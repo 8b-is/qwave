@@ -1,0 +1,50 @@
+{
+  "locations": {
+    "se-sto": { "country": "Sweden", "city": "Stockholm", "latitude": 59.3293, "longitude": 18.0686 },
+    "de-fra": { "country": "Germany", "city": "Frankfurt", "latitude": 50.1109, "longitude": 8.6821 },
+    "us-nyc": { "country": "USA", "city": "New York, NY", "latitude": 40.7128, "longitude": -74.006 }
+  },
+  "wireguard": {
+    "port_ranges": [[53, 53], [123, 123], [443, 443], [4000, 33433], [33565, 51820], [52000, 60000]],
+    "ipv4_gateway": "10.64.0.1",
+    "ipv6_gateway": "fc00:bbbb:bbbb:bb01::1",
+    "relays": [
+      {
+        "hostname": "se-sto-wg-001",
+        "location": "se-sto",
+        "active": true,
+        "owned": true,
+        "provider": "31173",
+        "ipv4_addr_in": "185.213.154.68",
+        "ipv6_addr_in": "2a03:1b20:5:f011::a01f",
+        "public_key": "aFCTFqCJnTqUnkYuxmpPnkzUS67HZbSZffZknJYYYFY=",
+        "daita": true,
+        "quic": null
+      },
+      {
+        "hostname": "de-fra-wg-001",
+        "location": "de-fra",
+        "active": true,
+        "owned": false,
+        "provider": "M247",
+        "ipv4_addr_in": "146.70.108.2",
+        "ipv6_addr_in": "2001:ac8:29:84::a26f",
+        "public_key": "uSputVEUEmBVLmLQ2NrBhvXTp22gut2q98kbNMkNTkU=",
+        "daita": false,
+        "quic": null
+      },
+      {
+        "hostname": "us-nyc-wg-301",
+        "location": "us-nyc",
+        "active": false,
+        "owned": true,
+        "provider": "xtom",
+        "ipv4_addr_in": "143.244.44.129",
+        "ipv6_addr_in": "2607:f7a0:d:4::a02f",
+        "public_key": "kkMil5bVp3O5R7ZWJnFT4inFqBFyU3Zx6zSGrbrRDBE=",
+        "daita": true,
+        "quic": null
+      }
+    ]
+  }
+}

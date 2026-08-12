@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish-release:
+    name: Build & Publish GitHub Release (unsigned)
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Run unit tests
+        run: swift test --package-path Packages/QwaveKit
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build (unsigned Release)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Qwave.xcodeproj \
+            -scheme Qwave \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY= \
+            build | xcbeautify
+
+      - name: Zip app artifact
+        run: |
+          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'Qwave.app' -path '*Release*' | head -n1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Qwave.app build artifact not found!"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" Qwave-v0.1.0-unsigned.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Qwave-v0.1.0-unsigned.zip
+          title: "Qwave ${{ github.ref_name }}"
+          body: |
+            ## Qwave v0.1.0 — Initial WebKit-Native macOS Browser Release
+
+            ### Features
+            - **Firefox Containers**: Isolated `WKWebsiteDataStore` universes & ephemeral burner tabs.
+            - **Brave Shields**: `WKContentRuleList` content blocking & HTTPS-first engine.
+            - **Energy Governor**: Tab hibernation and battery optimization.
+            - **Safari SPI Flags**: FeatureFlagService guards.
+            - **Mullvad VPN Integration**: WireGuardKit system extension architecture.
+
+            *Download the unsigned `Qwave-v0.1.0-unsigned.zip` artifact below.*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,132 @@
+name: Qwave
+
+options:
+  bundleIdPrefix: is.8b
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    SWIFT_STRICT_CONCURRENCY: targeted
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+packages:
+  QwaveKit:
+    path: Packages/QwaveKit
+  WireGuardKit:
+    path: Packages/WireGuardKit
+
+targets:
+  Qwave:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/QwaveApp
+    dependencies:
+      - package: QwaveKit
+        product: QwaveKit
+      - target: PacketTunnel
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave
+        PRODUCT_NAME: Qwave
+    info:
+      path: Resources/Qwave/Info.plist
+      properties:
+        CFBundleName: Qwave
+        CFBundleDisplayName: Qwave
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticTermination: false
+        NSSupportsSuddenTermination: false
+        # Browsers load arbitrary user-chosen web content; ATS is relaxed for
+        # web content only (app-level URLSession traffic stays ATS-enforced).
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+        LSApplicationCategoryType: public.app-category.productivity
+    entitlements:
+      path: Resources/Qwave/Qwave.entitlements
+      properties:
+        # Enforced only when the user signs with their team ID — see docs/SIGNING.md.
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider-systemextension
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)group.is.8b.qwave
+        keychain-access-groups:
+          - $(TeamIdentifierPrefix)is.8b.qwave.shared
+
+  PacketTunnel:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: Sources/PacketTunnel
+    dependencies:
+      - package: QwaveKit
+        product: QwaveTunnelKit
+      - package: WireGuardKit
+        product: WireGuardKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.tunnel
+        PRODUCT_NAME: PacketTunnel
+        # libwg-go.a is produced into BUILT_PRODUCTS_DIR by the pre-build
+        # make step; WireGuardKitGo links it via -lwg-go.
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
+    preBuildScripts:
+      - name: Build WireGuard Go Bridge
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          derived_data="${BUILD_DIR%%/Build/*}"
+          wg_go_dir="${PROJECT_DIR}/Packages/WireGuardKit/Sources/WireGuardKitGo"
+          if [ ! -d "${wg_go_dir}" ]; then
+            wg_go_dir="${derived_data}/SourcePackages/checkouts/wireguard-apple/Sources/WireGuardKitGo"
+          fi
+          if [ ! -d "${wg_go_dir}" ]; then
+            echo "error: WireGuardKitGo checkout not found at ${wg_go_dir}" >&2
+            exit 1
+          fi
+          make -C "${wg_go_dir}" build
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/libwg-go.a
+    info:
+      path: Resources/PacketTunnel/Info.plist
+      properties:
+        CFBundleName: PacketTunnel
+        CFBundleDisplayName: Qwave VPN Tunnel
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NetworkExtension:
+          NEMachServiceName: $(TeamIdentifierPrefix)group.is.8b.qwave.tunnel
+          NEProviderClasses:
+            com.apple.networkextension.packet-tunnel: PacketTunnel.PacketTunnelProvider
+    entitlements:
+      path: Resources/PacketTunnel/PacketTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider-systemextension
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)group.is.8b.qwave
+        keychain-access-groups:
+          - $(TeamIdentifierPrefix)is.8b.qwave.shared
+
+schemes:
+  Qwave:
+    build:
+      targets:
+        Qwave: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release

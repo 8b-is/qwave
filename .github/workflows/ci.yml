@@ -1,0 +1,92 @@
+name: qwave-ci
+
+on:
+  push:
+    branches: [main, "claude/**", "v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: qwave-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: QwaveKit unit tests (swift test)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+          swift --version
+
+      - name: Run unit tests
+        run: swift test --package-path Packages/QwaveKit
+
+  build-app:
+    name: Build Qwave.app (unsigned)
+    runs-on: macos-15
+    timeout-minutes: 45
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Cache SPM checkouts
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/QwaveKit/Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Qwave.xcodeproj \
+            -scheme Qwave \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY= \
+            build | xcbeautify
+
+      - name: Locate built app
+        id: locate
+        run: |
+          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'Qwave.app' -path '*Release*' | head -n1)"
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "Built: $APP_PATH"
+
+      - name: Zip app artifact
+        if: steps.locate.outputs.app_path != ''
+        run: |
+          ditto -c -k --keepParent "${{ steps.locate.outputs.app_path }}" Qwave-v0.1.0-unsigned.zip
+
+      - name: Upload app artifact
+        if: steps.locate.outputs.app_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Qwave-v0.1.0-unsigned
+          path: Qwave-v0.1.0-unsigned.zip
+          retention-days: 14
