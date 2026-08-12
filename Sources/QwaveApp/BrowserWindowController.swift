@@ -2,6 +2,7 @@ import AppKit
 import WebKit
 import BrowserCore
 import Shields
+import WebExtensions
 import SwiftUI
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
@@ -23,9 +24,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var forwardButton: NSButton!
     private var reloadButton: NSButton!
     private var shieldsButton: NSButton!
+    private var extensionsButton: NSButton!
 
     private var coordinators: [UUID: NavigationCoordinator] = [:]
     private var shieldsPopover: NSPopover?
+    private var extensionsPopup: ExtensionPopupController?
 
     // MARK: - Init
 
@@ -181,6 +184,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
         let record = tab.hibernationRecord
         let webView = environment.factory.makeWebView(for: tab)
+        // WebExtensions MV3 bridge: browser.* API for content scripts.
+        environment.extensions.installBridge(into: webView.configuration.userContentController)
 
         let coordinator = coordinators[tab.id] ?? environment.makeCoordinator(for: tab)
         coordinators[tab.id] = coordinator
@@ -477,6 +482,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         shieldsPopover = popover
     }
 
+    /// Extensions toolbar action: popup of the first installed extension
+    /// (a fuller extension manager lands with the MV3 engine milestones).
+    @objc func toggleExtensions(_ sender: Any?) {
+        guard let button = extensionsButton else { return }
+        if let popup = extensionsPopup {
+            popup.close()
+            extensionsPopup = nil
+            return
+        }
+        let router = environment.extensions.router
+        let popup = ExtensionPopupController(router: router)
+        extensionsPopup = popup
+        router.tabQueryHandler = { [weak self] _ in
+            guard let self, let tab = self.tabManager.selectedTab else { return [] }
+            return [["id": 1, "url": tab.url?.absoluteString ?? "", "active": true, "title": tab.title ?? ""]]
+        }
+        router.tabCreateHandler = { [weak self] props in
+            guard let self, let urlString = props["url"] as? String, let url = URL(string: urlString) else { return }
+            self.openNewTab(url: url, activate: true)
+        }
+        if let ext = environment.extensions.extensions.first {
+            popup.showPopup(for: ext, relativeTo: button, of: button.bounds)
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "No extensions installed"
+            alert.informativeText = "Drop a WebExtension bundle directory (containing manifest.json) onto the Extensions button to install it."
+            alert.beginSheetModal(for: window!)
+        }
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
@@ -517,9 +552,10 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let reloadItem = NSToolbarItem.Identifier("qwave.reload")
     private static let omniboxItem = NSToolbarItem.Identifier("qwave.omnibox")
     private static let shieldsItem = NSToolbarItem.Identifier("qwave.shields")
+    private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace, Self.shieldsItem]
+        [Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace, Self.shieldsItem, Self.extensionsItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -555,6 +591,10 @@ extension BrowserWindowController: NSToolbarDelegate {
             shieldsButton = makeToolbarButton(symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))
             item.view = shieldsButton
             item.label = "Shields"
+        case Self.extensionsItem:
+            extensionsButton = makeToolbarButton(symbol: "puzzlepiece.extension", label: "Extensions", action: #selector(toggleExtensions(_:)))
+            item.view = extensionsButton
+            item.label = "Extensions"
         default:
             return nil
         }

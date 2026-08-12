@@ -25,7 +25,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private let negotiator: EphemeralPeerNegotiating = NoopEphemeralPeerNegotiator()
+    private let negotiator: EphemeralPeerNegotiating = MullvadQuantumPeerNegotiator()
     private let secrets = KeychainSecretStore()
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {

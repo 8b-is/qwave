@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await environment.shields.prepare()
             await environment.vpn.tunnel.refresh()
             restoreOrOpenFirstWindow()
+            // Stage A.5: keep the remote blocklist warm in the background.
+            Task {
+                try? await environment.blocklistUpdater.fetchUpdatedBlocklistJSON()
+            }
         }
 
         startEnergyTimer()
