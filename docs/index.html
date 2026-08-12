@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qwave — Sovereign WebKit-Native macOS Browser</title>
+  <meta name="description" content="Qwave is a high-performance, WebKit-native, battery-optimized sovereign macOS web browser combining Firefox Containers, Brave Shields, Tab Hibernation, and WireGuard VPN.">
+  <meta property="og:title" content="Qwave — Sovereign WebKit-Native macOS Browser">
+  <meta property="og:description" content="High-performance, WebKit-native sovereign macOS web browser combining Firefox Containers, Brave Shields, Tab Hibernation, and WireGuard VPN.">
+  <meta property="og:image" content="assets/hero.jpg">
+  <meta property="og:url" content="https://peterlodri-sec.github.io/qwave/">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #050b14;
+      --bg-card: rgba(13, 25, 45, 0.7);
+      --border: rgba(0, 242, 254, 0.2);
+      --border-hover: rgba(0, 242, 254, 0.5);
+      --primary: #00f2fe;
+      --primary-glow: rgba(0, 242, 254, 0.35);
+      --secondary: #4facfe;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #38ef7d;
+      --font-heading: 'Space Grotesk', sans-serif;
+      --font-body: 'Inter', sans-serif;
+      --font-code: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      line-height: 1.6;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 50% -20%, rgba(0, 242, 254, 0.15), transparent 70%),
+        radial-gradient(circle at 10% 80%, rgba(79, 172, 254, 0.08), transparent 50%);
+    }
+
+    header {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-family: var(--font-heading);
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+    }
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #050b14;
+      font-weight: 900;
+    }
+
+    nav {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    nav a:hover { color: var(--primary); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      border-radius: 99px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      font-size: 0.95rem;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: #050b14;
+      box-shadow: 0 0 20px var(--primary-glow);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 30px rgba(0, 242, 254, 0.6);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--primary);
+    }
+
+    .hero {
+      max-width: 1200px;
+      margin: 3rem auto 5rem;
+      padding: 0 2rem;
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 1rem;
+      border-radius: 99px;
+      background: rgba(0, 242, 254, 0.1);
+      border: 1px solid var(--border);
+      color: var(--primary);
+      font-size: 0.85rem;
+      font-family: var(--font-code);
+      margin-bottom: 1.5rem;
+    }
+    .hero h1 {
+      font-family: var(--font-heading);
+      font-size: 4rem;
+      line-height: 1.1;
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      background: linear-gradient(135deg, #ffffff 0%, #a5f3fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      max-width: 750px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 4rem;
+    }
+
+    .preview-container {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+    }
+    .preview-container img {
+      width: 100%;
+      display: block;
+    }
+
+    .features {
+      max-width: 1200px;
+      margin: 0 auto 6rem;
+      padding: 0 2rem;
+    }
+    .section-title {
+      font-family: var(--font-heading);
+      font-size: 2.25rem;
+      text-align: center;
+      margin-bottom: 3rem;
+      color: #fff;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 2rem;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      backdrop-filter: blur(12px);
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-4px);
+    }
+    .card-icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      display: inline-block;
+    }
+    .card h3 {
+      font-family: var(--font-heading);
+      font-size: 1.35rem;
+      margin-bottom: 0.75rem;
+      color: #fff;
+    }
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .quickstart {
+      max-width: 900px;
+      margin: 0 auto 6rem;
+      padding: 0 2rem;
+    }
+    .terminal {
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      font-family: var(--font-code);
+      font-size: 0.9rem;
+      color: #38bdf8;
+      overflow-x: auto;
+    }
+    .terminal pre { white-space: pre-wrap; }
+    .terminal-header {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 1rem;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-green { background: #22c55e; }
+
+    footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    footer a { color: var(--primary); text-decoration: none; }
+
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2.75rem; }
+      .hero-actions { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="#" class="brand">
+      <div class="brand-icon">🌊</div>
+      Qwave
+    </a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="https://github.com/peterlodri-sec/qwave" target="_blank">GitHub</a>
+      <a href="https://github.com/peterlodri-sec/qwave/releases/tag/v0.1.0" class="btn btn-primary">Download v0.1.0</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="badge">🚀 Qwave v0.1.0 Released — macOS 14.0+</div>
+    <h1>Sovereign WebKit-Native Browser Engine</h1>
+    <p>Thin AppKit shell with Firefox Container Universes, Brave Content Shields, Tab Hibernation Memory Management, and Mullvad WireGuard VPN integration.</p>
+    
+    <div class="hero-actions">
+      <a href="https://github.com/peterlodri-sec/qwave/releases/download/v0.1.0/Qwave-v0.1.0-unsigned.zip" class="btn btn-primary">
+        <span>Download Qwave.app (Unsigned)</span>
+      </a>
+      <a href="https://github.com/peterlodri-sec/qwave" class="btn btn-secondary" target="_blank">
+        <span>View Source on GitHub</span>
+      </a>
+    </div>
+
+    <div class="preview-container">
+      <img src="assets/hero.jpg" alt="Qwave macOS Web Browser Mockup">
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <h2 class="section-title">Engineered for Battery, Privacy & Speed</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon">🪐</div>
+        <h3>Firefox Container Universes</h3>
+        <p>Isolated <code>WKWebsiteDataStore</code> instances per tab container (Personal, Work, Banking) plus ephemeral burner tabs that wipe state on close.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🛡️</div>
+        <h3>Brave Content Shields</h3>
+        <p>Curated 51-rule <code>WKContentRuleList</code> blocking engine, per-host JavaScript toggles, and automatic HTTPS-First upgrader.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🔋</div>
+        <h3>Energy Governor</h3>
+        <p>Smart <code>TabHibernator</code> that unloads background WebKit process memory while instantly preserving interaction state and scroll position.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🎛️</div>
+        <h3>Safari SPI Feature Flags</h3>
+        <p>Safely exposes 100+ Safari Technology Preview experimental feature toggles via runtime ObjC reflection with <code>responds(to:)</code> guards.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h3>Mullvad WireGuard VPN</h3>
+        <p>System extension architecture (<code>PacketTunnel.systemextension</code>) integrating WireGuardKit and Mullvad REST API for 1-click encryption.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">💾</div>
+        <h3>SQLite WAL Persistence</h3>
+        <p>Raw WAL-mode SQLite storage engine for lightning-fast history, bookmarks, and persistent session restoration without ORM overhead.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="quickstart" id="architecture">
+    <h2 class="section-title">Build & Run in Seconds</h2>
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+      </div>
+      <pre><code># 1. Clone Qwave public repository
+git clone https://github.com/peterlodri-sec/qwave.git
+cd qwave
+
+# 2. Run 94/94 SPM unit tests
+swift test --package-path Packages/QwaveKit
+
+# 3. Generate Xcode project & build Release binary
+xcodegen generate --spec project.yml
+xcodebuild -project Qwave.xcodeproj -scheme Qwave -configuration Release CODE_SIGNING_ALLOWED=NO build</code></pre>
+    </div>
+  </section>
+
+  <footer>
+    <p>Qwave is open-source software under the <a href="https://github.com/peterlodri-sec/qwave/blob/main/LICENSE" target="_blank">MIT License</a>. Built with ❤️ by 8b.is / Peter Lodri.</p>
+  </footer>
+
+</body>
+</html>
