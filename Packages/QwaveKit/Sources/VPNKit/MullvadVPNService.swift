@@ -22,12 +22,16 @@ public final class MullvadVPNService: ObservableObject {
     private let keys: DeviceKeyManager
 
     public init(
-        api: MullvadAPIClient = MullvadAPIClient(),
+        api: MullvadAPIClient? = nil,
         secrets: SecretStore,
         defaults: UserDefaults = .standard,
         tunnel: TunnelManager? = nil
     ) {
-        self.api = api
+        // The control-API client pins api.mullvad.net to the ISRG roots
+        // (docs/PINNING.md). A pinning URLSession carries a delegate, which
+        // URLSession.shared cannot, so it is built here and injected. Tests
+        // inject their own client.
+        self.api = api ?? MullvadAPIClient(session: .mullvadPinned())
         self.keys = DeviceKeyManager(secrets: secrets)
         self.account = AccountStore(secrets: secrets, defaults: defaults)
         self.tunnel = tunnel ?? TunnelManager()
