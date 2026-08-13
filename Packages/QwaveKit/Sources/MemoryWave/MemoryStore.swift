@@ -29,7 +29,12 @@ public final class MemoryStore {
             );
             CREATE INDEX IF NOT EXISTS idx_memories_container_created
                 ON memories(container_id, created DESC);
+            """,
             """
+            ALTER TABLE memories ADD COLUMN url_tag BLOB;
+            CREATE INDEX IF NOT EXISTS idx_memories_url_tag
+                ON memories(container_id, kind, url_tag);
+            """,
         ])
     }
 
@@ -74,12 +79,13 @@ public final class MemoryStore {
         let urlBox = try url.map { try MemoryCipher.seal(Data($0.absoluteString.utf8), key: key) }
         let sigBox = try MemoryCipher.seal(Data(signature.interferenceHash), key: key)
         let hostTag = url.flatMap { $0.host }.map { MemoryCipher.hostTag($0, key: key) }
+        let urlTag = url.map { MemoryCipher.hostTag($0.absoluteString, key: key) }
 
         try database.run(
             """
             INSERT INTO memories
-                (container_id, kind, lane, created, host_tag, frame, title_box, body_box, url_box, signature_box)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                (container_id, kind, lane, created, host_tag, frame, title_box, body_box, url_box, signature_box, url_tag)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             """,
             [
                 .text(Self.key(for: containerID)),
@@ -92,6 +98,7 @@ public final class MemoryStore {
                 .blob(bodyBox),
                 urlBox.map(SQLiteValue.blob) ?? .null,
                 .blob(sigBox),
+                urlTag.map(SQLiteValue.blob) ?? .null,
             ]
         )
 
@@ -107,6 +114,53 @@ public final class MemoryStore {
             wave: wave,
             signature: signature
         )
+    }
+
+    /// Insert or refresh a browse wave for the same URL + container.
+    @discardableResult
+    public func upsertBrowse(
+        title: String,
+        body: String,
+        url: URL,
+        containerID: UUID?,
+        emotion: EmotionVector = .neutral,
+        at date: Date = Date()
+    ) throws -> MemoryRecord {
+        let tag = MemoryCipher.hostTag(url.absoluteString, key: key)
+        let existing = try database.query(
+            """
+            SELECT id FROM memories
+            WHERE container_id = ?1 AND kind = ?2 AND url_tag = ?3
+            LIMIT 1
+            """,
+            [.text(Self.key(for: containerID)), .text(MemoryKind.browse.rawValue), .blob(tag)]
+        ) { $0.int(0) }
+        if let id = existing.first {
+            try database.run("DELETE FROM memories WHERE id = ?1", [.integer(id)])
+        }
+        return try insert(
+            title: title, body: body, url: url, kind: .browse, lane: .odd,
+            containerID: containerID, emotion: emotion, at: date)
+    }
+
+    public func records(since: Date? = nil, until: Date? = nil, limit: Int = 200) throws -> [MemoryRecord] {
+        var sql = """
+            SELECT id, container_id, kind, lane, created, frame, title_box, body_box, url_box, signature_box
+            FROM memories
+            WHERE 1=1
+            """
+        var params: [SQLiteValue] = []
+        if let since {
+            params.append(.real(since.timeIntervalSince1970))
+            sql += " AND created >= ?\(params.count)"
+        }
+        if let until {
+            params.append(.real(until.timeIntervalSince1970))
+            sql += " AND created <= ?\(params.count)"
+        }
+        params.append(.integer(Int64(limit)))
+        sql += " ORDER BY created DESC LIMIT ?\(params.count)"
+        return try database.query(sql, params, decode).compactMap { $0 }
     }
 
     public func records(containerID: UUID?, limit: Int = 32) throws -> [MemoryRecord] {

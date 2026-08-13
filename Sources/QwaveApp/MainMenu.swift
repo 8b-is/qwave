@@ -155,6 +155,12 @@ enum MainMenu {
         ask.keyEquivalentModifierMask = [.command, .shift]
         memoryMenu.addItem(.separator())
         memoryMenu.addItem(
+            withTitle: "Timeline",
+            action: #selector(BrowserWindowController.showTimeline(_:)), keyEquivalent: "")
+        memoryMenu.addItem(
+            withTitle: "Open Nibble Folder",
+            action: #selector(BrowserWindowController.openNibbleFolder(_:)), keyEquivalent: "")
+        memoryMenu.addItem(
             withTitle: "Show Memory Wave",
             action: #selector(BrowserWindowController.toggleMemoryWave(_:)), keyEquivalent: "")
 

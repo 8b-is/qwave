@@ -41,6 +41,8 @@ public struct MemoryWaveContext: Sendable, Equatable {
     public var destination: MemoryDestination
     /// Remote base URL, if the chosen provider talks to a network.
     public var remoteBaseURL: URL?
+    /// User opted into local auto-capture. Still never writes ephemeral tabs.
+    public var rememberEverything: Bool
 
     public init(
         isExplicit: Bool,
@@ -49,7 +51,8 @@ public struct MemoryWaveContext: Sendable, Equatable {
         provider: MemoryProviderKind,
         includeStoredMemory: Bool,
         destination: MemoryDestination,
-        remoteBaseURL: URL? = nil
+        remoteBaseURL: URL? = nil,
+        rememberEverything: Bool = false
     ) {
         self.isExplicit = isExplicit
         self.isEphemeral = isEphemeral
@@ -58,20 +61,21 @@ public struct MemoryWaveContext: Sendable, Equatable {
         self.includeStoredMemory = includeStoredMemory
         self.destination = destination
         self.remoteBaseURL = remoteBaseURL
+        self.rememberEverything = rememberEverything
     }
 }
 
 /// Fail-closed policy. Stored Cognitive waves never leave this Mac.
 public enum MemoryWavePolicy {
     public static func decide(_ context: MemoryWaveContext) -> MemoryWaveDecision {
-        guard context.isExplicit else { return .deny(.notExplicit) }
-
         switch context.destination {
         case .persist:
             if context.isEphemeral { return .deny(.ephemeral) }
-            return .allow
+            if context.isExplicit || context.rememberEverything { return .allow }
+            return .deny(.notExplicit)
 
         case .infer:
+            guard context.isExplicit else { return .deny(.notExplicit) }
             if !context.inferenceAllowed { return .deny(.energy) }
             if context.provider == .none { return .deny(.providerDisabled) }
             if context.provider == .openaiCompatible {

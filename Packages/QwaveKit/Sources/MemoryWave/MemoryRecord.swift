@@ -4,6 +4,10 @@ public enum MemoryKind: String, Sendable, Equatable {
     case pin
     case summary
     case note
+    /// Automatic capture from Remember Everything. Deduped per URL.
+    case browse
+    /// Tagged markdown nibble — retrieval unit for wave memory.
+    case nibble
 }
 
 public struct MemoryRecord: Identifiable, Equatable, Sendable {
@@ -17,6 +21,7 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
     public var body: String
     public var wave: WaveInt
     public var signature: WaveSignature
+    public var tags: [String]
 
     public init(
         id: Int64,
@@ -28,7 +33,8 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         title: String,
         body: String,
         wave: WaveInt,
-        signature: WaveSignature
+        signature: WaveSignature,
+        tags: [String] = []
     ) {
         self.id = id
         self.containerID = containerID
@@ -40,6 +46,7 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         self.body = body
         self.wave = wave
         self.signature = signature
+        self.tags = tags
     }
 }
 

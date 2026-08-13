@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MemoryWave
 
 struct MemoryWavePane: View {
@@ -8,6 +9,7 @@ struct MemoryWavePane: View {
     @State private var model = MemoryWavePreferences.defaultRemoteModel
     @State private var apiKey = ""
     @State private var status = ""
+    @State private var rememberEverything = false
 
     var body: some View {
         Form {
@@ -19,6 +21,15 @@ struct MemoryWavePane: View {
                 .foregroundStyle(.secondary)
                 Text(
                     "Remote providers never receive stored memory. They see only the current prompt and, if you include it, the current page."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Toggle("Remember everything (local)", isOn: $rememberEverything)
+                    .onChange(of: rememberEverything) { _, newValue in
+                        environment.memoryPreferences.rememberEverything = newValue
+                    }
+                Text(
+                    "When on, every non-private page is captured as a Cognitive wave on this Mac. Private and ephemeral tabs are still never written. Timeline summaries stay local; remote providers only see titles and times, never page bodies."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -68,6 +79,11 @@ struct MemoryWavePane: View {
             }
 
             Section("Housekeeping") {
+                Button("Open nibble folder") {
+                    if let directory = environment.memoryWave.vault?.directory {
+                        NSWorkspace.shared.open(directory)
+                    }
+                }
                 Button("Forget all memories on this Mac", role: .destructive) {
                     try? environment.memoryWave.store?.deleteAll()
                     status = "Local wave store emptied."
@@ -80,6 +96,7 @@ struct MemoryWavePane: View {
             baseURL = environment.memoryPreferences.remoteBaseURL.absoluteString
             model = environment.memoryPreferences.remoteModel
             apiKey = (try? environment.memoryPreferences.apiKey()) ?? ""
+            rememberEverything = environment.memoryPreferences.rememberEverything
         }
     }
 }

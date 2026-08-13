@@ -124,6 +124,26 @@ final class WavePageTests: XCTestCase {
         XCTAssertTrue(html.contains("start-form"))
         XCTAssertTrue(html.contains("Pinned"))
         XCTAssertTrue(html.contains("qwave://runtime/mermaid.min.js"))
+        XCTAssertTrue(html.contains("glass"))
+        XCTAssertTrue(html.contains("qwave://timeline"))
+    }
+
+    func testTimelineSlate() {
+        let html = InternalPages.timelineHTML(
+            days: [
+                TimelineDayView(
+                    heading: "Today",
+                    items: [TimelineItemView(title: "Example", detail: "9:00 · example.com", href: "https://example.com/")])
+            ],
+            summary: "A quiet morning of waves.",
+            rememberEverything: true,
+            providerLabel: "On-device"
+        )
+        XCTAssertTrue(html.contains("glass"))
+        XCTAssertTrue(html.contains("data-summarize=\"today\""))
+        XCTAssertTrue(html.contains("A quiet morning of waves."))
+        XCTAssertTrue(html.contains("Example"))
+        XCTAssertTrue(html.contains("capturing every page locally"))
     }
 
     func testMarkdownPageKeepsSourceForRemember() {

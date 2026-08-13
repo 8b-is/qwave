@@ -195,6 +195,32 @@ final class MemoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.records(containerID: work).first?.wave.provenance, .cognitive)
     }
 
+    func testBrowseUpsertAndTimelineGroup() throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        let url = URL(string: "https://example.com/story")!
+        let first = try store.upsertBrowse(
+            title: "One", body: "first", url: url, containerID: nil,
+            at: Date(timeIntervalSince1970: 1_700_000_000))
+        let second = try store.upsertBrowse(
+            title: "Two", body: "second", url: url, containerID: nil,
+            at: Date(timeIntervalSince1970: 1_700_000_100))
+        let all = try store.records(containerID: nil)
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all[0].title, "Two")
+        XCTAssertEqual(all[0].kind, .browse)
+        XCTAssertNotEqual(first.id, second.id)
+
+        let other = try store.upsertBrowse(
+            title: "Other", body: "x", url: URL(string: "https://example.com/b")!, containerID: nil,
+            at: Date(timeIntervalSince1970: 1_700_086_400))
+        _ = other
+        let days = MemoryTimeline.group(try store.records(since: nil, until: nil, limit: 20))
+        XCTAssertGreaterThanOrEqual(days.count, 1)
+        let corpusRemote = MemoryTimeline.summaryCorpus(try store.records(limit: 10), includeSnippets: false)
+        XCTAssertFalse(corpusRemote.contains("second"))
+        XCTAssertTrue(corpusRemote.contains("Two"))
+    }
+
     func testDeleteContainer() throws {
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
         let id = UUID()
@@ -223,6 +249,22 @@ final class MemoryWavePolicyTests: XCTestCase {
                 isExplicit: true, isEphemeral: false, inferenceAllowed: true,
                 provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd)))
         XCTAssertEqual(ok, .allow)
+    }
+
+    func testRememberEverythingAllowsLocalPersistButNotEphemeral() {
+        let capture = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: false, isEphemeral: false, inferenceAllowed: true,
+                provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd),
+                rememberEverything: true))
+        XCTAssertEqual(capture, .allow)
+
+        let ephemeral = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: false, isEphemeral: true, inferenceAllowed: true,
+                provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd),
+                rememberEverything: true))
+        XCTAssertEqual(ephemeral, .deny(.ephemeral))
     }
 
     func testRemoteCannotCarryStoredMemory() {
@@ -279,6 +321,74 @@ final class ArticleExtractorTests: XCTestCase {
     func testClamp() {
         let long = ArticleExtract(title: "t", text: String(repeating: "a", count: 50))
         XCTAssertEqual(long.clamped(maxChars: 10).text.count, 10)
+    }
+}
+
+final class NibbleTests: XCTestCase {
+    func testMarkdownRoundTripAndTags() {
+        let nibble = MemoryNibble(
+            title: "Wave grid",
+            body: "Sparse 256 grid. #MEM8 lives here.",
+            tags: ["WebKit", "#Memory Wave", "webkit"],
+            url: URL(string: "https://example.com/mem"),
+            kind: .browse,
+            containerID: nil
+        )
+        XCTAssertEqual(nibble.tags, ["webkit", "memory-wave"])
+        let text = NibbleMarkdown.encode(nibble)
+        let decoded = NibbleMarkdown.decode(text)
+        XCTAssertEqual(decoded?.title, "Wave grid")
+        XCTAssertEqual(decoded?.tags, nibble.tags)
+        XCTAssertEqual(decoded?.url, nibble.url)
+        XCTAssertTrue(text.contains("tags: [webkit, memory-wave]"))
+        XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
+    }
+
+    func testCutterSplitsHeadingsAndKeepsHashtags() {
+        let nibbles = NibbleCutter.cut(
+            title: "Article",
+            body: """
+                Intro paragraph that is long enough to keep as its own nibble about browsers.
+
+                ## Marine Algorithm
+                Salience is energy plus stability plus harmonic alignment in the watch.
+
+                ## Retrieval
+                Tagged nibbles #wave retrieve by resonance instead of a vector scan.
+                """,
+            url: URL(string: "https://docs.example.com/marine"),
+            kind: .browse,
+            containerID: nil
+        )
+        XCTAssertGreaterThanOrEqual(nibbles.count, 2)
+        XCTAssertTrue(nibbles.contains(where: { $0.tags.contains("marine") }))
+        XCTAssertTrue(nibbles.contains(where: { $0.tags.contains("wave") }))
+        XCTAssertTrue(nibbles.contains(where: { $0.tags.contains("docs") }))
+    }
+
+    func testVaultWriteAndTagRecall() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let vault = try NibbleVault(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        _ = try director.remember(
+            title: "Nibble test",
+            body: "A paragraph about tagged wave retrieval that is definitely long enough. #qwave",
+            url: URL(string: "https://qwave.example/nibble"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+        let hits = try director.recall(containerID: nil, query: "#qwave", limit: 8)
+        XCTAssertFalse(hits.isEmpty)
+        XCTAssertTrue(hits.contains(where: { $0.tags.contains("qwave") }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
+        let files = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") }
+        XCTAssertGreaterThan(files.count, 1)
     }
 }
 

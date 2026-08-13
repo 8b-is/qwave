@@ -64,7 +64,8 @@ final class BrowserEnvironment {
         vpn = MullvadVPNService(secrets: secrets)
         extensions = WebExtensionHost(storageDirectory: directory)
         let memoryStore = try? MemoryStore(directory: directory, secrets: secrets)
-        memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences)
+        let nibbleVault = try? NibbleVault(directory: directory.appendingPathComponent("nibbles", isDirectory: true))
+        memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences, vault: nibbleVault)
         // EasyList mirror + Qwave's own curated list; ETag-cached, no-op
         // fallback keeps the director simple.
         blocklistUpdater = RemoteBlocklistUpdater(
@@ -76,21 +77,64 @@ final class BrowserEnvironment {
         shieldsPolicy.defaultHTTPSFirst = settings.httpsFirstEnabled
 
         QwaveInternal.startPageHTML = { [weak self] in
-            guard let self else {
-                return InternalPages.startHTML(memories: [], providerLabel: "Remember only")
-            }
-            let records = (try? self.memoryWave.recall(containerID: nil, limit: 8)) ?? []
-            let chips = records.map {
-                StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
-            }
-            let label: String
-            switch self.memoryPreferences.providerKind {
-            case .none: label = "Remember only"
-            case .onDevice: label = "On-device"
-            case .openaiCompatible: label = "OpenAI-compatible"
-            }
-            return InternalPages.startHTML(memories: chips, providerLabel: label)
+            self?.makeStartPageHTML()
+                ?? InternalPages.startHTML(memories: [], providerLabel: "Remember only")
         }
+        QwaveInternal.timelinePageHTML = { [weak self] in
+            self?.makeTimelinePageHTML()
+                ?? InternalPages.timelineHTML(
+                    days: [], summary: QwaveInternal.lastTimelineSummary.isEmpty ? nil : QwaveInternal.lastTimelineSummary,
+                    rememberEverything: false, providerLabel: "Remember only")
+        }
+    }
+
+    var providerLabel: String {
+        switch memoryPreferences.providerKind {
+        case .none: return "Remember only"
+        case .onDevice: return "On-device"
+        case .openaiCompatible: return "OpenAI-compatible"
+        }
+    }
+
+    func makeStartPageHTML() -> String {
+        let tagChips = memoryWave.nibbleTags(limit: 10).map {
+            StartMemoryChip(title: "#\($0)", preview: "nibble")
+        }
+        let records = (try? memoryWave.recall(containerID: nil, limit: 8)) ?? []
+        let chips = tagChips + records.map {
+            StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
+        }
+        return InternalPages.startHTML(
+            memories: chips,
+            providerLabel: providerLabel,
+            rememberEverything: memoryPreferences.rememberEverything
+        )
+    }
+
+    func makeTimelinePageHTML() -> String {
+        let days = ((try? memoryWave.timeline(range: .all)) ?? []).map { day in
+            TimelineDayView(
+                heading: day.heading,
+                items: day.items.prefix(24).map { item in
+                    let time = item.created.formatted(date: .omitted, time: .shortened)
+                    let host = item.url?.host ?? item.kind.rawValue
+                    let tags = item.tags.prefix(4).map { "#\($0)" }.joined(separator: " ")
+                    let detail = tags.isEmpty ? "\(time) · \(host)" : "\(time) · \(host) · \(tags)"
+                    return TimelineItemView(
+                        title: item.title,
+                        detail: detail,
+                        href: item.url?.absoluteString
+                    )
+                }
+            )
+        }
+        let summary = QwaveInternal.lastTimelineSummary
+        return InternalPages.timelineHTML(
+            days: days,
+            summary: summary.isEmpty ? nil : summary,
+            rememberEverything: memoryPreferences.rememberEverything,
+            providerLabel: providerLabel
+        )
     }
 
     static func bootstrap() -> BrowserEnvironment {

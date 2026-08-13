@@ -15,6 +15,7 @@ public final class MemoryWavePreferences {
         static let provider = "qwave.memory.provider"
         static let remoteBaseURL = "qwave.memory.remoteBaseURL"
         static let remoteModel = "qwave.memory.remoteModel"
+        static let rememberEverything = "qwave.memory.rememberEverything"
     }
 
     public init(defaults: UserDefaults = .standard, secrets: SecretStore) {
@@ -42,6 +43,12 @@ public final class MemoryWavePreferences {
             return value.isEmpty ? Self.defaultRemoteModel : value
         }
         set { defaults.set(newValue, forKey: Key.remoteModel) }
+    }
+
+    /// Opt-in local auto-capture of every non-ephemeral page. Off by default.
+    public var rememberEverything: Bool {
+        get { defaults.bool(forKey: Key.rememberEverything) }
+        set { defaults.set(newValue, forKey: Key.rememberEverything) }
     }
 
     public func apiKey() throws -> String? {
