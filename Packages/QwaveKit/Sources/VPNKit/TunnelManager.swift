@@ -27,7 +27,7 @@ public final class TunnelManager: ObservableObject {
     private let localizedDescription: String
 
     private var manager: NETunnelProviderManager?
-    private var statusObserver: NSObjectProtocol?
+    private var statusObserverTask: Task<Void, Never>?
     private var currentRelayHostname: String?
 
     public init(
@@ -39,9 +39,7 @@ public final class TunnelManager: ObservableObject {
     }
 
     deinit {
-        if let statusObserver {
-            NotificationCenter.default.removeObserver(statusObserver)
-        }
+        statusObserverTask?.cancel()
     }
 
     // MARK: - Preferences
@@ -67,15 +65,14 @@ public final class TunnelManager: ObservableObject {
 
     private func adopt(manager: NETunnelProviderManager) {
         self.manager = manager
-        if let statusObserver {
-            NotificationCenter.default.removeObserver(statusObserver)
-        }
-        statusObserver = NotificationCenter.default.addObserver(
-            forName: .NEVPNStatusDidChange,
-            object: manager.connection,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
+        statusObserverTask?.cancel()
+        let connection = manager.connection
+        statusObserverTask = Task { @MainActor [weak self] in
+            for await notification in NotificationCenter.default.notifications(
+                named: .NEVPNStatusDidChange,
+                object: connection
+            ) {
+                guard !Task.isCancelled, (notification.object as AnyObject?) === connection else { return }
                 self?.syncState()
             }
         }

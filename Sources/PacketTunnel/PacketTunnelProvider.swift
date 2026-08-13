@@ -51,12 +51,16 @@ enum PacketTunnelError: Error {
     case filterInitFailed
 }
 
+private struct SendableTunnelConfiguration: @unchecked Sendable {
+    let value: TunnelConfiguration
+}
+
 /// WireGuard packet tunnel. The app hands over a `TunnelSessionConfig` via
 /// providerConfiguration; the device private key is resolved from the shared
 /// keychain (never crosses the app/extension boundary in the config), and the
 /// quantum-resistant PSK seam (`EphemeralPeerNegotiating`) runs before the
 /// tunnel handshake — Stage A's noop keeps this classic WireGuard.
-class PacketTunnelProvider: NEPacketTunnelProvider {
+final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private lazy var adapter = WireGuardAdapter(with: self) { level, message in
         switch level {
         case .error:
@@ -78,7 +82,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var lastRekey: Date?
     private var rekeyTimer: DispatchSourceTimer?
 
-    override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+    override func startTunnel(
+        options: [String: NSObject]?,
+        completionHandler: @escaping @Sendable (Error?) -> Void
+    ) {
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
             let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
         else {
@@ -107,7 +114,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     sessionConfig: sessionConfig,
                     privateKey: privateKey
                 )
-                let base = tunnelConfiguration
+                let base = SendableTunnelConfiguration(value: tunnelConfiguration)
 
                 // Stage B: quantum-resistant PSK, fail-closed. A negotiation
                 // failure aborts tunnel start (QuantumSessionError reaches
@@ -127,16 +134,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     negotiatedAt = Date()
                 }
 
-                let configuration = tunnelConfiguration
+                let configuration = SendableTunnelConfiguration(value: tunnelConfiguration)
                 let pskInstalledAt = negotiatedAt
-                self.adapter.start(tunnelConfiguration: configuration) { error in
+                self.adapter.start(tunnelConfiguration: configuration.value) { error in
                     if let error {
                         QwaveLog.tunnel.error("Adapter start failed: \(error.localizedDescription, privacy: .public)")
                     } else {
                         QwaveLog.tunnel.info("Tunnel up via \(sessionConfig.relayHostname, privacy: .public)")
                         DispatchQueue.main.async {
                             self.sessionConfig = sessionConfig
-                            self.baseConfiguration = base
+                            self.baseConfiguration = base.value
                             self.lastRekey = pskInstalledAt
                             if pskInstalledAt != nil {
                                 self.scheduleRekeyTimer()
@@ -152,7 +159,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+    override func stopTunnel(
+        with reason: NEProviderStopReason,
+        completionHandler: @escaping @Sendable () -> Void
+    ) {
         // Tear down the Zig packet filter.
         if let handle = filterHandle {
             qpacket_filter_deinit(handle)

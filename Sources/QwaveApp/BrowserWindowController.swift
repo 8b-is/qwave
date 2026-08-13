@@ -518,7 +518,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func addBookmark(_ sender: Any?) {
         guard let selected = tabManager.selectedTab, let url = selected.url else { return }
-        try? environment.bookmarks?.add(title: selected.displayTitle, url: url)
+        Task { @MainActor [weak self] in
+            try? await self?.environment.bookmarks?.add(title: selected.displayTitle, url: url)
+        }
     }
 
     @objc func selectNextTab(_ sender: Any?) { tabManager.selectNext() }
@@ -593,7 +595,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 result.flatMap(ArticleExtractor.decode)
                 ?? ArticleExtract(title: tab.title, text: tab.title, href: url.absoluteString)
             let title = extract.title.isEmpty ? (url.host ?? "Page") : extract.title
-            _ = try? self.environment.memoryWave.remember(
+            _ = try? await self.environment.memoryWave.remember(
                 title: title,
                 body: extract.text,
                 url: url,
@@ -683,7 +685,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             title = tab.displayTitle
         }
         do {
-            _ = try environment.memoryWave.remember(
+            _ = try await environment.memoryWave.remember(
                 title: title,
                 body: body,
                 url: tab.url,
@@ -813,7 +815,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         do {
-            _ = try environment.memoryWave.remember(
+            _ = try await environment.memoryWave.remember(
                 title: extract.title,
                 body: extract.text,
                 url: extract.href.flatMap(URL.init(string:)) ?? tab.url,
@@ -1026,17 +1028,18 @@ extension BrowserWindowController: NSTextFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         guard (notification.object as? NSTextField) === omnibox else { return }
         let query = omnibox.stringValue
-        guard query.count >= 2, let history = environment.history,
-            let entries = try? history.entries(matching: query, limit: 50)
-        else {
+        guard query.count >= 2, let history = environment.history else {
             suggestions.hide()
             return
         }
-        let ranked = OmniboxSuggester.suggestions(for: query, history: entries)
-        if ranked.isEmpty {
-            suggestions.hide()
-        } else {
-            suggestions.show(ranked, below: omnibox)
+        Task { @MainActor [weak self] in
+            guard let self, let entries = try? await history.entries(matching: query, limit: 50) else { return }
+            let ranked = OmniboxSuggester.suggestions(for: query, history: entries)
+            if ranked.isEmpty {
+                self.suggestions.hide()
+            } else {
+                self.suggestions.show(ranked, below: self.omnibox)
+            }
         }
     }
 

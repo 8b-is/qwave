@@ -63,7 +63,7 @@ struct ContainersPane: View {
                     let id = profile.id
                     Task { @MainActor in
                         await containers.deleteProfile(id: id)
-                        try? history?.deleteAll(containerID: id)
+                        try? await history?.deleteAll(containerID: id)
                     }
                 }
                 deletingProfile = nil

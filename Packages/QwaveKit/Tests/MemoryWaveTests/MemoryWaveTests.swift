@@ -180,53 +180,56 @@ final class MemoryCipherTests: XCTestCase {
 }
 
 final class MemoryStoreTests: XCTestCase {
-    func testContainerIsolationAndEphemeralCallerDuty() throws {
+    func testContainerIsolationAndEphemeralCallerDuty() async throws {
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
         let work = UUID()
-        _ = try store.insert(
+        _ = try await store.insert(
             title: "Work", body: "private note", url: URL(string: "https://example.com/a"),
             kind: .pin, containerID: work)
-        _ = try store.insert(
+        _ = try await store.insert(
             title: "Personal", body: "other note", url: URL(string: "https://example.com/b"),
             kind: .pin, containerID: nil)
 
-        XCTAssertEqual(try store.records(containerID: work).map(\.title), ["Work"])
-        XCTAssertEqual(try store.records(containerID: nil).map(\.title), ["Personal"])
-        XCTAssertEqual(try store.records(containerID: work).first?.wave.provenance, .cognitive)
+        let workRecords = try await store.records(containerID: work)
+        let personalRecords = try await store.records(containerID: nil)
+        XCTAssertEqual(workRecords.map(\.title), ["Work"])
+        XCTAssertEqual(personalRecords.map(\.title), ["Personal"])
+        XCTAssertEqual(workRecords.first?.wave.provenance, .cognitive)
     }
 
-    func testBrowseUpsertAndTimelineGroup() throws {
+    func testBrowseUpsertAndTimelineGroup() async throws {
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
         let url = URL(string: "https://example.com/story")!
-        let first = try store.upsertBrowse(
+        let first = try await store.upsertBrowse(
             title: "One", body: "first", url: url, containerID: nil,
             at: Date(timeIntervalSince1970: 1_700_000_000))
-        let second = try store.upsertBrowse(
+        let second = try await store.upsertBrowse(
             title: "Two", body: "second", url: url, containerID: nil,
             at: Date(timeIntervalSince1970: 1_700_000_100))
-        let all = try store.records(containerID: nil)
+        let all = try await store.records(containerID: nil)
         XCTAssertEqual(all.count, 1)
         XCTAssertEqual(all[0].title, "Two")
         XCTAssertEqual(all[0].kind, .browse)
         XCTAssertNotEqual(first.id, second.id)
 
-        let other = try store.upsertBrowse(
+        let other = try await store.upsertBrowse(
             title: "Other", body: "x", url: URL(string: "https://example.com/b")!, containerID: nil,
             at: Date(timeIntervalSince1970: 1_700_086_400))
         _ = other
-        let days = MemoryTimeline.group(try store.records(since: nil, until: nil, limit: 20))
+        let days = MemoryTimeline.group(try await store.records(since: nil, until: nil, limit: 20))
         XCTAssertGreaterThanOrEqual(days.count, 1)
-        let corpusRemote = MemoryTimeline.summaryCorpus(try store.records(limit: 10), includeSnippets: false)
+        let corpusRemote = MemoryTimeline.summaryCorpus(try await store.records(limit: 10), includeSnippets: false)
         XCTAssertFalse(corpusRemote.contains("second"))
         XCTAssertTrue(corpusRemote.contains("Two"))
     }
 
-    func testDeleteContainer() throws {
+    func testDeleteContainer() async throws {
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
         let id = UUID()
-        _ = try store.insert(title: "Gone", body: "x", url: nil, kind: .note, containerID: id)
-        try store.deleteAll(containerID: id)
-        XCTAssertTrue(try store.records(containerID: id).isEmpty)
+        _ = try await store.insert(title: "Gone", body: "x", url: nil, kind: .note, containerID: id)
+        try await store.deleteAll(containerID: id)
+        let records = try await store.records(containerID: id)
+        XCTAssertTrue(records.isEmpty)
     }
 }
 
@@ -324,6 +327,7 @@ final class ArticleExtractorTests: XCTestCase {
     }
 }
 
+@MainActor
 final class NibbleTests: XCTestCase {
     func testMarkdownRoundTripAndTags() {
         let nibble = MemoryNibble(
@@ -366,7 +370,7 @@ final class NibbleTests: XCTestCase {
         XCTAssertTrue(nibbles.contains(where: { $0.tags.contains("docs") }))
     }
 
-    func testVaultWriteAndTagRecall() throws {
+    func testVaultWriteAndTagRecall() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let vault = try NibbleVault(directory: dir)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -375,7 +379,7 @@ final class NibbleTests: XCTestCase {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
         let director = WaveDirector(store: store, preferences: prefs, vault: vault)
-        _ = try director.remember(
+        _ = try await director.remember(
             title: "Nibble test",
             body: "A paragraph about tagged wave retrieval that is definitely long enough. #qwave",
             url: URL(string: "https://qwave.example/nibble"),
@@ -383,7 +387,7 @@ final class NibbleTests: XCTestCase {
             containerID: nil,
             isEphemeral: false
         )
-        let hits = try director.recall(containerID: nil, query: "#qwave", limit: 8)
+        let hits = try await director.recall(containerID: nil, query: "#qwave", limit: 8)
         XCTAssertFalse(hits.isEmpty)
         XCTAssertTrue(hits.contains(where: { $0.tags.contains("qwave") }))
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
@@ -392,28 +396,30 @@ final class NibbleTests: XCTestCase {
     }
 }
 
+@MainActor
 final class WaveDirectorTests: XCTestCase {
-    func testRememberWritesCognitiveWave() throws {
+    func testRememberWritesCognitiveWave() async throws {
         let secrets = InMemorySecretStore()
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
         let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
         let director = WaveDirector(store: store, preferences: prefs)
-        let record = try director.remember(
+        let record = try await director.remember(
             title: "Page", body: "body", url: URL(string: "https://example.com/"),
             containerID: nil, isEphemeral: false)
         XCTAssertEqual(record.wave.provenance, .cognitive)
         XCTAssertEqual(record.lane, .odd)
     }
 
-    func testRememberDeniedForEphemeral() throws {
+    func testRememberDeniedForEphemeral() async throws {
         let secrets = InMemorySecretStore()
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
         let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
         let director = WaveDirector(store: store, preferences: prefs)
-        XCTAssertThrowsError(
-            try director.remember(
+        do {
+            _ = try await director.remember(
                 title: "Nope", body: "x", url: nil, containerID: nil, isEphemeral: true)
-        ) { error in
+            XCTFail("Expected ephemeral memory to be denied")
+        } catch {
             XCTAssertEqual(error as? MemoryProviderError, .denied(.ephemeral))
         }
     }
@@ -442,7 +448,7 @@ final class WaveDirectorTests: XCTestCase {
             apiKey: "test-key",
             session: session
         )
-        _ = try director.remember(
+        _ = try await director.remember(
             title: "Secret memory", body: "do-not-exfiltrate", url: nil,
             containerID: nil, isEphemeral: false)
 

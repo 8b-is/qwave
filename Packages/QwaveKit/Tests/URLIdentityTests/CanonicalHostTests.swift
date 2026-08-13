@@ -57,4 +57,12 @@ final class CanonicalHostTests: XCTestCase {
         let ascii = URL(string: "https://www.example.com/x")!
         XCTAssertEqual(CanonicalHost.host(of: ascii), "www.example.com")
     }
+
+    func testCanonicalHostResultSurvivesDetachedWork() async {
+        let host = await Task.detached {
+            CanonicalHost.host(ofURLString: "https://user@evil.example@good.example/path")
+        }.value
+
+        XCTAssertEqual(host, "good.example")
+    }
 }

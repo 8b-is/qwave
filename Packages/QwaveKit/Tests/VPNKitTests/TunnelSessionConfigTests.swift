@@ -20,6 +20,14 @@ final class TunnelSessionConfigTests: XCTestCase {
         XCTAssertEqual(decoded, original)
     }
 
+    func testConfigPreservesValuesAcrossDetachedWork() async {
+        let original = sampleConfig()
+        let transferred = await Task.detached { original }.value
+
+        XCTAssertEqual(transferred, original)
+        XCTAssertEqual(transferred.relayHostname, "se-sto-wg-001")
+    }
+
     func testDecodingGarbageReturnsNil() {
         XCTAssertNil(TunnelSessionConfig(providerConfiguration: nil))
         XCTAssertNil(TunnelSessionConfig(providerConfiguration: [:]))

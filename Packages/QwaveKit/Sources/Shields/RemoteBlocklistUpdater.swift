@@ -4,12 +4,12 @@ import QwaveSupport
 /// Persists the ETag of the last fetched list, so conditional requests can
 /// avoid re-downloading unchanged upstream lists.
 public protocol ETagStoring: Sendable {
-    func etag(for key: String) -> String?
-    func setETag(_ etag: String?, for key: String)
+    func etag(for key: String) async -> String?
+    func setETag(_ etag: String?, for key: String) async
 }
 
 /// UserDefaults-backed ETag store.
-public struct UserDefaultsETagStore: ETagStoring {
+public actor UserDefaultsETagStore: ETagStoring {
     private let defaults: UserDefaults
     private let prefix = "qwave.blocklist.etag."
 
@@ -50,7 +50,7 @@ public struct RemoteBlocklistUpdater: BlocklistUpdating {
     public func fetchUpdatedBlocklistJSON() async throws -> String? {
         var request = URLRequest(url: sourceURL)
         request.timeoutInterval = 30
-        if let etag = etags.etag(for: etagKey) {
+        if let etag = await etags.etag(for: etagKey) {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
 
@@ -67,7 +67,7 @@ public struct RemoteBlocklistUpdater: BlocklistUpdating {
                 throw URLError(.cannotDecodeContentData)
             }
             let newETag = http.value(forHTTPHeaderField: "ETag")
-            etags.setETag(newETag, for: etagKey)
+            await etags.setETag(newETag, for: etagKey)
 
             let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: text)
             QwaveLog.shields.info(
@@ -75,7 +75,7 @@ public struct RemoteBlocklistUpdater: BlocklistUpdating {
             )
             return json
         default:
-            throw URLError(.init(rawValue: http.statusCode) ?? .badServerResponse)
+            throw URLError(.init(rawValue: http.statusCode))
         }
     }
 }

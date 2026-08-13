@@ -2,7 +2,10 @@ import Foundation
 import WebKit
 
 /// A single native <-> page RPC exchange: the page's bridge call.
-public struct ExtensionBridgeCall: Sendable {
+///
+/// Its JavaScript values remain on the main actor with their WebKit source.
+@MainActor
+public struct ExtensionBridgeCall {
     public let id: Int
     public let method: String
     public let args: [Any]
@@ -16,7 +19,8 @@ public struct ExtensionBridgeCall: Sendable {
 
 /// How the host delivers a bridge response back into the page
 /// (evaluateJavaScript over `window.__qwaveNative.respond`).
-public protocol ExtensionMessageResponding: Sendable {
+@MainActor
+public protocol ExtensionMessageResponding {
     func respond(id: Int, success: Bool, value: Any?)
 }
 
@@ -32,7 +36,7 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
     public var tabCreateHandler: (([String: Any]) -> Void)?
     /// Called for `runtime.sendMessage`; may reply asynchronously via the
     /// provided closure (single reply per message, per the API).
-    public var runtimeMessageHandler: ((Any, @escaping (Any?) -> Void) -> Void)?
+    public var runtimeMessageHandler: (@MainActor (Any, @escaping @MainActor (Any?) -> Void) -> Void)?
     public var responder: ExtensionMessageResponding?
 
     public init(registry: WebExtensionRegistry, storage: ExtensionStorageService) {
@@ -112,6 +116,7 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
 }
 
 /// Evaluates bridge responses into a web view.
+@MainActor
 public struct WebViewBridgeResponder: ExtensionMessageResponding {
     public weak var webView: WKWebView?
 

@@ -56,7 +56,7 @@ public final class RuleListCompiler {
         let json = try cachedJSON(for: list)
         let identifier = "\(list.rawValue)-\(Self.stableHash(of: json))"
 
-        if let existing = try? await lookUp(identifier: identifier) {
+        if let existing = try? await store.contentRuleList(forIdentifier: identifier) {
             cache[list] = existing
             jsonCache.removeValue(forKey: list)
             return existing
@@ -87,15 +87,15 @@ public final class RuleListCompiler {
         let json = try cachedJSON(for: list)
         let identifier = "\(list.rawValue)-\(Self.stableHash(of: json))"
 
-        if let existing = try? await lookUp(identifier: identifier) {
+        if let existing = try? await store.contentRuleList(forIdentifier: identifier) {
             cache[list] = existing
             jsonCache.removeValue(forKey: list)
             return existing
         }
 
-        let staleIdentifier = await availableIdentifiers()
+        let staleIdentifier = (await store.availableIdentifiers() ?? [])
             .first { $0.hasPrefix("\(list.rawValue)-") && $0 != identifier }
-        if let staleIdentifier, let stale = try? await lookUp(identifier: staleIdentifier) {
+        if let staleIdentifier, let stale = try? await store.contentRuleList(forIdentifier: staleIdentifier) {
             QwaveLog.shields.info(
                 "Serving stale rule list \(staleIdentifier, privacy: .public) while \(identifier, privacy: .public) compiles"
             )
@@ -108,7 +108,7 @@ public final class RuleListCompiler {
                 do {
                     let fresh = try await self.compile(identifier: identifier, json: jsonCopy)
                     self.cache[list] = fresh
-                    self.store.removeContentRuleList(forIdentifier: staleIdentifier) { _ in }
+                    try? await self.store.removeContentRuleList(forIdentifier: staleIdentifier)
                     QwaveLog.shields.info("Refreshed rule list \(identifier, privacy: .public)")
                     onRefresh(fresh)
                 } catch {
@@ -124,26 +124,6 @@ public final class RuleListCompiler {
         jsonCache.removeValue(forKey: list)
         QwaveLog.shields.info("Compiled rule list \(identifier, privacy: .public)")
         return compiled
-    }
-
-    private func availableIdentifiers() async -> [String] {
-        await withCheckedContinuation { continuation in
-            store.getAvailableContentRuleListIdentifiers { identifiers in
-                continuation.resume(returning: identifiers ?? [])
-            }
-        }
-    }
-
-    private func lookUp(identifier: String) async throws -> WKContentRuleList? {
-        try await withCheckedThrowingContinuation { continuation in
-            store.lookUpContentRuleList(forIdentifier: identifier) { list, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: list)
-                }
-            }
-        }
     }
 
     private func compile(identifier: String, json: String) async throws -> WKContentRuleList {

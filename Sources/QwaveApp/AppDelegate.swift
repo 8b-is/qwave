@@ -24,7 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        environment = BrowserEnvironment.bootstrap()
         let updater = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
@@ -32,12 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         updaterController = updater
         NSApp.mainMenu = MainMenu.build(updater: updater)
-        vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
-
-        Task { @MainActor in
+        startMemoryPressureSource()
+        Task {
+            environment = await BrowserEnvironment.bootstrap()
+            vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
             await environment.shields.prepare()
             await environment.vpn.tunnel.refresh()
-            restoreOrOpenFirstWindow()
+            await restoreOrOpenFirstWindow()
+            startEnergyTimer()
         }
         // No launch-time network egress: the blocklist ships as a committed
         // build-time snapshot (scripts/update-blocklist.sh + commit), so
@@ -45,14 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // former launch fetch discarded its result anyway — egress that
         // bought the user nothing. See docs/NETWORK.md and docs/BLOCKLIST.md.
 
-        startEnergyTimer()
-        startMemoryPressureSource()
         QwaveLog.browser.info("Qwave launched")
     }
 
-    private func restoreOrOpenFirstWindow() {
+    private func restoreOrOpenFirstWindow() async {
         if environment.settings.restoreSessionOnLaunch,
-            let snapshot = environment.sessionStore?.load(),
+            let snapshot = await environment.sessionStore?.load(),
             !snapshot.windows.isEmpty
         {
             for manager in SessionRestorer.managers(from: snapshot) {
@@ -122,8 +121,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        saveSession()
         energyTimer?.cancel()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task { [weak self] in
+            await self?.saveSession()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -133,11 +139,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func saveSession() {
+    private func saveSession() async {
         guard let store = environment.sessionStore else { return }
         let managers = windowControllers.map(\.tabManager)
         let snapshot = SessionRestorer.snapshot(of: managers)
-        try? store.save(snapshot)
+        try? await store.save(snapshot)
     }
 
     // MARK: - Energy management
@@ -149,8 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer.schedule(deadline: .now() + 30, repeating: 30, leeway: .seconds(10))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            Task { @MainActor in
-                await self.energyTick()
+            Task { @MainActor [weak self] in
+                await self?.energyTick()
             }
         }
         timer.resume()

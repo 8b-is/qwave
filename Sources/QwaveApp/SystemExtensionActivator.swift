@@ -1,12 +1,13 @@
 import Foundation
-import SystemExtensions
+@preconcurrency import SystemExtensions
 import QwaveSupport
 
 /// Submits the OSSystemExtensionRequest that installs the packet-tunnel
 /// system extension. Only succeeds in a signed build running from
 /// /Applications (see docs/SIGNING.md); in an unsigned dev build the request
 /// fails and the status callback says so — the browser is unaffected.
-final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate {
+@MainActor
+final class SystemExtensionActivator: NSObject, @MainActor OSSystemExtensionRequestDelegate {
     /// Shared instance so the delegate outlives SwiftUI view churn while a
     /// request is in flight.
     static let shared = SystemExtensionActivator()

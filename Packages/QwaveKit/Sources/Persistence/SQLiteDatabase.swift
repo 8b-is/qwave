@@ -1,14 +1,14 @@
 import Foundation
 import SQLite3
 
-public enum SQLiteError: Error {
+public enum SQLiteError: Error, Sendable {
     case openFailed(code: Int32, message: String)
     case prepareFailed(code: Int32, message: String, sql: String)
     case stepFailed(code: Int32, message: String)
     case bindFailed(code: Int32)
 }
 
-public enum SQLiteValue {
+public enum SQLiteValue: Sendable {
     case null
     case integer(Int64)
     case real(Double)
@@ -16,182 +16,220 @@ public enum SQLiteValue {
     case blob(Data)
 }
 
-/// Row accessor passed to query callbacks. Column indices are 0-based.
-public struct SQLiteRow {
-    let statement: OpaquePointer
+/// A copied query row. SQLite statements stay inside `SQLiteDatabase` and
+/// values can safely cross its actor boundary.
+public struct SQLiteRow: Sendable {
+    private let values: [SQLiteValue]
+
+    init(values: [SQLiteValue]) {
+        self.values = values
+    }
 
     public func int(_ column: Int32) -> Int64 {
-        sqlite3_column_int64(statement, column)
+        switch values[Int(column)] {
+        case .integer(let value): return value
+        case .real(let value): return Int64(value)
+        default: return 0
+        }
     }
 
     public func double(_ column: Int32) -> Double {
-        sqlite3_column_double(statement, column)
+        switch values[Int(column)] {
+        case .integer(let value): return Double(value)
+        case .real(let value): return value
+        default: return 0
+        }
     }
 
     public func text(_ column: Int32) -> String? {
-        guard let cString = sqlite3_column_text(statement, column) else { return nil }
-        return String(cString: cString)
+        guard case .text(let value) = values[Int(column)] else { return nil }
+        return value
     }
 
     public func blob(_ column: Int32) -> Data? {
-        guard let bytes = sqlite3_column_blob(statement, column) else { return nil }
-        let count = Int(sqlite3_column_bytes(statement, column))
-        return Data(bytes: bytes, count: count)
+        guard case .blob(let value) = values[Int(column)] else { return nil }
+        return value
     }
 
     public func isNull(_ column: Int32) -> Bool {
-        sqlite3_column_type(statement, column) == SQLITE_NULL
+        if case .null = values[Int(column)] { return true }
+        return false
     }
 }
 
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-/// Minimal serialized wrapper over the system SQLite. Not an ORM by design —
-/// Qwave's stores are a handful of tables and this keeps the dependency
-/// surface at zero (WireGuardKit stays the only third-party package).
-public final class SQLiteDatabase {
-    private var handle: OpaquePointer?
-    private let queue = DispatchQueue(label: "is.8b.qwave.sqlite")
+private final class SQLiteConnection {
+    let handle: OpaquePointer
+    var statementCache: [String: OpaquePointer] = [:]
+
+    init(path: String) throws {
+        var database: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let code = sqlite3_open_v2(path, &database, flags, nil)
+        guard code == SQLITE_OK, let database else {
+            let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            if let database { sqlite3_close_v2(database) }
+            throw SQLiteError.openFailed(code: code, message: message)
+        }
+        handle = database
+        sqlite3_exec(database, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA foreign_keys=ON;", nil, nil, nil)
+    }
+
+    deinit {
+        for statement in statementCache.values {
+            sqlite3_finalize(statement)
+        }
+        sqlite3_close_v2(handle)
+    }
+}
+
+/// Minimal serialized wrapper over system SQLite. The database handle and
+/// prepared-statement cache never leave this actor.
+public actor SQLiteDatabase {
+    private let connection: SQLiteConnection
     /// Caches prepared statements keyed by SQL text so the hottest queries
     /// (HistoryStore on every keystroke) skip sqlite3_prepare_v2 overhead.
-    /// Guarded by queue.sync — all database access is serialized.
-    private var statementCache: [String: OpaquePointer] = [:]
-
     public init(url: URL) throws {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try open(path: url.path)
+        connection = try SQLiteConnection(path: url.path)
     }
 
     /// In-memory database for tests.
     public init() throws {
-        try open(path: ":memory:")
-    }
-
-    private func open(path: String) throws {
-        var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        let code = sqlite3_open_v2(path, &db, flags, nil)
-        guard code == SQLITE_OK, let db else {
-            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
-            if let db { sqlite3_close_v2(db) }
-            throw SQLiteError.openFailed(code: code, message: message)
-        }
-        handle = db
-        sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
-        sqlite3_exec(db, "PRAGMA foreign_keys=ON;", nil, nil, nil)
-    }
-
-    deinit {
-        for stmt in statementCache.values {
-            sqlite3_finalize(stmt)
-        }
-        if let handle {
-            sqlite3_close_v2(handle)
-        }
+        connection = try SQLiteConnection(path: ":memory:")
     }
 
     private func errorMessage() -> String {
-        handle.map { String(cString: sqlite3_errmsg($0)) } ?? "no database"
+        String(cString: sqlite3_errmsg(connection.handle))
     }
 
     /// Returns a cached prepared statement for `sql`, or prepares and caches one.
     private func cachedStatement(_ sql: String) throws -> OpaquePointer {
-        guard let handle else { throw SQLiteError.prepareFailed(code: -1, message: "no database", sql: sql) }
-        if let cached = statementCache[sql] {
+        if let cached = connection.statementCache[sql] {
             sqlite3_reset(cached)
             sqlite3_clear_bindings(cached)
             return cached
         }
-        var stmt: OpaquePointer?
-        let code = sqlite3_prepare_v2(handle, sql, -1, &stmt, nil)
-        guard code == SQLITE_OK, let stmt else {
+        var statement: OpaquePointer?
+        let code = sqlite3_prepare_v2(connection.handle, sql, -1, &statement, nil)
+        guard code == SQLITE_OK, let statement else {
             throw SQLiteError.prepareFailed(code: code, message: errorMessage(), sql: sql)
         }
-        statementCache[sql] = stmt
-        return stmt
+        connection.statementCache[sql] = statement
+        return statement
     }
 
     /// Executes one or more statements that take no parameters and return no rows.
     public func execute(_ sql: String) throws {
-        try queue.sync {
-            guard let handle else { return }
-            let code = sqlite3_exec(handle, sql, nil, nil, nil)
-            guard code == SQLITE_OK else {
-                throw SQLiteError.stepFailed(code: code, message: errorMessage())
-            }
+        let code = sqlite3_exec(connection.handle, sql, nil, nil, nil)
+        guard code == SQLITE_OK else {
+            throw SQLiteError.stepFailed(code: code, message: errorMessage())
         }
     }
 
     /// Runs a single parameterized statement that returns no rows.
     public func run(_ sql: String, _ params: [SQLiteValue] = []) throws {
-        _ = try query(sql, params) { _ in () }
+        _ = try rows(sql, params)
     }
 
-    /// Runs a parameterized query, mapping each result row through `transform`.
-    /// Uses the cached-statement path: the first call prepares, subsequent
-    /// calls reuse the prepared statement (reset + rebind only).
-    public func query<T>(
-        _ sql: String,
-        _ params: [SQLiteValue] = [],
-        _ transform: (SQLiteRow) throws -> T
-    ) throws -> [T] {
-        try queue.sync {
-            let statement = try cachedStatement(sql)
-
-            for (index, param) in params.enumerated() {
-                let position = Int32(index + 1)
-                let bindCode: Int32
-                switch param {
-                case .null:
-                    bindCode = sqlite3_bind_null(statement, position)
-                case .integer(let value):
-                    bindCode = sqlite3_bind_int64(statement, position, value)
-                case .real(let value):
-                    bindCode = sqlite3_bind_double(statement, position, value)
-                case .text(let value):
-                    bindCode = sqlite3_bind_text(statement, position, value, -1, sqliteTransient)
-                case .blob(let value):
-                    bindCode = value.withUnsafeBytes { buffer in
-                        sqlite3_bind_blob(statement, position, buffer.baseAddress, Int32(buffer.count), sqliteTransient)
-                    }
-                }
-                guard bindCode == SQLITE_OK else {
-                    throw SQLiteError.bindFailed(code: bindCode)
-                }
-            }
-
-            var results: [T] = []
-            while true {
-                let stepCode = sqlite3_step(statement)
-                if stepCode == SQLITE_ROW {
-                    results.append(try transform(SQLiteRow(statement: statement)))
-                } else if stepCode == SQLITE_DONE {
-                    break
-                } else {
-                    throw SQLiteError.stepFailed(code: stepCode, message: errorMessage())
-                }
-            }
-            return results
-        }
+    /// Executes an insert and captures its SQLite row id before the actor can
+    /// service another database operation.
+    public func insertReturningRowID(_ sql: String, _ params: [SQLiteValue] = []) throws -> Int64 {
+        try run(sql, params)
+        return sqlite3_last_insert_rowid(connection.handle)
     }
 
-    public var lastInsertRowID: Int64 {
-        queue.sync {
-            guard let handle else { return 0 }
-            return sqlite3_last_insert_rowid(handle)
+    /// Replaces matching rows and inserts a new row without yielding the
+    /// database actor between those operations.
+    public func replaceAndInsertReturningRowID(
+        deleteSQL: String,
+        deleteParameters: [SQLiteValue],
+        insertSQL: String,
+        insertParameters: [SQLiteValue]
+    ) throws -> Int64 {
+        try run(deleteSQL, deleteParameters)
+        return try insertReturningRowID(insertSQL, insertParameters)
+    }
+
+    /// Runs a parameterized query and returns copied values, never SQLite-backed
+    /// statement state.
+    public func rows(_ sql: String, _ params: [SQLiteValue] = []) throws -> [SQLiteRow] {
+        let statement = try cachedStatement(sql)
+
+        for (index, param) in params.enumerated() {
+            let position = Int32(index + 1)
+            let bindCode: Int32
+            switch param {
+            case .null:
+                bindCode = sqlite3_bind_null(statement, position)
+            case .integer(let value):
+                bindCode = sqlite3_bind_int64(statement, position, value)
+            case .real(let value):
+                bindCode = sqlite3_bind_double(statement, position, value)
+            case .text(let value):
+                bindCode = sqlite3_bind_text(statement, position, value, -1, sqliteTransient)
+            case .blob(let value):
+                bindCode = value.withUnsafeBytes { buffer in
+                    sqlite3_bind_blob(statement, position, buffer.baseAddress, Int32(buffer.count), sqliteTransient)
+                }
+            }
+            guard bindCode == SQLITE_OK else {
+                throw SQLiteError.bindFailed(code: bindCode)
+            }
         }
+
+        var results: [SQLiteRow] = []
+        while true {
+            let stepCode = sqlite3_step(statement)
+            if stepCode == SQLITE_ROW {
+                results.append(copyRow(from: statement))
+            } else if stepCode == SQLITE_DONE {
+                break
+            } else {
+                throw SQLiteError.stepFailed(code: stepCode, message: errorMessage())
+            }
+        }
+        return results
     }
 
     /// Schema-versioned migrations via PRAGMA user_version.
     public func migrate(_ migrations: [String]) throws {
-        let current = try query("PRAGMA user_version") { row in row.int(0) }.first ?? 0
+        let current = try rows("PRAGMA user_version").first?.int(0) ?? 0
         guard current < Int64(migrations.count) else { return }
         for index in Int(current)..<migrations.count {
             try execute(migrations[index])
             try execute("PRAGMA user_version = \(index + 1)")
         }
+    }
+
+    private func copyRow(from statement: OpaquePointer) -> SQLiteRow {
+        let columnCount = sqlite3_column_count(statement)
+        var values: [SQLiteValue] = []
+        values.reserveCapacity(Int(columnCount))
+        for column in 0..<columnCount {
+            switch sqlite3_column_type(statement, column) {
+            case SQLITE_INTEGER:
+                values.append(.integer(sqlite3_column_int64(statement, column)))
+            case SQLITE_FLOAT:
+                values.append(.real(sqlite3_column_double(statement, column)))
+            case SQLITE_TEXT:
+                values.append(.text(String(cString: sqlite3_column_text(statement, column))))
+            case SQLITE_BLOB:
+                let count = Int(sqlite3_column_bytes(statement, column))
+                if count == 0 {
+                    values.append(.blob(Data()))
+                } else {
+                    values.append(.blob(Data(bytes: sqlite3_column_blob(statement, column), count: count)))
+                }
+            default:
+                values.append(.null)
+            }
+        }
+        return SQLiteRow(values: values)
     }
 }

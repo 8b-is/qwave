@@ -76,4 +76,21 @@ final class FeatureFlagServiceTests: XCTestCase {
         XCTAssertFalse(WebFeature.Status.unknown(99).isUserFacing)
         XCTAssertTrue(WebFeature.Status.preview.isUserFacing)
     }
+
+    func testFeatureValuePreservesMetadataAcrossDetachedWork() async {
+        let feature = WebFeature(
+            key: "WebGPU",
+            name: "WebGPU",
+            details: "GPU APIs for the web",
+            status: .preview,
+            defaultValue: false,
+            isEnabled: true
+        )
+
+        let transferred = await Task.detached { feature }.value
+
+        XCTAssertEqual(transferred.id, "WebGPU")
+        XCTAssertEqual(transferred.status, .preview)
+        XCTAssertTrue(transferred.isEnabled)
+    }
 }

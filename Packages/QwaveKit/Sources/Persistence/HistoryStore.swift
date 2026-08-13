@@ -1,6 +1,6 @@
 import Foundation
 
-public struct HistoryEntry: Identifiable, Equatable {
+public struct HistoryEntry: Identifiable, Equatable, Sendable {
     public let id: Int64
     public let url: URL
     public let title: String
@@ -23,12 +23,12 @@ public struct HistoryEntry: Identifiable, Equatable {
 ///
 /// The default container is stored as '' rather than NULL: SQLite UNIQUE
 /// constraints treat NULLs as pairwise distinct, which would break the upsert.
-public final class HistoryStore {
+public actor HistoryStore {
     private let database: SQLiteDatabase
 
-    public init(database: SQLiteDatabase) throws {
+    public init(database: SQLiteDatabase) async throws {
         self.database = database
-        try database.migrate([
+        try await database.migrate([
             """
             CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,8 +50,8 @@ public final class HistoryStore {
         containerID?.uuidString ?? ""
     }
 
-    public func recordVisit(url: URL, title: String?, containerID: UUID?, at date: Date = Date()) throws {
-        try database.run(
+    public func recordVisit(url: URL, title: String?, containerID: UUID?, at date: Date = Date()) async throws {
+        try await database.run(
             """
             INSERT INTO history (url, title, visit_count, last_visit, container_id)
             VALUES (?1, ?2, 1, ?3, ?4)
@@ -71,9 +71,9 @@ public final class HistoryStore {
 
     /// Updates the stored title for `url` (titles usually arrive after
     /// didFinish, later than the visit record).
-    public func updateTitle(_ title: String, for url: URL, containerID: UUID?) throws {
+    public func updateTitle(_ title: String, for url: URL, containerID: UUID?) async throws {
         guard !title.isEmpty else { return }
-        try database.run(
+        try await database.run(
             "UPDATE history SET title = ?1 WHERE url = ?2 AND container_id = ?3",
             [
                 .text(title),
@@ -83,7 +83,7 @@ public final class HistoryStore {
         )
     }
 
-    public func entries(matching query: String? = nil, limit: Int = 100) throws -> [HistoryEntry] {
+    public func entries(matching query: String? = nil, limit: Int = 100) async throws -> [HistoryEntry] {
         let transform: (SQLiteRow) -> HistoryEntry? = { row in
             guard let urlString = row.text(1), let url = URL(string: urlString) else { return nil }
             let containerKey = row.text(5) ?? ""
@@ -96,41 +96,39 @@ public final class HistoryStore {
                 containerID: containerKey.isEmpty ? nil : UUID(uuidString: containerKey)
             )
         }
-        let rows: [HistoryEntry?]
+        let rows: [SQLiteRow]
         if let query, !query.isEmpty {
-            rows = try database.query(
+            rows = try await database.rows(
                 """
                 SELECT id, url, title, visit_count, last_visit, container_id FROM history
                 WHERE url LIKE ?1 OR title LIKE ?1
                 ORDER BY visit_count DESC, last_visit DESC LIMIT ?2
                 """,
                 [.text("%\(query)%"), .integer(Int64(limit))],
-                transform
             )
         } else {
-            rows = try database.query(
+            rows = try await database.rows(
                 """
                 SELECT id, url, title, visit_count, last_visit, container_id FROM history
                 ORDER BY last_visit DESC LIMIT ?1
                 """,
-                [.integer(Int64(limit))],
-                transform
+                [.integer(Int64(limit))]
             )
         }
-        return rows.compactMap { $0 }
+        return rows.compactMap(transform)
     }
 
-    public func delete(id: Int64) throws {
-        try database.run("DELETE FROM history WHERE id = ?1", [.integer(id)])
+    public func delete(id: Int64) async throws {
+        try await database.run("DELETE FROM history WHERE id = ?1", [.integer(id)])
     }
 
-    public func deleteAll() throws {
-        try database.run("DELETE FROM history")
+    public func deleteAll() async throws {
+        try await database.run("DELETE FROM history")
     }
 
     /// Removes all history recorded under a container (used when the container
     /// itself is deleted).
-    public func deleteAll(containerID: UUID) throws {
-        try database.run("DELETE FROM history WHERE container_id = ?1", [.text(containerID.uuidString)])
+    public func deleteAll(containerID: UUID) async throws {
+        try await database.run("DELETE FROM history WHERE container_id = ?1", [.text(containerID.uuidString)])
     }
 }

@@ -95,6 +95,23 @@ final class MullvadAPIClientTests: XCTestCase {
         XCTAssertEqual(body?["pubkey"] as? String, "AAA=")
     }
 
+    func testDecodedDevicePreservesValuesAcrossDetachedWork() async throws {
+        MockURLProtocol.stub(
+            path: "/accounts/v1/devices",
+            status: 201,
+            json: """
+                {"id": "dev-1", "name": "cuddly krill", "pubkey": "AAA=",
+                 "ipv4_address": "10.67.1.2/32", "ipv6_address": "fc00:bbbb::2/128"}
+                """
+        )
+
+        let device = try await client.registerDevice(accessToken: "mva_token", publicKeyBase64: "AAA=")
+        let transferred = await Task.detached { device }.value
+
+        XCTAssertEqual(transferred, device)
+        XCTAssertEqual(transferred.ipv6Address, "fc00:bbbb::2/128")
+    }
+
     func testHTTPErrorSurfaces() async {
         MockURLProtocol.stub(path: "/auth/v1/token", status: 401, json: #"{"code": "INVALID_ACCOUNT"}"#)
         do {
