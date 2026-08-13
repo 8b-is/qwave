@@ -88,6 +88,52 @@
 
 ---
 
+## Profiling Method
+
+- **Allocations:** `package-benchmark` with `mallocCountTotal` (deterministic, CI-assertable)
+- **ARC traffic:** `package-benchmark` with `.retainCount`, `.releaseCount`, `.retainReleaseDelta` (CI-assertable, captures what mallocCountTotal misses)
+- **CPU:** `sample` (built-in macOS) for lightweight CPU profiling
+- **Memory:** `vmmap` for process-level memory breakdown
+- **Blocklist:** `WKContentRuleListStore` budget tests in `BlocklistPerformanceTests`
+- **Hibernation:** `proc_pid_rusage` over WebContent pid-set difference
+
+## Measurement Protocol
+
+### Machine state requirements
+Before running any benchmark, verify:
+- **Thermal state:** `ProcessInfo.processInfo.thermalState == .nominal` (fail if not)
+- **No background builds:** `pgrep -fl xcodebuild` returns empty (fail if running)
+- **Load average:** `< 2.0` on 8-core machine (warn if exceeded)
+- **No other browsers/apps with significant WebKit usage** (warn)
+
+A benchmark run on an unquiesced machine is rejected, not recorded. The 19.66 s blocklist compile from session 1 should have been rejected — it was a background `xcodebuild` artifact, not a real measurement.
+
+### Variance reporting
+- Run N ≥ 5 iterations per benchmark
+- Report median, p90, and spread (p90-p50)
+- Fail if relative variance (p90-p50)/median exceeds 25% — high variance means the number is meaningless
+- A single sample is not a measurement
+
+### CI gates
+| Metric | Deterministic | CI-checked | Tolerance | Notes |
+|---|---|---|---|---|
+| `mallocCountTotal` | ✅ Yes | ✅ Yes | 25% p90 | Primary allocation gate |
+| `retainCount` | ✅ Yes | ✅ Yes | 5% p90 | ARC traffic gate (observed variance ~0%) |
+| `releaseCount` | ✅ Yes | ✅ Yes | 5% p90 | ARC traffic gate (observed variance ~0%) |
+| `retainReleaseDelta` | ✅ Yes | ✅ Yes | 5% p90 | ARC cycle detection (observed variance ~0%) |
+| Wall-clock | ❌ No | ❌ No | — | Recorded for trends, not gated |
+| CPU time | ❌ No | ❌ No | — | Recorded for trends, not gated |
+
+ARC gates tightened from 25% to 5% after measuring observed run-to-run variance
+at ~0% for all 5 benchmarks. The 25% flat tolerance was loose enough to hide
+a real regression. 5% gives a small cushion for allocator/toolchain drift while
+keeping the gates meaningful.
+
+### Wake-to-interactive canonical definition
+Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint with page content). Includes: WebContent process spawn, WKWebView construction, interactionState restoration, and page load. The process spawn boundary is explicitly inside the measurement.
+
+---
+
 ## What We Chose NOT to Optimize
 
 | Area | Reason |

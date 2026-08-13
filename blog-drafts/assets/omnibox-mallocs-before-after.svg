@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Bar chart: OmniboxSuggester allocations per iteration fall from 4,370 to 1,011, a 77 percent reduction">
+  <defs>
+    <marker id="arrowdown" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="26" font-size="15" font-weight="600" fill="#374151">OmniboxSuggester.suggestions &#183; mallocs per iteration</text>
+  <text x="20" y="44" font-size="11" fill="#6b7280">500-row history, query &#8220;site&#8221; &#8212; package-benchmark mallocCountTotal &#8212; lower is better</text>
+
+  <!-- gridlines: 1,000 mallocs = 61.78px, baseline 330 -->
+  <g stroke="#d1d5db" stroke-dasharray="3 4" stroke-width="1">
+    <line x1="60" y1="268" x2="540" y2="268"/>
+    <line x1="60" y1="206" x2="540" y2="206"/>
+    <line x1="60" y1="144" x2="540" y2="144"/>
+    <line x1="60" y1="83"  x2="540" y2="83"/>
+  </g>
+  <line x1="60" y1="330" x2="540" y2="330" stroke="#9ca3af" stroke-width="1.5"/>
+  <line x1="60" y1="60"  x2="60"  y2="330" stroke="#9ca3af" stroke-width="1.5"/>
+
+  <g font-size="10" fill="#9ca3af" text-anchor="start">
+    <text x="26" y="334">0</text>
+    <text x="26" y="272">1k</text>
+    <text x="26" y="210">2k</text>
+    <text x="26" y="148">3k</text>
+    <text x="26" y="87">4k</text>
+  </g>
+
+  <!-- before bar: 4370 -> 270px tall -->
+  <rect x="150" y="60" width="110" height="270" rx="8" fill="#ef4444"/>
+  <text x="205" y="52" font-size="16" font-weight="700" fill="#dc2626" text-anchor="middle">4,370</text>
+
+  <!-- after bar: 1011 -> 62.5px tall -->
+  <rect x="370" y="267" width="110" height="63" rx="8" fill="#10b981"/>
+  <text x="425" y="259" font-size="16" font-weight="700" fill="#059669" text-anchor="middle">1,011</text>
+
+  <!-- -77% callout -->
+  <path d="M 265 70 C 310 120, 320 200, 360 250" fill="none" stroke="#059669" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrowdown)"/>
+  <text x="296" y="140" font-size="22" font-weight="700" fill="#059669" text-anchor="middle">&#8722;77%</text>
+  <text x="296" y="158" font-size="10" fill="#6b7280" text-anchor="middle">3,359 fewer allocations</text>
+  <text x="296" y="171" font-size="10" fill="#6b7280" text-anchor="middle">per keystroke</text>
+
+  <!-- x labels -->
+  <g text-anchor="middle">
+    <text x="205" y="352" font-size="12" font-weight="600" fill="#374151">Before</text>
+    <text x="205" y="367" font-size="10" fill="#6b7280">full sort +</text>
+    <text x="205" y="380" font-size="10" fill="#6b7280">replacingOccurrences</text>
+
+    <text x="425" y="352" font-size="12" font-weight="600" fill="#374151">After</text>
+    <text x="425" y="367" font-size="10" fill="#6b7280">bounded top-6 +</text>
+    <text x="425" y="380" font-size="10" fill="#6b7280">Substring prefix drop</text>
+  </g>
+</svg>

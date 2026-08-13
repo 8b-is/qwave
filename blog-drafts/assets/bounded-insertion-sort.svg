@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Before: sort all 500 entries to keep 6. After: bounded top-k insertion keeps a fixed 7-tuple buffer.">
+  <defs>
+    <marker id="sort-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+    <marker id="ins-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/>
+    </marker>
+  </defs>
+
+  <!-- divider -->
+  <line x1="480" y1="20" x2="480" y2="380" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4 4"/>
+
+  <!-- LEFT: before -->
+  <text x="24" y="36" font-size="14" font-weight="600" fill="#374151">Before &#8212; sort all 500, keep 6</text>
+  <text x="452" y="36" font-size="18" font-weight="700" fill="#dc2626" text-anchor="end">&#10005;</text>
+
+  <g fill="#e5e7eb" fill-opacity="0.6" stroke="#9ca3af" stroke-width="1">
+    <rect x="24"  y="56" width="15" height="16"/><rect x="42"  y="56" width="15" height="16"/>
+    <rect x="60"  y="56" width="15" height="16"/><rect x="78"  y="56" width="15" height="16"/>
+    <rect x="96"  y="56" width="15" height="16"/><rect x="114" y="56" width="15" height="16"/>
+    <rect x="132" y="56" width="15" height="16"/><rect x="150" y="56" width="15" height="16"/>
+    <rect x="168" y="56" width="15" height="16"/><rect x="186" y="56" width="15" height="16"/>
+    <rect x="204" y="56" width="15" height="16"/><rect x="222" y="56" width="15" height="16"/>
+    <rect x="240" y="56" width="15" height="16"/><rect x="258" y="56" width="15" height="16"/>
+    <rect x="276" y="56" width="15" height="16"/><rect x="294" y="56" width="15" height="16"/>
+    <rect x="312" y="56" width="15" height="16"/><rect x="330" y="56" width="15" height="16"/>
+    <rect x="348" y="56" width="15" height="16"/><rect x="366" y="56" width="15" height="16"/>
+    <rect x="384" y="56" width="15" height="16"/><rect x="402" y="56" width="15" height="16"/>
+  </g>
+  <text x="428" y="69" font-size="10" fill="#6b7280">&#215; 500</text>
+  <text x="24" y="92" font-size="10" fill="#6b7280">every scored match, accumulated in a dictionary</text>
+
+  <line x1="240" y1="106" x2="240" y2="146" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#sort-arrow)"/>
+  <text x="252" y="122" font-size="11" fill="#4b5563" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">best.values.sorted { $0.score &gt; $1.score }</text>
+  <text x="252" y="138" font-size="10" fill="#6b7280">full comparison sort of 500 tuples + tie-break on lastVisit</text>
+
+  <!-- kept 6 -->
+  <g fill="#d1fae5" stroke="#059669" stroke-width="1.5">
+    <rect x="24"  y="158" width="40" height="24" rx="4"/><rect x="70"  y="158" width="40" height="24" rx="4"/>
+    <rect x="116" y="158" width="40" height="24" rx="4"/><rect x="162" y="158" width="40" height="24" rx="4"/>
+    <rect x="208" y="158" width="40" height="24" rx="4"/><rect x="254" y="158" width="40" height="24" rx="4"/>
+  </g>
+  <text x="164" y="202" font-size="11" fill="#6b7280" text-anchor="middle">prefix(6) &#8212; the only part the UI can display</text>
+  <!-- discarded -->
+  <g stroke="#d1d5db" stroke-width="1" stroke-dasharray="3 3" fill="none">
+    <rect x="312" y="158" width="15" height="16"/><rect x="332" y="158" width="15" height="16"/>
+    <rect x="352" y="158" width="15" height="16"/><rect x="372" y="158" width="15" height="16"/>
+    <rect x="392" y="158" width="15" height="16"/>
+  </g>
+  <text x="312" y="202" font-size="10" fill="#9ca3af">&#8230;494 sorted, then discarded</text>
+
+  <text x="24" y="232" font-size="11" fill="#6b7280">Cost: O(n&#8201;log&#8201;n) comparisons on 500 elements,</text>
+  <text x="24" y="248" font-size="11" fill="#6b7280">plus a dictionary for 500 keys &#8212; rehash growth included.</text>
+  <text x="24" y="264" font-size="11" font-weight="600" fill="#dc2626">n = 500, k = 6: 99% of the sort is thrown away.</text>
+
+  <!-- RIGHT: after -->
+  <text x="504" y="36" font-size="14" font-weight="600" fill="#374151">After &#8212; bounded top-k (k = 6)</text>
+  <text x="936" y="36" font-size="18" font-weight="700" fill="#059669" text-anchor="end">&#10003;</text>
+
+  <!-- stream -->
+  <g fill="#e5e7eb" fill-opacity="0.6" stroke="#9ca3af" stroke-width="1">
+    <rect x="504" y="60"  width="15" height="16"/><rect x="504" y="96"  width="15" height="16"/>
+    <rect x="504" y="132" width="15" height="16"/><rect x="504" y="168" width="15" height="16"/>
+    <rect x="504" y="204" width="15" height="16"/>
+  </g>
+  <text x="530" y="92" font-size="10" fill="#6b7280">for entry in history &#8230;</text>
+  <text x="530" y="106" font-size="10" fill="#6b7280">(stream, one at a time, no accumulation)</text>
+
+  <line x1="522" y1="104" x2="588" y2="104" stroke="#059669" stroke-width="1.5" marker-end="url(#ins-arrow)"/>
+  <text x="555" y="96" font-size="10" fill="#059669" text-anchor="middle">insert</text>
+
+  <!-- buffer -->
+  <g fill="#d1fae5" stroke="#059669" stroke-width="1.5">
+    <rect x="596" y="84" width="40" height="40" rx="6"/><rect x="642" y="84" width="40" height="40" rx="6"/>
+    <rect x="688" y="84" width="40" height="40" rx="6"/><rect x="734" y="84" width="40" height="40" rx="6"/>
+    <rect x="780" y="84" width="40" height="40" rx="6"/><rect x="826" y="84" width="40" height="40" rx="6"/>
+  </g>
+  <rect x="872" y="84" width="40" height="40" rx="6" fill="none" stroke="#059669" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="892" y="108" font-size="11" font-weight="700" fill="#059669" text-anchor="middle">+1</text>
+  <text x="754" y="150" font-size="11" fill="#6b7280" text-anchor="middle">sorted buffer &#8212; top 6 + 1 scratch slot</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#4b5563">
+    <text x="504" y="232" font-size="11">let i = best.firstIndex { $0.score &lt; score } ?? endIndex</text>
+    <text x="504" y="250" font-size="11">best.insert((score, entry), at: i)</text>
+    <text x="504" y="268" font-size="11">if best.count &gt; limit { best.removeLast() }</text>
+  </g>
+
+  <text x="504" y="300" font-size="11" fill="#6b7280">Cost: O(n &#215; k) worst case, but k is 6 and the</text>
+  <text x="504" y="316" font-size="11" fill="#6b7280">buffer never exceeds 7 tuples, whatever history holds.</text>
+  <text x="504" y="340" font-size="11" font-weight="600" fill="#059669">No dictionary rehashing. No full sort. reserveCapacity(7).</text>
+  <text x="504" y="362" font-size="10" fill="#9ca3af">Same O(n) scan either way &#8212; the scan was never the problem.</text>
+</svg>

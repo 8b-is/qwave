@@ -18,9 +18,20 @@ let benchmarks: @Sendable () -> Void = {
     // does not and is never CI-checked. 25% p90 tolerance absorbs
     // allocator/toolchain drift while a real regression (2x allocations)
     // still fails.
-    let checkedMetrics: [BenchmarkMetric] = [.mallocCountTotal]
+    // retainCount/releaseCount/retainReleaseDelta are similarly deterministic
+    // and capture ARC traffic that mallocCountTotal misses (e.g. @inlinable
+    // effects on dispatch and specialization).
+    let checkedMetrics: [BenchmarkMetric] = [
+        .mallocCountTotal,
+        .retainCount,
+        .releaseCount,
+        .retainReleaseDelta,
+    ]
     let tolerance: [BenchmarkMetric: BenchmarkThresholds] = [
-        .mallocCountTotal: .init(relative: [.p90: 25.0])
+        .mallocCountTotal: .init(relative: [.p90: 25.0]),
+        .retainCount: .init(relative: [.p90: 5.0]),
+        .releaseCount: .init(relative: [.p90: 5.0]),
+        .retainReleaseDelta: .init(relative: [.p90: 5.0]),
     ]
 
     // Every keystroke runs this — and since v0.3.0 it goes through the
