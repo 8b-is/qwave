@@ -1,0 +1,69 @@
+[
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*ads\\.example\\.com(:[0-9]+)?(\/|$)"
+    }
+  },
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "load-type" : "third-party",
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*tracker\\.example\\.com(:[0-9]+)?(\/|$)"
+    }
+  },
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "resource-type" : [
+        "image",
+        "script"
+      ],
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*cdn\\.example\\.com(:[0-9]+)?(\/|$)banners"
+    }
+  },
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "if-domain" : [
+        "news.example"
+      ],
+      "unless-domain" : [
+        "blog.news.example"
+      ],
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*metrics\\.example\\.com(:[0-9]+)?(\/|$)"
+    }
+  },
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "url-filter" : "([^a-z0-9.-]|\\.)*beacon\\.example\\.net([^a-z0-9.-]|$)"
+    }
+  },
+  {
+    "action" : {
+      "type" : "block"
+    },
+    "trigger" : {
+      "url-filter" : "\\\/analytics\\\/track\\.js"
+    }
+  },
+  {
+    "action" : {
+      "type" : "ignore-previous-rules"
+    },
+    "trigger" : {
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*cdn\\.example\\.com\\\/banners\\\/allowed\\.png(:[0-9]+)?(\/|$)"
+    }
+  }
+]

@@ -54,7 +54,10 @@ public enum UBORuleListCompiler {
     ) -> [String: Any] {
         var trigger: [String: Any] = ["url-filter": urlFilter]
         if !options.resourceTypes.isEmpty {
-            let mapped = options.resourceTypes.compactMap { resourceTypeMap[$0] }
+            // Sorted: Set iteration order varies per process, and the output
+            // must be deterministic for golden tests and the content-hash
+            // rule-list cache.
+            let mapped = Array(Set(options.resourceTypes.compactMap { resourceTypeMap[$0] })).sorted()
             if !mapped.isEmpty {
                 trigger["resource-type"] = mapped
             }
