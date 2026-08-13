@@ -10,7 +10,7 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="Qwave — Sovereign macOS Browser">
   <meta property="og:description" content="WebKit-native. Post-quantum. Signed & notarized. A browser that proves what it sends.">
-  <meta property="og:image" content="assets/hero.jpg">
+  <meta property="og:image" content="assets/hero-v2.jpg">
   <meta property="og:url" content="https://8b-is.github.io/qwave/">
   <meta name="twitter:card" content="summary_large_image">
 
@@ -86,6 +86,15 @@
       transform-origin: 50% 100%;
     }
     .preview img { width: 100%; }
+
+    /* ---- Visual gallery --------------------------------------------- */
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; }
+    @media (max-width: 760px) { .gallery { grid-template-columns: 1fr; } }
+    .gallery-card { overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--r-3); background: var(--surface); box-shadow: var(--shadow-2); }
+    .gallery-card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+    .gallery-card figcaption { padding: 1rem 1.1rem 1.2rem; }
+    .gallery-card h3 { font-size: 1rem; }
+    .gallery-card p { margin-top: 0.35rem; color: var(--text-muted); font-size: 0.86rem; }
 
     /* ---- Trust strip ------------------------------------------------- */
     .trust {
@@ -192,6 +201,7 @@
       <nav class="nav-links">
         <a class="link" href="#features">Features</a>
         <a class="link" href="#egress">Transparency</a>
+        <a class="link" href="#gallery">Gallery</a>
         <a class="link" href="#quantum">Post-Quantum</a>
         <a class="link" href="#architecture">Architecture</a>
         <a class="link" href="design-system.html">Design</a>
@@ -228,7 +238,7 @@
     </div>
 
     <div class="preview reveal container" data-delay="4">
-      <img src="assets/hero.jpg" alt="Qwave browser running on macOS" width="1376" height="768" loading="eager">
+      <img src="assets/hero-v2.jpg" alt="A luminous Qwave browser window carried by blue and aqua wave ribbons" width="1672" height="941" loading="eager">
     </div>
   </section>
 
@@ -297,6 +307,31 @@
           <h3>Raw SQLite, WAL mode</h3>
           <p>A hand-rolled, prepared-statement store for history, bookmarks, and session restore &mdash; measured at 391 allocations per 50k-row query, and held there by a CI gate.</p>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ GALLERY ============================ -->
+  <section class="section" id="gallery">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Inside the wave</span>
+        <h2 class="display" style="font-size:var(--step-3)">Boundaries you can see</h2>
+        <p class="lead">Qwave turns privacy and performance ideas into visible, testable boundaries.</p>
+      </div>
+      <div class="gallery">
+        <figure class="gallery-card reveal">
+          <img src="assets/gallery/containers.jpg" alt="Three isolated browser universes orbiting a central wave" width="1254" height="1254" loading="lazy">
+          <figcaption><h3>Container universes</h3><p>Separate WebKit storage worlds for separate contexts.</p></figcaption>
+        </figure>
+        <figure class="gallery-card reveal" data-delay="1">
+          <img src="assets/gallery/shields.jpg" alt="A glowing shield deflecting red and amber network particles" width="1254" height="1254" loading="lazy">
+          <figcaption><h3>Native shields</h3><p>Declarative content rules applied inside WebKit.</p></figcaption>
+        </figure>
+        <figure class="gallery-card reveal" data-delay="2">
+          <img src="assets/gallery/quantum-network.jpg" alt="Two secure nodes connected by parallel blue and aqua wave paths" width="1254" height="1254" loading="lazy">
+          <figcaption><h3>Hybrid tunnel</h3><p>Classical WireGuard plus a post-quantum negotiation seam.</p></figcaption>
+        </figure>
       </div>
     </div>
   </section>
