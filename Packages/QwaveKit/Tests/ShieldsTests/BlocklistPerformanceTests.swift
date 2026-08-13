@@ -114,11 +114,22 @@ final class BlocklistPerformanceTests: XCTestCase {
         XCTAssertEqual(refreshedID.value?.hasPrefix("easylist-compiled-"), true)
 
         // The superseded artifact is removed so the store doesn't grow
-        // version over version.
-        let remaining = await withCheckedContinuation { (cont: CheckedContinuation<[String], Never>) in
-            store.getAvailableContentRuleListIdentifiers { cont.resume(returning: $0 ?? []) }
+        // version over version. removeContentRuleList runs fire-and-forget
+        // after the refresh callback, so poll for its completion rather than
+        // assuming it finished synchronously — the completion order is not
+        // guaranteed relative to onRefresh, and a slow runner exposes the race.
+        var removed = false
+        for _ in 0..<50 {
+            let remaining = await withCheckedContinuation { (cont: CheckedContinuation<[String], Never>) in
+                store.getAvailableContentRuleListIdentifiers { cont.resume(returning: $0 ?? []) }
+            }
+            if !remaining.contains(staleID) {
+                removed = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
         }
-        XCTAssertFalse(remaining.contains(staleID))
+        XCTAssertTrue(removed, "superseded rule list \(staleID) should have been removed")
     }
 
     /// Regression guard: compiling the 59k-rule list must not stall the main
