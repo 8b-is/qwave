@@ -2,11 +2,20 @@
 
 | Fact | Value |
 |---|---|
-| **Repo** | https://github.com/WebKit/WebKit (WebKitAdditions) |
-| **Latest version** | WebKit tip (2026-08) |
-| **License** | **Copyleft (LGPL family) — VERIFY BEFORE USE** |
-| **Platforms** | macOS / cross-platform via WebKit |
+| **Repo** | https://github.com/AdguardTeam/SafariConverterLib |
+| **Latest version** | v4.3.0 (verified 2026-08-13) |
+| **License** | GPL-3.0 (verified in LICENSE at v4.3.0) |
+| **Platforms** | macOS / cross-platform Swift |
 | **Apple Silicon status** | ✅ Native |
+
+> **Correction (2026-08-13):** the original note misattributed this to a
+> WebKit-project "WebKitAdditions" component with an LGPL-family license. It
+> is AdGuard's Swift library, GPL-3.0. License review passed for use as an
+> external **build-time** tool only — see [docs/BLOCKLIST.md](../../docs/BLOCKLIST.md)
+> for the boundary conditions (never link/vendor it into shipped targets,
+> never ship its advanced-blocking JS; EasyList output shipped under the
+> CC BY-SA 3.0 branch with attribution). Adopted in v0.3.0 via
+> `scripts/update-blocklist.sh`.
 
 ## What it is
 

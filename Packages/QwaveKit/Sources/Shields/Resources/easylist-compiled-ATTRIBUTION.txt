@@ -1,0 +1,12 @@
+This file accompanies easylist-compiled.json.
+
+easylist-compiled.json is derived from EasyList (https://easylist.to/),
+version 202608130351 (last modified 13 Aug 2026 03:51 UTC), by the
+EasyList authors, and is used under the Creative Commons Attribution-
+ShareAlike 3.0 Unported licence (CC BY-SA 3.0,
+https://creativecommons.org/licenses/by-sa/3.0/). The compiled snapshot is
+itself distributed under CC BY-SA 3.0.
+
+Conversion: AdguardTeam/SafariConverterLib v4.3.0 (ConverterTool
+convert --safari-version 17), run at build time as an
+external tool. Rules in snapshot: 59657.
