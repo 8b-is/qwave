@@ -15,7 +15,7 @@
 
 The repo is in strong shape: the entire v0.3.0 "Trust & Distribution" security
 and distribution DoD is **shipped and tested**, and the Swift 6 migration is
-complete in configuration — though it did not compile on `main` (finding 5).
+complete in configuration, though it did not compile on `main` (finding 5).
 Five findings contradict claims that prior kickoffs have been repeating as
 settled fact. They are the honest output of this audit:
 
@@ -57,7 +57,7 @@ settled fact. They are the honest output of this audit:
    `QwaveSchemeHandler.shouldShowWaveError` that its own test could not call
    (GitHub Actions run `31754774466`). `swift-format lint (--strict)` was red on
    `main` for the same window. Fixed on this branch by `8003898`, `6b2e41b`,
-   `b929493` — the only non-docs commits here, carried because the repo-wide
+   `b929493` (the only non-docs commits here), carried because the repo-wide
    gates block this PR. The migration's *language mode* is real; its *"complete
    and green"* status was not, and no table row cited build evidence for it.
 
