@@ -10,6 +10,10 @@ public enum RuleListError: Error {
 /// Compiles the bundled content-blocker rule sets into `WKContentRuleList`s.
 /// Compiled lists are cached by WebKit keyed on identifier; the identifier
 /// embeds a hash of the JSON so editing a shipped list invalidates the cache.
+///
+/// The source JSON (~7.5 MB for the EasyList snapshot) is cached in memory
+/// after the first read and released after compilation succeeds, so the
+/// steady-state memory cost is the compiled artifact only.
 @MainActor
 public final class RuleListCompiler {
     public enum BuiltinList: String, CaseIterable, Sendable {
@@ -21,6 +25,9 @@ public final class RuleListCompiler {
 
     private let store: WKContentRuleListStore
     private var cache: [BuiltinList: WKContentRuleList] = [:]
+    /// Cached source JSON: read from disk once, released after compilation
+    /// succeeds so the 7.5 MB EasyList snapshot doesn't stay resident.
+    private var jsonCache: [BuiltinList: String] = [:]
 
     public init(store: WKContentRuleListStore? = nil) {
         self.store = store ?? .default()
@@ -33,20 +40,31 @@ public final class RuleListCompiler {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    /// Returns the source JSON for `list`, reading from the in-memory cache
+    /// or loading from disk on first access.
+    private func cachedJSON(for list: BuiltinList) throws -> String {
+        if let cached = jsonCache[list] { return cached }
+        let json = try Self.builtinJSON(for: list)
+        jsonCache[list] = json
+        return json
+    }
+
     public func compiledList(for list: BuiltinList) async throws -> WKContentRuleList {
         if let cached = cache[list] {
             return cached
         }
-        let json = try Self.builtinJSON(for: list)
+        let json = try cachedJSON(for: list)
         let identifier = "\(list.rawValue)-\(Self.stableHash(of: json))"
 
         if let existing = try? await lookUp(identifier: identifier) {
             cache[list] = existing
+            jsonCache.removeValue(forKey: list)
             return existing
         }
 
         let compiled = try await compile(identifier: identifier, json: json)
         cache[list] = compiled
+        jsonCache.removeValue(forKey: list)
         QwaveLog.shields.info("Compiled rule list \(identifier, privacy: .public)")
         return compiled
     }
@@ -66,11 +84,12 @@ public final class RuleListCompiler {
         if let cached = cache[list] {
             return cached
         }
-        let json = try Self.builtinJSON(for: list)
+        let json = try cachedJSON(for: list)
         let identifier = "\(list.rawValue)-\(Self.stableHash(of: json))"
 
         if let existing = try? await lookUp(identifier: identifier) {
             cache[list] = existing
+            jsonCache.removeValue(forKey: list)
             return existing
         }
 
@@ -80,10 +99,14 @@ public final class RuleListCompiler {
             QwaveLog.shields.info(
                 "Serving stale rule list \(staleIdentifier, privacy: .public) while \(identifier, privacy: .public) compiles"
             )
+            // The json is captured for the background compile; release it
+            // from the cache so the stale list + JSON don't both stay resident.
+            let jsonCopy = json
+            jsonCache.removeValue(forKey: list)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    let fresh = try await self.compile(identifier: identifier, json: json)
+                    let fresh = try await self.compile(identifier: identifier, json: jsonCopy)
                     self.cache[list] = fresh
                     self.store.removeContentRuleList(forIdentifier: staleIdentifier) { _ in }
                     QwaveLog.shields.info("Refreshed rule list \(identifier, privacy: .public)")
@@ -98,6 +121,7 @@ public final class RuleListCompiler {
 
         let compiled = try await compile(identifier: identifier, json: json)
         cache[list] = compiled
+        jsonCache.removeValue(forKey: list)
         QwaveLog.shields.info("Compiled rule list \(identifier, privacy: .public)")
         return compiled
     }

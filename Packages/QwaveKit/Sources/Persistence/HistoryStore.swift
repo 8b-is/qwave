@@ -40,6 +40,8 @@ public final class HistoryStore {
                 UNIQUE(url, container_id)
             );
             CREATE INDEX IF NOT EXISTS idx_history_last_visit ON history(last_visit DESC);
+            CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
+            CREATE INDEX IF NOT EXISTS idx_history_score ON history(visit_count DESC, last_visit DESC);
             """
         ])
     }
