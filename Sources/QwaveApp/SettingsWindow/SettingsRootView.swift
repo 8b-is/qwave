@@ -77,6 +77,13 @@ private struct GeneralPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+
+            Divider()
+            Link(
+                "What does Qwave send?",
+                destination: URL(string: "https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md")!
+            )
+            .font(.caption)
         }
         .padding(20)
         .onAppear {
