@@ -122,11 +122,10 @@ final class BrowserEnvironment {
             StartMemoryChip(title: "#\($0)", preview: "nibble")
         }
         let records = (try? await memoryWave.recall(containerID: nil, limit: 8)) ?? []
-        startPageMemories =
-            tagChips
-            + records.map {
-                StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
-            }
+        let recordChips = records.map {
+            StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
+        }
+        startPageMemories = tagChips + recordChips
         timelineDays = ((try? await memoryWave.timeline(range: .all)) ?? []).map { day in
             TimelineDayView(
                 heading: day.heading,
