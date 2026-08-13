@@ -1,5 +1,12 @@
-import Foundation
-import NetworkExtension
+// NetworkExtension and Foundation vend non-Sendable reference types this
+// @MainActor manager must pass across await boundaries — NETunnelProviderManager
+// from `loadAllFromPreferences()` and Notification from the NEVPNStatusDidChange
+// async sequence. Neither SDK is Sendable-annotated yet, so @preconcurrency
+// downgrades those specific cross-actor diagnostics to warnings instead of
+// hiding them behind @unchecked Sendable on our own types. Required by Swift
+// 6.1 (CI authority); Swift 6.3 (local) is more permissive and would not flag.
+@preconcurrency import Foundation
+@preconcurrency import NetworkExtension
 import Combine
 import QwaveSupport
 
