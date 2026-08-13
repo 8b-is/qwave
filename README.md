@@ -161,6 +161,13 @@ The four findings that drove the v0.3.0 roadmap (all landed):
 
 ---
 
+## ⚡ Performance
+
+- **[hot_paths.md](hot_paths.md)** — Ranked hot paths with real measurements, optimisations applied, and what we chose not to optimise.
+- **[swift_tips_tricks.md](swift_tips_tricks.md)** — Performance patterns discovered during Qwave's optimisation work: string/collection techniques, SQLite prepared-statement caching, `@inlinable` guidance, and Apple Silicon specifics.
+
+---
+
 ## 📦 Releases
 
 Download pre-compiled unsigned `Qwave.app` builds directly from [GitHub Releases](https://github.com/8b-is/qwave/releases).

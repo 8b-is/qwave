@@ -52,6 +52,10 @@ private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self
 public final class SQLiteDatabase {
     private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "is.8b.qwave.sqlite")
+    /// Caches prepared statements keyed by SQL text so the hottest queries
+    /// (HistoryStore on every keystroke) skip sqlite3_prepare_v2 overhead.
+    /// Guarded by queue.sync — all database access is serialized.
+    private var statementCache: [String: OpaquePointer] = [:]
 
     public init(url: URL) throws {
         try FileManager.default.createDirectory(
@@ -81,6 +85,9 @@ public final class SQLiteDatabase {
     }
 
     deinit {
+        for stmt in statementCache.values {
+            sqlite3_finalize(stmt)
+        }
         if let handle {
             sqlite3_close_v2(handle)
         }
@@ -88,6 +95,23 @@ public final class SQLiteDatabase {
 
     private func errorMessage() -> String {
         handle.map { String(cString: sqlite3_errmsg($0)) } ?? "no database"
+    }
+
+    /// Returns a cached prepared statement for `sql`, or prepares and caches one.
+    private func cachedStatement(_ sql: String) throws -> OpaquePointer {
+        guard let handle else { throw SQLiteError.prepareFailed(code: -1, message: "no database", sql: sql) }
+        if let cached = statementCache[sql] {
+            sqlite3_reset(cached)
+            sqlite3_clear_bindings(cached)
+            return cached
+        }
+        var stmt: OpaquePointer?
+        let code = sqlite3_prepare_v2(handle, sql, -1, &stmt, nil)
+        guard code == SQLITE_OK, let stmt else {
+            throw SQLiteError.prepareFailed(code: code, message: errorMessage(), sql: sql)
+        }
+        statementCache[sql] = stmt
+        return stmt
     }
 
     /// Executes one or more statements that take no parameters and return no rows.
@@ -107,19 +131,15 @@ public final class SQLiteDatabase {
     }
 
     /// Runs a parameterized query, mapping each result row through `transform`.
+    /// Uses the cached-statement path: the first call prepares, subsequent
+    /// calls reuse the prepared statement (reset + rebind only).
     public func query<T>(
         _ sql: String,
         _ params: [SQLiteValue] = [],
         _ transform: (SQLiteRow) throws -> T
     ) throws -> [T] {
         try queue.sync {
-            guard let handle else { return [] }
-            var statement: OpaquePointer?
-            let prepareCode = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
-            guard prepareCode == SQLITE_OK, let statement else {
-                throw SQLiteError.prepareFailed(code: prepareCode, message: errorMessage(), sql: sql)
-            }
-            defer { sqlite3_finalize(statement) }
+            let statement = try cachedStatement(sql)
 
             for (index, param) in params.enumerated() {
                 let position = Int32(index + 1)
