@@ -22,8 +22,27 @@ private func qpacket_filter_stats(
     _ dropped: UnsafeMutablePointer<UInt64>
 )
 
+@_silgen_name("qpacket_filter_stats_extended")
+private func qpacket_filter_stats_extended(
+    _ state: UnsafeMutableRawPointer?,
+    _ stats: UnsafeMutablePointer<QpacketStats>
+)
+
 @_silgen_name("qpacket_filter_deinit")
 private func qpacket_filter_deinit(_ state: UnsafeMutableRawPointer?)
+
+/// C-compatible struct mirroring the Zig PacketStats.
+private struct QpacketStats {
+    var packets_seen: UInt64
+    var packets_dropped: UInt64
+    var packets_tcp: UInt64
+    var packets_udp: UInt64
+    var packets_icmp: UInt64
+    var packets_other: UInt64
+    var packets_ipv4: UInt64
+    var packets_ipv6: UInt64
+    var bytes_seen: UInt64
+}
 
 enum PacketTunnelError: Error {
     case missingConfiguration
@@ -227,9 +246,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         switch message {
         case "stats":
-            adapter.getRuntimeConfiguration { configuration in
-                completionHandler?(configuration.map { Data($0.utf8) })
+            var stats = QpacketStats(
+                packets_seen: 0, packets_dropped: 0, packets_tcp: 0,
+                packets_udp: 0, packets_icmp: 0, packets_other: 0,
+                packets_ipv4: 0, packets_ipv6: 0, bytes_seen: 0
+            )
+            if let handle = filterHandle {
+                qpacket_filter_stats_extended(handle, &stats)
             }
+            let json = """
+            {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
+            "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
+            "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
+            "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
+            """
+            completionHandler?(Data(json.utf8))
         default:
             completionHandler?(nil)
         }
