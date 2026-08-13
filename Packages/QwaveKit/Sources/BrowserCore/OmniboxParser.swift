@@ -9,6 +9,7 @@ public enum OmniboxInput: Equatable {
 
 /// URL-vs-search heuristic for the omnibox. Pure logic, exhaustively tested.
 public enum OmniboxParser {
+    @inlinable
     public static func parse(_ raw: String) -> OmniboxInput {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .search("") }
@@ -35,12 +36,16 @@ public enum OmniboxParser {
         }
 
         // Split off path/query to inspect the authority alone.
-        let authority = trimmed.split(separator: "/", maxSplits: 1)[0]
-        let hostPart = authority.split(separator: ":", maxSplits: 1)[0].lowercased()
-        let portPart =
-            authority.contains(":")
-            ? authority.split(separator: ":", maxSplits: 1).last.map(String.init)
-            : nil
+        let authorityEnd = trimmed.firstIndex(of: "/") ?? trimmed.endIndex
+        let authority = trimmed[..<authorityEnd]
+        let hostEnd = authority.firstIndex(of: ":") ?? authority.endIndex
+        let hostPart = authority[..<hostEnd].lowercased()
+        let portPart: String?
+        if let colonIndex = authority.firstIndex(of: ":"), colonIndex < authority.endIndex {
+            portPart = String(authority[authority.index(after: colonIndex)...])
+        } else {
+            portPart = nil
+        }
 
         // Port must be numeric for this to be host:port and not e.g. "note:text".
         if let portPart, UInt16(portPart) == nil {
@@ -50,7 +55,7 @@ public enum OmniboxParser {
         let looksLikeHost: Bool
         if hostPart == "localhost" {
             looksLikeHost = true
-        } else if isIPv4(String(hostPart)) {
+        } else if isIPv4(hostPart) {
             looksLikeHost = true
         } else if hostPart.contains(".") && !hostPart.hasPrefix(".") && !hostPart.hasSuffix(".") {
             // Needs a plausible TLD: last label ≥ 2 chars, alphabetic-or-punycode.
@@ -81,7 +86,8 @@ public enum OmniboxParser {
     /// of the raw input is kept; when they disagree (IDN, percent-encoded or
     /// non-decimal-IP hosts, multiple-@ authorities) the canonical WHATWG
     /// serialization wins. Inputs the WHATWG parser rejects become searches.
-    private static func url(from string: String) -> OmniboxInput? {
+    @usableFromInline
+    static func url(from string: String) -> OmniboxInput? {
         guard let webURL = WebURL(string) else { return nil }
         let canonicalHost = webURL.host?.serialized ?? ""
         if let foundation = URL(string: string),
@@ -93,7 +99,8 @@ public enum OmniboxParser {
         return .url(converted)
     }
 
-    private static func isIPv4(_ candidate: String) -> Bool {
+    @usableFromInline
+    static func isIPv4(_ candidate: String) -> Bool {
         let parts = candidate.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 4 && parts.allSatisfy { UInt8($0) != nil }
     }
