@@ -12,6 +12,11 @@ public final class WebViewFactory {
     private let shields: ShieldsDirector
     private let featureFlags: FeatureFlagService
     private let settings: SettingsStore
+    /// Shared process pool for warm-process pre-warming. Non-nil when
+    /// `warmProcessCount > 0` — held so WebKit keeps a WebContent process
+    /// alive for faster wake-to-interactive. Nil at .conserve and .critical
+    /// tiers so the 45.7 MB/tab reclamation floor is not silently eroded.
+    private var warmPool: WKProcessPool?
 
     public init(
         containers: ContainerRegistry,
@@ -25,9 +30,22 @@ public final class WebViewFactory {
         self.settings = settings
     }
 
+    /// Sets the number of spare WebContent processes to keep warm.
+    /// Currently only 0 or 1 are supported; values > 1 clamp to 1.
+    public func setWarmProcessCount(_ count: Int) {
+        if count > 0, warmPool == nil {
+            warmPool = WKProcessPool()
+        } else if count == 0, warmPool != nil {
+            warmPool = nil
+        }
+    }
+
     public func makeWebView(for tab: Tab) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = containers.dataStore(for: tab.containerID)
+        if let warmPool {
+            configuration.processPool = warmPool
+        }
 
         // Present as Safari for site compatibility (the WebKit engine really
         // is Safari's; only the app token differs).

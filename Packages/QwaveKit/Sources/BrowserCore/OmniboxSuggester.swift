@@ -24,7 +24,6 @@ public struct OmniboxSuggestion: Equatable, Sendable {
 /// sort, scheme stripping via prefix checks instead of replacingOccurrences,
 /// and a single lowercased pass per entry.
 public enum OmniboxSuggester {
-    @inlinable
     public static func suggestions(
         for query: String,
         history: [HistoryEntry],
@@ -62,8 +61,7 @@ public enum OmniboxSuggester {
         return best.map { OmniboxSuggestion(url: $0.entry.url, title: $0.entry.title) }
     }
 
-    @usableFromInline
-    static func matchScore(_ query: String, entry: HistoryEntry) -> Double? {
+    private static func matchScore(_ query: String, entry: HistoryEntry) -> Double? {
         let host = (entry.url.host ?? "").lowercased()
         let hostSansWWW = host.hasPrefix("www.") ? host[host.index(host.startIndex, offsetBy: 4)...] : Substring(host)
         let urlString = entry.url.absoluteString.lowercased()

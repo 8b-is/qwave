@@ -387,6 +387,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         hibernation: HibernationController,
         hibernator: TabHibernator
     ) async {
+        environment.factory.setWarmProcessCount(policy.warmProcessCount)
         var infos: [TabHibernationInfo] = []
         for tab in tabManager.tabs {
             let isSelected = tab.id == tabManager.selectedTabID
