@@ -132,9 +132,10 @@ public struct WaveInt: Equatable, Hashable, Sendable {
     /// Grid placement: X = frequency vs 0.73 Hz, Y = valence, Z = age in seconds.
     public func coordinate(nowNanos: UInt64? = nil) -> WaveCoord {
         let now = nowNanos ?? createdAt
-        let xOffset = frequency.log2Q5().flatMap { freqLog in
-            MemoryWaveConstants.consciousness.log2Q5().map { freqLog - $0 }
-        } ?? 0
+        let xOffset =
+            frequency.log2Q5().flatMap { freqLog in
+                MemoryWaveConstants.consciousness.log2Q5().map { freqLog - $0 }
+            } ?? 0
         let x = UInt8(clamping: Int(128 + xOffset))
         let yNorm = (emotionalValence.doubleValue + 1.0) / 2.0
         let y = UInt8(clamping: Int((yNorm * 255.0).rounded(.down)))

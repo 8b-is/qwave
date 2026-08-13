@@ -58,18 +58,25 @@ public enum ArticleExtractor {
 
     public static func fallbackExtract(html: String, url: URL? = nil) -> ArticleExtract {
         var stripped = html
-        if let titleRange = stripped.range(of: #"<title[^>]*>(.*?)</title>"#, options: [.regularExpression, .caseInsensitive]) {
+        if let titleRange = stripped.range(
+            of: #"<title[^>]*>(.*?)</title>"#, options: [.regularExpression, .caseInsensitive])
+        {
             let raw = String(stripped[titleRange])
             let title = raw.replacingOccurrences(of: #"</?title[^>]*>"#, with: "", options: .regularExpression)
-            stripped = stripped.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-            stripped = stripped.replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            stripped = stripped.replacingOccurrences(
+                of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            stripped = stripped.replacingOccurrences(
+                of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
             stripped = stripped.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             let text = stripped.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ArticleExtract(title: title.trimmingCharacters(in: .whitespacesAndNewlines), text: text, href: url?.absoluteString)
+            return ArticleExtract(
+                title: title.trimmingCharacters(in: .whitespacesAndNewlines), text: text, href: url?.absoluteString)
         }
-        stripped = stripped.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-        stripped = stripped.replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+        stripped = stripped.replacingOccurrences(
+            of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+        stripped = stripped.replacingOccurrences(
+            of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
         stripped = stripped.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
         let text = stripped.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)

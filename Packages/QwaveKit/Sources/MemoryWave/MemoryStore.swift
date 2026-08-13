@@ -50,7 +50,8 @@ public final class MemoryStore {
         at date: Date = Date()
     ) throws -> MemoryRecord {
         let payload = Data((title + "\n" + body).utf8)
-        let identity = MemoryWaveConstants.consciousness.doubleValue
+        let identity =
+            MemoryWaveConstants.consciousness.doubleValue
             * MemoryWaveConstants.goldenRatio.doubleValue
         let signature = WaveSignature.fromContent(payload, identityFrequency: identity)
         let nanos = UInt64(date.timeIntervalSince1970 * 1_000_000_000)
@@ -170,7 +171,8 @@ public final class MemoryStore {
             url = nil
         }
         let containerKey = row.text(1) ?? ""
-        let identity = MemoryWaveConstants.consciousness.doubleValue
+        let identity =
+            MemoryWaveConstants.consciousness.doubleValue
             * MemoryWaveConstants.goldenRatio.doubleValue
         let signature = WaveSignature.fromContent(
             Data((title + "\n" + body).utf8), identityFrequency: identity)

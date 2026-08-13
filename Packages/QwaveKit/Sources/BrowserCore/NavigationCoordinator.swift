@@ -310,7 +310,8 @@ extension NavigationCoordinator: WKNavigationDelegate {
         } catch {
             await MainActor.run {
                 webView.loadHTMLString(
-                    InternalPages.connectionLostHTML(host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
+                    InternalPages.connectionLostHTML(
+                        host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
                     baseURL: url
                 )
             }

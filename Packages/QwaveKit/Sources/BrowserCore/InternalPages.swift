@@ -92,11 +92,11 @@ public enum InternalPages {
         let toolbar =
             allowRemember
             ? """
-                <div class="md-toolbar">
-                  <button class="escape-btn" data-remember="page">Remember page</button>
-                  <button class="escape-btn" data-remember="selection">Remember selection</button>
-                </div>
-                """
+            <div class="md-toolbar">
+              <button class="escape-btn" data-remember="page">Remember page</button>
+              <button class="escape-btn" data-remember="selection">Remember selection</button>
+            </div>
+            """
             : ""
         return waveDocument(
             title: title,

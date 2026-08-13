@@ -89,32 +89,32 @@ public struct OnDeviceMemoryProvider: MemoryProviding {
 
     public var isAvailable: Bool {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            return true
-        }
+            if #available(macOS 26.0, *) {
+                return true
+            }
         #endif
         return false
     }
 
     public func complete(system: String, user: String) async throws -> String {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            return try await FoundationModelsBridge.complete(system: system, user: user)
-        }
+            if #available(macOS 26.0, *) {
+                return try await FoundationModelsBridge.complete(system: system, user: user)
+            }
         #endif
         throw MemoryProviderError.unavailable
     }
 }
 
 #if canImport(FoundationModels)
-import FoundationModels
+    import FoundationModels
 
-@available(macOS 26.0, *)
-enum FoundationModelsBridge {
-    static func complete(system: String, user: String) async throws -> String {
-        let session = LanguageModelSession()
-        let response = try await session.respond(to: "\(system)\n\n\(user)")
-        return String(describing: response.content)
+    @available(macOS 26.0, *)
+    enum FoundationModelsBridge {
+        static func complete(system: String, user: String) async throws -> String {
+            let session = LanguageModelSession()
+            let response = try await session.respond(to: "\(system)\n\n\(user)")
+            return String(describing: response.content)
+        }
     }
-}
 #endif

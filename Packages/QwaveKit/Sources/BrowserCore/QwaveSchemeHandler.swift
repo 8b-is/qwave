@@ -54,7 +54,8 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
     public func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 
     private func finish(_ task: WKURLSchemeTask, url: URL, mime: String, body: Data) {
-        let response = URLResponse(url: url, mimeType: mime, expectedContentLength: body.count, textEncodingName: "utf-8")
+        let response = URLResponse(
+            url: url, mimeType: mime, expectedContentLength: body.count, textEncodingName: "utf-8")
         task.didReceive(response)
         task.didReceive(body)
         task.didFinish()
@@ -73,9 +74,9 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         #if SWIFT_PACKAGE
-        let bundle = Bundle.module
+            let bundle = Bundle.module
         #else
-        let bundle = Bundle(for: QwaveSchemeHandler.self)
+            let bundle = Bundle(for: QwaveSchemeHandler.self)
         #endif
 
         let filename = URL(fileURLWithPath: cleaned).deletingPathExtension().lastPathComponent
@@ -94,7 +95,9 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
             return (data, mime)
         }
         // process("Resources") may flatten or keep markdown/ at the bundle root.
-        if let url = bundle.url(forResource: filename, withExtension: ext, subdirectory: cleaned.contains("/") ? URL(fileURLWithPath: cleaned).deletingLastPathComponent().path : nil),
+        if let url = bundle.url(
+            forResource: filename, withExtension: ext,
+            subdirectory: cleaned.contains("/") ? URL(fileURLWithPath: cleaned).deletingLastPathComponent().path : nil),
             let data = try? Data(contentsOf: url)
         {
             return (data, mime)

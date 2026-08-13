@@ -615,7 +615,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isEphemeral: tab.isEphemeral
             )
             memoryPanelTitle = title
-            memoryPanelBody = scope == "selection" ? "Remembered the selection as a Cognitive wave." : "Remembered the page as a Cognitive wave."
+            memoryPanelBody =
+                scope == "selection"
+                ? "Remembered the selection as a Cognitive wave." : "Remembered the page as a Cognitive wave."
             memoryPanelFootnote = "Odd lane · encrypted · this Mac only."
         } catch MemoryProviderError.denied(.ephemeral) {
             memoryPanelBody = "Ephemeral and private tabs never write to Memory Wave."
@@ -776,7 +778,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             )
             memoryPanelTitle = extract.title
             memoryPanelBody = answer.text
-            memoryPanelFootnote = persist
+            memoryPanelFootnote =
+                persist
                 ? "Summary saved locally. Provider: \(answer.provider.rawValue)."
                 : "Not saved. Provider: \(answer.provider.rawValue)."
         } catch MemoryProviderError.denied(let reason) {
