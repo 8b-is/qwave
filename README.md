@@ -40,13 +40,14 @@ Built with modern **Swift 5.10**, **XcodeGen**, and **SPM Modular Architecture**
 | `PostQuantum` | Pure-Swift Keccak/SHAKE, ML-KEM-768 (FIPS 203), Classic McEliece 348864, `HybridKEM` |
 | `WebExtensions` | MV3 manifest registry, `browser.*` bridge, extension storage, popups |
 | `Persistence` | WAL-mode SQLite stores (history, bookmarks, sessions) |
+| `MemoryWave` | MEM8 wave substrate: 79-byte `WaveInt`, Cognitive/Nexus provenance, container-scoped AES-GCM store, Marine salience, AI-agnostic providers (on-device / OpenAI-compatible). Stored memories never leave the Mac. |
 | `QwaveSupport` | Logging (`QwaveLog`) and keychain helpers |
 
 `Packages/WireGuardKit` (vendored) supplies the WireGuard Go bridge + C module for the tunnel extension.
 
 ```
 Qwave.app (AppKit shell)
-├── QwaveKit (SPM umbrella: 8 modules above)
+├── QwaveKit (SPM umbrella: 10 modules above)
 ├── PacketTunnel.systemextension (WireGuardKit + QwaveTunnelKit)
 └── Resources (Info.plist, entitlements, built-in rule lists)
 ```
@@ -153,7 +154,8 @@ The four findings that drove the v0.3.0 roadmap (all landed):
 | Compiled EasyList snapshot (~59k rules) | ✅ v0.3.0 |
 | swift-log structured logging with privacy redaction | ✅ v0.3.0 |
 | VPN extension in CI-signed builds | 🔜 needs Apple NE Developer ID approval |
-| Local AI features (MLX) | 🧪 research only |
+| Memory Wave (MEM8 substrate + AI-agnostic inference) | ✅ v0.4.0 |
+| Local MLX weights | 🧪 research only |
 
 ---
 

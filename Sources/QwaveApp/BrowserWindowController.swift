@@ -5,6 +5,8 @@ import Shields
 import WebExtensions
 import SwiftUI
 import URLIdentity
+import MemoryWave
+import QwaveSupport
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
 /// and the web view container. Owns a `TabManager` and per-tab coordinators.
@@ -31,10 +33,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var reloadButton: NSButton!
     private var shieldsButton: NSButton!
     private var extensionsButton: NSButton!
+    private var memoryButton: NSButton!
 
     private var coordinators: [UUID: NavigationCoordinator] = [:]
     private var shieldsPopover: NSPopover?
     private var extensionsPopup: ExtensionPopupController?
+    private var memoryPopover: NSPopover?
+    private var memoryPanelTitle = ""
+    private var memoryPanelBody = ""
+    private var memoryPanelFootnote = "Cognitive waves stay on this Mac."
+    private var memoryBusy = false
+    private var memoryAskDraft = ""
 
     // MARK: - Init
 
@@ -154,6 +163,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         tabBar.onReorder = { [weak self] from, to in
             self?.tabManager.move(fromIndex: from, toIndex: to)
         }
+        containerView.onDropFile = { [weak self] url in
+            self?.openNewTab(url: url, activate: true)
+        }
     }
 
     private func wireSuggestions() {
@@ -178,11 +190,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Tabs
 
+    private func defaultNewTabURL() -> URL {
+        if isPrivate { return InternalPages.startURL }
+        return environment.settings.homepage ?? InternalPages.startURL
+    }
+
     private func appendFreshTab(activate: Bool) {
         let tab =
             isPrivate
-            ? Tab(containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true)
-            : Tab()
+            ? Tab(
+                containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true,
+                pendingURL: InternalPages.startURL)
+            : Tab(pendingURL: defaultNewTabURL())
         tabManager.append(tab, select: activate)
         if activate {
             focusOmnibox()
@@ -200,7 +219,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         let tab = Tab(
             containerID: makeEphemeral ? ContainerRegistry.ephemeralProfileID : containerID,
             isEphemeral: makeEphemeral,
-            pendingURL: url
+            pendingURL: url ?? (makeEphemeral ? InternalPages.startURL : defaultNewTabURL())
         )
         tabManager.insertAfterSelection(tab, select: activate)
         if activate, url == nil {
@@ -231,6 +250,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         coordinator.onStateChange = { [weak self] in
             self?.refreshChromeState()
+        }
+        coordinator.onInternalAction = { [weak self] action in
+            self?.handleInternalAction(action)
         }
         coordinator.onFaviconURL = { [weak self, weak tab] iconURL in
             guard let self, let tab else { return }
@@ -309,7 +331,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             window?.firstResponder is NSTextView
             && omnibox.currentEditor() === (window?.firstResponder as? NSTextView)
         if !isEditingOmnibox {
-            omnibox.stringValue = selected.url?.absoluteString ?? ""
+            if InternalPages.isStartURL(selected.url) {
+                omnibox.stringValue = ""
+            } else {
+                omnibox.stringValue = selected.url?.absoluteString ?? ""
+            }
         }
 
         if let button = reloadButton {
@@ -499,6 +525,320 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         render()
     }
 
+    @objc func openDocument(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.openNewTab(url: url, activate: true)
+        }
+    }
+
+    @objc func rememberSelection(_ sender: Any?) {
+        Task { await rememberCurrentSelection() }
+    }
+
+    private func handleInternalAction(_ action: QwaveInternalAction) {
+        switch action {
+        case .submit(let query):
+            let parsed = OmniboxParser.parse(query)
+            switch parsed {
+            case .url(let url):
+                guard let selected = tabManager.selectedTab else { return }
+                ensureWebView(for: selected).load(URLRequest(url: url))
+            case .search(let text):
+                Task { await askStartQuery(text) }
+            }
+        case .remember(let scope, let text):
+            Task { await rememberText(text, scope: scope) }
+        }
+    }
+
+    private func askStartQuery(_ text: String) async {
+        guard let tab = tabManager.selectedTab else { return }
+        memoryAskDraft = text
+        memoryBusy = true
+        showMemoryWaveIfNeeded()
+        refreshMemoryPopover()
+        defer {
+            memoryBusy = false
+            refreshMemoryPopover()
+        }
+        do {
+            let answer = try await environment.memoryWave.ask(
+                prompt: text,
+                page: nil,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral,
+                inferenceAllowed: inferenceAllowed()
+            )
+            memoryPanelTitle = "Ask"
+            memoryPanelBody = answer.text
+            memoryPanelFootnote = "Start page · memories stay local"
+        } catch MemoryProviderError.denied(let reason) {
+            memoryPanelBody = denialMessage(reason)
+        } catch MemoryProviderError.unavailable {
+            if let search = environment.settings.searchEngine.searchURL(for: text) {
+                ensureWebView(for: tab).load(URLRequest(url: search))
+                return
+            }
+            memoryPanelBody = "No inference provider. Settings → Memory Wave, or search from the omnibox."
+        } catch {
+            memoryPanelBody = "Ask failed."
+        }
+    }
+
+    private func rememberText(_ text: String, scope: String) async {
+        guard let tab = tabManager.selectedTab else { return }
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            memoryPanelBody = "Nothing selected."
+            showMemoryWaveIfNeeded()
+            refreshMemoryPopover()
+            return
+        }
+        let title: String
+        if scope == "selection" {
+            title = "Selection · \(tab.displayTitle)"
+        } else {
+            title = tab.displayTitle
+        }
+        do {
+            _ = try environment.memoryWave.remember(
+                title: title,
+                body: body,
+                url: tab.url,
+                kind: scope == "selection" ? .note : .pin,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral
+            )
+            memoryPanelTitle = title
+            memoryPanelBody = scope == "selection" ? "Remembered the selection as a Cognitive wave." : "Remembered the page as a Cognitive wave."
+            memoryPanelFootnote = "Odd lane · encrypted · this Mac only."
+        } catch MemoryProviderError.denied(.ephemeral) {
+            memoryPanelBody = "Ephemeral and private tabs never write to Memory Wave."
+        } catch {
+            memoryPanelBody = "Could not store that memory."
+        }
+        showMemoryWaveIfNeeded()
+        refreshMemoryPopover()
+    }
+
+    private func rememberCurrentSelection() async {
+        guard let webView = tabManager.selectedTab?.webView else { return }
+        let script = """
+            (function() {
+              const sel = window.getSelection() ? window.getSelection().toString() : '';
+              if (sel) return sel;
+              const src = document.getElementById('qwave-source');
+              return src ? src.textContent : '';
+            })()
+            """
+        let value = try? await webView.evaluateJavaScript(script)
+        let text = value as? String ?? ""
+        await rememberText(text, scope: "selection")
+    }
+
+    @objc func rememberThisPage(_ sender: Any?) {
+        Task { await rememberSelectedPage() }
+    }
+
+    @objc func summarizePage(_ sender: Any?) {
+        Task { await summarizeSelectedPage(persist: false) }
+    }
+
+    @objc func askMemoryWave(_ sender: Any?) {
+        showMemoryWave(sender)
+        window?.makeFirstResponder(nil)
+    }
+
+    @objc func toggleMemoryWave(_ sender: Any?) {
+        showMemoryWave(sender)
+    }
+
+    private func showMemoryWave(_ sender: Any?) {
+        guard let button = memoryButton else { return }
+        if let popover = memoryPopover, popover.isShown {
+            popover.close()
+            memoryPopover = nil
+            return
+        }
+        presentMemoryPopover(relativeTo: button)
+    }
+
+    private func presentMemoryPopover(relativeTo button: NSButton) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: memoryPanelRoot())
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        memoryPopover = popover
+    }
+
+    private func memoryPanelRoot() -> MemoryWavePanelView {
+        MemoryWavePanelView(
+            title: memoryPanelTitle,
+            bodyText: memoryPanelBody,
+            footnote: memoryPanelFootnote,
+            isBusy: memoryBusy,
+            askDraft: Binding(
+                get: { self.memoryAskDraft },
+                set: { self.memoryAskDraft = $0 }
+            ),
+            onAsk: { Task { await self.askSelectedPage() } },
+            onRemember: { Task { await self.rememberSelectedPage() } },
+            onSummarize: { Task { await self.summarizeSelectedPage(persist: true) } }
+        )
+    }
+
+    private func refreshMemoryPopover() {
+        guard let popover = memoryPopover, popover.isShown,
+            let button = memoryButton
+        else { return }
+        popover.contentViewController = NSHostingController(rootView: memoryPanelRoot())
+        _ = button
+    }
+
+    private func inferenceAllowed() -> Bool {
+        (NSApp.delegate as? AppDelegate)?.inferenceAllowedNow() ?? true
+    }
+
+    private func extractSelectedPage() async -> ArticleExtract? {
+        guard let tab = tabManager.selectedTab else { return nil }
+        let webView = ensureWebView(for: tab)
+        do {
+            let result: Any = try await webView.evaluateJavaScript(ArticleExtractor.userScript)
+            if let extract = ArticleExtractor.decode(result) {
+                return extract
+            }
+        } catch {
+            QwaveLog.memory.warning("article extract script failed")
+        }
+        if let url = tab.url {
+            return ArticleExtract(title: tab.displayTitle, text: tab.title, href: url.absoluteString)
+        }
+        return nil
+    }
+
+    private func rememberSelectedPage() async {
+        guard let tab = tabManager.selectedTab else { return }
+        memoryBusy = true
+        refreshMemoryPopover()
+        defer {
+            memoryBusy = false
+            refreshMemoryPopover()
+        }
+        guard let extract = await extractSelectedPage() else {
+            memoryPanelBody = "Nothing to remember on this tab."
+            return
+        }
+        do {
+            _ = try environment.memoryWave.remember(
+                title: extract.title,
+                body: extract.text,
+                url: extract.href.flatMap(URL.init(string:)) ?? tab.url,
+                kind: .pin,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral
+            )
+            memoryPanelTitle = extract.title
+            memoryPanelBody = "Remembered as a Cognitive wave in this container."
+            memoryPanelFootnote = "Odd lane · encrypted · this Mac only."
+        } catch MemoryProviderError.denied(.ephemeral) {
+            memoryPanelBody = "Ephemeral and private tabs never write to Memory Wave."
+        } catch {
+            memoryPanelBody = "Could not store that memory."
+        }
+        showMemoryWaveIfNeeded()
+    }
+
+    private func summarizeSelectedPage(persist: Bool) async {
+        guard let tab = tabManager.selectedTab else { return }
+        memoryBusy = true
+        showMemoryWaveIfNeeded()
+        refreshMemoryPopover()
+        defer {
+            memoryBusy = false
+            refreshMemoryPopover()
+        }
+        guard let extract = await extractSelectedPage() else {
+            memoryPanelBody = "Could not read the page."
+            return
+        }
+        do {
+            let answer = try await environment.memoryWave.summarize(
+                extract: extract,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral,
+                inferenceAllowed: inferenceAllowed(),
+                persist: persist && !tab.isEphemeral
+            )
+            memoryPanelTitle = extract.title
+            memoryPanelBody = answer.text
+            memoryPanelFootnote = persist
+                ? "Summary saved locally. Provider: \(answer.provider.rawValue)."
+                : "Not saved. Provider: \(answer.provider.rawValue)."
+        } catch MemoryProviderError.denied(let reason) {
+            memoryPanelBody = denialMessage(reason)
+        } catch MemoryProviderError.unavailable {
+            memoryPanelBody = "No inference provider is configured. Remember still works."
+        } catch {
+            memoryPanelBody = "Summarize failed."
+        }
+    }
+
+    private func askSelectedPage() async {
+        guard let tab = tabManager.selectedTab else { return }
+        let prompt = memoryAskDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        memoryBusy = true
+        showMemoryWaveIfNeeded()
+        refreshMemoryPopover()
+        defer {
+            memoryBusy = false
+            refreshMemoryPopover()
+        }
+        let extract = await extractSelectedPage()
+        do {
+            let answer = try await environment.memoryWave.ask(
+                prompt: prompt,
+                page: extract,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral,
+                inferenceAllowed: inferenceAllowed()
+            )
+            memoryPanelTitle = extract?.title ?? "Ask"
+            memoryPanelBody = answer.text
+            memoryPanelFootnote =
+                answer.usedStoredMemory
+                ? "Answer used local Cognitive waves (on-device only)."
+                : "Stored memories were not sent."
+        } catch MemoryProviderError.denied(let reason) {
+            memoryPanelBody = denialMessage(reason)
+        } catch MemoryProviderError.unavailable {
+            memoryPanelBody = "No inference provider is configured. Settings → Memory Wave."
+        } catch {
+            memoryPanelBody = "Ask failed."
+        }
+    }
+
+    private func showMemoryWaveIfNeeded() {
+        guard memoryPopover?.isShown != true, let button = memoryButton else { return }
+        presentMemoryPopover(relativeTo: button)
+    }
+
+    private func denialMessage(_ reason: MemoryWaveDenial) -> String {
+        switch reason {
+        case .notExplicit: return "Memory Wave only runs when you ask."
+        case .ephemeral: return "Private and ephemeral tabs cannot write memories."
+        case .energy: return "Inference is paused under thermal or memory pressure."
+        case .providerDisabled: return "Choose a provider in Settings → Memory Wave."
+        case .cognitiveEgress: return "Stored memories cannot leave this Mac."
+        case .insecureEndpoint: return "Remote providers must use HTTPS."
+        }
+    }
+
     @objc func hibernateInactiveTabs(_ sender: Any?) {
         Task { @MainActor in
             for tab in tabManager.tabs where tab.id != tabManager.selectedTabID && tab.webView != nil {
@@ -659,12 +999,13 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let reloadItem = NSToolbarItem.Identifier("qwave.reload")
     private static let omniboxItem = NSToolbarItem.Identifier("qwave.omnibox")
     private static let shieldsItem = NSToolbarItem.Identifier("qwave.shields")
+    private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.shieldsItem, Self.extensionsItem,
+            Self.memoryItem, Self.shieldsItem, Self.extensionsItem,
         ]
     }
 
@@ -698,6 +1039,11 @@ extension BrowserWindowController: NSToolbarDelegate {
             item.label = "Address"
             item.minSize = NSSize(width: 240, height: 24)
             item.maxSize = NSSize(width: 900, height: 24)
+        case Self.memoryItem:
+            memoryButton = makeToolbarButton(
+                symbol: "waveform", label: "Memory Wave", action: #selector(toggleMemoryWave(_:)))
+            item.view = memoryButton
+            item.label = "Memory Wave"
         case Self.shieldsItem:
             shieldsButton = makeToolbarButton(
                 symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))

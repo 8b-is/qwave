@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Single coalesced timer driving hibernation + energy management for the
     /// whole app — one wakeup, generous leeway, instead of per-tab timers.
     private var energyTimer: DispatchSourceTimer?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var underMemoryPressure = false
 
     // MARK: - Launch
 
@@ -43,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         startEnergyTimer()
+        startMemoryPressureSource()
         QwaveLog.browser.info("Qwave launched")
     }
 
@@ -160,8 +163,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return EnergyConditions(
             thermalState: ProcessInfo.processInfo.thermalState,
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            allWindowsOccluded: !windowControllers.isEmpty && occluded
+            allWindowsOccluded: !windowControllers.isEmpty && occluded,
+            underMemoryPressure: underMemoryPressure
         )
+    }
+
+    private func startMemoryPressureSource() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let event = source.data
+            self.underMemoryPressure = event.contains(.warning) || event.contains(.critical)
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    func inferenceAllowedNow() -> Bool {
+        EnergyGovernor.tier(for: currentConditions()) == .normal
     }
 
     private func energyTick() async {

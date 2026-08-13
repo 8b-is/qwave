@@ -56,6 +56,8 @@ enum MainMenu {
         privateWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         fileMenu.addItem(
+            withTitle: "Open…", action: #selector(BrowserWindowController.openDocument(_:)), keyEquivalent: "o")
+        fileMenu.addItem(
             withTitle: "Open Location…", action: #selector(BrowserWindowController.openLocation(_:)), keyEquivalent: "l"
         )
         fileMenu.addItem(.separator())
@@ -129,6 +131,32 @@ enum MainMenu {
         bookmarksItem.submenu = bookmarksMenu
         bookmarksMenu.addItem(
             withTitle: "Add Bookmark", action: #selector(BrowserWindowController.addBookmark(_:)), keyEquivalent: "d")
+
+        // Memory Wave — MEM8 substrate; never automatic.
+        let memoryItem = NSMenuItem()
+        main.addItem(memoryItem)
+        let memoryMenu = NSMenu(title: "Memory Wave")
+        memoryItem.submenu = memoryMenu
+        let remember = memoryMenu.addItem(
+            withTitle: "Remember This Page",
+            action: #selector(BrowserWindowController.rememberThisPage(_:)), keyEquivalent: "m")
+        remember.keyEquivalentModifierMask = [.command, .shift]
+        let rememberSel = memoryMenu.addItem(
+            withTitle: "Remember Selection",
+            action: #selector(BrowserWindowController.rememberSelection(_:)), keyEquivalent: "r")
+        rememberSel.keyEquivalentModifierMask = [.command, .shift]
+        let summarize = memoryMenu.addItem(
+            withTitle: "Summarize Page",
+            action: #selector(BrowserWindowController.summarizePage(_:)), keyEquivalent: "s")
+        summarize.keyEquivalentModifierMask = [.command, .shift]
+        let ask = memoryMenu.addItem(
+            withTitle: "Ask Memory Wave…",
+            action: #selector(BrowserWindowController.askMemoryWave(_:)), keyEquivalent: "k")
+        ask.keyEquivalentModifierMask = [.command, .shift]
+        memoryMenu.addItem(.separator())
+        memoryMenu.addItem(
+            withTitle: "Show Memory Wave",
+            action: #selector(BrowserWindowController.toggleMemoryWave(_:)), keyEquivalent: "")
 
         // Tab navigation
         let tabItem = NSMenuItem()

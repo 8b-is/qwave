@@ -15,9 +15,17 @@ public enum OmniboxParser {
 
         // Explicit scheme wins outright.
         let lower = trimmed.lowercased()
-        for scheme in ["http://", "https://", "file://", "about:"] {
+        for scheme in ["http://", "https://", "file://", "about:", "qwave://"] {
             if lower.hasPrefix(scheme) {
                 return url(from: trimmed) ?? .search(trimmed)
+            }
+        }
+
+        // Absolute or ~ paths that exist on disk become file: navigations.
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~/") || trimmed.hasPrefix("~") {
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: expanded) {
+                return .url(URL(fileURLWithPath: expanded))
             }
         }
 

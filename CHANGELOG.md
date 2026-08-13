@@ -2,6 +2,41 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [0.4.1] - 2026-08-13
+
+Wave start page, error pages, and a real markdown reader.
+
+### Added
+- **Lost-in-the-Math WebGL scene** for new tabs (`qwave://start`), HTTP
+  404/410/5xx, and connection failures — same domain-warped shader, Escape
+  Sequence back to the start page.
+- **Markdown reader** (file or web): headings, tables, task lists, fenced
+  mermaid (bundled Mermaid 11, `securityLevel: strict`), KaTeX math
+  (`$…$` / `$$…$$`). Original source is kept for Memory Wave.
+- **Directory fallback**: `index.html` / `index.htm`, then `README.md`,
+  then a listing. File → Open…, drag-and-drop, and omnibox `/path` or `~`.
+- **Remember page or selection** from the markdown chrome or ⌘⇧R.
+
+## [0.4.0] - 2026-08-13
+
+Memory Wave — the browser node of the MEM8 substrate.
+
+### Added
+- **`MemoryWave` module**: Swift port of the MEM8 cognitive substrate used
+  across `mem8`, `mem8v2`, and `8b-Mem8`. 79-byte little-endian `WaveInt`
+  frames (Cognitive vs Nexus provenance, checksummed), sparse 256×256×65536
+  grid, Marine salience, AES-GCM sealed payloads, container isolation.
+- **Fail-closed policy**: ephemeral/private tabs cannot write; stored
+  Cognitive waves never egress to a remote provider; HTTPS-only remote
+  endpoints; inference gated on `EnergyGovernor` `.normal` (now also
+  samples memory pressure).
+- **AI-agnostic providers**: off (remember only), on-device Apple
+  Intelligence when present, or any OpenAI-compatible HTTPS
+  `chat/completions` endpoint (default `https://api.x.ai/v1` / `grok-4.6`).
+  API keys live in the Keychain.
+- Settings pane, toolbar waveform, and **Memory Wave** menu
+  (Remember / Summarize / Ask). Nothing runs unless the user asks.
+
 ## [0.3.1] - 2026-08-13
 
 "Prove the claims" — no new user-facing features; this release measures

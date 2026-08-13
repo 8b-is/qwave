@@ -21,6 +21,15 @@ final class OmniboxParserTests: XCTestCase {
         assertURL("http://example.com/a?b=c", "http://example.com/a?b=c")
         assertURL("about:blank", "about:blank")
         assertURL("file:///tmp/x.html", "file:///tmp/x.html")
+        assertURL("qwave://start", "qwave://start")
+    }
+
+    func testExistingUnixPathBecomesFileURL() {
+        guard case .url(let url) = OmniboxParser.parse("/tmp") else {
+            return XCTFail("expected file URL for /tmp")
+        }
+        XCTAssertTrue(url.isFileURL)
+        XCTAssertTrue(url.path.hasSuffix("tmp"))
     }
 
     func testBareDomains() {

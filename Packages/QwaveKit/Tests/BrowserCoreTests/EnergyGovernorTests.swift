@@ -55,4 +55,18 @@ final class EnergyGovernorTests: XCTestCase {
         let conserve = EnergyGovernor.policy(for: .conserve, baseHibernationTimeout: 90)
         XCTAssertEqual(conserve.hibernationTimeout, 60, "conserve floor is one minute")
     }
+
+    func testMemoryPressurePromotesTier() {
+        let normal = EnergyGovernor.tier(
+            for: .init(
+                thermalState: .nominal, lowPowerMode: false, allWindowsOccluded: false,
+                underMemoryPressure: true))
+        XCTAssertEqual(normal, .conserve)
+
+        let conserve = EnergyGovernor.tier(
+            for: .init(
+                thermalState: .nominal, lowPowerMode: true, allWindowsOccluded: false,
+                underMemoryPressure: true))
+        XCTAssertEqual(conserve, .critical)
+    }
 }

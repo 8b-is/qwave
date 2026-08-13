@@ -5,6 +5,7 @@ import FeatureFlags
 import Persistence
 import VPNKit
 import WebExtensions
+import MemoryWave
 import QwaveSupport
 
 /// The app-wide service graph, built once at launch.
@@ -28,12 +29,18 @@ final class BrowserEnvironment {
     let extensions: WebExtensionHost
     /// Remote uBlock/EasyList blocklist updater (ETag-cached).
     let blocklistUpdater: BlocklistUpdating
+    /// MEM8 wave memory. Optional — the browser runs without it.
+    let memoryWave: WaveDirector
+    let memoryPreferences: MemoryWavePreferences
+    let secrets: SecretStore
 
     private let directory: URL
 
     private init(directory: URL) {
         self.directory = directory
         settings = SettingsStore()
+        secrets = KeychainSecretStore()
+        memoryPreferences = MemoryWavePreferences(secrets: secrets)
         containers = ContainerRegistry(directory: directory)
         shieldsPolicy = ShieldsPolicy(directory: directory)
         shields = ShieldsDirector(compiler: RuleListCompiler(), policy: shieldsPolicy)
@@ -54,8 +61,10 @@ final class BrowserEnvironment {
         )
         hibernator = TabHibernator(factory: factory)
         hibernation = HibernationController(timeout: settings.hibernationTimeout)
-        vpn = MullvadVPNService(secrets: KeychainSecretStore())
+        vpn = MullvadVPNService(secrets: secrets)
         extensions = WebExtensionHost(storageDirectory: directory)
+        let memoryStore = try? MemoryStore(directory: directory, secrets: secrets)
+        memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences)
         // EasyList mirror + Qwave's own curated list; ETag-cached, no-op
         // fallback keeps the director simple.
         blocklistUpdater = RemoteBlocklistUpdater(
@@ -65,6 +74,23 @@ final class BrowserEnvironment {
         // Defaults sync: shields policy mirrors settings toggles.
         shieldsPolicy.defaultAdsBlocked = settings.shieldsEnabledByDefault
         shieldsPolicy.defaultHTTPSFirst = settings.httpsFirstEnabled
+
+        QwaveInternal.startPageHTML = { [weak self] in
+            guard let self else {
+                return InternalPages.startHTML(memories: [], providerLabel: "Remember only")
+            }
+            let records = (try? self.memoryWave.recall(containerID: nil, limit: 8)) ?? []
+            let chips = records.map {
+                StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
+            }
+            let label: String
+            switch self.memoryPreferences.providerKind {
+            case .none: label = "Remember only"
+            case .onDevice: label = "On-device"
+            case .openaiCompatible: label = "OpenAI-compatible"
+            }
+            return InternalPages.startHTML(memories: chips, providerLabel: label)
+        }
     }
 
     static func bootstrap() -> BrowserEnvironment {

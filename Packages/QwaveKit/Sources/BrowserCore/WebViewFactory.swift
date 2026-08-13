@@ -37,6 +37,8 @@ public final class WebViewFactory {
         configuration.upgradeKnownHostsToHTTPS = true
         configuration.suppressesIncrementalRendering = false
         configuration.allowsAirPlayForMediaPlayback = true
+        // One handler instance per configuration — WebKit forbids reuse.
+        configuration.setURLSchemeHandler(QwaveSchemeHandler(), forURLScheme: QwaveSchemeHandler.scheme)
 
         let preferences = configuration.preferences
         preferences.isElementFullscreenEnabled = true

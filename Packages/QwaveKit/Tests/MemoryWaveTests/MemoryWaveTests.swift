@@ -1,0 +1,392 @@
+import XCTest
+@testable import MemoryWave
+import Persistence
+import QwaveSupport
+
+final class RationalTests: XCTestCase {
+    func testRejectsZeroDenominator() {
+        XCTAssertNil(Rational(1, 0))
+    }
+
+    func testReduces() {
+        let r = Rational(4, 8)
+        XCTAssertEqual(r?.num, 1)
+        XCTAssertEqual(r?.den, 2)
+    }
+
+    func testEqualityAfterReduction() {
+        XCTAssertEqual(Rational(2, 4), Rational(1, 2))
+    }
+}
+
+final class WaveIntFrameTests: XCTestCase {
+    func testRoundTrip() throws {
+        let wave = WaveInt(
+            baseAmplitude: Rational(1, 2)!,
+            frequency: Rational(73, 100)!,
+            phase: Rational(1, 4)!,
+            emotionalValence: Rational(-1, 2)!,
+            arousal: Rational(3, 10)!,
+            createdAt: 1_700_000_000_000_000_000,
+            lastAccessed: 1_700_000_000_000_000_001,
+            accessCount: 7,
+            decayRate: Rational(1, 10)!,
+            id: 42,
+            provenance: .cognitive
+        )
+        let frame = wave.toFrame()
+        XCTAssertEqual(frame.count, 79)
+        switch WaveInt.fromFrame(frame) {
+        case .success(let decoded):
+            XCTAssertEqual(decoded, wave)
+        case .failure(let error):
+            XCTFail("round-trip failed: \(error)")
+        }
+    }
+
+    func testRejectsUnknownProvenance() {
+        var frame = WaveInt(
+            baseAmplitude: .one,
+            frequency: MemoryWaveConstants.consciousness,
+            phase: .zero,
+            emotionalValence: .zero,
+            arousal: Rational(1, 2)!,
+            createdAt: 1,
+            lastAccessed: 1,
+            accessCount: 0,
+            decayRate: Rational(1, 10)!,
+            id: nil,
+            provenance: .cognitive
+        ).toFrame()
+        frame[1] = 0xFF
+        frame[78] = frame.prefix(78).reduce(0, ^)
+        if case .failure(let error) = WaveInt.fromFrame(frame) {
+            XCTAssertEqual(error, .invalidProvenance)
+        } else {
+            XCTFail("hostile provenance must not enter the grid")
+        }
+    }
+
+    func testChecksumCatchesFlip() {
+        var frame = WaveInt(
+            baseAmplitude: .one,
+            frequency: MemoryWaveConstants.consciousness,
+            phase: .zero,
+            emotionalValence: .zero,
+            arousal: Rational(1, 2)!,
+            createdAt: 1,
+            lastAccessed: 1,
+            accessCount: 0,
+            decayRate: Rational(1, 10)!,
+            id: nil,
+            provenance: .cognitive
+        ).toFrame()
+        frame[10] ^= 0x01
+        if case .failure(let error) = WaveInt.fromFrame(frame) {
+            XCTAssertEqual(error, .checksumMismatch)
+        } else {
+            XCTFail("tampered frame must be rejected")
+        }
+    }
+
+    func testCognitiveNeverEqualsNexus() {
+        XCTAssertNotEqual(WaveProvenance.cognitive.rawValue, WaveProvenance.nexus.rawValue)
+    }
+}
+
+final class WaveSignatureTests: XCTestCase {
+    func testVerifyAndTamper() {
+        let sig = WaveSignature.fromContent(Data("hello waves".utf8), identityFrequency: 0.73 * 1.618)
+        XCTAssertTrue(sig.verify())
+        var broken = sig
+        broken.amplitudes[0] += 0.05
+        XCTAssertFalse(broken.verify())
+    }
+
+    func testDeterministic() {
+        let a = WaveSignature.fromContent(Data("same".utf8), identityFrequency: 1.0)
+        let b = WaveSignature.fromContent(Data("same".utf8), identityFrequency: 1.0)
+        XCTAssertEqual(a.interferenceHash, b.interferenceHash)
+    }
+}
+
+final class SparseWaveGridTests: XCTestCase {
+    func testResonanceRanksCloserFrequencyFirst() {
+        var grid = SparseWaveGrid()
+        let near = makeWave(freq: Rational(80, 100)!, valence: .zero)
+        let far = makeWave(freq: Rational(200, 100)!, valence: .zero)
+        grid.insert(near)
+        grid.insert(far)
+        let query = makeWave(freq: Rational(73, 100)!, valence: .zero)
+        let ranked = grid.resonate(query: query, radius: 64)
+        XCTAssertGreaterThanOrEqual(ranked.count, 1)
+        XCTAssertEqual(ranked.first?.1.frequency, near.frequency)
+    }
+
+    private func makeWave(freq: Rational, valence: Rational) -> WaveInt {
+        WaveInt(
+            baseAmplitude: .one,
+            frequency: freq,
+            phase: .zero,
+            emotionalValence: valence,
+            arousal: Rational(1, 2)!,
+            createdAt: 1,
+            lastAccessed: 1,
+            accessCount: 0,
+            decayRate: Rational(1, 10)!,
+            id: nil,
+            provenance: .cognitive
+        )
+    }
+}
+
+final class MarineDetectorTests: XCTestCase {
+    func testPeriodicSignalOutranksSpike() {
+        var periodic = MarineDetector()
+        var peak = 0.0
+        for i in 0..<64 {
+            let sample = sin(Double(i) * .pi / 4.0)
+            peak = max(peak, periodic.process(sample: sample))
+        }
+        var spike = MarineDetector()
+        _ = spike.process(sample: 0)
+        _ = spike.process(sample: 1)
+        _ = spike.process(sample: 0)
+        XCTAssertGreaterThan(peak, spike.salience)
+    }
+
+    func testTextScoreIsBounded() {
+        let score = MarineDetector.score(text: "The wave remembers what the vector forgets.")
+        XCTAssertGreaterThanOrEqual(score, 0)
+        XCTAssertLessThanOrEqual(score, 1)
+    }
+}
+
+final class MemoryCipherTests: XCTestCase {
+    func testSealOpenRoundTrip() throws {
+        let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let box = try MemoryCipher.seal(Data("cognitive".utf8), key: key)
+        XCTAssertEqual(try MemoryCipher.open(box, key: key), Data("cognitive".utf8))
+    }
+
+    func testTamperedBoxFailsClosed() throws {
+        let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        var box = try MemoryCipher.seal(Data("secret".utf8), key: key)
+        box[box.count - 1] ^= 0xFF
+        XCTAssertThrowsError(try MemoryCipher.open(box, key: key))
+    }
+}
+
+final class MemoryStoreTests: XCTestCase {
+    func testContainerIsolationAndEphemeralCallerDuty() throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        let work = UUID()
+        _ = try store.insert(
+            title: "Work", body: "private note", url: URL(string: "https://example.com/a"),
+            kind: .pin, containerID: work)
+        _ = try store.insert(
+            title: "Personal", body: "other note", url: URL(string: "https://example.com/b"),
+            kind: .pin, containerID: nil)
+
+        XCTAssertEqual(try store.records(containerID: work).map(\.title), ["Work"])
+        XCTAssertEqual(try store.records(containerID: nil).map(\.title), ["Personal"])
+        XCTAssertEqual(try store.records(containerID: work).first?.wave.provenance, .cognitive)
+    }
+
+    func testDeleteContainer() throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        let id = UUID()
+        _ = try store.insert(title: "Gone", body: "x", url: nil, kind: .note, containerID: id)
+        try store.deleteAll(containerID: id)
+        XCTAssertTrue(try store.records(containerID: id).isEmpty)
+    }
+}
+
+final class MemoryWavePolicyTests: XCTestCase {
+    func testPersistRequiresExplicitAndRejectsEphemeral() {
+        let denied = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: false, isEphemeral: false, inferenceAllowed: true,
+                provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd)))
+        XCTAssertEqual(denied, .deny(.notExplicit))
+
+        let ephemeral = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: true, isEphemeral: true, inferenceAllowed: true,
+                provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd)))
+        XCTAssertEqual(ephemeral, .deny(.ephemeral))
+
+        let ok = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                provider: .none, includeStoredMemory: false, destination: .persist(lane: .odd)))
+        XCTAssertEqual(ok, .allow)
+    }
+
+    func testRemoteCannotCarryStoredMemory() {
+        let leak = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                provider: .openaiCompatible, includeStoredMemory: true,
+                destination: .infer, remoteBaseURL: URL(string: "https://api.x.ai/v1")))
+        XCTAssertEqual(leak, .deny(.cognitiveEgress))
+        XCTAssertFalse(MemoryWavePolicy.remotePayloadAllowed(includeStoredMemory: true))
+    }
+
+    func testRemoteRejectsHTTP() {
+        let http = MemoryWavePolicy.decide(
+            MemoryWaveContext(
+                isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                provider: .openaiCompatible, includeStoredMemory: false,
+                destination: .infer, remoteBaseURL: URL(string: "http://127.0.0.1:11434")))
+        XCTAssertEqual(http, .deny(.insecureEndpoint))
+    }
+
+    func testEnergyAndDisabledProvider() {
+        XCTAssertEqual(
+            MemoryWavePolicy.decide(
+                MemoryWaveContext(
+                    isExplicit: true, isEphemeral: false, inferenceAllowed: false,
+                    provider: .onDevice, includeStoredMemory: false, destination: .infer)),
+            .deny(.energy))
+        XCTAssertEqual(
+            MemoryWavePolicy.decide(
+                MemoryWaveContext(
+                    isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                    provider: .none, includeStoredMemory: false, destination: .infer)),
+            .deny(.providerDisabled))
+    }
+}
+
+final class ArticleExtractorTests: XCTestCase {
+    func testDecodeJSONString() {
+        let json = #"{"title":"Hello","text":"World","href":"https://example.com/"}"#
+        let extract = ArticleExtractor.decode(json)
+        XCTAssertEqual(extract?.title, "Hello")
+        XCTAssertEqual(extract?.text, "World")
+    }
+
+    func testFallbackStripsTags() {
+        let html = "<html><head><title>Doc</title></head><body><script>evil()</script><p>Hi</p></body></html>"
+        let extract = ArticleExtractor.fallbackExtract(html: html, url: URL(string: "https://ex.test/"))
+        XCTAssertEqual(extract.title, "Doc")
+        XCTAssertTrue(extract.text.contains("Hi"))
+        XCTAssertFalse(extract.text.contains("evil"))
+    }
+
+    func testClamp() {
+        let long = ArticleExtract(title: "t", text: String(repeating: "a", count: 50))
+        XCTAssertEqual(long.clamped(maxChars: 10).text.count, 10)
+    }
+}
+
+final class WaveDirectorTests: XCTestCase {
+    func testRememberWritesCognitiveWave() throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs)
+        let record = try director.remember(
+            title: "Page", body: "body", url: URL(string: "https://example.com/"),
+            containerID: nil, isEphemeral: false)
+        XCTAssertEqual(record.wave.provenance, .cognitive)
+        XCTAssertEqual(record.lane, .odd)
+    }
+
+    func testRememberDeniedForEphemeral() throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs)
+        XCTAssertThrowsError(
+            try director.remember(
+                title: "Nope", body: "x", url: nil, containerID: nil, isEphemeral: true)
+        ) { error in
+            XCTAssertEqual(error as? MemoryProviderError, .denied(.ephemeral))
+        }
+    }
+
+    func testAskRemoteNeverIncludesStoredMemories() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
+        prefs.providerKind = .openaiCompatible
+        try prefs.setAPIKey("test-key")
+
+        let captured = RequestCapture()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CaptureProtocol.self]
+        CaptureProtocol.capture = captured
+        CaptureProtocol.responseJSON = """
+            {"choices":[{"message":{"role":"assistant","content":"ok"}}]}
+            """
+        let session = URLSession(configuration: config)
+
+        let director = WaveDirector(store: store, preferences: prefs)
+        director.providerOverride = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            session: session
+        )
+        _ = try director.remember(
+            title: "Secret memory", body: "do-not-exfiltrate", url: nil,
+            containerID: nil, isEphemeral: false)
+
+        let answer = try await director.ask(
+            prompt: "What do you know?",
+            page: ArticleExtract(title: "Now", text: "visible page"),
+            containerID: nil,
+            isEphemeral: false,
+            inferenceAllowed: true
+        )
+        XCTAssertEqual(answer.text, "ok")
+        XCTAssertFalse(answer.usedStoredMemory)
+        let sent = String(data: captured.body ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(sent.contains("do-not-exfiltrate"))
+        XCTAssertFalse(sent.contains("Secret memory"))
+        XCTAssertTrue(sent.contains("visible page"))
+    }
+}
+
+private final class RequestCapture: @unchecked Sendable {
+    var body: Data?
+}
+
+private final class CaptureProtocol: URLProtocol {
+    nonisolated(unsafe) static var capture: RequestCapture?
+    nonisolated(unsafe) static var responseJSON = ""
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.capture?.body = request.httpBody ?? httpBodyFromStream(request)
+        let data = Data(Self.responseJSON.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private func httpBodyFromStream(_ request: URLRequest) -> Data? {
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+        defer { buf.deallocate() }
+        while stream.hasBytesAvailable {
+            let n = stream.read(buf, maxLength: 1024)
+            if n > 0 { data.append(buf, count: n) } else { break }
+        }
+        return data
+    }
+}

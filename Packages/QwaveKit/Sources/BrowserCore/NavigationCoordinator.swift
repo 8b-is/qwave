@@ -24,21 +24,26 @@ public final class NavigationCoordinator: NSObject {
     public var onStateChange: (() -> Void)?
     /// The page's declared (or default /favicon.ico) icon URL, once known.
     public var onFaviconURL: ((URL) -> Void)?
+    /// Start-page submit / markdown remember — handled by the app shell.
+    public var onInternalAction: ((QwaveInternalAction) -> Void)?
 
     private var observations: [NSKeyValueObservation] = []
+    private let session: URLSession
 
     public init(
         tab: Tab,
         shields: ShieldsDirector,
         httpsUpgrader: HTTPSFirstUpgrader,
         history: HistoryStore?,
-        downloads: DownloadManager
+        downloads: DownloadManager,
+        session: URLSession = .shared
     ) {
         self.tab = tab
         self.shields = shields
         self.httpsUpgrader = httpsUpgrader
         self.history = history
         self.downloads = downloads
+        self.session = session
         super.init()
     }
 
@@ -46,6 +51,8 @@ public final class NavigationCoordinator: NSObject {
     public func attach(to webView: WKWebView) {
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+        webView.configuration.userContentController.add(self, name: "qwave")
 
         observations = [
             webView.observe(\.title) { [weak self] webView, _ in
@@ -85,6 +92,7 @@ public final class NavigationCoordinator: NSObject {
     public func detach() {
         observations.forEach { $0.invalidate() }
         observations = []
+        tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
     }
 }
 
@@ -111,6 +119,40 @@ extension NavigationCoordinator: WKNavigationDelegate {
         {
             decisionHandler(.cancel, preferences)
             onOpenNewTab?(url, navigationAction.modifierFlags.contains(.shift))
+            return
+        }
+
+        if isMainFrame, let url, url.scheme == QwaveSchemeHandler.scheme {
+            preferences.allowsContentJavaScript = true
+            decisionHandler(.allow, preferences)
+            return
+        }
+
+        if isMainFrame, let url, url.isFileURL {
+            preferences.allowsContentJavaScript = true
+            switch LocalDocumentResolver.resolve(url) {
+            case .file:
+                decisionHandler(.allow, preferences)
+            case .htmlIndex(let file, let root):
+                decisionHandler(.cancel, preferences)
+                DispatchQueue.main.async { webView.loadFileURL(file, allowingReadAccessTo: root) }
+            case .markdown(let source, let file):
+                decisionHandler(.cancel, preferences)
+                DispatchQueue.main.async { self.presentMarkdown(source, at: file, in: webView) }
+            case .listing(let markdown, let directory):
+                decisionHandler(.cancel, preferences)
+                DispatchQueue.main.async {
+                    self.presentMarkdown(markdown, at: directory, in: webView)
+                }
+            case .missing:
+                decisionHandler(.cancel, preferences)
+                DispatchQueue.main.async {
+                    webView.loadHTMLString(
+                        InternalPages.httpErrorHTML(status: 404, host: url.lastPathComponent),
+                        baseURL: url
+                    )
+                }
+            }
             return
         }
 
@@ -144,6 +186,28 @@ extension NavigationCoordinator: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
+        if navigationResponse.isForMainFrame {
+            let mime = navigationResponse.response.mimeType
+            let url = navigationResponse.response.url
+            if let url, LocalDocumentResolver.isMarkdownURL(url) || LocalDocumentResolver.isMarkdownMIME(mime) {
+                decisionHandler(.cancel)
+                Task { await self.fetchAndPresentMarkdown(url, in: webView) }
+                return
+            }
+            if let http = navigationResponse.response as? HTTPURLResponse,
+                QwaveSchemeHandler.shouldShowWaveError(status: http.statusCode)
+            {
+                decisionHandler(.cancel)
+                let host = http.url.flatMap(CanonicalHost.host(of:)) ?? http.url?.host ?? ""
+                DispatchQueue.main.async {
+                    webView.loadHTMLString(
+                        InternalPages.httpErrorHTML(status: http.statusCode, host: host),
+                        baseURL: http.url
+                    )
+                }
+                return
+            }
+        }
         if !navigationResponse.canShowMIMEType {
             decisionHandler(.download)
         } else {
@@ -222,24 +286,57 @@ extension NavigationCoordinator: WKNavigationDelegate {
     }
 
     private func showErrorPage(in webView: WKWebView, error: NSError, url: URL?) {
-        let host = url?.host ?? ""
-        let message = error.localizedDescription
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        let html = """
-            <!doctype html><html><head><meta charset="utf-8">
-            <style>
-              body { font-family: -apple-system, sans-serif; display: flex; align-items: center;
-                     justify-content: center; height: 90vh; color: #444; }
-              @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #bbb; } }
-              .card { max-width: 26em; text-align: center; }
-              h1 { font-size: 1.2em; }
-            </style></head><body><div class="card">
-            <h1>Can’t open \(host.isEmpty ? "this page" : host)</h1>
-            <p>\(message)</p>
-            </div></body></html>
-            """
+        let host = url.flatMap(CanonicalHost.host(of:)) ?? url?.host ?? ""
+        let html = InternalPages.connectionLostHTML(host: host, message: error.localizedDescription)
         webView.loadHTMLString(html, baseURL: url)
+    }
+
+    private func presentMarkdown(_ source: String, at url: URL, in webView: WKWebView) {
+        let title = url.lastPathComponent
+        let body = MarkdownCompiler.compile(source)
+        let html = InternalPages.markdownHTML(
+            title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
+        webView.loadHTMLString(html, baseURL: url)
+        tab?.url = url
+        tab?.title = title
+        onStateChange?()
+    }
+
+    private func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
+        do {
+            let (data, _) = try await session.data(from: url)
+            let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            await MainActor.run { presentMarkdown(source, at: url, in: webView) }
+        } catch {
+            await MainActor.run {
+                webView.loadHTMLString(
+                    InternalPages.connectionLostHTML(host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
+                    baseURL: url
+                )
+            }
+        }
+    }
+}
+
+extension NavigationCoordinator: WKScriptMessageHandler {
+    public func userContentController(
+        _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "qwave", let body = message.body as? [String: Any],
+            let type = body["type"] as? String
+        else { return }
+        switch type {
+        case "submit":
+            if let query = body["query"] as? String {
+                onInternalAction?(.submit(query))
+            }
+        case "remember":
+            let scope = body["scope"] as? String ?? "page"
+            let text = body["text"] as? String ?? ""
+            onInternalAction?(.remember(scope: scope, text: text))
+        default:
+            break
+        }
     }
 }
 

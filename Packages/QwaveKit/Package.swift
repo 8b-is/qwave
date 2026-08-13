@@ -12,7 +12,7 @@ let package = Package(
             name: "QwaveKit",
             targets: [
                 "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
-                "URLIdentity",
+                "URLIdentity", "MemoryWave",
             ]
         ),
         // Slim product linked by the PacketTunnel system extension.
@@ -66,6 +66,9 @@ let package = Package(
             dependencies: [
                 "QwaveSupport", "Persistence", "Shields", "FeatureFlags", "URLIdentity",
                 .product(name: "OrderedCollections", package: "swift-collections"),
+            ],
+            resources: [
+                .process("Resources")
             ]
         ),
         // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
@@ -74,6 +77,9 @@ let package = Package(
         .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"]),
         // WebExtensions Manifest V3 engine: browser.* bridge, storage, popups.
         .target(name: "WebExtensions", dependencies: ["QwaveSupport"]),
+        // MEM8 wave substrate: Cognitive/Nexus provenance, 79-byte WaveInt,
+        // encrypted container-scoped store, AI-agnostic inference providers.
+        .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"]),
 
         .testTarget(
             name: "QwaveSupportTests",
@@ -102,5 +108,6 @@ let package = Package(
                 .process("Fixtures")
             ]
         ),
+        .testTarget(name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"]),
     ]
 )

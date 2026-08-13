@@ -16,6 +16,8 @@ struct SettingsRootView: View {
                 .tabItem { Label("Web Features", systemImage: "flask") }
             VPNPane(vpn: environment.vpn)
                 .tabItem { Label("VPN", systemImage: "lock.shield") }
+            MemoryWavePane(environment: environment)
+                .tabItem { Label("Memory Wave", systemImage: "waveform") }
         }
         .frame(minWidth: 700, minHeight: 480)
         .padding(8)

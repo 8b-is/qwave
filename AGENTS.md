@@ -11,7 +11,7 @@
 - **Language:** Swift 5.10 (macOS 14.0+ deployment target).
 - **Build System:** XcodeGen (`project.yml` is the single source of truth; `Qwave.xcodeproj` is gitignored).
 - **Core Engine:** WebKit `WKWebView`, `WKWebsiteDataStore`, `WKContentRuleList`.
-- **Modular Package:** `Packages/QwaveKit` (9 modules: QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags, BrowserCore, VPNKit, PostQuantum, WebExtensions).
+- **Modular Package:** `Packages/QwaveKit` (10 modules: QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags, BrowserCore, VPNKit, PostQuantum, WebExtensions, MemoryWave).
 - **VPN Extension:** `Sources/PacketTunnel` WireGuardKit system extension (`NETunnelProviderManager`).
 - **CI/CD:** GitHub Actions (`.github/workflows/ci.yml` & `release.yml`).
 

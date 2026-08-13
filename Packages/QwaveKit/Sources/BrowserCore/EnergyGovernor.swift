@@ -6,11 +6,20 @@ public struct EnergyConditions: Equatable, Sendable {
     public var lowPowerMode: Bool
     /// True when every browser window is occluded (hidden/covered).
     public var allWindowsOccluded: Bool
+    /// True when the process is under memory pressure (jetsam warning/critical).
+    /// Inference is the feature that needs this; hibernation already reacts via thermal/LPM.
+    public var underMemoryPressure: Bool
 
-    public init(thermalState: ProcessInfo.ThermalState, lowPowerMode: Bool, allWindowsOccluded: Bool) {
+    public init(
+        thermalState: ProcessInfo.ThermalState,
+        lowPowerMode: Bool,
+        allWindowsOccluded: Bool,
+        underMemoryPressure: Bool = false
+    ) {
         self.thermalState = thermalState
         self.lowPowerMode = lowPowerMode
         self.allWindowsOccluded = allWindowsOccluded
+        self.underMemoryPressure = underMemoryPressure
     }
 }
 
@@ -42,17 +51,25 @@ public struct EnergyPolicy: Equatable, Sendable {
 /// tick owned by the app.
 public enum EnergyGovernor {
     public static func tier(for conditions: EnergyConditions) -> EnergyTier {
+        let base: EnergyTier
         switch conditions.thermalState {
         case .serious, .critical:
-            return .critical
+            base = .critical
         case .fair:
-            return conditions.lowPowerMode ? .critical : .conserve
+            base = conditions.lowPowerMode ? .critical : .conserve
         case .nominal:
-            if conditions.lowPowerMode { return .conserve }
-            if conditions.allWindowsOccluded { return .conserve }
-            return .normal
+            if conditions.lowPowerMode || conditions.allWindowsOccluded {
+                base = .conserve
+            } else {
+                base = .normal
+            }
         @unknown default:
-            return .conserve
+            base = .conserve
+        }
+        guard conditions.underMemoryPressure else { return base }
+        switch base {
+        case .normal: return .conserve
+        case .conserve, .critical: return .critical
         }
     }
 
