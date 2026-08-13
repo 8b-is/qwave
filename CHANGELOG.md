@@ -2,6 +2,44 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [0.5.0] - 2026-08-14
+
+Swift 6 language mode throughout — structural foundations completed.
+
+### Swift 6 migration
+- **Package default**: `.swiftLanguageMode(.v6)` with `strict-concurrency=complete`.
+  All 10 QwaveKit modules and both app targets (QwaveApp, PacketTunnel) compile
+  in Swift 6 mode. No per-target `.v5` pins remain.
+- **App-layer**: `SWIFT_VERSION: "6.0"`, `SWIFT_STRICT_CONCURRENCY: complete` in
+  `project.yml`. QwaveApp and PacketTunnel both green.
+- **VPNKit**: `TunnelManager.deinit` observer teardown restructured for v6's
+  stricter `deinit` isolation. `MullvadVPNService` async flows and `AccountStore`
+  SecretStore writes adjusted for `sending` correctness.
+- **Shields**: `WKContentRuleList` continuation code updated for v6's stricter
+  `sending` checks on `@Sendable` closures.
+- **FeatureFlags**: ObjC-runtime reflection (`AnyObject.perform`, guarded KVC,
+  `unsafeBitCast` IMPs) kept within the isolation domain.
+- **251 tests**, 0 failures (9 new tests validating v6 concurrency patterns).
+
+### Zig kernel integration
+- **PacketTunnel data plane**: `libqpacket.a` static library compiled from
+  Zig (`zig-core/src/packet.zig`) via XcodeGen preBuildScript — same pattern
+  as the WireGuard Go bridge.
+- **Packet inspection**: IPv4/IPv6 validation, protocol classification (TCP/UDP/
+  ICMP), malformed-packet rejection. Extended stats via `qpacket_filter_stats_extended()`.
+- **CI**: `zig-validation` job builds, tests, and validates the blocklist.
+  Zig required in the app-build job for the preBuildScript.
+- **Build pattern documented**: `docs/ZIG_INTEGRATION.md` records the three
+  load-bearing fixes (Zig in CI, `$ARCHS` + `lipo` for universal, `-fcompiler-rt`
+  for cross-arch runtime symbols).
+
+### Performance (carried forward from earlier sessions)
+- OmniboxSuggester: 4,370→1,011 mallocs per keystroke (−77%)
+- ARC metrics (retainCount, releaseCount, retainReleaseDelta) as CI gates (5% p90)
+- `warmProcessCount` wired in WebViewFactory (1 at .normal tier, 0 at conserve/critical)
+- `@inlinable` annotations removed (zero measurable effect on ARC or allocation)
+- Measurement protocol in `hot_paths.md`: quiesce check, N≥5, reject unquiesced runs
+
 ## [0.4.4] - 2026-08-13
 
 "Prove what it sends" — network-egress hardening. A sovereign browser must
