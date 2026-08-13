@@ -1,9 +1,11 @@
 import AppKit
+import Sparkle
 import SwiftUI
 
 final class SettingsWindowController: NSWindowController {
-    init(environment: BrowserEnvironment) {
-        let hosting = NSHostingController(rootView: SettingsRootView(environment: environment))
+    init(environment: BrowserEnvironment, updater: SPUUpdater?) {
+        let hosting = NSHostingController(
+            rootView: SettingsRootView(environment: environment, updater: updater))
         let window = NSWindow(contentViewController: hosting)
         window.title = "Qwave Settings"
         window.styleMask = [.titled, .closable]

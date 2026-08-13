@@ -83,12 +83,21 @@ crosses the wire, is the next piece of work after this inventory.
 
 ## Auto-updates
 
-Qwave uses Sparkle. `SUEnableAutomaticChecks` is deliberately **not** set, so
-Sparkle asks your permission before it ever checks automatically, and
-"Check for Updates…" in the app menu is always a manual, explicit action.
-Update downloads are EdDSA-signed; a compromised host cannot serve a forged
-update. (The consent flow and the "check automatically" setting are being
-audited and hardened — see the network-hardening work in progress.)
+Qwave uses Sparkle, and the consent chain is:
+
+1. **Nothing checks before you say so.** `SUEnableAutomaticChecks` is
+   deliberately not set, so Sparkle asks your permission (its standard
+   prompt) before it ever checks automatically. No update request fires
+   until you've answered.
+2. **You can change your mind, visibly.** Settings → General →
+   "Check for updates automatically" toggles it any time. Off means **zero
+   background update requests** — the only way an update check happens is
+   you choosing "Check for Updates…" from the menu.
+3. **Only one host, and it's allowlisted.** Update checks reach exactly
+   `github.com` (the signed appcast); that host is on the committed egress
+   allowlist and enforced by `EgressGuardTests`.
+4. **Updates are EdDSA-signed** — a compromised host cannot serve a forged
+   update without the private key.
 
 ## Blocklist updates
 

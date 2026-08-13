@@ -99,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController(environment: environment)
+            settingsWindowController = SettingsWindowController(
+                environment: environment, updater: updaterController?.updater)
         }
         settingsWindowController?.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
