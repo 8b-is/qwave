@@ -1,5 +1,13 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.0
 import PackageDescription
+
+// Per-target Swift language mode. tools-version 6.0 defaults targets to
+// language mode 6, so every not-yet-migrated target is explicitly pinned to
+// `.v5` and modules are flipped to `.v6` one at a time (see docs and the
+// structural-foundations work). This lets each module's strict-concurrency
+// migration land as its own reviewable commit instead of one big-bang flip.
+let v5: [SwiftSetting] = [.swiftLanguageMode(.v5)]
+let v6: [SwiftSetting] = [.swiftLanguageMode(.v6)]
 
 let package = Package(
     name: "QwaveKit",
@@ -37,11 +45,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
     ],
     targets: [
+        // MIGRATED to Swift 6 language mode.
         .target(
             name: "QwaveSupport",
             dependencies: [
                 .product(name: "Logging", package: "swift-log")
-            ]
+            ],
+            swiftSettings: v6
         ),
         // Canonical (WHATWG) host identity. Kept out of QwaveTunnelKit so the
         // tunnel extension doesn't carry a URL parser it never uses.
@@ -50,17 +60,20 @@ let package = Package(
             dependencies: [
                 .product(name: "WebURL", package: "swift-url"),
                 .product(name: "WebURLFoundationExtras", package: "swift-url"),
-            ]
+            ],
+            swiftSettings: v5
         ),
-        .target(name: "Persistence", dependencies: ["QwaveSupport"]),
+        // MIGRATED to Swift 6 language mode.
+        .target(name: "Persistence", dependencies: ["QwaveSupport"], swiftSettings: v6),
         .target(
             name: "Shields",
             dependencies: ["QwaveSupport", "Persistence", "URLIdentity"],
             resources: [
                 .process("Resources")
-            ]
+            ],
+            swiftSettings: v5
         ),
-        .target(name: "FeatureFlags", dependencies: ["QwaveSupport"]),
+        .target(name: "FeatureFlags", dependencies: ["QwaveSupport"], swiftSettings: v5),
         .target(
             name: "BrowserCore",
             dependencies: [
@@ -69,51 +82,59 @@ let package = Package(
             ],
             resources: [
                 .process("Resources")
-            ]
+            ],
+            swiftSettings: v5
         ),
         // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
         // and the hybrid construction used by the Stage B VPN negotiator.
-        .target(name: "PostQuantum"),
-        .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"]),
+        .target(name: "PostQuantum", swiftSettings: v5),
+        .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"], swiftSettings: v5),
         // WebExtensions Manifest V3 engine: browser.* bridge, storage, popups.
-        .target(name: "WebExtensions", dependencies: ["QwaveSupport"]),
+        .target(name: "WebExtensions", dependencies: ["QwaveSupport"], swiftSettings: v5),
         // MEM8 wave substrate: Cognitive/Nexus provenance, 79-byte WaveInt,
         // encrypted container-scoped store, AI-agnostic inference providers.
-        .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"]),
+        .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"], swiftSettings: v5),
 
         .testTarget(
             name: "QwaveSupportTests",
             dependencies: [
                 "QwaveSupport",
                 .product(name: "Logging", package: "swift-log"),
-            ]
+            ],
+            swiftSettings: v5
         ),
-        .testTarget(name: "URLIdentityTests", dependencies: ["URLIdentity"]),
-        .testTarget(name: "PersistenceTests", dependencies: ["Persistence"]),
+        .testTarget(name: "URLIdentityTests", dependencies: ["URLIdentity"], swiftSettings: v5),
+        .testTarget(name: "PersistenceTests", dependencies: ["Persistence"], swiftSettings: v5),
         .testTarget(
             name: "ShieldsTests",
             dependencies: [
                 "Shields",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
-            ]
+            ],
+            swiftSettings: v5
         ),
-        .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"]),
-        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"]),
-        .testTarget(name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")]),
-        .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"]),
+        .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: v5),
+        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"], swiftSettings: v5),
+        .testTarget(
+            name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
+            swiftSettings: v5),
+        .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: v5),
         .testTarget(
             name: "VPNKitTests",
             dependencies: ["VPNKit"],
             resources: [
                 .process("Fixtures")
-            ]
+            ],
+            swiftSettings: v5
         ),
-        .testTarget(name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"]),
+        .testTarget(
+            name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"], swiftSettings: v5),
         // Egress regression gate: enforces the committed Category-A host
         // allowlist against every module that can make Qwave's own requests.
         .testTarget(
             name: "EgressGuardTests",
-            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave"]
+            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave"],
+            swiftSettings: v5
         ),
     ]
 )
