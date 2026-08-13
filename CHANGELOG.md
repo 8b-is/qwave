@@ -2,6 +2,45 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [0.3.1] - 2026-08-13
+
+"Prove the claims" — no new user-facing features; this release measures
+what v0.3.0 asserted, pays down its surface, and is the first build shipped
+through the fully signed + notarised + Sparkle-appcast pipeline.
+
+### Added
+- **Blocklist performance budget** (`docs/ENERGY.md`): cold compile of the
+  59,657-rule list measured at 2.8–3.1 s, warm relaunch load ~135 ms,
+  27.7 MB compiled artifact, ~130 ms max main-thread stall — budgets now
+  test-enforced. A list-content update no longer holds first paint hostage:
+  `RuleListCompiler.availableList` serves the previous compiled version
+  while the fresh one compiles in the background.
+- **Hibernation claim proven**: process-tree measurement (WebContent pids +
+  `proc_pid_rusage`) shows hibernation terminates the tab's content
+  processes entirely — 137 MB → 0 MB across 3 ballast tabs, 45.7 MB/tab,
+  wake-to-interactive 138 ms; regression-floored in CI. Hibernate/wake now
+  emit `os_signpost` intervals for Instruments.
+- **In-process benchmark suite** (`Benchmarks/`, package-benchmark):
+  OmniboxParser (the WHATWG path measured, not asserted), OmniboxSuggester,
+  HistoryStore at 50k rows, UBORuleListCompiler, SessionRestorer — CI
+  checks `mallocCountTotal` against committed thresholds.
+- `THIRD-PARTY-NOTICES.md` (EasyList redistribution determination) and the
+  rule-update-path disclosure in `docs/BLOCKLIST.md`.
+
+### Changed
+- `TabManager` storage is now `OrderedDictionary` (swift-collections
+  1.6.0): ordered + unique + O(1) keyed lookup; drag-reorder via
+  `move(indices:to:)`; behavior unchanged.
+- One isolated swift-format reformat (`.git-blame-ignore-revs` skips it);
+  `swift-format lint --strict` gates CI; CI Xcode pinned to 16.4
+  (asserted); all GitHub actions pinned to full commit SHAs; Go installed
+  for the WireGuard bridge on Blacksmith runners.
+- Notarisation uses an App Store Connect API key
+  (`NOTARY_KEY_B64`/`NOTARY_KEY_ID`/`NOTARY_ISSUER_ID`).
+- Periphery dead-code sweep: two unused McEliece helpers removed
+  (KATs re-run green), remaining findings triaged in
+  `Packages/QwaveKit/.periphery.yml`, report-only CI job added.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added

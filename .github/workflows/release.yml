@@ -166,6 +166,32 @@ jobs:
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
+      # Sparkle's SPM artifact embeds XPC services and helper executables
+      # that Xcode's embed step does not give the hardened runtime — the
+      # notary service rejects them (this is the documented Sparkle
+      # notarization gotcha). Deep-sign them inside-out, then re-seal the
+      # framework and the app.
+      - name: Harden embedded Sparkle for notarization
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        run: |
+          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+          for nested in \
+            "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+            "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+            "$SPARKLE_FW/Versions/B/Autoupdate" \
+            "$SPARKLE_FW/Versions/B/Updater.app"; do
+            if [ -e "$nested" ]; then
+              codesign --force --options runtime --timestamp \
+                --sign "Developer ID Application" "$nested"
+            fi
+          done
+          codesign --force --options runtime --timestamp \
+            --sign "Developer ID Application" "$SPARKLE_FW"
+          codesign --force --options runtime --timestamp \
+            --entitlements "$PWD/Resources/CI/Distribution-NoVPN.entitlements" \
+            --sign "Developer ID Application" "$APP_PATH"
+          codesign --verify --deep --strict -v "$APP_PATH"
+
       - name: Notarize & staple app
         if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
         env:
@@ -175,11 +201,27 @@ jobs:
         run: |
           echo "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
           ditto -c -k --keepParent "$APP_PATH" "Qwave-notarize.zip"
+          set +e
           xcrun notarytool submit "Qwave-notarize.zip" \
             --key "$RUNNER_TEMP/notary-key.p8" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --wait
+            --wait --output-format json > "$RUNNER_TEMP/notary-submit.json"
+          SUBMIT_EXIT=$?
+          set -e
+          SUBMIT_ID=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/notary-submit.json')).get('id',''))" || true)
+          SUBMIT_STATUS=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/notary-submit.json')).get('status',''))" || true)
+          echo "Submission $SUBMIT_ID → $SUBMIT_STATUS"
+          if [ "$SUBMIT_STATUS" != "Accepted" ]; then
+            echo "::group::notarytool log (why the submission was rejected)"
+            xcrun notarytool log "$SUBMIT_ID" \
+              --key "$RUNNER_TEMP/notary-key.p8" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          [ "$SUBMIT_EXIT" -eq 0 ] || exit "$SUBMIT_EXIT"
           xcrun stapler staple "$APP_PATH"
           rm "Qwave-notarize.zip"
 
@@ -215,11 +257,27 @@ jobs:
         run: |
           echo "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
           codesign --force --timestamp --sign "Developer ID Application" "$DMG_PATH"
+          set +e
           xcrun notarytool submit "$DMG_PATH" \
             --key "$RUNNER_TEMP/notary-key.p8" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --wait
+            --wait --output-format json > "$RUNNER_TEMP/notary-dmg.json"
+          SUBMIT_EXIT=$?
+          set -e
+          SUBMIT_ID=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/notary-dmg.json')).get('id',''))" || true)
+          SUBMIT_STATUS=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/notary-dmg.json')).get('status',''))" || true)
+          echo "DMG submission $SUBMIT_ID → $SUBMIT_STATUS"
+          if [ "$SUBMIT_STATUS" != "Accepted" ]; then
+            echo "::group::notarytool log (why the DMG was rejected)"
+            xcrun notarytool log "$SUBMIT_ID" \
+              --key "$RUNNER_TEMP/notary-key.p8" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          [ "$SUBMIT_EXIT" -eq 0 ] || exit "$SUBMIT_EXIT"
           xcrun stapler staple "$DMG_PATH"
 
       - name: Zip app artifact (unsigned fallback)
