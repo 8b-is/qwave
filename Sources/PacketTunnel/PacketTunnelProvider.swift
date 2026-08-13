@@ -255,11 +255,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 qpacket_filter_stats_extended(handle, &stats)
             }
             let json = """
-            {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
-            "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
-            "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
-            "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
-            """
+                {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
+                "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
+                "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
+                "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
+                """
             completionHandler?(Data(json.utf8))
         default:
             completionHandler?(nil)

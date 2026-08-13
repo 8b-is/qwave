@@ -132,10 +132,22 @@ targets:
             exit 1
           fi
           cd "${PROJECT_DIR}/zig-core"
-          zig build-lib src/packet.zig \
-            -O ReleaseSafe \
-            -target aarch64-macos \
-            -femit-bin="${BUILT_PRODUCTS_DIR}/libqpacket.a"
+          # Build one static-library slice per architecture xcodebuild asked
+          # for, then lipo them into the universal libqpacket.a the linker
+          # expects. Release builds are universal (arm64 + x86_64); a single
+          # aarch64 archive fails to link the x86_64 slice.
+          slices=()
+          for arch in ${ARCHS:-arm64}; do
+            case "$arch" in
+              arm64)  ztarget="aarch64-macos" ;;
+              x86_64) ztarget="x86_64-macos" ;;
+              *) echo "error: unsupported arch '$arch' for zig packet filter" >&2; exit 1 ;;
+            esac
+            out="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.a"
+            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -femit-bin="$out"
+            slices+=("$out")
+          done
+          lipo -create "${slices[@]}" -output "${BUILT_PRODUCTS_DIR}/libqpacket.a"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/libqpacket.a
     info:
