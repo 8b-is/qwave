@@ -1,4 +1,13 @@
-# GRDB.swift
+# GRDB
+
+> **Status 2026-08-13 (v0.4.4+): evaluated and DECLINED for `HistoryStore`.**
+> A parallel GRDB 7.11.1 `HistoryStore` was built, proven migration-safe
+> against a real raw-SQLite database, and benchmarked: idiomatic GRDB costs
+> **700 mallocs vs the hand-rolled path's 391** (~1.8×) for the same 50k-row
+> query, and the shared `browser.db` file means per-store GRDB is a fragile
+> hybrid without the `ValueObservation` payoff. Kept raw SQLite. Full
+> measurement and the "revisit only as a whole-layer decision" reasoning:
+> [docs/GRDB-EVALUATION.md](../../docs/GRDB-EVALUATION.md)..swift
 
 | Fact | Value |
 |---|---|
