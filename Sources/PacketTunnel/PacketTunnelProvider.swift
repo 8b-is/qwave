@@ -28,6 +28,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private let negotiator: EphemeralPeerNegotiating = MullvadQuantumPeerNegotiator()
     private let secrets = KeychainSecretStore()
 
+    // Rekey state, confined to the main queue (timer + wake both hop there).
+    private var sessionConfig: TunnelSessionConfig?
+    private var baseConfiguration: TunnelConfiguration?
+    private var lastRekey: Date?
+    private var rekeyTimer: DispatchSourceTimer?
+
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
               let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
@@ -49,10 +55,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     sessionConfig: sessionConfig,
                     privateKey: privateKey
                 )
+                let base = tunnelConfiguration
 
-                // Stage B seam: quantum-resistant preshared key negotiation.
-                if sessionConfig.quantumResistant,
-                   let material = try? await self.negotiator.negotiatePresharedKey(config: sessionConfig),
+                // Stage B: quantum-resistant PSK, fail-closed. A negotiation
+                // failure aborts tunnel start (QuantumSessionError reaches
+                // the app as the start error) — never a silent classic
+                // fallback while the user believes they are protected.
+                var negotiatedAt: Date?
+                if let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
                    let peer = tunnelConfiguration.peers.first {
                     var pskPeer = peer
                     pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
@@ -61,29 +71,110 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                         interface: tunnelConfiguration.interface,
                         peers: [pskPeer]
                     )
+                    negotiatedAt = Date()
                 }
 
                 let configuration = tunnelConfiguration
+                let pskInstalledAt = negotiatedAt
                 self.adapter.start(tunnelConfiguration: configuration) { error in
                     if let error {
                         QwaveLog.tunnel.error("Adapter start failed: \(error.localizedDescription, privacy: .public)")
                     } else {
                         QwaveLog.tunnel.info("Tunnel up via \(sessionConfig.relayHostname, privacy: .public)")
+                        DispatchQueue.main.async {
+                            self.sessionConfig = sessionConfig
+                            self.baseConfiguration = base
+                            self.lastRekey = pskInstalledAt
+                            if pskInstalledAt != nil {
+                                self.scheduleRekeyTimer()
+                            }
+                        }
                     }
                     completionHandler(error)
                 }
             } catch {
+                QwaveLog.tunnel.error("Tunnel start blocked: \(error.localizedDescription, privacy: .public)")
                 completionHandler(error)
             }
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            self.rekeyTimer?.cancel()
+            self.rekeyTimer = nil
+            self.sessionConfig = nil
+            self.baseConfiguration = nil
+            self.lastRekey = nil
+        }
         adapter.stop { error in
             if let error {
                 QwaveLog.tunnel.error("Adapter stop failed: \(error.localizedDescription, privacy: .public)")
             }
             completionHandler()
+        }
+    }
+
+    // MARK: - Daily ephemeral-peer rekey
+
+    override func sleep(completionHandler: @escaping () -> Void) {
+        completionHandler()
+    }
+
+    override func wake() {
+        DispatchQueue.main.async {
+            guard RekeyPolicy.shouldRekey(lastRekey: self.lastRekey) else { return }
+            self.rekeyNow()
+        }
+    }
+
+    private func scheduleRekeyTimer() {
+        rekeyTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        // Generous leeway: exact rotation time doesn't matter, extra wakeups do.
+        timer.schedule(
+            deadline: .now() + RekeyPolicy.interval,
+            repeating: RekeyPolicy.interval,
+            leeway: .seconds(15 * 60)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.rekeyNow()
+        }
+        timer.resume()
+        rekeyTimer = timer
+    }
+
+    /// Negotiates a fresh ephemeral PSK and installs it via
+    /// `WireGuardAdapter.update`. A failed rekey keeps the current PSK (the
+    /// tunnel stays quantum-resistant on the previous key) and retries at the
+    /// next timer tick or wake — unlike start, there is no downgrade to block.
+    private func rekeyNow() {
+        guard let sessionConfig, let baseConfiguration, sessionConfig.quantumResistant else { return }
+        Task {
+            do {
+                guard let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
+                      let peer = baseConfiguration.peers.first
+                else { return }
+                var pskPeer = peer
+                pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
+                let updated = TunnelConfiguration(
+                    name: baseConfiguration.name,
+                    interface: baseConfiguration.interface,
+                    peers: [pskPeer]
+                )
+                self.adapter.update(tunnelConfiguration: updated) { error in
+                    if let error {
+                        QwaveLog.tunnel.error("Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+                    } else {
+                        QwaveLog.tunnel.info("Ephemeral peer PSK rotated")
+                        DispatchQueue.main.async {
+                            self.lastRekey = Date()
+                        }
+                    }
+                }
+            } catch {
+                QwaveLog.tunnel.error("Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

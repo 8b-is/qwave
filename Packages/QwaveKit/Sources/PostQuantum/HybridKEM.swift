@@ -12,6 +12,19 @@ public enum HybridKEM {
     public static let ctSize = MLKEM768.ctSize + ClassicMcEliece348864.ctSize
     public static let ssSize = 32
 
+    /// Wrong-size inputs at this boundary throw instead of trapping: the
+    /// callers run inside the packet tunnel provider, where a precondition
+    /// failure kills the tunnel process.
+    public enum HybridKEMError: Error, Equatable {
+        case invalidInputSize(parameter: String, expected: Int, actual: Int)
+    }
+
+    private static func requireSize(_ data: Data, _ expected: Int, _ parameter: String) throws {
+        guard data.count == expected else {
+            throw HybridKEMError.invalidInputSize(parameter: parameter, expected: expected, actual: data.count)
+        }
+    }
+
     private static let pskLabel = Data("qwave/pq-psk/v1".utf8)
     private static let mlkemKgLabel = Data("qwave/mlkem-kg".utf8)
     private static let mlkemEncLabel = Data("qwave/mlkem-enc".utf8)
@@ -20,7 +33,7 @@ public enum HybridKEM {
 
     /// seed: 32 bytes. Returns (ek, dk).
     public static func keygen(seed: Data) throws -> (ek: Data, dk: Data) {
-        precondition(seed.count == 32)
+        try requireSize(seed, 32, "seed")
         let (mlkemEk, mlkemDk) = MLKEM768.keygen(seed: Keccak.shake256(mlkemKgLabel + seed, count: 32))
         let (mceEk, mceDk) = try ClassicMcEliece348864.keygen(seed: Keccak.shake256(mceKgLabel + seed, count: 32))
         return (mlkemEk + mceEk, mlkemDk + mceDk)
@@ -28,7 +41,8 @@ public enum HybridKEM {
 
     /// seed: 32 bytes. Returns (ct, ss).
     public static func encapsulate(ek: Data, seed: Data) throws -> (ct: Data, ss: Data) {
-        precondition(ek.count == ekSize && seed.count == 32)
+        try requireSize(ek, ekSize, "ek")
+        try requireSize(seed, 32, "seed")
         let mlkemEk = ek.prefix(MLKEM768.ekSize)
         let mceEk = ek.subdata(in: MLKEM768.ekSize..<ek.count)
 
@@ -45,7 +59,8 @@ public enum HybridKEM {
 
     /// Returns the 32-byte shared secret, or throws when either leg fails.
     public static func decapsulate(dk: Data, ct: Data) throws -> Data {
-        precondition(dk.count == dkSize && ct.count == ctSize)
+        try requireSize(dk, dkSize, "dk")
+        try requireSize(ct, ctSize, "ct")
         let mlkemDk = dk.prefix(MLKEM768.dkSize)
         let mceDk = dk.subdata(in: MLKEM768.dkSize..<dk.count)
         let ctMlkem = ct.prefix(MLKEM768.ctSize)

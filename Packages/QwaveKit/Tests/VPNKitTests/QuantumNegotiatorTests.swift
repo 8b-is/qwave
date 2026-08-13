@@ -71,7 +71,7 @@ final class QuantumNegotiatorTests: XCTestCase {
         XCTAssertEqual(transport.requestCount, 0)
     }
 
-    func testTransportFailurePropagatesForClassicFallback() async {
+    func testTransportFailurePropagates() async {
         let transport = MockQuantumTransport(relaySeed: Data(repeating: 0x42, count: 32))
         transport.shouldFail = true
         let negotiator = MullvadQuantumPeerNegotiator(transport: transport, seed: Data(repeating: 0x21, count: 32))
@@ -79,7 +79,8 @@ final class QuantumNegotiatorTests: XCTestCase {
             _ = try await negotiator.negotiatePresharedKey(config: sampleConfig())
             XCTFail("expected failure")
         } catch {
-            // The tunnel provider catches this and proceeds classic.
+            // Fail-closed since v0.3.0: the provider blocks tunnel start on
+            // this error (see FailClosedNegotiationTests) — never classic.
         }
     }
 

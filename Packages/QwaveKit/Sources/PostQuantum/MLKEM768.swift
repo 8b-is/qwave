@@ -423,9 +423,21 @@ public enum MLKEM768 {
         let k2 = k2R.prefix(32)
         let r2 = Data(k2R.dropFirst(32))
         let ct2 = kpkeEncrypt(ek, m2, r2)
-        if ct2 == ct {
-            return Keccak.shake256(k2 + ct, count: 32)
+
+        // FIPS 203 implicit rejection, constant time: the re-encryption
+        // comparison must not early-exit and the k2-vs-z selection must not
+        // branch — both operate on secret-derived data.
+        var acc: UInt8 = 0
+        for (a, b) in zip(ct2, ct) {
+            acc |= a ^ b
         }
-        return Keccak.shake256(z + ct, count: 32)
+        let accWide = UInt16(acc)
+        let isTampered = UInt8((accWide | (0 &- accWide)) >> 8) & 1
+        let mask = 0 &- isTampered  // 0x00 accept (k2), 0xFF reject (z)
+        var selected = Data(count: 32)
+        for (i, pair) in zip(k2, z).enumerated() {
+            selected[i] = pair.0 ^ (mask & (pair.0 ^ pair.1))
+        }
+        return Keccak.shake256(selected + ct, count: 32)
     }
 }
