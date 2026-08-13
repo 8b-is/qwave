@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  CI signing entitlements: empty on purpose.
+  CI signing entitlements: empty on purpose unless both Developer ID Network
+  Extension provisioning profiles are configured in the release workflow.
 
   The real entitlements (generated from project.yml) declare the Network
   Extension packet-tunnel capability, which cannot be signed with a bare
