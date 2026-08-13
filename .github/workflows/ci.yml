@@ -267,3 +267,34 @@ jobs:
         run: |
           cd zig-core
           zig-out/bin/qwave-blocklist ../Packages/QwaveKit/Sources/Shields/Resources/easylist-compiled.json
+
+  # ---------------------------------------------------------------------------
+  # Experimental toolchain lane (NON-BLOCKING). Runs the authority test suite
+  # on the NEWEST Xcode present on the image (Swift 6.3/6.4-era) to gather
+  # evidence for a future toolchain-pin flip. `continue-on-error: true` means
+  # it can never fail the run; keep it OUT of branch-protection required checks.
+  # Rule: >=5 consecutive greens here justify a pin-flip proposal PR (the
+  # authority flip alone). If it flakes, the flake analysis IS the evidence.
+  # ---------------------------------------------------------------------------
+  unit-tests-next:
+    name: unit tests (next toolchain · non-blocking)
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select newest Xcode
+        run: |
+          # Deliberately the opposite of the authority lane: glob the highest
+          # Xcode on the image instead of asserting a pin. Print the resolved
+          # toolchain so each run records which Swift version produced the
+          # green/red — that record is the pin-flip evidence.
+          newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -z "$newest" ] && newest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n1)"
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest/Contents/Developer"; fi
+          xcodebuild -version
+          swift --version
+
+      - name: Run unit tests (non-blocking)
+        run: swift test -c release --package-path Packages/QwaveKit
