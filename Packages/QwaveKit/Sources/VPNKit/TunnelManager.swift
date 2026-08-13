@@ -1,10 +1,12 @@
 // NetworkExtension and Foundation vend non-Sendable reference types this
-// @MainActor manager must pass across await boundaries — NETunnelProviderManager
-// from `loadAllFromPreferences()` and Notification from the NEVPNStatusDidChange
-// async sequence. Neither SDK is Sendable-annotated yet, so @preconcurrency
-// downgrades those specific cross-actor diagnostics to warnings instead of
-// hiding them behind @unchecked Sendable on our own types. Required by Swift
-// 6.1 (CI authority); Swift 6.3 (local) is more permissive and would not flag.
+// @MainActor manager must pass across await boundaries — notably
+// NETunnelProviderManager from `loadAllFromPreferences()`. Neither SDK is
+// Sendable-annotated yet, so @preconcurrency downgrades those specific
+// cross-actor diagnostics to warnings instead of hiding them behind
+// @unchecked Sendable on our own types. Required by Swift 6.1 (CI authority);
+// Swift 6.3 (local) is more permissive and would not flag. The
+// NEVPNStatusDidChange async sequence needs a separate fix (see adopt(manager:)):
+// @preconcurrency cannot reach diagnostics raised by the concurrency library.
 @preconcurrency import Foundation
 @preconcurrency import NetworkExtension
 import Combine
@@ -75,11 +77,20 @@ public final class TunnelManager: ObservableObject {
         statusObserverTask?.cancel()
         let connection = manager.connection
         statusObserverTask = Task { @MainActor [weak self] in
-            for await notification in NotificationCenter.default.notifications(
+            // `Notification` is non-Sendable, and on Swift 6.1 returning it from
+            // `AsyncIteratorProtocol.next()` into this @MainActor task is an error
+            // that @preconcurrency on the Foundation import cannot downgrade — the
+            // diagnostic comes from the concurrency library's generic machinery, not
+            // from Foundation. We only need the "status changed" edge: the sequence
+            // is already filtered to `object: connection`, and syncState() re-reads
+            // the live status. Mapping each notification to Void keeps every
+            // non-Sendable value on the nonisolated side of the boundary.
+            let statusChanges = NotificationCenter.default.notifications(
                 named: .NEVPNStatusDidChange,
                 object: connection
-            ) {
-                guard !Task.isCancelled, (notification.object as AnyObject?) === connection else { return }
+            ).map { _ in () }
+            for await _ in statusChanges {
+                guard !Task.isCancelled else { return }
                 self?.syncState()
             }
         }
