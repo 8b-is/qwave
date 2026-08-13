@@ -16,7 +16,11 @@ private func qpacket_filter_init() -> UnsafeMutableRawPointer?
 private func qpacket_filter(_ state: UnsafeMutableRawPointer?, _ packet: UnsafePointer<UInt8>?, _ len: Int) -> Int32
 
 @_silgen_name("qpacket_filter_stats")
-private func qpacket_filter_stats(_ state: UnsafeMutableRawPointer?, _ seen: UnsafeMutablePointer<UInt64>, _ dropped: UnsafeMutablePointer<UInt64>)
+private func qpacket_filter_stats(
+    _ state: UnsafeMutableRawPointer?,
+    _ seen: UnsafeMutablePointer<UInt64>,
+    _ dropped: UnsafeMutablePointer<UInt64>
+)
 
 @_silgen_name("qpacket_filter_deinit")
 private func qpacket_filter_deinit(_ state: UnsafeMutableRawPointer?)

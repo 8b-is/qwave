@@ -83,7 +83,7 @@ let package = Package(
             resources: [
                 .process("Resources")
             ],
-            swiftSettings: v5
+            swiftSettings: v6
         ),
         // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
         // and the hybrid construction used by the Stage B VPN negotiator.

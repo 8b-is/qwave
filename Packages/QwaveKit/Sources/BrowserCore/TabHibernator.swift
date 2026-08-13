@@ -22,13 +22,12 @@ public final class TabHibernator {
         let interval = QwaveSignposts.energy.beginInterval("hibernate", id: signpostID)
         defer { QwaveSignposts.energy.endInterval("hibernate", interval) }
 
-        let snapshot: NSImage? = await withCheckedContinuation { continuation in
-            let configuration = WKSnapshotConfiguration()
-            configuration.afterScreenUpdates = false
-            webView.takeSnapshot(with: configuration) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
+        let configuration = WKSnapshotConfiguration()
+        configuration.afterScreenUpdates = false
+        // The async form keeps the image on the main actor: bridging the
+        // completion handler through a continuation would send a main
+        // actor-isolated `NSImage` across isolation, which mode 6 rejects.
+        let snapshot: NSImage? = try? await webView.takeSnapshot(configuration: configuration)
 
         let record = HibernationRecord(
             url: webView.url ?? tab.url,

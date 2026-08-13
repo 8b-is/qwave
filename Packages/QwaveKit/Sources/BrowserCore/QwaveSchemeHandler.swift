@@ -5,6 +5,12 @@ import WebKit
 /// Never hits the network.
 /// App-injected start-page body. A new handler instance is required per
 /// `WKWebViewConfiguration` (WebKit rule).
+///
+/// Main-actor isolated: these hooks are installed by the app at launch (main
+/// thread) and read only when WebKit serves a `qwave://` page, which WebKit
+/// always delivers on the main thread. Isolation makes that contract explicit
+/// instead of leaving them as nonisolated mutable global state.
+@MainActor
 public enum QwaveInternal {
     public static var startPageHTML: () -> String = {
         InternalPages.startHTML(memories: [], providerLabel: "Remember only")
