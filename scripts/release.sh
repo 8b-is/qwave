@@ -75,6 +75,25 @@ APP_PATH="build/DerivedDataRelease/Build/Products/Release/Qwave.app"
 NOTARIZED=false
 if $SIGNED && [ -n "${QWAVE_NOTARY_PROFILE:-}" ]; then
   NOTARIZED=true
+  # Sparkle's SPM-embedded XPC services/helpers lack the hardened runtime
+  # as embedded — the notary service rejects them. Deep-sign inside-out,
+  # then re-seal the framework and the app (mirrors release.yml).
+  SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+  for nested in \
+    "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+    "$SPARKLE_FW/Versions/B/Autoupdate" \
+    "$SPARKLE_FW/Versions/B/Updater.app"; do
+    if [ -e "$nested" ]; then
+      codesign --force --options runtime --timestamp \
+        --sign "$QWAVE_SIGN_IDENTITY" "$nested"
+    fi
+  done
+  codesign --force --options runtime --timestamp --sign "$QWAVE_SIGN_IDENTITY" "$SPARKLE_FW"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$repo_root/Resources/CI/Distribution-NoVPN.entitlements" \
+    --sign "$QWAVE_SIGN_IDENTITY" "$APP_PATH"
+  codesign --verify --deep --strict -v "$APP_PATH"
   ditto -c -k --keepParent "$APP_PATH" "$out_dir/Qwave-notarize.zip"
   xcrun notarytool submit "$out_dir/Qwave-notarize.zip" \
     --keychain-profile "$QWAVE_NOTARY_PROFILE" --wait
