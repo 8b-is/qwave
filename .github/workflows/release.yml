@@ -19,12 +19,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Select Xcode
+      - name: Pin Xcode
         run: |
-          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
 
       - name: Install tools
         # go: the WireGuardKitGo bridge builds libwg-go.a at compile time

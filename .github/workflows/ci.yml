@@ -12,6 +12,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  format:
+    name: swift-format lint (--strict)
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Pin Xcode
+        run: |
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
+
+      # Packages/WireGuardKit is a pinned upstream and must stay
+      # byte-identical to the reviewed revision — never linted or formatted.
+      - name: Lint formatting
+        run: |
+          xcrun swift-format lint --strict --recursive \
+            Sources \
+            Packages/QwaveKit/Sources \
+            Packages/QwaveKit/Tests \
+            Packages/QwaveKit/Package.swift \
+            Benchmarks/Benchmarks \
+            Benchmarks/Package.swift
+
   unit-tests:
     name: QwaveKit unit tests (swift test)
     runs-on: blacksmith-6vcpu-macos-15
@@ -19,13 +52,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Select Xcode
+      - name: Pin Xcode
         run: |
-          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          swift --version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
 
       - name: Run unit tests
         run: swift test --package-path Packages/QwaveKit
@@ -38,12 +77,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Select Xcode
+      - name: Pin Xcode
         run: |
-          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
 
       - name: Install tools
         # go: the WireGuardKitGo bridge builds libwg-go.a at compile time
@@ -101,12 +147,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Select Xcode
+      - name: Pin Xcode
         run: |
-          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n1)/Contents/Developer"
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
 
       # Only mallocCountTotal is checked (deterministic per code path);
       # see Benchmarks/README.md.
