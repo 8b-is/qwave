@@ -51,6 +51,62 @@ public final class RuleListCompiler {
         return compiled
     }
 
+    /// Launch-path variant: returns fast, shields active from the first
+    /// paint. Cache hit → that list. Cache miss with a previous version of
+    /// the same list in the store (the identifier embeds a content hash, so
+    /// an updated bundle changes it) → the STALE list is returned
+    /// immediately and the fresh one compiles in the background;
+    /// `onRefresh` delivers it and the superseded artifact is removed.
+    /// True first launch (nothing to serve) → waits for the full compile,
+    /// which is the correct trade for a shields-first browser.
+    public func availableList(
+        for list: BuiltinList,
+        onRefresh: @escaping @MainActor (WKContentRuleList) -> Void
+    ) async throws -> WKContentRuleList {
+        if let cached = cache[list] {
+            return cached
+        }
+        let json = try Self.builtinJSON(for: list)
+        let identifier = "\(list.rawValue)-\(Self.stableHash(of: json))"
+
+        if let existing = try? await lookUp(identifier: identifier) {
+            cache[list] = existing
+            return existing
+        }
+
+        let staleIdentifier = await availableIdentifiers()
+            .first { $0.hasPrefix("\(list.rawValue)-") && $0 != identifier }
+        if let staleIdentifier, let stale = try? await lookUp(identifier: staleIdentifier) {
+            QwaveLog.shields.info("Serving stale rule list \(staleIdentifier, privacy: .public) while \(identifier, privacy: .public) compiles")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let fresh = try await self.compile(identifier: identifier, json: json)
+                    self.cache[list] = fresh
+                    self.store.removeContentRuleList(forIdentifier: staleIdentifier) { _ in }
+                    QwaveLog.shields.info("Refreshed rule list \(identifier, privacy: .public)")
+                    onRefresh(fresh)
+                } catch {
+                    QwaveLog.shields.error("Background rule refresh failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            return stale
+        }
+
+        let compiled = try await compile(identifier: identifier, json: json)
+        cache[list] = compiled
+        QwaveLog.shields.info("Compiled rule list \(identifier, privacy: .public)")
+        return compiled
+    }
+
+    private func availableIdentifiers() async -> [String] {
+        await withCheckedContinuation { continuation in
+            store.getAvailableContentRuleListIdentifiers { identifiers in
+                continuation.resume(returning: identifiers ?? [])
+            }
+        }
+    }
+
     private func lookUp(identifier: String) async throws -> WKContentRuleList? {
         try await withCheckedThrowingContinuation { continuation in
             store.lookUpContentRuleList(forIdentifier: identifier) { list, error in

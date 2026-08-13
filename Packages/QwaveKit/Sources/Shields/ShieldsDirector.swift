@@ -20,11 +20,18 @@ public final class ShieldsDirector {
         self.policy = policy
     }
 
-    /// Compile both built-in lists up front (idempotent).
+    /// Makes both built-in lists available fast (idempotent). On a list
+    /// update this returns the previous compiled version immediately and
+    /// swaps in the fresh one when its background compile finishes — new
+    /// navigations reconcile via `applyLists`, so the swap needs no push.
     public func prepare() async {
         do {
-            adsList = try await compiler.compiledList(for: .adsAndTrackers)
-            httpsUpgradeList = try await compiler.compiledList(for: .httpsUpgrade)
+            adsList = try await compiler.availableList(for: .adsAndTrackers) { [weak self] fresh in
+                self?.adsList = fresh
+            }
+            httpsUpgradeList = try await compiler.availableList(for: .httpsUpgrade) { [weak self] fresh in
+                self?.httpsUpgradeList = fresh
+            }
         } catch {
             QwaveLog.shields.error("Rule list compilation failed: \(error.localizedDescription, privacy: .public)")
         }

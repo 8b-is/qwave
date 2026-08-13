@@ -1,5 +1,34 @@
 # Energy & memory measurement plan
 
+## Blocklist performance budget (measured 2026-08-13)
+
+Method: `ShieldsTests/BlocklistPerformanceTests` — a fresh
+`WKContentRuleListStore` directory per run; "cold" compiles the shipped
+59,657-rule `easylist-compiled.json` from nothing, "warm" builds a new
+store object on the same directory (a relaunch) so the content-hash
+identifier must hit the on-disk cache; artifact size is the store
+directory's byte total; main-thread stall is the largest gap observed in a
+50 ms main-queue heartbeat during the compile. Machine: Apple Silicon
+laptop, debug build (CI budgets are ~2× these numbers).
+
+| Metric | Measured | Budget (test-enforced) |
+|---|---|---|
+| Cold compile (59,657 rules) | **2.8–3.1 s** | < 15 s |
+| Warm load (relaunch, cache hit) | **~135 ms** | < 2 s, and < ½ cold |
+| Compiled artifact on disk | **27.7 MB** (from 7.5 MB JSON) | < 200 MB |
+| Max main-thread stall during compile | **~130 ms** | < 500 ms |
+
+Launch impact: WebKit compiles off the app's main thread, and the compiled
+list persists across launches, so a normal launch pays ~135 ms. A **list
+content update** used to pay the full cold compile before first paint
+(AppDelegate awaits `shields.prepare()`); since v0.3.x
+`RuleListCompiler.availableList` serves the previous compiled version
+immediately and swaps in the fresh compile in the background
+(`testStaleListServedWhileFreshCompiles` pins this). Only a true first
+launch — nothing compiled yet — waits the full ~3 s, which is the correct
+trade for a shields-first browser: no unshielded first paint.
+
+
 `EnergyGovernorTests` verifies hibernation *decisions*; nothing yet measures
 the *memory actually reclaimed*. This documents how to measure it — and why
 the obvious tooling can't.
