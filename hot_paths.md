@@ -88,6 +88,47 @@
 
 ---
 
+## Profiling Method
+
+- **Allocations:** `package-benchmark` with `mallocCountTotal` (deterministic, CI-assertable)
+- **ARC traffic:** `package-benchmark` with `.retainCount`, `.releaseCount`, `.retainReleaseDelta` (CI-assertable, captures what mallocCountTotal misses)
+- **CPU:** `sample` (built-in macOS) for lightweight CPU profiling
+- **Memory:** `vmmap` for process-level memory breakdown
+- **Blocklist:** `WKContentRuleListStore` budget tests in `BlocklistPerformanceTests`
+- **Hibernation:** `proc_pid_rusage` over WebContent pid-set difference
+
+## Measurement Protocol
+
+### Machine state requirements
+Before running any benchmark, verify:
+- **Thermal state:** `ProcessInfo.processInfo.thermalState == .nominal` (fail if not)
+- **No background builds:** `pgrep -fl xcodebuild` returns empty (fail if running)
+- **Load average:** `< 2.0` on 8-core machine (warn if exceeded)
+- **No other browsers/apps with significant WebKit usage** (warn)
+
+A benchmark run on an unquiesced machine is rejected, not recorded. The 19.66 s blocklist compile from session 1 should have been rejected — it was a background `xcodebuild` artifact, not a real measurement.
+
+### Variance reporting
+- Run N ≥ 5 iterations per benchmark
+- Report median, p90, and spread (p90-p50)
+- Fail if relative variance (p90-p50)/median exceeds 25% — high variance means the number is meaningless
+- A single sample is not a measurement
+
+### CI gates
+| Metric | Deterministic | CI-checked | Notes |
+|---|---|---|---|
+| `mallocCountTotal` | ✅ Yes | ✅ Yes | Primary allocation gate |
+| `retainCount` | ✅ Yes | ✅ Yes | ARC traffic gate |
+| `releaseCount` | ✅ Yes | ✅ Yes | ARC traffic gate |
+| `retainReleaseDelta` | ✅ Yes | ✅ Yes | ARC cycle detection |
+| Wall-clock | ❌ No | ❌ No | Recorded for trends, not gated |
+| CPU time | ❌ No | ❌ No | Recorded for trends, not gated |
+
+### Wake-to-interactive canonical definition
+Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint with page content). Includes: WebContent process spawn, WKWebView construction, interactionState restoration, and page load. The process spawn boundary is explicitly inside the measurement.
+
+---
+
 ## What We Chose NOT to Optimize
 
 | Area | Reason |

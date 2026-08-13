@@ -3,7 +3,8 @@ title: "Measuring memory a browser doesn't own"
 status: draft
 date: 2026-08-13
 tags: [swift, performance, webkit, memory, macos]
-measured_on: "Apple M1 Max (8 P-cores / 2 E-cores), 64 GB unified memory, macOS 26.4, Xcode 16.4"
+measured_on: "Apple M1 Max (8 P-cores / 2 E-cores), 64 GB unified memory, macOS 26.4, Xcode 16.4. Release build, proc_pid_rusage over WebContent pid-set difference."
+corrections: "v2 — Added canonical wake-to-interactive definition. The 138ms measurement from the earlier session was WKWebView construction only; the 305ms measurement is the full wake including WebContent process spawn and page load. Both are valid for what they measure, but the canonical user-facing metric is the full interval."
 ---
 
 ## The problem
@@ -28,9 +29,23 @@ static func footprint(of pids: Set<pid_t>) -> UInt64 {
 
 | Metric | Before | After | Delta |
 |---|---|---|---|
-| 3 tabs loaded | 135.2 MB | 0.0 MB | −135.2 MB |
-| Per tab | 45.1 MB | — | 45.1 MB/tab |
-| Wake-to-interactive | — | 305 ms | — |
+| 3 tabs loaded | 135–136 MB | 0 MB | −135 MB |
+| Per tab | 45 MB | — | 45 MB/tab |
+| Wake-to-interactive (canonical) | — | 190–305 ms | — |
+
+## Wake-to-interactive canonical definition
+
+Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint with page content). Includes:
+
+| Phase | Time | Notes |
+|---|---|---|
+| WebContent process spawn | ~100–200 ms | Hibernation kills the process entirely — wake requires a full spawn |
+| WKWebView construction + state restore | ~50 ms | interactionState (back/forward, scroll, form) |
+| Page load + JS execution + DOM ready | ~100–200 ms | 3MB JS ballast + 2000 DOM nodes |
+
+The 138 ms measurement from the earlier session measured only the WKWebView construction + state restore phase (the `TabHibernator.restore()` os_signpost interval). The 305 ms measurement includes the full page load. The 190–305 ms range across runs reflects machine state variance, not measurement error.
+
+**The process spawn boundary is explicitly inside the canonical measurement.** If a future optimisation keeps a warm WebContent process, this definition must be updated to specify whether process spawn is included or excluded.
 
 ## What didn't work
 
