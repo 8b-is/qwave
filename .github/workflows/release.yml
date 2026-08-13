@@ -60,8 +60,11 @@ jobs:
             exit 1
           fi
 
+      # Release, not debug — same rationale as ci.yml: the Classic McEliece
+      # keygen KATs are ~10× faster optimized, so this gate no longer adds
+      # ~40 min in front of signing.
       - name: Run unit tests
-        run: swift test --package-path Packages/QwaveKit
+        run: swift test -c release --package-path Packages/QwaveKit
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
