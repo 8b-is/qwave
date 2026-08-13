@@ -20,8 +20,8 @@ struct HybridKEMNegativeSuite {
 
     static let allVectors: [Vector] = {
         guard let url = Bundle.module.url(forResource: "hybrid_vectors", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let vectors = try? JSONDecoder().decode([Vector].self, from: data)
+            let data = try? Data(contentsOf: url),
+            let vectors = try? JSONDecoder().decode([Vector].self, from: data)
         else { return [] }
         return vectors
     }()

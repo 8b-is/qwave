@@ -36,7 +36,8 @@ public final class DownloadManager: NSObject, ObservableObject {
     private let directory: URL
 
     public init(directory: URL? = nil) {
-        self.directory = directory
+        self.directory =
+            directory
             ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         super.init()
@@ -53,7 +54,7 @@ public final class DownloadManager: NSObject, ObservableObject {
 
     public func cancel(itemID: UUID) {
         guard let key = itemIDs.first(where: { $0.value == itemID })?.key,
-              let download = activeDownloads[key]
+            let download = activeDownloads[key]
         else { return }
         download.cancel { _ in }
         update(itemID: itemID) { $0.state = .cancelled }

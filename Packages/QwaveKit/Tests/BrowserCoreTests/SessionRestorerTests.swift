@@ -35,7 +35,10 @@ final class SessionRestorerTests: XCTestCase {
     func testEphemeralTabsExcluded() {
         let manager = TabManager()
         manager.append(Tab(pendingURL: URL(string: "https://example.com/")))
-        manager.append(Tab(containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true, pendingURL: URL(string: "https://secret.example/")))
+        manager.append(
+            Tab(
+                containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true,
+                pendingURL: URL(string: "https://secret.example/")))
 
         let snapshot = SessionRestorer.snapshot(of: [manager])
         XCTAssertEqual(snapshot.windows[0].tabs.count, 1)

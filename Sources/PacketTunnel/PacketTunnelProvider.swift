@@ -36,14 +36,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
-              let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
+            let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
         else {
             completionHandler(PacketTunnelError.missingConfiguration)
             return
         }
 
         guard let keyData = try? secrets.secret(for: DeviceKeyManager.privateKeyStorageKey),
-              let privateKey = PrivateKey(rawValue: keyData)
+            let privateKey = PrivateKey(rawValue: keyData)
         else {
             completionHandler(PacketTunnelError.missingPrivateKey)
             return
@@ -63,7 +63,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // fallback while the user believes they are protected.
                 var negotiatedAt: Date?
                 if let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
-                   let peer = tunnelConfiguration.peers.first {
+                    let peer = tunnelConfiguration.peers.first
+                {
                     var pskPeer = peer
                     pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
                     tunnelConfiguration = TunnelConfiguration(
@@ -153,7 +154,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         Task {
             do {
                 guard let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
-                      let peer = baseConfiguration.peers.first
+                    let peer = baseConfiguration.peers.first
                 else { return }
                 var pskPeer = peer
                 pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
@@ -164,7 +165,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 )
                 self.adapter.update(tunnelConfiguration: updated) { error in
                     if let error {
-                        QwaveLog.tunnel.error("Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+                        QwaveLog.tunnel.error(
+                            "Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
                     } else {
                         QwaveLog.tunnel.info("Ephemeral peer PSK rotated")
                         DispatchQueue.main.async {
@@ -173,7 +175,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                 }
             } catch {
-                QwaveLog.tunnel.error("Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+                QwaveLog.tunnel.error(
+                    "Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

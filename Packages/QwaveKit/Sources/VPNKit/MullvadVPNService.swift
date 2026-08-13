@@ -117,7 +117,7 @@ public final class MullvadVPNService: ObservableObject {
                 throw MullvadAPIError.invalidResponse
             }
             guard let ipv4 = account.deviceIPv4Address, let ipv6 = account.deviceIPv6Address,
-                  let deviceID = account.deviceID, let deviceName = account.deviceName
+                let deviceID = account.deviceID, let deviceName = account.deviceName
             else {
                 lastError = "Not logged in — add your Mullvad account first."
                 return

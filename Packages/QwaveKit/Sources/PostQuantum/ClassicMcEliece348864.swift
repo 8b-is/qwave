@@ -24,7 +24,7 @@ public enum ClassicMcEliece348864 {
     public static let n = 3488
     public static let t = 64
     public static let k = 2720
-    static let nk = m * t // 768
+    static let nk = m * t  // 768
     static let fieldPoly = 0x1053
     static let gfMask = 0xFFF
 

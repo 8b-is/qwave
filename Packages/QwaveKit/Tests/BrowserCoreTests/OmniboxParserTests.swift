@@ -57,9 +57,9 @@ final class OmniboxParserTests: XCTestCase {
     }
 
     func testDotButNotDomain() {
-        assertSearch("v1.2")          // numeric TLD-alike
-        assertSearch("filename.")     // empty label
-        assertSearch(".hidden")       // empty label
+        assertSearch("v1.2")  // numeric TLD-alike
+        assertSearch("filename.")  // empty label
+        assertSearch(".hidden")  // empty label
     }
 
     func testWhitespaceTrimming() {

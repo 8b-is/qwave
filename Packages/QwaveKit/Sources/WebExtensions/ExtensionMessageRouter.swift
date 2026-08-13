@@ -43,11 +43,13 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
 
     // MARK: - WKScriptMessageHandler
 
-    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+    public func userContentController(
+        _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
+    ) {
         guard message.name == BrowserBridgeScript.messageHandlerName,
-              let body = message.body as? [String: Any],
-              let id = body["id"] as? Int,
-              let method = body["method"] as? String
+            let body = message.body as? [String: Any],
+            let id = body["id"] as? Int,
+            let method = body["method"] as? String
         else { return }
         let args = (body["args"] as? [Any]) ?? []
         let call = ExtensionBridgeCall(id: id, method: method, args: args)
@@ -121,7 +123,8 @@ public struct WebViewBridgeResponder: ExtensionMessageResponding {
         guard let webView else { return }
         let payload: String
         if let value, let data = try? JSONSerialization.data(withJSONObject: value),
-           let encoded = String(data: data, encoding: .utf8) {
+            let encoded = String(data: data, encoding: .utf8)
+        {
             payload = encoded
         } else {
             payload = "null"

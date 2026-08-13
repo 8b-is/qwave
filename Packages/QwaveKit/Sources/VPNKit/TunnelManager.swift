@@ -109,10 +109,11 @@ public final class TunnelManager: ObservableObject {
             manager = existing
         } else {
             let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
-            manager = managers.first { m in
-                (m.protocolConfiguration as? NETunnelProviderProtocol)?
-                    .providerBundleIdentifier == providerBundleIdentifier
-            } ?? NETunnelProviderManager()
+            manager =
+                managers.first { m in
+                    (m.protocolConfiguration as? NETunnelProviderProtocol)?
+                        .providerBundleIdentifier == providerBundleIdentifier
+                } ?? NETunnelProviderManager()
         }
 
         let proto = NETunnelProviderProtocol()
@@ -144,7 +145,7 @@ public final class TunnelManager: ObservableObject {
     /// Session stats via provider messages ("stats" → tx/rx/handshake text).
     public func requestStats() async -> String? {
         guard let session = manager?.connection as? NETunnelProviderSession,
-              manager?.connection.status == .connected
+            manager?.connection.status == .connected
         else { return nil }
         return await withCheckedContinuation { continuation in
             do {
@@ -160,7 +161,8 @@ public final class TunnelManager: ObservableObject {
     private static func describe(_ error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == NEVPNErrorDomain {
-            return "VPN configuration error (\(nsError.code)). Is the tunnel extension installed and signed? See docs/SIGNING.md."
+            return
+                "VPN configuration error (\(nsError.code)). Is the tunnel extension installed and signed? See docs/SIGNING.md."
         }
         return nsError.localizedDescription
     }

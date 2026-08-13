@@ -8,17 +8,17 @@ import Foundation
 final class MV3ManifestTests: XCTestCase {
     func testDecodesMV3Manifest() throws {
         let json = """
-        {
-          "name": "Test Extension",
-          "version": "1.2.3",
-          "manifest_version": 3,
-          "permissions": ["storage", "tabs"],
-          "action": { "default_popup": "popup.html" },
-          "content_scripts": [
-            { "matches": ["https://*.example.com/*"], "js": ["content.js"], "run_at": "document_idle" }
-          ]
-        }
-        """
+            {
+              "name": "Test Extension",
+              "version": "1.2.3",
+              "manifest_version": 3,
+              "permissions": ["storage", "tabs"],
+              "action": { "default_popup": "popup.html" },
+              "content_scripts": [
+                { "matches": ["https://*.example.com/*"], "js": ["content.js"], "run_at": "document_idle" }
+              ]
+            }
+            """
         let manifest = try JSONDecoder().decode(MV3Manifest.self, from: Data(json.utf8))
         XCTAssertEqual(manifest.name, "Test Extension")
         XCTAssertEqual(manifest.manifestVersion, 3)
@@ -30,8 +30,8 @@ final class MV3ManifestTests: XCTestCase {
 
     func testLegacyBrowserAction() throws {
         let json = """
-        { "name": "Old", "version": "0.1", "browser_action": { "default_popup": "a.html" } }
-        """
+            { "name": "Old", "version": "0.1", "browser_action": { "default_popup": "a.html" } }
+            """
         let manifest = try JSONDecoder().decode(MV3Manifest.self, from: Data(json.utf8))
         XCTAssertEqual(manifest.popupPath, "a.html")
         XCTAssertEqual(manifest.manifestVersion, 2)
@@ -45,9 +45,9 @@ final class WebExtensionRegistryTests: XCTestCase {
             .appendingPathComponent("qwave-ext-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let manifest = """
-        { "name": "Popup Ext", "version": "1.0", "manifest_version": 3,
-          "action": { "default_popup": "popup.html" } }
-        """
+            { "name": "Popup Ext", "version": "1.0", "manifest_version": 3,
+              "action": { "default_popup": "popup.html" } }
+            """
         try manifest.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
         try "<html></html>".write(to: dir.appendingPathComponent("popup.html"), atomically: true, encoding: .utf8)
         return dir
@@ -138,7 +138,8 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     func testStorageRouting() {
-        router.handle(ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: "e1")
         router.handle(ExtensionBridgeCall(id: 2, method: "storage.local.get", args: [NSNull()]), extensionID: "e1")
         XCTAssertEqual(responder.responses.count, 2)
         XCTAssertEqual(responder.responses[1].id, 2)
@@ -163,7 +164,8 @@ final class ExtensionMessageRouterTests: XCTestCase {
     func testTabCreateRouting() {
         var created: [String: Any]?
         router.tabCreateHandler = { props in created = props }
-        router.handle(ExtensionBridgeCall(id: 5, method: "tabs.create", args: [["url": "https://qwave.app"]]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 5, method: "tabs.create", args: [["url": "https://qwave.app"]]), extensionID: "e1")
         XCTAssertEqual(created?["url"] as? String, "https://qwave.app")
     }
 

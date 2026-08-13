@@ -55,7 +55,8 @@ public enum OmniboxSuggester {
         let host = (entry.url.host ?? "").lowercased()
         let hostSansWWW = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         let urlString = entry.url.absoluteString.lowercased()
-        let urlSansScheme = urlString
+        let urlSansScheme =
+            urlString
             .replacingOccurrences(of: "https://", with: "")
             .replacingOccurrences(of: "http://", with: "")
         let title = entry.title.lowercased()

@@ -48,8 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func restoreOrOpenFirstWindow() {
         if environment.settings.restoreSessionOnLaunch,
-           let snapshot = environment.sessionStore?.load(),
-           !snapshot.windows.isEmpty {
+            let snapshot = environment.sessionStore?.load(),
+            !snapshot.windows.isEmpty
+        {
             for manager in SessionRestorer.managers(from: snapshot) {
                 openWindow(tabManager: manager)
             }
@@ -171,7 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.hibernation.updateTimeout(policy.hibernationTimeout)
 
         for controller in windowControllers {
-            await controller.applyEnergyPolicy(policy, hibernation: environment.hibernation, hibernator: environment.hibernator)
+            await controller.applyEnergyPolicy(
+                policy, hibernation: environment.hibernation, hibernator: environment.hibernator)
         }
     }
 }

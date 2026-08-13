@@ -186,7 +186,8 @@ struct OSLogBackend: LogHandler {
 
         var text = message.description
         if !merged.isEmpty {
-            let pairs = merged
+            let pairs =
+                merged
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key)=\($0.value)" }
                 .joined(separator: " ")

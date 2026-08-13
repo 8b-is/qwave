@@ -13,9 +13,11 @@ struct ContainersPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Each container is a fully isolated storage universe — separate cookies, logins, caches, and site data. Deleting a container wipes everything sites stored in it.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            Text(
+                "Each container is a fully isolated storage universe — separate cookies, logins, caches, and site data. Deleting a container wipes everything sites stored in it."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
 
             List {
                 ForEach(containers.profiles) { profile in

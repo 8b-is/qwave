@@ -39,7 +39,10 @@ final class HTTPSFirstUpgraderTests: XCTestCase {
 
     func testSkipsLocalHosts() {
         let upgrader = HTTPSFirstUpgrader()
-        for raw in ["http://localhost/", "http://localhost:8080/x", "http://127.0.0.1/", "http://myserver/", "http://printer.local/", "http://192.168.1.10/admin"] {
+        for raw in [
+            "http://localhost/", "http://localhost:8080/x", "http://127.0.0.1/", "http://myserver/",
+            "http://printer.local/", "http://192.168.1.10/admin",
+        ] {
             XCTAssertEqual(
                 upgrader.decision(for: URL(string: raw)!, isMainFrame: true, policyAllowsUpgrade: true),
                 .allow,
@@ -51,7 +54,8 @@ final class HTTPSFirstUpgraderTests: XCTestCase {
     func testSkipsExplicitNonDefaultPort() {
         let upgrader = HTTPSFirstUpgrader()
         XCTAssertEqual(
-            upgrader.decision(for: URL(string: "http://example.com:8080/")!, isMainFrame: true, policyAllowsUpgrade: true),
+            upgrader.decision(
+                for: URL(string: "http://example.com:8080/")!, isMainFrame: true, policyAllowsUpgrade: true),
             .allow
         )
     }
@@ -59,7 +63,8 @@ final class HTTPSFirstUpgraderTests: XCTestCase {
     func testUpgradesExplicitPort80AndDropsIt() {
         let upgrader = HTTPSFirstUpgrader()
         XCTAssertEqual(
-            upgrader.decision(for: URL(string: "http://example.com:80/a")!, isMainFrame: true, policyAllowsUpgrade: true),
+            upgrader.decision(
+                for: URL(string: "http://example.com:80/a")!, isMainFrame: true, policyAllowsUpgrade: true),
             .upgrade(URL(string: "https://example.com/a")!)
         )
     }
@@ -67,7 +72,9 @@ final class HTTPSFirstUpgraderTests: XCTestCase {
     func testFallbackAfterTLSFailureThenAllowsHTTPForSession() {
         let upgrader = HTTPSFirstUpgrader()
         let httpURL = URL(string: "http://broken.example.com/")!
-        guard case .upgrade(let httpsURL) = upgrader.decision(for: httpURL, isMainFrame: true, policyAllowsUpgrade: true) else {
+        guard
+            case .upgrade(let httpsURL) = upgrader.decision(for: httpURL, isMainFrame: true, policyAllowsUpgrade: true)
+        else {
             return XCTFail("expected upgrade")
         }
 
@@ -85,7 +92,9 @@ final class HTTPSFirstUpgraderTests: XCTestCase {
     func testNoFallbackForUnrelatedError() {
         let upgrader = HTTPSFirstUpgrader()
         let httpURL = URL(string: "http://ok.example.com/")!
-        guard case .upgrade(let httpsURL) = upgrader.decision(for: httpURL, isMainFrame: true, policyAllowsUpgrade: true) else {
+        guard
+            case .upgrade(let httpsURL) = upgrader.decision(for: httpURL, isMainFrame: true, policyAllowsUpgrade: true)
+        else {
             return XCTFail("expected upgrade")
         }
         XCTAssertNil(upgrader.fallbackURL(afterFailureOf: httpsURL, errorCode: NSURLErrorCancelled))

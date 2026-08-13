@@ -25,22 +25,22 @@ public final class HTTPSFirstUpgrader {
     /// Error codes that mean "the https side of this host is broken", not
     /// "the network is down".
     static let fallbackErrorCodes: Set<Int> = [
-        NSURLErrorSecureConnectionFailed,          // -1200
-        NSURLErrorServerCertificateHasBadDate,     // -1201
-        NSURLErrorServerCertificateUntrusted,      // -1202
-        NSURLErrorServerCertificateHasUnknownRoot, // -1203
-        NSURLErrorServerCertificateNotYetValid,    // -1204
-        NSURLErrorClientCertificateRejected,       // -1205
-        NSURLErrorCannotConnectToHost,             // -1004
-        NSURLErrorNetworkConnectionLost,           // -1005
-        NSURLErrorTimedOut,                        // -1001
+        NSURLErrorSecureConnectionFailed,  // -1200
+        NSURLErrorServerCertificateHasBadDate,  // -1201
+        NSURLErrorServerCertificateUntrusted,  // -1202
+        NSURLErrorServerCertificateHasUnknownRoot,  // -1203
+        NSURLErrorServerCertificateNotYetValid,  // -1204
+        NSURLErrorClientCertificateRejected,  // -1205
+        NSURLErrorCannotConnectToHost,  // -1004
+        NSURLErrorNetworkConnectionLost,  // -1005
+        NSURLErrorTimedOut,  // -1001
     ]
 
     public func decision(for url: URL, isMainFrame: Bool, policyAllowsUpgrade: Bool) -> Decision {
         guard isMainFrame,
-              policyAllowsUpgrade,
-              url.scheme?.lowercased() == "http",
-              let host = CanonicalHost.host(of: url)
+            policyAllowsUpgrade,
+            url.scheme?.lowercased() == "http",
+            let host = CanonicalHost.host(of: url)
         else {
             return .allow
         }
@@ -78,10 +78,10 @@ public final class HTTPSFirstUpgrader {
     /// the error class qualifies for fallback.
     public func fallbackURL(afterFailureOf url: URL?, errorCode: Int) -> URL? {
         guard let url,
-              url.scheme?.lowercased() == "https",
-              let host = CanonicalHost.host(of: url),
-              let original = pendingUpgrades[host],
-              Self.fallbackErrorCodes.contains(errorCode)
+            url.scheme?.lowercased() == "https",
+            let host = CanonicalHost.host(of: url),
+            let original = pendingUpgrades[host],
+            Self.fallbackErrorCodes.contains(errorCode)
         else {
             return nil
         }

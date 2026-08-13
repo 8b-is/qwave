@@ -44,7 +44,7 @@ public struct TunnelSessionConfig: Codable, Equatable, Sendable {
 
     public init?(providerConfiguration: [String: Any]?) {
         guard let data = providerConfiguration?[Self.configurationKey] as? Data,
-              let decoded = try? JSONDecoder().decode(TunnelSessionConfig.self, from: data)
+            let decoded = try? JSONDecoder().decode(TunnelSessionConfig.self, from: data)
         else {
             return nil
         }

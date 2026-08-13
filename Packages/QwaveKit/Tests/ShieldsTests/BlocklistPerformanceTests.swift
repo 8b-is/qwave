@@ -27,9 +27,10 @@ final class BlocklistPerformanceTests: XCTestCase {
     }
 
     private func directorySize(_ dir: URL) -> Int {
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.fileSizeKey], options: []
-        )) ?? []
+        let files =
+            (try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey], options: []
+            )) ?? []
         return files.reduce(0) { total, file in
             total + ((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
@@ -45,7 +46,8 @@ final class BlocklistPerformanceTests: XCTestCase {
         let coldStart = ContinuousClock.now
         _ = try await coldCompiler.compiledList(for: .adsAndTrackers)
         let cold = ContinuousClock.now - coldStart
-        let coldSeconds = Double(cold.components.seconds)
+        let coldSeconds =
+            Double(cold.components.seconds)
             + Double(cold.components.attoseconds) / 1e18
 
         let artifactBytes = directorySize(dir)
@@ -58,10 +60,13 @@ final class BlocklistPerformanceTests: XCTestCase {
         let warmStart = ContinuousClock.now
         _ = try await warmCompiler.compiledList(for: .adsAndTrackers)
         let warm = ContinuousClock.now - warmStart
-        let warmSeconds = Double(warm.components.seconds)
+        let warmSeconds =
+            Double(warm.components.seconds)
             + Double(warm.components.attoseconds) / 1e18
 
-        print("[blocklist-budget] cold=\(String(format: "%.2f", coldSeconds))s warm=\(String(format: "%.3f", warmSeconds))s artifact=\(artifactBytes / 1024)KB")
+        print(
+            "[blocklist-budget] cold=\(String(format: "%.2f", coldSeconds))s warm=\(String(format: "%.3f", warmSeconds))s artifact=\(artifactBytes / 1024)KB"
+        )
 
         XCTAssertLessThan(coldSeconds, Self.coldCompileBudget, "cold compile blew the budget")
         XCTAssertLessThan(warmSeconds, Self.warmLoadBudget, "warm load must be cache-hit fast")
@@ -97,7 +102,8 @@ final class BlocklistPerformanceTests: XCTestCase {
             refreshed.fulfill()
         }
         let elapsed = ContinuousClock.now - start
-        let servedSeconds = Double(elapsed.components.seconds)
+        let servedSeconds =
+            Double(elapsed.components.seconds)
             + Double(elapsed.components.attoseconds) / 1e18
 
         XCTAssertEqual(served.identifier, staleID, "the previous version must be served immediately")

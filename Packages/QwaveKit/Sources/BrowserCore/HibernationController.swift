@@ -49,9 +49,9 @@ public final class HibernationController {
     public func tabsToHibernate(now: Date, tabs: [TabHibernationInfo]) -> [UUID] {
         tabs.filter { tab in
             guard tab.isHibernatable,
-                  !tab.isSelected,
-                  !tab.isPinned,
-                  !tab.isPlayingMedia
+                !tab.isSelected,
+                !tab.isPinned,
+                !tab.isPlayingMedia
             else { return false }
             return now.timeIntervalSince(tab.lastActivated) >= timeout
         }

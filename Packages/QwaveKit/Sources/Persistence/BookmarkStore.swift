@@ -65,10 +65,11 @@ public final class BookmarkStore {
     }
 
     public func contains(url: URL) throws -> Bool {
-        let count = try database.query(
-            "SELECT COUNT(*) FROM bookmarks WHERE url = ?1",
-            [.text(url.absoluteString)]
-        ) { $0.int(0) }.first ?? 0
+        let count =
+            try database.query(
+                "SELECT COUNT(*) FROM bookmarks WHERE url = ?1",
+                [.text(url.absoluteString)]
+            ) { $0.int(0) }.first ?? 0
         return count > 0
     }
 

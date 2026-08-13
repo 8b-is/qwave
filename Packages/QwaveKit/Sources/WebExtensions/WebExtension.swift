@@ -80,7 +80,7 @@ public final class WebExtensionRegistry {
 
     private func load() {
         guard let data = defaults.data(forKey: Self.storageKey),
-              let decoded = try? JSONDecoder().decode([WebExtension].self, from: data)
+            let decoded = try? JSONDecoder().decode([WebExtension].self, from: data)
         else { return }
         extensions = decoded
     }

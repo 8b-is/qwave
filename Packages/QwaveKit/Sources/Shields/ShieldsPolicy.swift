@@ -62,8 +62,9 @@ public final class ShieldsPolicy: ObservableObject {
         }
 
         if let fileURL = self.fileURL,
-           let data = try? Data(contentsOf: fileURL),
-           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            let data = try? Data(contentsOf: fileURL),
+            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
+        {
             self.defaultAdsBlocked = snapshot.defaultAdsBlocked
             self.defaultHTTPSFirst = snapshot.defaultHTTPSFirst
             // Re-key persisted overrides: pre-v0.3.0 keys used Foundation's

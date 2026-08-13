@@ -13,7 +13,8 @@ final class SessionStoreTests: XCTestCase {
         let snapshot = SessionSnapshot(windows: [
             WindowSnapshot(
                 tabs: [
-                    TabSnapshot(url: URL(string: "https://example.com/"), title: "Example", containerID: nil, isPinned: true),
+                    TabSnapshot(
+                        url: URL(string: "https://example.com/"), title: "Example", containerID: nil, isPinned: true),
                     TabSnapshot(url: nil, title: "New Tab", containerID: UUID(), isPinned: false),
                 ],
                 selectedIndex: 1

@@ -79,9 +79,9 @@ final class MullvadAPIClientTests: XCTestCase {
             path: "/accounts/v1/devices",
             status: 201,
             json: """
-            {"id": "dev-1", "name": "cuddly krill", "pubkey": "AAA=",
-             "ipv4_address": "10.67.1.2/32", "ipv6_address": "fc00:bbbb::2/128"}
-            """,
+                {"id": "dev-1", "name": "cuddly krill", "pubkey": "AAA=",
+                 "ipv4_address": "10.67.1.2/32", "ipv6_address": "fc00:bbbb::2/128"}
+                """,
             onRequest: { box.request = $0 }
         )
 

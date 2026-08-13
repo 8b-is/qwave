@@ -20,9 +20,11 @@ final class KeccakTests: XCTestCase {
     func testSHA3_256Vectors() throws {
         XCTAssertEqual(hex(Keccak.sha3_256(Data())), try XCTUnwrap(vectors["sha3_256_empty"]))
         XCTAssertEqual(hex(Keccak.sha3_256(Data("abc".utf8))), try XCTUnwrap(vectors["sha3_256_abc"]))
-        XCTAssertEqual(hex(Keccak.sha3_256(Data(repeating: 0x41, count: 200))), try XCTUnwrap(vectors["sha3_256_2blocks"]))
+        XCTAssertEqual(
+            hex(Keccak.sha3_256(Data(repeating: 0x41, count: 200))), try XCTUnwrap(vectors["sha3_256_2blocks"]))
         // rate = 136: 137 bytes crosses into the final padded block.
-        XCTAssertEqual(hex(Keccak.sha3_256(Data(repeating: 0x45, count: 137))), try XCTUnwrap(vectors["sha3_256_136_137"]))
+        XCTAssertEqual(
+            hex(Keccak.sha3_256(Data(repeating: 0x45, count: 137))), try XCTUnwrap(vectors["sha3_256_136_137"]))
     }
 
     func testSHA3OtherSizes() throws {
@@ -36,10 +38,16 @@ final class KeccakTests: XCTestCase {
         XCTAssertEqual(hex(Keccak.shake128(Data(), count: 32)), try XCTUnwrap(vectors["shake128_empty_32"]))
         XCTAssertEqual(hex(Keccak.shake128(Data("abc".utf8), count: 64)), try XCTUnwrap(vectors["shake128_abc_64"]))
         // exact rate boundary needs the extra padded block
-        XCTAssertEqual(hex(Keccak.shake128(Data(repeating: 0x42, count: 168), count: 32)), try XCTUnwrap(vectors["shake128_exactrate"]))
+        XCTAssertEqual(
+            hex(Keccak.shake128(Data(repeating: 0x42, count: 168), count: 32)),
+            try XCTUnwrap(vectors["shake128_exactrate"]))
         XCTAssertEqual(hex(Keccak.shake256(Data(), count: 64)), try XCTUnwrap(vectors["shake256_empty_64"]))
         XCTAssertEqual(hex(Keccak.shake256(Data("abc".utf8), count: 32)), try XCTUnwrap(vectors["shake256_abc_32"]))
-        XCTAssertEqual(hex(Keccak.shake256(Data(repeating: 0x43, count: 136), count: 136)), try XCTUnwrap(vectors["shake256_136_136"]))
-        XCTAssertEqual(hex(Keccak.shake256(Data(repeating: 0x44, count: 137), count: 32)), try XCTUnwrap(vectors["shake256_137_32"]))
+        XCTAssertEqual(
+            hex(Keccak.shake256(Data(repeating: 0x43, count: 136), count: 136)),
+            try XCTUnwrap(vectors["shake256_136_136"]))
+        XCTAssertEqual(
+            hex(Keccak.shake256(Data(repeating: 0x44, count: 137), count: 32)),
+            try XCTUnwrap(vectors["shake256_137_32"]))
     }
 }

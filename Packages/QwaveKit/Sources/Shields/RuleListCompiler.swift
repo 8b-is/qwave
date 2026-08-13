@@ -77,7 +77,9 @@ public final class RuleListCompiler {
         let staleIdentifier = await availableIdentifiers()
             .first { $0.hasPrefix("\(list.rawValue)-") && $0 != identifier }
         if let staleIdentifier, let stale = try? await lookUp(identifier: staleIdentifier) {
-            QwaveLog.shields.info("Serving stale rule list \(staleIdentifier, privacy: .public) while \(identifier, privacy: .public) compiles")
+            QwaveLog.shields.info(
+                "Serving stale rule list \(staleIdentifier, privacy: .public) while \(identifier, privacy: .public) compiles"
+            )
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
@@ -87,7 +89,8 @@ public final class RuleListCompiler {
                     QwaveLog.shields.info("Refreshed rule list \(identifier, privacy: .public)")
                     onRefresh(fresh)
                 } catch {
-                    QwaveLog.shields.error("Background rule refresh failed: \(error.localizedDescription, privacy: .public)")
+                    QwaveLog.shields.error(
+                        "Background rule refresh failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
             return stale

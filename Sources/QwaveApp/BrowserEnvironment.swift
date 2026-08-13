@@ -68,7 +68,8 @@ final class BrowserEnvironment {
     }
 
     static func bootstrap() -> BrowserEnvironment {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let directory = base.appendingPathComponent("Qwave", isDirectory: true)
         return BrowserEnvironment(directory: directory)

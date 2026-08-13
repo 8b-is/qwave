@@ -10,7 +10,8 @@ struct FeatureFlagsPane: View {
     private var visibleFeatures: [WebFeature] {
         service.features.filter { feature in
             let statusOK = showInternal || feature.status.isUserFacing
-            let searchOK = searchText.isEmpty
+            let searchOK =
+                searchText.isEmpty
                 || feature.name.localizedCaseInsensitiveContains(searchText)
                 || feature.key.localizedCaseInsensitiveContains(searchText)
             return statusOK && searchOK

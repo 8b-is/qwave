@@ -10,7 +10,10 @@ let package = Package(
         // Umbrella product linked by the Qwave app target.
         .library(
             name: "QwaveKit",
-            targets: ["BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions", "URLIdentity"]
+            targets: [
+                "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
+                "URLIdentity",
+            ]
         ),
         // Slim product linked by the PacketTunnel system extension.
         .library(

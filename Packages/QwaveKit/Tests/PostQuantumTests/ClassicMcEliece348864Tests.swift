@@ -119,7 +119,8 @@ final class ClassicMcEliece348864Tests: XCTestCase {
         let seed = Data(repeating: 0x11, count: 32)
         let (_, dk) = try ClassicMcEliece348864.keygen(seed: seed)
         let g = ClassicMcEliece348864.unpackFieldElements(dk.prefix(98), count: 65)
-        let support = ClassicMcEliece348864.unpackFieldElements(dk.subdata(in: 98..<dk.count), count: ClassicMcEliece348864.n)
+        let support = ClassicMcEliece348864.unpackFieldElements(
+            dk.subdata(in: 98..<dk.count), count: ClassicMcEliece348864.n)
         for j in [0, 17, 999, 3487] {
             let factor = [support[j], UInt16(1)]
             let inverse = try ClassicMcEliece348864.polyInverse(factor, mod: g)

@@ -76,9 +76,11 @@ final class FailClosedNegotiationTests: XCTestCase {
     func testRekeyDueAfterInterval() {
         let start = Date(timeIntervalSince1970: 1_000_000)
         XCTAssertFalse(RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(60)))
-        XCTAssertFalse(RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(RekeyPolicy.interval - 1)))
+        XCTAssertFalse(
+            RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(RekeyPolicy.interval - 1)))
         XCTAssertTrue(RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(RekeyPolicy.interval)))
-        XCTAssertTrue(RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(RekeyPolicy.interval * 3)))
+        XCTAssertTrue(
+            RekeyPolicy.shouldRekey(lastRekey: start, now: start.addingTimeInterval(RekeyPolicy.interval * 3)))
     }
 
     func testRekeyNotDueWithoutPriorRekey() {

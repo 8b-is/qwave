@@ -58,9 +58,11 @@ private struct LibraryView: View {
             switch section {
             case .history:
                 List(historyEntries) { entry in
-                    row(title: entry.title.isEmpty ? entry.url.absoluteString : entry.title,
+                    row(
+                        title: entry.title.isEmpty ? entry.url.absoluteString : entry.title,
                         subtitle: entry.url.absoluteString,
-                        url: entry.url) {
+                        url: entry.url
+                    ) {
                         try? history?.delete(id: entry.id)
                         reload()
                     }
@@ -124,9 +126,12 @@ private struct LibraryView: View {
         let query = searchText.isEmpty ? nil : searchText
         historyEntries = (try? history?.entries(matching: query, limit: 300)) ?? []
         let allBookmarks = (try? bookmarks?.all()) ?? []
-        bookmarkEntries = searchText.isEmpty ? allBookmarks : allBookmarks.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText)
-                || $0.url.absoluteString.localizedCaseInsensitiveContains(searchText)
-        }
+        bookmarkEntries =
+            searchText.isEmpty
+            ? allBookmarks
+            : allBookmarks.filter {
+                $0.title.localizedCaseInsensitiveContains(searchText)
+                    || $0.url.absoluteString.localizedCaseInsensitiveContains(searchText)
+            }
     }
 }

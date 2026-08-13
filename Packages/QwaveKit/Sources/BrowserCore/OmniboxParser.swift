@@ -29,7 +29,8 @@ public enum OmniboxParser {
         // Split off path/query to inspect the authority alone.
         let authority = trimmed.split(separator: "/", maxSplits: 1)[0]
         let hostPart = authority.split(separator: ":", maxSplits: 1)[0].lowercased()
-        let portPart = authority.contains(":")
+        let portPart =
+            authority.contains(":")
             ? authority.split(separator: ":", maxSplits: 1).last.map(String.init)
             : nil
 
@@ -47,9 +48,10 @@ public enum OmniboxParser {
             // Needs a plausible TLD: last label ≥ 2 chars, alphabetic-or-punycode.
             let labels = hostPart.split(separator: ".", omittingEmptySubsequences: false)
             if let last = labels.last, labels.allSatisfy({ !$0.isEmpty }),
-               last.count >= 2,
-               last.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }),
-               last.contains(where: { $0.isLetter }) {
+                last.count >= 2,
+                last.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }),
+                last.contains(where: { $0.isLetter })
+            {
                 looksLikeHost = true
             } else {
                 looksLikeHost = false
@@ -75,7 +77,8 @@ public enum OmniboxParser {
         guard let webURL = WebURL(string) else { return nil }
         let canonicalHost = webURL.host?.serialized ?? ""
         if let foundation = URL(string: string),
-           (foundation.host ?? "").lowercased() == canonicalHost {
+            (foundation.host ?? "").lowercased() == canonicalHost
+        {
             return .url(foundation)
         }
         guard let converted = URL(webURL) else { return nil }

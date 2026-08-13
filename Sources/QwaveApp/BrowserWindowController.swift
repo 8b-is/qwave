@@ -179,7 +179,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Tabs
 
     private func appendFreshTab(activate: Bool) {
-        let tab = isPrivate
+        let tab =
+            isPrivate
             ? Tab(containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true)
             : Tab()
         tabManager.append(tab, select: activate)
@@ -283,7 +284,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isEphemeral: tab.isEphemeral,
                 containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
                 favicon: tab.favicon
-                    ?? faviconLoader.cachedIcon(forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
+                    ?? faviconLoader.cachedIcon(
+                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
             )
         }
         tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
@@ -303,7 +305,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         backButton?.isEnabled = webView?.canGoBack ?? false
         forwardButton?.isEnabled = webView?.canGoForward ?? false
 
-        let isEditingOmnibox = window?.firstResponder is NSTextView
+        let isEditingOmnibox =
+            window?.firstResponder is NSTextView
             && omnibox.currentEditor() === (window?.firstResponder as? NSTextView)
         if !isEditingOmnibox {
             omnibox.stringValue = selected.url?.absoluteString ?? ""
@@ -311,7 +314,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
         if let button = reloadButton {
             let symbol = selected.isLoading ? "xmark" : "arrow.clockwise"
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: selected.isLoading ? "Stop" : "Reload")
+            button.image = NSImage(
+                systemSymbolName: symbol, accessibilityDescription: selected.isLoading ? "Stop" : "Reload")
         }
 
         if let button = shieldsButton {
@@ -335,7 +339,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isEphemeral: tab.isEphemeral,
                 containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
                 favicon: tab.favicon
-                    ?? faviconLoader.cachedIcon(forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
+                    ?? faviconLoader.cachedIcon(
+                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
             )
         }
         tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
@@ -506,7 +511,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func toggleShields(_ sender: Any?) {
         guard let button = shieldsButton, let selected = tabManager.selectedTab,
-              let host = selected.url.flatMap(CanonicalHost.host(of:)) else {
+            let host = selected.url.flatMap(CanonicalHost.host(of:))
+        else {
             return
         }
         if let popover = shieldsPopover, popover.isShown {
@@ -556,7 +562,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         } else {
             let alert = NSAlert()
             alert.messageText = "No extensions installed"
-            alert.informativeText = "Drop a WebExtension bundle directory (containing manifest.json) onto the Extensions button to install it."
+            alert.informativeText =
+                "Drop a WebExtension bundle directory (containing manifest.json) onto the Extensions button to install it."
             alert.beginSheetModal(for: window!)
         }
     }
@@ -600,7 +607,7 @@ extension BrowserWindowController: NSTextFieldDelegate {
         guard (notification.object as? NSTextField) === omnibox else { return }
         let query = omnibox.stringValue
         guard query.count >= 2, let history = environment.history,
-              let entries = try? history.entries(matching: query, limit: 50)
+            let entries = try? history.entries(matching: query, limit: 50)
         else {
             suggestions.hide()
             return
@@ -655,7 +662,10 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace, Self.shieldsItem, Self.extensionsItem]
+        [
+            Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
+            Self.shieldsItem, Self.extensionsItem,
+        ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -674,7 +684,8 @@ extension BrowserWindowController: NSToolbarDelegate {
             item.view = backButton
             item.label = "Back"
         case Self.forwardItem:
-            forwardButton = makeToolbarButton(symbol: "chevron.right", label: "Forward", action: #selector(goForward(_:)))
+            forwardButton = makeToolbarButton(
+                symbol: "chevron.right", label: "Forward", action: #selector(goForward(_:)))
             item.view = forwardButton
             item.label = "Forward"
         case Self.reloadItem:
@@ -688,11 +699,13 @@ extension BrowserWindowController: NSToolbarDelegate {
             item.minSize = NSSize(width: 240, height: 24)
             item.maxSize = NSSize(width: 900, height: 24)
         case Self.shieldsItem:
-            shieldsButton = makeToolbarButton(symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))
+            shieldsButton = makeToolbarButton(
+                symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))
             item.view = shieldsButton
             item.label = "Shields"
         case Self.extensionsItem:
-            extensionsButton = makeToolbarButton(symbol: "puzzlepiece.extension", label: "Extensions", action: #selector(toggleExtensions(_:)))
+            extensionsButton = makeToolbarButton(
+                symbol: "puzzlepiece.extension", label: "Extensions", action: #selector(toggleExtensions(_:)))
             item.view = extensionsButton
             item.label = "Extensions"
         default:

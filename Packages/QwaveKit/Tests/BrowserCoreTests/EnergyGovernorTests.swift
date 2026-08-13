@@ -3,17 +3,20 @@ import XCTest
 
 final class EnergyGovernorTests: XCTestCase {
     func testNominalIsNormal() {
-        let tier = EnergyGovernor.tier(for: .init(thermalState: .nominal, lowPowerMode: false, allWindowsOccluded: false))
+        let tier = EnergyGovernor.tier(
+            for: .init(thermalState: .nominal, lowPowerMode: false, allWindowsOccluded: false))
         XCTAssertEqual(tier, .normal)
     }
 
     func testLowPowerModeConserves() {
-        let tier = EnergyGovernor.tier(for: .init(thermalState: .nominal, lowPowerMode: true, allWindowsOccluded: false))
+        let tier = EnergyGovernor.tier(
+            for: .init(thermalState: .nominal, lowPowerMode: true, allWindowsOccluded: false))
         XCTAssertEqual(tier, .conserve)
     }
 
     func testOcclusionConserves() {
-        let tier = EnergyGovernor.tier(for: .init(thermalState: .nominal, lowPowerMode: false, allWindowsOccluded: true))
+        let tier = EnergyGovernor.tier(
+            for: .init(thermalState: .nominal, lowPowerMode: false, allWindowsOccluded: true))
         XCTAssertEqual(tier, .conserve)
     }
 
@@ -28,7 +31,8 @@ final class EnergyGovernorTests: XCTestCase {
     }
 
     func testSeriousThermalIsCritical() {
-        let tier = EnergyGovernor.tier(for: .init(thermalState: .serious, lowPowerMode: false, allWindowsOccluded: false))
+        let tier = EnergyGovernor.tier(
+            for: .init(thermalState: .serious, lowPowerMode: false, allWindowsOccluded: false))
         XCTAssertEqual(tier, .critical)
     }
 

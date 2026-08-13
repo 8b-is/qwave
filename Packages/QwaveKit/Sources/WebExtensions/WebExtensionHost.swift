@@ -15,7 +15,8 @@ public final class WebExtensionHost {
     public init(storageDirectory: URL, defaults: Foundation.UserDefaults = .standard) {
         self.storageDirectory = storageDirectory
         self.registry = WebExtensionRegistry(defaults: defaults)
-        self.storage = ExtensionStorageService(directory: storageDirectory.appendingPathComponent("storage", isDirectory: true))
+        self.storage = ExtensionStorageService(
+            directory: storageDirectory.appendingPathComponent("storage", isDirectory: true))
         self.router = ExtensionMessageRouter(registry: registry, storage: storage)
     }
 

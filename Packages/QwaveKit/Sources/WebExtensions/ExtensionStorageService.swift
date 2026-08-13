@@ -27,7 +27,8 @@ public final class ExtensionStorageService {
         let url = fileURL(for: extensionID)
         let value: [String: Any]
         if let data = try? Data(contentsOf: url),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
             value = object
         } else {
             value = [:]

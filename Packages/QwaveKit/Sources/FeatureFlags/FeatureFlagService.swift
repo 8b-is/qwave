@@ -48,8 +48,11 @@ public final class FeatureFlagService: ObservableObject {
 
         let probe = WKPreferences()
         let parsed = rawFeatures.compactMap { raw -> WebFeature? in
-            guard let key = (Self.string(from: raw, key: "key") ?? Self.string(from: raw, key: "keyName") ?? Self.string(from: raw, key: "identifier")),
-                  !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            guard
+                let key =
+                    (Self.string(from: raw, key: "key") ?? Self.string(from: raw, key: "keyName")
+                        ?? Self.string(from: raw, key: "identifier")),
+                !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
 
             let rawName = Self.string(from: raw, key: "name") ?? Self.string(from: raw, key: "displayName")
@@ -77,11 +80,15 @@ public final class FeatureFlagService: ObservableObject {
     /// Raw `_WKFeature` objects, or nil when the SPI is unavailable.
     private static func copyRawFeatures() -> [NSObject]? {
         let cls: AnyObject = WKPreferences.self
-        if cls.responds(to: featuresSelector), let result = cls.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject] {
+        if cls.responds(to: featuresSelector),
+            let result = cls.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject]
+        {
             return result
         }
         let instance = WKPreferences()
-        if instance.responds(to: featuresSelector), let result = instance.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject] {
+        if instance.responds(to: featuresSelector),
+            let result = instance.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject]
+        {
             return result
         }
         return nil
@@ -122,8 +129,8 @@ public final class FeatureFlagService: ObservableObject {
 
         for raw in rawFeatures {
             guard let key = Self.string(from: raw, key: "key"),
-                  let value = overrides[key],
-                  !safety.isDenied(key: key)
+                let value = overrides[key],
+                !safety.isDenied(key: key)
             else { continue }
             setEnabled(preferences, Self.setEnabledSelector, ObjCBool(value), raw)
         }

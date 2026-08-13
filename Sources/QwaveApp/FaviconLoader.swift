@@ -53,9 +53,9 @@ final class FaviconLoader {
         Task { @MainActor [weak self] in
             defer { self?.inFlight.remove(cacheKey) }
             guard let (data, response) = try? await self?.session.data(from: iconURL),
-                  let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  data.count <= 512 * 1024,
-                  let image = NSImage(data: data)
+                let http = response as? HTTPURLResponse, http.statusCode == 200,
+                data.count <= 512 * 1024,
+                let image = NSImage(data: data)
             else {
                 completion(nil)
                 return

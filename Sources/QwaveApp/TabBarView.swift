@@ -95,12 +95,14 @@ final class TabBarView: NSView {
     private func showNewTabMenu(under button: NSButton) {
         let menu = NSMenu()
         menu.addItem(withTitle: "New Tab", action: #selector(menuNewTab(_:)), keyEquivalent: "").target = self
-        let ephemeralItem = menu.addItem(withTitle: "New Ephemeral Tab", action: #selector(menuNewEphemeralTab(_:)), keyEquivalent: "")
+        let ephemeralItem = menu.addItem(
+            withTitle: "New Ephemeral Tab", action: #selector(menuNewEphemeralTab(_:)), keyEquivalent: "")
         ephemeralItem.target = self
         if let containers = containerProvider?(), !containers.isEmpty {
             menu.addItem(.separator())
             for (id, name) in containers {
-                let item = menu.addItem(withTitle: "New \(name) Tab", action: #selector(menuNewContainerTab(_:)), keyEquivalent: "")
+                let item = menu.addItem(
+                    withTitle: "New \(name) Tab", action: #selector(menuNewContainerTab(_:)), keyEquivalent: "")
                 item.representedObject = id
                 item.target = self
             }
@@ -184,7 +186,8 @@ private final class TabItemView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         layer?.cornerRadius = 6
-        layer?.backgroundColor = isSelected
+        layer?.backgroundColor =
+            isSelected
             ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             : NSColor.clear.cgColor
 
@@ -200,7 +203,8 @@ private final class TabItemView: NSView {
         stripe.layer?.cornerRadius = 1.5
         addSubview(stripe)
 
-        favicon.image = model.favicon
+        favicon.image =
+            model.favicon
             ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
         favicon.imageScaling = .scaleProportionallyDown

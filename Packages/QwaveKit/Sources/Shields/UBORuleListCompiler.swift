@@ -93,7 +93,8 @@ public enum UBORuleListCompiler {
             let regex = "\(anchoredHostRegex(host: host))\(NSRegularExpression.escapedPattern(for: path))"
             return rule(urlFilter: regex, options: options, isException: false)
         case .substring(let pattern, let options):
-            return rule(urlFilter: NSRegularExpression.escapedPattern(for: pattern), options: options, isException: false)
+            return rule(
+                urlFilter: NSRegularExpression.escapedPattern(for: pattern), options: options, isException: false)
         case .exception(let pattern, let options):
             let regex: String
             if pattern.hasPrefix("||") {

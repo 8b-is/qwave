@@ -46,10 +46,10 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
             webView.loadFileURL(popupURL, allowingReadAccessTo: ext.bundleURL)
         } else {
             let html = """
-            <html><body style="font-family:-apple-system;padding:1rem">
-            <h2>\(ext.manifest.name)</h2><p>No popup declared in manifest.json.</p>
-            </body></html>
-            """
+                <html><body style="font-family:-apple-system;padding:1rem">
+                <h2>\(ext.manifest.name)</h2><p>No popup declared in manifest.json.</p>
+                </body></html>
+                """
             webView.loadHTMLString(html, baseURL: ext.bundleURL)
         }
         popover.show(relativeTo: positioningRect, of: positioningView, preferredEdge: .minY)

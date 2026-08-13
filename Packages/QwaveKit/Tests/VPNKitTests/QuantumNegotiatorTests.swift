@@ -21,7 +21,7 @@ final class MockQuantumTransport: QuantumTransporting, @unchecked Sendable {
             throw QuantumTransportError.transportFailed(underlying: URLError(.cannotConnectToHost))
         }
         guard let mlkem = Data(base64Encoded: request.mlkemPublicKey),
-              let mceliece = Data(base64Encoded: request.mceliecePublicKey)
+            let mceliece = Data(base64Encoded: request.mceliecePublicKey)
         else {
             throw QuantumTransportError.invalidResponse
         }
@@ -57,7 +57,8 @@ final class QuantumNegotiatorTests: XCTestCase {
 
         // The relay side encapsulates against the client's public half and
         // derives the same key from its own encapsulation.
-        let clientEK = Data(base64Encoded: transport.receivedRequest!.mlkemPublicKey)!
+        let clientEK =
+            Data(base64Encoded: transport.receivedRequest!.mlkemPublicKey)!
             + Data(base64Encoded: transport.receivedRequest!.mceliecePublicKey)!
         let (_, relaySS) = try HybridKEM.encapsulate(ek: clientEK, seed: relaySeed)
         XCTAssertEqual(psk, relaySS)

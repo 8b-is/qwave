@@ -134,7 +134,9 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         if state.isConnected {
             sampler.start()
             if relayList == nil {
-                Task { await vpn.loadRelays(); relayList = vpn.relayList }
+                Task {
+                    await vpn.loadRelays(); relayList = vpn.relayList
+                }
             }
         } else {
             sampler.stop()
@@ -191,7 +193,8 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         if vpn.tunnel.state.isConnected {
             let s = sampler.sample
             if s.txBytes > 0 || s.rxBytes > 0 {
-                let statsLine = "Sent \(TunnelStatsSampler.formatTotal(s.txBytes)) · Received \(TunnelStatsSampler.formatTotal(s.rxBytes))"
+                let statsLine =
+                    "Sent \(TunnelStatsSampler.formatTotal(s.txBytes)) · Received \(TunnelStatsSampler.formatTotal(s.rxBytes))"
                 let statsItem = menu.addItem(withTitle: statsLine, action: nil, keyEquivalent: "")
                 statsItem.isEnabled = false
             }
@@ -216,7 +219,8 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Server", action: nil, keyEquivalent: "").isEnabled = false
 
-        let fastestItem = menu.addItem(withTitle: "⚡ Fastest available", action: #selector(connectFastest(_:)), keyEquivalent: "")
+        let fastestItem = menu.addItem(
+            withTitle: "⚡ Fastest available", action: #selector(connectFastest(_:)), keyEquivalent: "")
         fastestItem.target = self
         fastestItem.isEnabled = !vpn.isBusy
 

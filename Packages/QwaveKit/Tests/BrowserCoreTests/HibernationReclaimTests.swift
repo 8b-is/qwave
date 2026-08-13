@@ -62,18 +62,18 @@ final class HibernationReclaimTests: XCTestCase {
     /// process carries measurable, deterministic ballast. Local file only.
     private func writeBallastPage(index: Int) throws -> URL {
         let html = """
-        <!doctype html><html><head><meta charset="utf-8"><title>ballast \(index)</title></head>
-        <body><h1>ballast \(index)</h1>
-        <script>
-          window.ballast = new Array(3 * 1024 * 1024).fill(0.123456789 + \(index));
-          for (let i = 0; i < 2000; i++) {
-            const p = document.createElement('p');
-            p.textContent = 'paragraph ' + i + ' of ballast page \(index)';
-            document.body.appendChild(p);
-          }
-          document.title = 'ready-\(index)';
-        </script></body></html>
-        """
+            <!doctype html><html><head><meta charset="utf-8"><title>ballast \(index)</title></head>
+            <body><h1>ballast \(index)</h1>
+            <script>
+              window.ballast = new Array(3 * 1024 * 1024).fill(0.123456789 + \(index));
+              for (let i = 0; i < 2000; i++) {
+                const p = document.createElement('p');
+                p.textContent = 'paragraph ' + i + ' of ballast page \(index)';
+                document.body.appendChild(p);
+              }
+              document.title = 'ready-\(index)';
+            </script></body></html>
+            """
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-hibernation-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -153,7 +153,9 @@ final class HibernationReclaimTests: XCTestCase {
         let reclaimed = before - min(after, before)
 
         let mb = { (bytes: UInt64) in String(format: "%.1f", Double(bytes) / 1_048_576) }
-        print("[hibernation-reclaim] processes=\(ourPIDs.count) before=\(mb(before))MB after=\(mb(after))MB reclaimed=\(mb(reclaimed))MB (\(mb(reclaimed / UInt64(tabCount)))MB/tab)")
+        print(
+            "[hibernation-reclaim] processes=\(ourPIDs.count) before=\(mb(before))MB after=\(mb(after))MB reclaimed=\(mb(reclaimed))MB (\(mb(reclaimed / UInt64(tabCount)))MB/tab)"
+        )
 
         XCTAssertLessThan(
             after, before / 2,
@@ -176,7 +178,8 @@ final class HibernationReclaimTests: XCTestCase {
             restored.title == "ready-0"
         }
         let wakeElapsed = ContinuousClock.now - wakeStart
-        let wakeMS = Double(wakeElapsed.components.seconds) * 1000
+        let wakeMS =
+            Double(wakeElapsed.components.seconds) * 1000
             + Double(wakeElapsed.components.attoseconds) / 1e15
         print("[hibernation-reclaim] wake-to-interactive: \(Int(wakeMS))ms")
         XCTAssertTrue(woke, "restored tab must reload its page")

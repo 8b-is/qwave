@@ -50,8 +50,8 @@ struct KeccakVectorSuite {
 
     static let expected: [String: String] = {
         guard let url = Bundle.module.url(forResource: "keccak_vectors", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let vectors = try? JSONDecoder().decode([String: String].self, from: data)
+            let data = try? Data(contentsOf: url),
+            let vectors = try? JSONDecoder().decode([String: String].self, from: data)
         else { return [:] }
         return vectors
     }()

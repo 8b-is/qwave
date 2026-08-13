@@ -43,7 +43,7 @@ public struct MullvadQuantumPeerNegotiator: EphemeralPeerNegotiating {
         )
         let response = try await transport.requestEphemeralPeer(request)
         guard let ciphertext = Data(base64Encoded: response.ciphertextBundle),
-              ciphertext.count == HybridKEM.ctSize
+            ciphertext.count == HybridKEM.ctSize
         else {
             throw QuantumTransportError.invalidResponse
         }

@@ -105,9 +105,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
         // Cmd-click → background tab in the same container.
         if isMainFrame,
-           navigationAction.navigationType == .linkActivated,
-           navigationAction.modifierFlags.contains(.command),
-           let url {
+            navigationAction.navigationType == .linkActivated,
+            navigationAction.modifierFlags.contains(.command),
+            let url
+        {
             decisionHandler(.cancel, preferences)
             onOpenNewTab?(url, navigationAction.modifierFlags.contains(.shift))
             return
@@ -150,7 +151,8 @@ extension NavigationCoordinator: WKNavigationDelegate {
         }
     }
 
-    public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+    public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload)
+    {
         downloads.track(download)
     }
 
@@ -174,22 +176,24 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// `<link rel~=icon>` if the page declares one, /favicon.ico otherwise.
     private func extractFaviconURL(from webView: WKWebView) {
         let script = """
-        (function() {
-          const links = document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon']");
-          for (const l of links) { if (l.href) { return l.href; } }
-          return new URL('/favicon.ico', location.origin).href;
-        })()
-        """
+            (function() {
+              const links = document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon']");
+              for (const l of links) { if (l.href) { return l.href; } }
+              return new URL('/favicon.ico', location.origin).href;
+            })()
+            """
         webView.evaluateJavaScript(script) { [weak self] result, _ in
             guard let string = result as? String,
-                  let iconURL = URL(string: string),
-                  iconURL.scheme == "http" || iconURL.scheme == "https"
+                let iconURL = URL(string: string),
+                iconURL.scheme == "http" || iconURL.scheme == "https"
             else { return }
             self?.onFaviconURL?(iconURL)
         }
     }
 
-    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    public func webView(
+        _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
+    ) {
         handleFailure(webView: webView, error: error)
     }
 
@@ -223,18 +227,18 @@ extension NavigationCoordinator: WKNavigationDelegate {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
         let html = """
-        <!doctype html><html><head><meta charset="utf-8">
-        <style>
-          body { font-family: -apple-system, sans-serif; display: flex; align-items: center;
-                 justify-content: center; height: 90vh; color: #444; }
-          @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #bbb; } }
-          .card { max-width: 26em; text-align: center; }
-          h1 { font-size: 1.2em; }
-        </style></head><body><div class="card">
-        <h1>Can’t open \(host.isEmpty ? "this page" : host)</h1>
-        <p>\(message)</p>
-        </div></body></html>
-        """
+            <!doctype html><html><head><meta charset="utf-8">
+            <style>
+              body { font-family: -apple-system, sans-serif; display: flex; align-items: center;
+                     justify-content: center; height: 90vh; color: #444; }
+              @media (prefers-color-scheme: dark) { body { background: #1e1e1e; color: #bbb; } }
+              .card { max-width: 26em; text-align: center; }
+              h1 { font-size: 1.2em; }
+            </style></head><body><div class="card">
+            <h1>Can’t open \(host.isEmpty ? "this page" : host)</h1>
+            <p>\(message)</p>
+            </div></body></html>
+            """
         webView.loadHTMLString(html, baseURL: url)
     }
 }

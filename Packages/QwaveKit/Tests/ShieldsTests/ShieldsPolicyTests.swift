@@ -73,9 +73,9 @@ final class ShieldsPolicyTests: XCTestCase {
 
         // v0.2-era file: keys as Foundation spelled them.
         let legacy = """
-        {"defaultAdsBlocked":true,"defaultHTTPSFirst":true,
-         "overrides":{"::1":{"jsEnabled":false},"WWW.Example.com":{"adsBlocked":false}}}
-        """
+            {"defaultAdsBlocked":true,"defaultHTTPSFirst":true,
+             "overrides":{"::1":{"jsEnabled":false},"WWW.Example.com":{"adsBlocked":false}}}
+            """
         try Data(legacy.utf8).write(to: dir.appendingPathComponent("shields.json"))
 
         let policy = ShieldsPolicy(directory: dir)

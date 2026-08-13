@@ -169,7 +169,8 @@ public enum MLKEM768 {
     static func byteDecode10(_ data: Data) -> [Int] {
         var out = [Int](repeating: 0, count: 256)
         for i in 0..<64 {
-            let t = Int(data[5 * i])
+            let t =
+                Int(data[5 * i])
                 | (Int(data[5 * i + 1]) << 8)
                 | (Int(data[5 * i + 2]) << 16)
                 | (Int(data[5 * i + 3]) << 24)

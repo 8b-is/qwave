@@ -39,8 +39,9 @@ public final class ContainerRegistry: ObservableObject {
         }
 
         if let fileURL = self.fileURL,
-           let data = try? Data(contentsOf: fileURL),
-           let saved = try? JSONDecoder().decode([ContainerProfile].self, from: data) {
+            let data = try? Data(contentsOf: fileURL),
+            let saved = try? JSONDecoder().decode([ContainerProfile].self, from: data)
+        {
             self.profiles = saved
         } else {
             self.profiles = [
@@ -83,7 +84,8 @@ public final class ContainerRegistry: ObservableObject {
         } catch {
             // A store that was never instantiated has nothing on disk; that
             // surfaces as an error here and is fine to ignore.
-            QwaveLog.browser.info("Data store removal for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            QwaveLog.browser.info(
+                "Data store removal for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 

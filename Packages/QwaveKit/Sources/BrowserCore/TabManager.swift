@@ -104,8 +104,9 @@ public final class TabManager {
 
     public func move(fromIndex: Int, toIndex: Int) {
         guard storage.elements.indices.contains(fromIndex),
-              storage.elements.indices.contains(toIndex),
-              fromIndex != toIndex else {
+            storage.elements.indices.contains(toIndex),
+            fromIndex != toIndex
+        else {
             return
         }
         // OrderedDictionary.move's destination is in the ORIGINAL index

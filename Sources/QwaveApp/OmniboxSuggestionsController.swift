@@ -146,13 +146,14 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
             string: title,
             attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]
         )
-        composed.append(NSAttributedString(
-            string: "  \(suggestion.url.absoluteString)",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-        ))
+        composed.append(
+            NSAttributedString(
+                string: "  \(suggestion.url.absoluteString)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            ))
         text.attributedStringValue = composed
         text.lineBreakMode = .byTruncatingTail
         text.translatesAutoresizingMaskIntoConstraints = false

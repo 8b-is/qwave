@@ -119,7 +119,8 @@ public enum UBOFilterParser {
                 loadType = "third-party"
             case "first-party":
                 loadType = "first-party"
-            case "script", "image", "stylesheet", "font", "media", "raw", "document", "xmlhttprequest", "websocket", "other":
+            case "script", "image", "stylesheet", "font", "media", "raw", "document", "xmlhttprequest", "websocket",
+                "other":
                 resourceTypes.insert(t)
             case "domain":
                 // bare $domain (no value) is malformed — ignore
@@ -135,11 +136,12 @@ public enum UBOFilterParser {
                         }
                     }
                 }
-                // Unsupported options (removeparam, redirect, csp, …) are
-                // dropped silently: the rule still blocks, just without the
-                // extra behavior.
+            // Unsupported options (removeparam, redirect, csp, …) are
+            // dropped silently: the rule still blocks, just without the
+            // extra behavior.
             }
         }
-        return UBOFilterOptions(resourceTypes: resourceTypes, loadType: loadType, domains: domains, notDomains: notDomains)
+        return UBOFilterOptions(
+            resourceTypes: resourceTypes, loadType: loadType, domains: domains, notDomains: notDomains)
     }
 }

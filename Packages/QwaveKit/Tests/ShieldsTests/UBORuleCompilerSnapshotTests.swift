@@ -11,16 +11,16 @@ final class UBORuleCompilerSnapshotTests: XCTestCase {
     /// resource types, $domain, anchored path, plain host, substring,
     /// exception, and skipped lines (comment + cosmetic).
     private static let sampleList = """
-    ! sample fixture — not a real list
-    ||ads.example.com^
-    ||tracker.example.com^$third-party
-    ||cdn.example.com/banners^$image,script
-    ||metrics.example.com^$domain=news.example|~blog.news.example
-    beacon.example.net
-    /analytics/track.js
-    @@||cdn.example.com/banners/allowed.png^
-    example.com##.ad-slot
-    """
+        ! sample fixture — not a real list
+        ||ads.example.com^
+        ||tracker.example.com^$third-party
+        ||cdn.example.com/banners^$image,script
+        ||metrics.example.com^$domain=news.example|~blog.news.example
+        beacon.example.net
+        /analytics/track.js
+        @@||cdn.example.com/banners/allowed.png^
+        example.com##.ad-slot
+        """
 
     func testCompiledJSONGolden() throws {
         let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: Self.sampleList)

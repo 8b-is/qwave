@@ -74,12 +74,12 @@ final class UBOFilterParserTests: XCTestCase {
 final class UBORuleListCompilerTests: XCTestCase {
     func testCompilesBlockingAndExceptions() throws {
         let text = """
-        [Adblock Plus 2.0]
-        ! comment
-        ||doubleclick.net^
-        example.com
-        @@||example.com/analytics^$script
-        """
+            [Adblock Plus 2.0]
+            ! comment
+            ||doubleclick.net^
+            example.com
+            @@||example.com/analytics^$script
+            """
         let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: text)
         let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
         XCTAssertEqual(rules.count, 3)
