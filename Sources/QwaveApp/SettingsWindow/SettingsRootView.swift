@@ -1,12 +1,14 @@
-import SwiftUI
 import Persistence
+import Sparkle
+import SwiftUI
 
 struct SettingsRootView: View {
     let environment: BrowserEnvironment
+    let updater: SPUUpdater?
 
     var body: some View {
         TabView {
-            GeneralPane(environment: environment)
+            GeneralPane(environment: environment, updater: updater)
                 .tabItem { Label("General", systemImage: "gearshape") }
             ContainersPane(containers: environment.containers, history: environment.history)
                 .tabItem { Label("Containers", systemImage: "square.stack.3d.up") }
@@ -26,9 +28,11 @@ struct SettingsRootView: View {
 
 private struct GeneralPane: View {
     let environment: BrowserEnvironment
+    let updater: SPUUpdater?
     @State private var searchEngine: SearchEngine = .duckduckgo
     @State private var restoreSession = true
     @State private var hibernationMinutes: Double = 15
+    @State private var autoCheckUpdates = false
 
     var body: some View {
         Form {
@@ -57,12 +61,36 @@ private struct GeneralPane: View {
             .onChange(of: hibernationMinutes) { _, newValue in
                 environment.settings.hibernationTimeout = newValue * 60
             }
+
+            if let updater {
+                Divider()
+                Toggle("Check for updates automatically", isOn: $autoCheckUpdates)
+                    .onChange(of: autoCheckUpdates) { _, newValue in
+                        updater.automaticallyChecksForUpdates = newValue
+                    }
+                Text(
+                    "When on, Qwave periodically asks GitHub whether a newer signed "
+                        + "release exists. When off, no update check runs unless you choose "
+                        + "\u{201C}Check for Updates\u{2026}\u{201D} from the menu. Qwave never checks "
+                        + "before you\u{2019}ve answered this the first time."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Divider()
+            Link(
+                "What does Qwave send?",
+                destination: URL(string: "https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md")!
+            )
+            .font(.caption)
         }
         .padding(20)
         .onAppear {
             searchEngine = environment.settings.searchEngine
             restoreSession = environment.settings.restoreSessionOnLaunch
             hibernationMinutes = environment.settings.hibernationTimeout / 60
+            autoCheckUpdates = updater?.automaticallyChecksForUpdates ?? false
         }
     }
 }

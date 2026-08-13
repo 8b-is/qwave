@@ -27,8 +27,6 @@ final class BrowserEnvironment {
     let vpn: MullvadVPNService
     /// WebExtensions MV3 engine (browser.* bridge, popups, storage).
     let extensions: WebExtensionHost
-    /// Remote uBlock/EasyList blocklist updater (ETag-cached).
-    let blocklistUpdater: BlocklistUpdating
     /// MEM8 wave memory. Optional — the browser runs without it.
     let memoryWave: WaveDirector
     let memoryPreferences: MemoryWavePreferences
@@ -66,11 +64,10 @@ final class BrowserEnvironment {
         let memoryStore = try? MemoryStore(directory: directory, secrets: secrets)
         let nibbleVault = try? NibbleVault(directory: directory.appendingPathComponent("nibbles", isDirectory: true))
         memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences, vault: nibbleVault)
-        // EasyList mirror + Qwave's own curated list; ETag-cached, no-op
-        // fallback keeps the director simple.
-        blocklistUpdater = RemoteBlocklistUpdater(
-            sourceURL: URL(string: "https://raw.githubusercontent.com/easylist/easylist/master/easylist/easylist.txt")!
-        )
+        // The blocklist ships as a committed build-time snapshot (regenerated
+        // by scripts/update-blocklist.sh); there is no launch-time fetch, so
+        // the app makes no network request at startup. RemoteBlocklistUpdater
+        // remains available (and tested) for a future opt-in runtime path.
 
         // Defaults sync: shields policy mirrors settings toggles.
         shieldsPolicy.defaultAdsBlocked = settings.shieldsEnabledByDefault

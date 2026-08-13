@@ -109,5 +109,11 @@ let package = Package(
             ]
         ),
         .testTarget(name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"]),
+        // Egress regression gate: enforces the committed Category-A host
+        // allowlist against every module that can make Qwave's own requests.
+        .testTarget(
+            name: "EgressGuardTests",
+            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave"]
+        ),
     ]
 )

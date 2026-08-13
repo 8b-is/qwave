@@ -195,6 +195,35 @@ jobs:
             --sign "Developer ID Application" "$APP_PATH"
           codesign --verify --deep --strict -v "$APP_PATH"
 
+      # Regression guard for the Sparkle notarization failure that cost a
+      # release cycle: the notary service rejects any embedded executable
+      # without a Developer ID signature + hardened runtime, and its error
+      # is opaque. Assert every Sparkle helper is correctly signed BEFORE
+      # submission, so a future Sparkle bump that adds/moves a helper fails
+      # here (fast, clear) instead of at notarytool (slow, cryptic).
+      - name: Verify embedded Sparkle helpers are signed + hardened
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        run: |
+          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+          fail=0
+          for helper in \
+            "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+            "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+            "$SPARKLE_FW/Versions/B/Autoupdate" \
+            "$SPARKLE_FW/Versions/B/Updater.app" \
+            "$SPARKLE_FW"; do
+            [ -e "$helper" ] || { echo "❌ missing Sparkle helper: $helper"; fail=1; continue; }
+            info="$(codesign -dvv "$helper" 2>&1)"
+            echo "$info" | grep -q "Authority=Developer ID Application" \
+              || { echo "❌ $helper is not Developer ID signed"; fail=1; }
+            echo "$info" | grep -q "flags=.*runtime" \
+              || { echo "❌ $helper lacks the hardened runtime"; fail=1; }
+            echo "$info" | grep -q "Timestamp=" \
+              || { echo "❌ $helper has no secure timestamp"; fail=1; }
+          done
+          [ "$fail" -eq 0 ] || { echo "Sparkle helpers would be rejected by notarytool"; exit 1; }
+          echo "✅ all embedded Sparkle helpers are Developer ID signed, hardened, timestamped"
+
       - name: Notarize & staple app
         if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
         env:

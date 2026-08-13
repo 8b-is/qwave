@@ -37,6 +37,19 @@ correction: WebGPU in `WKWebView` is **not** on by default — it's the
 
 **41 package notes · 12 categories · verdicts: 8 Adopt, 5 Trial, 11 Assess, 17 Hold/Reference**
 
+### Resolved open question — WebKit for SwiftUI (2026-08-13)
+
+The research flagged an unknown: *does `WebPage.Configuration` (the macOS 26
+SwiftUI WebKit surface) expose the `_WKFeature` hook that `FeatureFlagService`
+reflects over?* Spiked against the Xcode 26.4 / macOS 26 SDK: **no.**
+`WebPage.Configuration` has `websiteDataStore` (so container isolation
+carries over) and `defaultNavigationPreferences`, but **no `preferences`
+(`WKPreferences`) member** — the object `FeatureFlags` reaches `_features`
+through. So WebKit-for-SwiftUI can **parallel** the current
+`WKWebView` + `WKPreferences` path but **cannot replace** it while the
+experimental Safari feature flags depend on `_WKFeature` reflection. Verdict
+stays *Adopt (gated / additive)*, not *replacement*.
+
 ## The four findings that should drive the roadmap
 
 1. **Code signing is the highest-leverage work in the repo.** Unsigned
