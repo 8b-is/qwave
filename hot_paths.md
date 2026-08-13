@@ -115,14 +115,19 @@ A benchmark run on an unquiesced machine is rejected, not recorded. The 19.66 s 
 - A single sample is not a measurement
 
 ### CI gates
-| Metric | Deterministic | CI-checked | Notes |
-|---|---|---|---|
-| `mallocCountTotal` | ✅ Yes | ✅ Yes | Primary allocation gate |
-| `retainCount` | ✅ Yes | ✅ Yes | ARC traffic gate |
-| `releaseCount` | ✅ Yes | ✅ Yes | ARC traffic gate |
-| `retainReleaseDelta` | ✅ Yes | ✅ Yes | ARC cycle detection |
-| Wall-clock | ❌ No | ❌ No | Recorded for trends, not gated |
-| CPU time | ❌ No | ❌ No | Recorded for trends, not gated |
+| Metric | Deterministic | CI-checked | Tolerance | Notes |
+|---|---|---|---|---|
+| `mallocCountTotal` | ✅ Yes | ✅ Yes | 25% p90 | Primary allocation gate |
+| `retainCount` | ✅ Yes | ✅ Yes | 5% p90 | ARC traffic gate (observed variance ~0%) |
+| `releaseCount` | ✅ Yes | ✅ Yes | 5% p90 | ARC traffic gate (observed variance ~0%) |
+| `retainReleaseDelta` | ✅ Yes | ✅ Yes | 5% p90 | ARC cycle detection (observed variance ~0%) |
+| Wall-clock | ❌ No | ❌ No | — | Recorded for trends, not gated |
+| CPU time | ❌ No | ❌ No | — | Recorded for trends, not gated |
+
+ARC gates tightened from 25% to 5% after measuring observed run-to-run variance
+at ~0% for all 5 benchmarks. The 25% flat tolerance was loose enough to hide
+a real regression. 5% gives a small cushion for allocator/toolchain drift while
+keeping the gates meaningful.
 
 ### Wake-to-interactive canonical definition
 Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint with page content). Includes: WebContent process spawn, WKWebView construction, interactionState restoration, and page load. The process spawn boundary is explicitly inside the measurement.

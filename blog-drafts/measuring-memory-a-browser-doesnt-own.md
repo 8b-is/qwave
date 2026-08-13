@@ -4,7 +4,7 @@ status: draft
 date: 2026-08-13
 tags: [swift, performance, webkit, memory, macos]
 measured_on: "Apple M1 Max (8 P-cores / 2 E-cores), 64 GB unified memory, macOS 26.4, Xcode 16.4. Release build, proc_pid_rusage over WebContent pid-set difference."
-corrections: "v2 — Added canonical wake-to-interactive definition. The 138ms measurement from the earlier session was WKWebView construction only; the 305ms measurement is the full wake including WebContent process spawn and page load. Both are valid for what they measure, but the canonical user-facing metric is the full interval."
+corrections: "v2 — Added canonical wake-to-interactive definition. The 138ms measurement from the earlier session was WKWebView construction only; the 305ms measurement is the full wake including WebContent process spawn and page load. Both are valid for what they measure, but the canonical user-facing metric is the full interval. v3 — warmProcessCount field added to EnergyPolicy in a previous session but is DEAD CONFIGURATION: declared and set to 1 at .normal tier, but never consumed by any code. No warm processes are actually held, so the pre-warming tradeoff described here is aspirational, not measured."
 ---
 
 ## The problem
@@ -57,3 +57,7 @@ The 138 ms measurement from the earlier session measured only the WKWebView cons
 ## Key takeaway
 
 If your web content lives in out-of-process renderers (WKWebView, Chromium's --site-per-process), the only way to measure the full memory impact of tab lifecycle decisions is to measure the process tree. `proc_pid_rusage` with set-difference filtering is the simplest reliable approach on macOS.
+
+## Follow-up: warmProcessCount is dead configuration
+
+The `EnergyPolicy.warmProcessCount` field was added to the pure enum in a previous session: 1 at .normal tier, 0 at .conserve and .critical. However, **no consumer reads this field**. The app layer (WebViewFactory, AppDelegate, HibernationController) never checks `warmProcessCount`, so no warm processes are ever held. The advertised tradeoff of "~45 MB for ~100-200 ms latency savings" is aspirational — the knob exists but is not wired to anything.

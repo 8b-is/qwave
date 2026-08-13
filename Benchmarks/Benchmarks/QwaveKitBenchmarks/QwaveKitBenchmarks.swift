@@ -29,9 +29,9 @@ let benchmarks: @Sendable () -> Void = {
     ]
     let tolerance: [BenchmarkMetric: BenchmarkThresholds] = [
         .mallocCountTotal: .init(relative: [.p90: 25.0]),
-        .retainCount: .init(relative: [.p90: 25.0]),
-        .releaseCount: .init(relative: [.p90: 25.0]),
-        .retainReleaseDelta: .init(relative: [.p90: 25.0]),
+        .retainCount: .init(relative: [.p90: 5.0]),
+        .releaseCount: .init(relative: [.p90: 5.0]),
+        .retainReleaseDelta: .init(relative: [.p90: 5.0]),
     ]
 
     // Every keystroke runs this — and since v0.3.0 it goes through the
