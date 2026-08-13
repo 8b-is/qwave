@@ -29,6 +29,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", .upToNextMinor(from: "1.6.4")),
         // Test-only: golden files for the uBO → content-blocker compiler.
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.9.0"),
+        // OrderedDictionary for TabManager: ordered + unique + O(1) keyed
+        // lookup is exactly the tab strip's shape.
+        .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
     ],
     targets: [
         .target(
@@ -57,7 +60,10 @@ let package = Package(
         .target(name: "FeatureFlags", dependencies: ["QwaveSupport"]),
         .target(
             name: "BrowserCore",
-            dependencies: ["QwaveSupport", "Persistence", "Shields", "FeatureFlags", "URLIdentity"]
+            dependencies: [
+                "QwaveSupport", "Persistence", "Shields", "FeatureFlags", "URLIdentity",
+                .product(name: "OrderedCollections", package: "swift-collections"),
+            ]
         ),
         // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
         // and the hybrid construction used by the Stage B VPN negotiator.

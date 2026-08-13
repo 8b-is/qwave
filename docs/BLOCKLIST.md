@@ -38,8 +38,30 @@ builds and CI never run the converter.
   snapshot itself carries CC BY-SA 3.0 with attribution in
   `easylist-compiled-ATTRIBUTION.txt`, which ships in the bundle beside it.
 
-## Runtime updates
+## Rule update path (determination, 2026-08-13)
 
-`RemoteBlocklistUpdater` (ETag-cached fetch of upstream EasyList text +
-`UBORuleListCompiler`) is unchanged and remains the path for refreshing
-rules between releases; the bundled snapshot is the offline baseline.
+**The shipped path is the committed snapshot.** Rules update by running
+`scripts/update-blocklist.sh`, committing the regenerated JSON, and
+shipping a release — auditable in diff, covered by the compile tests, and
+EdDSA-signed on the way to users like any other code. This is deliberate
+for a sovereign browser: the effective blocklist is exactly what the
+reviewed repository says it is.
+
+**Current runtime egress — disclosed:** `RemoteBlocklistUpdater` performs
+one conditional (ETag-cached) fetch of the upstream EasyList mirror at app
+launch. Today its result is **discarded** (the fetch exists to warm the
+cache for a future wiring; nothing it downloads reaches the active
+shields), so the network egress buys the user nothing. Determination:
+either of these is acceptable, the status quo is not —
+
+1. **Remove the launch fetch** until runtime updates are actually wired
+   (zero egress, snapshot-only), or
+2. **Wire it fully**: fetched lists compile through the existing
+   `UBORuleListCompiler` pipeline into the active shields, behind a
+   settings toggle that is **off by default** and clearly labelled as
+   network egress, with the source URL user-visible.
+
+Until one of those lands, users should know: the fetch contacts
+`raw.githubusercontent.com` (the EasyList mirror) once per launch, sends
+no identifying data beyond what any HTTPS request carries, and stores only
+an ETag. This paragraph is that disclosure.
