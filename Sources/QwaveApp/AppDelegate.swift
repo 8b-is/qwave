@@ -2,6 +2,7 @@ import AppKit
 import BrowserCore
 import Persistence
 import QwaveSupport
+import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var libraryWindowController: LibraryWindowController?
     private var vpnStatusItem: VPNStatusItem?
+    /// Sparkle auto-updater; feed and EdDSA public key come from Info.plist
+    /// (SUFeedURL / SUPublicEDKey, declared in project.yml).
+    private(set) var updaterController: SPUStandardUpdaterController?
 
     /// Single coalesced timer driving hibernation + energy management for the
     /// whole app — one wakeup, generous leeway, instead of per-tab timers.
@@ -19,7 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         environment = BrowserEnvironment.bootstrap()
-        NSApp.mainMenu = MainMenu.build()
+        let updater = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        updaterController = updater
+        NSApp.mainMenu = MainMenu.build(updater: updater)
         vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
 
         Task { @MainActor in

@@ -81,6 +81,73 @@ systemextensionsctl list              # inspect installed extensions
   key registered with Mullvad matches the keychain key: log out and back in
   to rotate both together.
 
+## CI release pipeline (signing, notarisation, Sparkle)
+
+`.github/workflows/release.yml` builds every `v*` tag. Which path it takes
+depends on which repository secrets exist:
+
+| Secret | Purpose |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | base64 of a `.p12` containing the **Developer ID Application** certificate + private key (`base64 -i cert.p12 \| pbcopy`) |
+| `MACOS_CERTIFICATE_PASSWORD` | password of that `.p12` |
+| `APPLE_TEAM_ID` | 10-char team id (e.g. `7CFQYBX575`) |
+| `NOTARY_APPLE_ID` | Apple ID for `notarytool` |
+| `NOTARY_PASSWORD` | app-specific password for that Apple ID |
+| `SPARKLE_ED_PRIVATE_KEY` | single-line base64 Ed25519 seed for signing Sparkle updates |
+
+- **All signing secrets present** → Developer ID signed build (hardened
+  runtime, timestamped), notarised via `notarytool`, stapled, verified with
+  `spctl -a -vv`, shipped as a signed+stapled DMG.
+  *Verified locally 2026-08-13*: the signed build's chain
+  (`Developer ID Application` → `Developer ID Certification Authority` →
+  `Apple Root CA`), hardened-runtime flag, and `codesign --verify --deep
+  --strict` all pass; `spctl -a -vv` answers `rejected (Unnotarized
+  Developer ID)` until notarisation runs, which is exactly the step the CI
+  pipeline performs before its own `spctl` assertion.
+- **Signing secrets absent** → unsigned build, shipped as
+  `Qwave-vX.Y.Z-unsigned.zip` (the pre-v0.3.0 behaviour). Local dev keeps
+  working unsigned: `CODE_SIGNING_ALLOWED=NO` still builds.
+- **`SPARKLE_ED_PRIVATE_KEY` present** → `generate_appcast` (from the pinned
+  Sparkle 2.9.5 distribution, checksum-verified) signs the DMG with EdDSA and
+  publishes `appcast.xml` as a release asset. The app's `SUFeedURL` points at
+  `releases/latest/download/appcast.xml`, so the appcast must ship with every
+  release — the workflow re-downloads the previous appcast first to keep the
+  update history.
+
+### Sparkle update keys
+
+The EdDSA **public** key is committed in `project.yml` (`SUPublicEDKey`). The
+**private** seed lives only in `~/.qwave-secrets/sparkle_ed25519_seed.b64` on
+the maintainer's machine and in the `SPARKLE_ED_PRIVATE_KEY` repo secret.
+Rotating it means: generate a new pair (`Sparkle`'s `generate_keys`, or any
+Ed25519 tool emitting a base64 32-byte seed), update `SUPublicEDKey`, update
+the secret, and ship one release signed with **both** keys' signatures per
+Sparkle's key-rotation guidance.
+
+### Known gap: Network Extension entitlements under Developer ID
+
+The app and PacketTunnel entitlements declare
+`com.apple.developer.networking.networkextension`
+(`packet-tunnel-provider-systemextension`). Manual Developer ID signing with
+those entitlements fails outright — verified 2026-08-13 with a local
+Developer ID identity:
+
+```
+error: "Qwave" requires a provisioning profile with the Network Extensions
+feature. Select a provisioning profile in the Signing & Capabilities editor.
+```
+
+Fixing that requires Apple's **Developer ID Network Extension approval** and
+Developer ID provisioning profiles for `is.8b.qwave` / `is.8b.qwave.tunnel`
+— an Apple-side process, not a repo change. Until then, the CI signed path
+substitutes empty entitlements
+(`Resources/CI/Distribution-NoVPN.entitlements` via
+`CODE_SIGN_ENTITLEMENTS`): the signed app browses and auto-updates, but VPN
+activation is not available in CI-signed builds. Local Xcode signing with
+your team (see above) is the working path for VPN testing today. Once the NE
+profiles exist, drop the `CODE_SIGN_ENTITLEMENTS` override from
+`release.yml` and install the profiles in the signing step.
+
 ## Renaming
 
 `is.8b.qwave` is a placeholder identity. To rebrand: change `bundleIdPrefix`,

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CI signing entitlements: empty on purpose.
+
+  The real entitlements (generated from project.yml) declare the Network
+  Extension packet-tunnel capability, which cannot be signed with a bare
+  Developer ID certificate - it needs Apple's Developer ID Network Extension
+  approval plus provisioning profiles. Until those exist, CI signs the app
+  with no restricted entitlements: the browser and Sparkle updates work, VPN
+  activation does not. See docs/SIGNING.md.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

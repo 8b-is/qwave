@@ -9,6 +9,7 @@ Resources/PacketTunnel/PacketTunnel.entitlements
 
 # Build products
 .build/
+build/
 DerivedData/
 *.xcresult
 

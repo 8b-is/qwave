@@ -20,6 +20,12 @@ packages:
     path: Packages/QwaveKit
   WireGuardKit:
     path: Packages/WireGuardKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    # 2.9.5, pinned by commit: the update framework is a trust anchor, and a
+    # moved tag must not be able to change what we embed. The SPM binary
+    # artifact is additionally checksum-verified by SwiftPM itself.
+    revision: 79bc9e872948e47877e76f194cb0c8e0412b0b90
 
 targets:
   Qwave:
@@ -30,6 +36,7 @@ targets:
     dependencies:
       - package: QwaveKit
         product: QwaveKit
+      - package: Sparkle
       - target: PacketTunnel
         embed: true
     settings:
@@ -41,8 +48,10 @@ targets:
       properties:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.3.0"
+        # major*10000 + minor*100 + patch — Sparkle compares this value, and
+        # CI enforces the mapping against the release tag.
+        CFBundleVersion: "300"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -53,6 +62,13 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsInWebContent: true
         LSApplicationCategoryType: public.app-category.productivity
+        # Sparkle 2 auto-updates: appcast lives on GitHub Releases; updates are
+        # EdDSA-signed in CI (see .github/workflows/release.yml and docs/SIGNING.md).
+        # SUEnableAutomaticChecks is deliberately NOT set: Sparkle asks the
+        # user for permission before any background checking — a privacy-first
+        # browser does not phone home without consent.
+        SUFeedURL: https://github.com/8b-is/qwave/releases/latest/download/appcast.xml
+        SUPublicEDKey: Lk/fBirUE+oEowMO599Wgr1X2C1XBPcWBJExkkHwG48=
     entitlements:
       path: Resources/Qwave/Qwave.entitlements
       properties:
@@ -103,8 +119,8 @@ targets:
       properties:
         CFBundleName: PacketTunnel
         CFBundleDisplayName: Qwave VPN Tunnel
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "300"
         NetworkExtension:
           NEMachServiceName: $(TeamIdentifierPrefix)group.is.8b.qwave.tunnel
           NEProviderClasses:

@@ -1,11 +1,12 @@
 import AppKit
+import Sparkle
 
 /// Programmatic main menu. Actions dispatch through the responder chain; tab
 /// and navigation actions land on `BrowserWindowController`, app-level ones
 /// on `AppDelegate`.
 @MainActor
 enum MainMenu {
-    static func build() -> NSMenu {
+    static func build(updater: SPUStandardUpdaterController) -> NSMenu {
         let main = NSMenu()
 
         // App
@@ -14,6 +15,10 @@ enum MainMenu {
         let appMenu = NSMenu()
         appItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Qwave", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        // Sparkle enables/disables this item itself via SPUUpdater.canCheckForUpdates.
+        let checkForUpdates = appMenu.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        checkForUpdates.target = updater
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         appMenu.addItem(.separator())

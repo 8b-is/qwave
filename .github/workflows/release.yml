@@ -5,11 +5,15 @@ on:
     tags:
       - "v*"
 
+env:
+  SPARKLE_VERSION: "2.9.5"
+  SPARKLE_SHA256: "015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc"
+
 jobs:
   publish-release:
-    name: Build & Publish GitHub Release (unsigned)
+    name: Build, sign & publish GitHub Release
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: write
     steps:
@@ -23,7 +27,29 @@ jobs:
           xcodebuild -version
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify
+        run: brew install xcodegen xcbeautify create-dmg
+
+      - name: Verify tag matches project versions
+        run: |
+          # v0.3.0-rc.1 → 0.3.0 (prerelease suffix is not part of the bundle version)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${TAG_VERSION%%-*}"
+          if ! grep -q "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml; then
+            echo "❌ Tag ${GITHUB_REF_NAME} does not match CFBundleShortVersionString in project.yml"
+            grep "CFBundleShortVersionString" project.yml
+            exit 1
+          fi
+          # CFBundleVersion is what Sparkle compares; enforce the committed
+          # scheme major*10000 + minor*100 + patch on BOTH targets so a
+          # forgotten bump can't ship an update existing installs ignore.
+          IFS=. read -r MAJOR MINOR PATCH <<< "$TAG_VERSION"
+          EXPECTED_BUILD=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+          COUNT=$(grep -c "CFBundleVersion: \"${EXPECTED_BUILD}\"" project.yml || true)
+          if [ "$COUNT" -ne 2 ]; then
+            echo "❌ Expected CFBundleVersion \"${EXPECTED_BUILD}\" on both targets"
+            grep "CFBundleVersion" project.yml
+            exit 1
+          fi
 
       - name: Run unit tests
         run: swift test --package-path Packages/QwaveKit
@@ -31,7 +57,64 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
-      - name: Build (unsigned Release)
+      # Signing is optional: when the Developer ID secrets are absent the
+      # pipeline falls back to the unsigned build so forks and the upstream
+      # repo (no certs yet) keep releasing. See docs/SIGNING.md for the
+      # exact secrets to add to enable the signed + notarised path.
+      - name: Detect signing configuration
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$MACOS_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ Developer ID secrets absent — building unsigned."
+          fi
+          if [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "appcast=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "appcast=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ SPARKLE_ED_PRIVATE_KEY absent — skipping appcast generation."
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.sign == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          KEYCHAIN_PATH="$RUNNER_TEMP/qwave-signing.keychain-db"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      # The generated entitlements declare the Network Extension capability,
+      # which needs Apple's Developer ID NE approval + provisioning profiles.
+      # Until those exist, CI-signed builds carry empty entitlements: browser
+      # and Sparkle updates work, VPN activation does not (docs/SIGNING.md).
+      - name: Build (signed Release)
+        if: steps.signing.outputs.sign == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -o pipefail
           xcodebuild \
@@ -39,37 +122,173 @@ jobs:
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            ENABLE_HARDENED_RUNTIME=YES \
+            OTHER_CODE_SIGN_FLAGS="--timestamp" \
+            CODE_SIGN_ENTITLEMENTS="$PWD/Resources/CI/Distribution-NoVPN.entitlements" \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            build | xcbeautify
+
+      - name: Build (unsigned Release)
+        if: steps.signing.outputs.sign != 'true'
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Qwave.xcodeproj \
+            -scheme Qwave \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
             build | xcbeautify
 
-      - name: Zip app artifact
+      - name: Locate app
         run: |
-          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'Qwave.app' -path '*Release*' | head -n1)"
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ Qwave.app build artifact not found!"
+          APP_PATH="build/DerivedData/Build/Products/Release/Qwave.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ Qwave.app not found at $APP_PATH"
             exit 1
           fi
-          echo "Found app at: $APP_PATH"
-          ditto -c -k --keepParent "$APP_PATH" Qwave-v0.1.0-unsigned.zip
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Notarize & staple app
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent "$APP_PATH" "Qwave-notarize.zip"
+          xcrun notarytool submit "Qwave-notarize.zip" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$APP_PATH"
+          rm "Qwave-notarize.zip"
+
+      - name: Verify Gatekeeper assessment
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        run: spctl -a -vv "$APP_PATH"
+
+      - name: Package DMG
+        run: |
+          STAGING="$RUNNER_TEMP/dmg-staging"
+          mkdir -p "$STAGING"
+          cp -R "$APP_PATH" "$STAGING/"
+          create-dmg \
+            --volname "Qwave" \
+            --window-size 540 380 \
+            --icon-size 96 \
+            --icon "Qwave.app" 140 180 \
+            --app-drop-link 400 180 \
+            --hide-extension "Qwave.app" \
+            --no-internet-enable \
+            --skip-jenkins \
+            --hdiutil-quiet \
+            "Qwave-${GITHUB_REF_NAME}.dmg" \
+            "$STAGING/"
+          echo "DMG_PATH=Qwave-${GITHUB_REF_NAME}.dmg" >> "$GITHUB_ENV"
+
+      - name: Sign, notarize & staple DMG
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          codesign --force --timestamp --sign "Developer ID Application" "$DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Zip app artifact (unsigned fallback)
+        if: steps.signing.outputs.sign != 'true'
+        run: |
+          ditto -c -k --keepParent "$APP_PATH" "Qwave-${GITHUB_REF_NAME}-unsigned.zip"
+          echo "ZIP_PATH=Qwave-${GITHUB_REF_NAME}-unsigned.zip" >> "$GITHUB_ENV"
+
+      # The appcast is generated ONLY for signed+notarised, non-prerelease
+      # builds: unsigned artifacts must never enter the EdDSA-trusted update
+      # channel (generate_appcast rejects them anyway — SUSparkleErrorDomain
+      # code 2 — which would kill the whole release job), and /releases/latest
+      # never serves prereleases so rc enclosures must stay out of the feed.
+      - name: Verify Sparkle key pairs with SUPublicEDKey
+        if: steps.signing.outputs.appcast == 'true' && steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true' && !contains(github.ref_name, '-')
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          cat > "$RUNNER_TEMP/derive-pubkey.swift" <<'EOF'
+          import CryptoKit
+          import Foundation
+          let env = ProcessInfo.processInfo.environment
+          guard let seedB64 = env["SPARKLE_ED_PRIVATE_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                let seed = Data(base64Encoded: seedB64),
+                let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+          else {
+            FileHandle.standardError.write(Data("malformed SPARKLE_ED_PRIVATE_KEY\n".utf8))
+            exit(1)
+          }
+          print(key.publicKey.rawRepresentation.base64EncodedString())
+          EOF
+          ACTUAL=$(swift "$RUNNER_TEMP/derive-pubkey.swift")
+          EXPECTED=$(grep 'SUPublicEDKey:' project.yml | awk '{print $2}')
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "❌ SPARKLE_ED_PRIVATE_KEY does not pair with the committed SUPublicEDKey"
+            echo "   derived: $ACTUAL"
+            echo "   committed: $EXPECTED"
+            exit 1
+          fi
+
+      - name: Generate Sparkle appcast
+        if: steps.signing.outputs.appcast == 'true' && steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true' && !contains(github.ref_name, '-')
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          curl -fsSL -o "Sparkle-${SPARKLE_VERSION}.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          echo "${SPARKLE_SHA256}  Sparkle-${SPARKLE_VERSION}.tar.xz" | shasum -a 256 -c -
+          mkdir -p sparkle-dist
+          tar -xJf "Sparkle-${SPARKLE_VERSION}.tar.xz" -C sparkle-dist
+
+          mkdir -p updates
+          cp "$DMG_PATH" updates/
+          # Reuse the previous appcast so the feed keeps update history.
+          curl -fsSL -o updates/appcast.xml \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/appcast.xml" || true
+
+          echo "$SPARKLE_ED_PRIVATE_KEY" | ./sparkle-dist/bin/generate_appcast \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            -o updates/appcast.xml \
+            updates/
+          echo "APPCAST_PATH=updates/appcast.xml" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Qwave-v0.1.0-unsigned.zip
-          title: "Qwave ${{ github.ref_name }}"
+          files: |
+            ${{ env.DMG_PATH }}
+            ${{ env.ZIP_PATH }}
+            ${{ env.APPCAST_PATH }}
+          name: "Qwave ${{ github.ref_name }}"
           body: |
-            ## Qwave v0.1.0 — Initial WebKit-Native macOS Browser Release
+            ## Qwave ${{ github.ref_name }}
 
-            ### Features
-            - **Firefox Containers**: Isolated `WKWebsiteDataStore` universes & ephemeral burner tabs.
-            - **Brave Shields**: `WKContentRuleList` content blocking & HTTPS-first engine.
-            - **Energy Governor**: Tab hibernation and battery optimization.
-            - **Safari SPI Flags**: FeatureFlagService guards.
-            - **Mullvad VPN Integration**: WireGuardKit system extension architecture.
+            Signed builds pass Gatekeeper (`spctl -a -vv`) and auto-update via
+            Sparkle (`appcast.xml` attached). Unsigned builds are published as
+            a zip when Developer ID secrets are not configured — see
+            `docs/SIGNING.md` for enabling the signed pipeline.
 
-            *Download the unsigned `Qwave-v0.1.0-unsigned.zip` artifact below.*
+            Full changes: see `CHANGELOG.md`.
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
