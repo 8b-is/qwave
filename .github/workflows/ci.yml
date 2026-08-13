@@ -199,9 +199,18 @@ jobs:
             exit 1
           }
 
+      # package-benchmark's mallocCountTotal metric is backed by jemalloc,
+      # which the Blacksmith image does not ship. package-jemalloc is a
+      # pkgConfig system target, so install jemalloc and point PKG_CONFIG_PATH
+      # at its .pc file, otherwise the build fails with
+      # "'jemalloc/jemalloc.h' file not found".
+      - name: Install jemalloc
+        run: brew install jemalloc
+
       # Only mallocCountTotal is checked (deterministic per code path);
       # see Benchmarks/README.md.
       - name: Check benchmark thresholds
         run: |
+          export PKG_CONFIG_PATH="$(brew --prefix jemalloc)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cd Benchmarks
           swift package benchmark thresholds check --no-progress
