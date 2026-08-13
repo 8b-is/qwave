@@ -38,11 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await environment.shields.prepare()
             await environment.vpn.tunnel.refresh()
             restoreOrOpenFirstWindow()
-            // Stage A.5: keep the remote blocklist warm in the background.
-            Task {
-                try? await environment.blocklistUpdater.fetchUpdatedBlocklistJSON()
-            }
         }
+        // No launch-time network egress: the blocklist ships as a committed
+        // build-time snapshot (scripts/update-blocklist.sh + commit), so
+        // shields are fully active from a cold start with zero requests. The
+        // former launch fetch discarded its result anyway — egress that
+        // bought the user nothing. See docs/NETWORK.md and docs/BLOCKLIST.md.
 
         startEnergyTimer()
         startMemoryPressureSource()

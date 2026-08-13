@@ -1,0 +1,117 @@
+import WebKit
+import XCTest
+
+@testable import MemoryWave
+@testable import QwaveSupport
+@testable import Shields
+@testable import VPNKit
+
+/// The egress regression gate (docs/NETWORK.md, "prove what it sends").
+///
+/// Two guarantees:
+///  1. Every Category-A endpoint this codebase can contact by default is on
+///     the committed `EgressAllowlist`. Add a new default endpoint without
+///     allowlisting it → this fails.
+///  2. The always-on launch path (shields preparation) makes no URLSession
+///     request at all — the launch-time blocklist fetch was removed.
+///
+/// Honest scope: this catches Category A (Qwave's own egress). It cannot see
+/// Category B (page subresources) or Category C (WebKit's own network
+/// process, e.g. the fraudulent-website warning) — those do not route through
+/// this process's `URLSession`. See docs/NETWORK.md.
+final class EgressGuardTests: XCTestCase {
+
+    // MARK: - Allowlist ↔ endpoint consistency
+
+    func testMullvadDefaultEndpointIsAllowlisted() {
+        let client = MullvadAPIClient()
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: client.baseURL.host),
+            "Mullvad API host \(client.baseURL.host ?? "nil") must be on the egress allowlist"
+        )
+    }
+
+    func testMemoryProviderDefaultEndpointIsAllowlisted() {
+        let host = MemoryWavePreferences.defaultRemoteBaseURL.host
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: host),
+            "Memory Wave default AI host \(host ?? "nil") must be on the egress allowlist"
+        )
+    }
+
+    func testSparkleFeedHostIsAllowlisted() {
+        // SUFeedURL lives in project.yml (releases/latest/download/appcast.xml
+        // on github.com); assert the host it resolves to is permitted.
+        XCTAssertTrue(EgressAllowlist.permits(host: "github.com"))
+        XCTAssertTrue(EgressAllowlist.permits(host: "objects.githubusercontent.com") == false)
+    }
+
+    /// The post-quantum key exchange targets the relay's in-tunnel gateway
+    /// (10.64.0.1), reachable only INSIDE the VPN — never open-internet
+    /// egress. It is deliberately NOT on the allowlist, and the allowlist
+    /// must not accidentally permit it.
+    func testInTunnelQuantumEndpointIsNotOpenEgress() {
+        let transport = MullvadEphemeralPeerTransport()
+        XCTAssertFalse(
+            EgressAllowlist.permits(host: transport.endpoint.host),
+            "the in-tunnel PQ endpoint must not be treated as an allowlisted open-internet host"
+        )
+    }
+
+    func testAllowlistRejectsUnknownHosts() {
+        XCTAssertFalse(EgressAllowlist.permits(host: "example.com"))
+        XCTAssertFalse(EgressAllowlist.permits(host: "evil.tracker.net"))
+        XCTAssertFalse(EgressAllowlist.permits(host: nil))
+        XCTAssertFalse(EgressAllowlist.permits(host: ""))
+        // subdomain match works; sibling-domain confusion does not
+        XCTAssertTrue(EgressAllowlist.permits(host: "codeload.github.com"))
+        XCTAssertFalse(EgressAllowlist.permits(host: "github.com.evil.net"))
+    }
+
+    // MARK: - No egress on the launch path
+
+    /// A process-wide URLProtocol recorder: registered, it observes every
+    /// `URLSession.shared` request and records the host without letting it
+    /// leave the machine.
+    final class Recorder: URLProtocol, @unchecked Sendable {
+        static let lock = NSLock()
+        static var recordedHosts: [String] = []
+
+        override class func canInit(with request: URLRequest) -> Bool {
+            lock.lock()
+            if let host = request.url?.host { recordedHosts.append(host) }
+            lock.unlock()
+            return false  // don't actually handle — just observe, let it fail closed
+        }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    }
+
+    @MainActor
+    func testShieldsLaunchPathMakesNoNetworkRequest() async throws {
+        Recorder.lock.lock()
+        Recorder.recordedHosts = []
+        Recorder.lock.unlock()
+        URLProtocol.registerClass(Recorder.self)
+        defer { URLProtocol.unregisterClass(Recorder.self) }
+
+        // The always-on launch shields path, on a fresh rule-list store.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-egress-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let director = ShieldsDirector(
+            compiler: RuleListCompiler(store: WKContentRuleListStore(url: dir)!),
+            policy: ShieldsPolicy(directory: nil)
+        )
+        await director.prepare()
+
+        Recorder.lock.lock()
+        let hosts = Recorder.recordedHosts
+        Recorder.lock.unlock()
+        XCTAssertTrue(
+            hosts.isEmpty,
+            "shields launch preparation must make no network request — saw \(hosts)"
+        )
+    }
+}
