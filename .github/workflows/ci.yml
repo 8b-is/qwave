@@ -214,3 +214,28 @@ jobs:
           export PKG_CONFIG_PATH="$(brew --prefix jemalloc)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cd Benchmarks
           swift package benchmark thresholds check --no-progress
+
+  zig-validation:
+    name: Zig blocklist validation
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Zig
+        run: brew install zig
+
+      - name: Build
+        run: |
+          cd zig-core
+          zig build
+
+      - name: Test
+        run: |
+          cd zig-core
+          zig build test
+
+      - name: Validate blocklist
+        run: |
+          cd zig-core
+          zig-out/bin/qwave-blocklist ../Packages/QwaveKit/Sources/Shields/Resources/easylist-compiled.json

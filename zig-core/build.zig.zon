@@ -1,0 +1,12 @@
+.{
+    .name = .qwave_blocklist,
+    .version = "0.1.0",
+    .fingerprint = 0x1b79e7209d80b9f7,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src/main.zig",
+    },
+}
