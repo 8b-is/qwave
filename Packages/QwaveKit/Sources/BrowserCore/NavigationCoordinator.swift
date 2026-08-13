@@ -62,7 +62,11 @@ public final class NavigationCoordinator: NSObject {
                     guard let self, let tab = self.tab else { return }
                     tab.title = webView.title ?? ""
                     if let url = webView.url, let title = webView.title, !title.isEmpty, !tab.isEphemeral {
-                        try? self.history?.updateTitle(title, for: url, containerID: tab.containerID)
+                        let history = self.history
+                        let containerID = tab.containerID
+                        Task { @MainActor in
+                            try? await history?.updateTitle(title, for: url, containerID: containerID)
+                        }
                     }
                     self.onStateChange?()
                 }
@@ -137,23 +141,19 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 decisionHandler(.allow, preferences)
             case .htmlIndex(let file, let root):
                 decisionHandler(.cancel, preferences)
-                DispatchQueue.main.async { webView.loadFileURL(file, allowingReadAccessTo: root) }
+                webView.loadFileURL(file, allowingReadAccessTo: root)
             case .markdown(let source, let file):
                 decisionHandler(.cancel, preferences)
-                DispatchQueue.main.async { self.presentMarkdown(source, at: file, in: webView) }
+                presentMarkdown(source, at: file, in: webView)
             case .listing(let markdown, let directory):
                 decisionHandler(.cancel, preferences)
-                DispatchQueue.main.async {
-                    self.presentMarkdown(markdown, at: directory, in: webView)
-                }
+                presentMarkdown(markdown, at: directory, in: webView)
             case .missing:
                 decisionHandler(.cancel, preferences)
-                DispatchQueue.main.async {
-                    webView.loadHTMLString(
-                        InternalPages.httpErrorHTML(status: 404, host: url.lastPathComponent),
-                        baseURL: url
-                    )
-                }
+                webView.loadHTMLString(
+                    InternalPages.httpErrorHTML(status: 404, host: url.lastPathComponent),
+                    baseURL: url
+                )
             }
             return
         }
@@ -201,12 +201,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
             {
                 decisionHandler(.cancel)
                 let host = http.url.flatMap(CanonicalHost.host(of:)) ?? http.url?.host ?? ""
-                DispatchQueue.main.async {
-                    webView.loadHTMLString(
-                        InternalPages.httpErrorHTML(status: http.statusCode, host: host),
-                        baseURL: http.url
-                    )
-                }
+                webView.loadHTMLString(
+                    InternalPages.httpErrorHTML(status: http.statusCode, host: host),
+                    baseURL: http.url
+                )
                 return
             }
         }
@@ -231,7 +229,12 @@ extension NavigationCoordinator: WKNavigationDelegate {
         httpsUpgrader.noteSuccessfulNavigation(to: url)
 
         if !tab.isEphemeral, let scheme = url.scheme, scheme == "http" || scheme == "https" {
-            try? history?.recordVisit(url: url, title: webView.title, containerID: tab.containerID)
+            let history = history
+            let title = webView.title
+            let containerID = tab.containerID
+            Task { @MainActor in
+                try? await history?.recordVisit(url: url, title: title, containerID: containerID)
+            }
         }
         if let scheme = url.scheme, scheme == "http" || scheme == "https" {
             extractFaviconURL(from: webView)
@@ -309,15 +312,13 @@ extension NavigationCoordinator: WKNavigationDelegate {
         do {
             let (data, _) = try await session.data(from: url)
             let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            await MainActor.run { presentMarkdown(source, at: url, in: webView) }
+            presentMarkdown(source, at: url, in: webView)
         } catch {
-            await MainActor.run {
-                webView.loadHTMLString(
-                    InternalPages.connectionLostHTML(
-                        host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
-                    baseURL: url
-                )
-            }
+            webView.loadHTMLString(
+                InternalPages.connectionLostHTML(
+                    host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
+                baseURL: url
+            )
         }
     }
 }

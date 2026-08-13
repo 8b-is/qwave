@@ -1,10 +1,10 @@
 import Foundation
 
 /// One WebKit runtime feature discovered via SPI reflection.
-public struct WebFeature: Identifiable, Equatable {
+public struct WebFeature: Identifiable, Equatable, Sendable {
     /// WebKit's internal status buckets. Raw values track `_WKFeatureStatus`;
     /// unknown numbers degrade to `.unknown` rather than failing.
-    public enum Status: Equatable {
+    public enum Status: Equatable, Sendable {
         case embedder
         case unstable
         case internalDebug

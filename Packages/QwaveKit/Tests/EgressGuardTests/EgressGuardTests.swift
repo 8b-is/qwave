@@ -73,14 +73,32 @@ final class EgressGuardTests: XCTestCase {
     /// A process-wide URLProtocol recorder: registered, it observes every
     /// `URLSession.shared` request and records the host without letting it
     /// leave the machine.
-    final class Recorder: URLProtocol, @unchecked Sendable {
-        static let lock = NSLock()
-        static var recordedHosts: [String] = []
+    final class RecorderState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recordedHosts: [String] = []
+
+        func reset() {
+            lock.withLock {
+                recordedHosts = []
+            }
+        }
+
+        func record(_ host: String) {
+            lock.withLock {
+                recordedHosts.append(host)
+            }
+        }
+
+        func hosts() -> [String] {
+            lock.withLock { recordedHosts }
+        }
+    }
+
+    final class Recorder: URLProtocol {
+        static let state = RecorderState()
 
         override class func canInit(with request: URLRequest) -> Bool {
-            lock.lock()
-            if let host = request.url?.host { recordedHosts.append(host) }
-            lock.unlock()
+            if let host = request.url?.host { state.record(host) }
             return false  // don't actually handle — just observe, let it fail closed
         }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -88,9 +106,7 @@ final class EgressGuardTests: XCTestCase {
 
     @MainActor
     func testShieldsLaunchPathMakesNoNetworkRequest() async throws {
-        Recorder.lock.lock()
-        Recorder.recordedHosts = []
-        Recorder.lock.unlock()
+        Recorder.state.reset()
         URLProtocol.registerClass(Recorder.self)
         defer { URLProtocol.unregisterClass(Recorder.self) }
 
@@ -106,9 +122,7 @@ final class EgressGuardTests: XCTestCase {
         )
         await director.prepare()
 
-        Recorder.lock.lock()
-        let hosts = Recorder.recordedHosts
-        Recorder.lock.unlock()
+        let hosts = Recorder.state.hosts()
         XCTAssertTrue(
             hosts.isEmpty,
             "shields launch preparation must make no network request — saw \(hosts)"

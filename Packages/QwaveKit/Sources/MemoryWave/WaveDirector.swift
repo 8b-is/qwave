@@ -17,6 +17,7 @@ public struct WaveAnswer: Equatable, Sendable {
 
 /// Orchestrates remember / recall / infer against the MEM8 substrate.
 /// The browser is fully functional if `store` is nil — Memory Wave is optional.
+@MainActor
 public final class WaveDirector {
     public let store: MemoryStore?
     public let vault: NibbleVault?
@@ -45,7 +46,7 @@ public final class WaveDirector {
         isExplicit: Bool = true,
         lane: MemoryLane = .odd,
         emotion: EmotionVector = .neutral
-    ) throws -> MemoryRecord {
+    ) async throws -> MemoryRecord {
         let decision = MemoryWavePolicy.decide(
             MemoryWaveContext(
                 isExplicit: isExplicit,
@@ -62,10 +63,10 @@ public final class WaveDirector {
         let clamped = String(body.prefix(MemoryWaveConstants.maxBodyCharacters))
         let record: MemoryRecord
         if kind == .browse, let url {
-            record = try store.upsertBrowse(
+            record = try await store.upsertBrowse(
                 title: title, body: clamped, url: url, containerID: containerID, emotion: emotion)
         } else {
-            record = try store.insert(
+            record = try await store.insert(
                 title: title,
                 body: clamped,
                 url: url,
@@ -103,10 +104,10 @@ public final class WaveDirector {
         return written
     }
 
-    public func timeline(range: TimelineRange, limit: Int = 200) throws -> [TimelineDay] {
+    public func timeline(range: TimelineRange, limit: Int = 200) async throws -> [TimelineDay] {
         guard let store else { return [] }
         let window = range.interval()
-        var records = try store.records(since: window.0, until: window.1, limit: limit)
+        var records = try await store.records(since: window.0, until: window.1, limit: limit)
         if let vault, let nibbles = try? vault.all(limit: 400) {
             var byURL: [String: [String]] = [:]
             for nibble in nibbles {
@@ -129,7 +130,7 @@ public final class WaveDirector {
         inferenceAllowed: Bool,
         persist: Bool = true
     ) async throws -> WaveAnswer {
-        let days = try timeline(range: range)
+        let days = try await timeline(range: range)
         let records = days.flatMap(\.items)
         guard !records.isEmpty else {
             return WaveAnswer(
@@ -157,7 +158,7 @@ public final class WaveDirector {
             salience: MarineDetector.score(text: corpus)
         )
         if persist {
-            _ = try? remember(
+            _ = try? await remember(
                 title: "Timeline · \(range.displayName)",
                 body: answer.text,
                 url: URL(string: "qwave://timeline"),
@@ -171,7 +172,7 @@ public final class WaveDirector {
         return answer
     }
 
-    public func recall(containerID: UUID?, query: String? = nil, limit: Int = 8) throws -> [MemoryRecord] {
+    public func recall(containerID: UUID?, query: String? = nil, limit: Int = 8) async throws -> [MemoryRecord] {
         if let query, let vault {
             let tags = NibbleMarkdown.tags(inQuery: query)
             if !tags.isEmpty {
@@ -179,7 +180,7 @@ public final class WaveDirector {
             }
         }
 
-        var records = (try store?.records(containerID: containerID, limit: 64)) ?? []
+        var records = (try await store?.records(containerID: containerID, limit: 64)) ?? []
         if let query, !query.isEmpty {
             let identity =
                 MemoryWaveConstants.consciousness.doubleValue
@@ -200,7 +201,7 @@ public final class WaveDirector {
                 provenance: .cognitive
             )
             if let store {
-                let grid = try store.grid(containerID: containerID)
+                let grid = try await store.grid(containerID: containerID)
                 let ranked = grid.resonate(query: probe)
                 let order = Dictionary(
                     uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
@@ -244,7 +245,7 @@ public final class WaveDirector {
             salience: salience
         )
         if persist, !isEphemeral {
-            _ = try? remember(
+            _ = try? await remember(
                 title: clamped.title,
                 body: answer.text,
                 url: clamped.href.flatMap(URL.init(string:)),
@@ -305,7 +306,7 @@ public final class WaveDirector {
         var composed = user
         var usedMemory = false
         if includeStoredMemory, provider.kind == .onDevice, !isEphemeral {
-            let recalled = (try? recall(containerID: containerID, query: user, limit: 6)) ?? []
+            let recalled = (try? await recall(containerID: containerID, query: user, limit: 6)) ?? []
             if !recalled.isEmpty {
                 usedMemory = true
                 let block = recalled.map { "- \($0.title): \(String($0.body.prefix(240)))" }.joined(separator: "\n")

@@ -45,6 +45,22 @@ final class RelaySelectorTests: XCTestCase {
         XCTAssertEqual(a, b)
     }
 
+    func testSelectedRelayPreservesEndpointAcrossDetachedWork() async throws {
+        let relayList = try JSONDecoder().decode(
+            RelayList.self,
+            from: Data(contentsOf: XCTUnwrap(Bundle.module.url(forResource: "relays", withExtension: "json")))
+        )
+        let picked = await Task.detached {
+            RelaySelector.pickRelay(from: relayList, constraints: RelayConstraints(location: "se"), seed: 1)
+        }.value
+        let selected = try XCTUnwrap(
+            picked
+        )
+
+        XCTAssertEqual(selected.relay.hostname, "se-sto-wg-001")
+        XCTAssertEqual(selected.endpoint, "185.213.154.68:51820")
+    }
+
     func testPortPrefersCanonicalWireGuardPort() {
         // Fixture ranges include 33565-51820.
         let port = RelaySelector.pickPort(from: list.wireguard.portRanges, seed: 123)

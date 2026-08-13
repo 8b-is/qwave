@@ -75,15 +75,14 @@ final class WebExtensionRegistryTests: XCTestCase {
 
 @MainActor
 final class ExtensionStorageServiceTests: XCTestCase {
-    private var service: ExtensionStorageService!
-
-    override func setUp() {
+    private func makeService() -> ExtensionStorageService {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-ext-storage-\(UUID().uuidString)", isDirectory: true)
-        service = ExtensionStorageService(directory: dir)
+        return ExtensionStorageService(directory: dir)
     }
 
     func testSetGetRemove() throws {
+        let service = makeService()
         let id = "ext-test"
         service.set(extensionID: id, items: ["theme": "dark", "count": 3])
         let all = try service.get(extensionID: id, keys: nil)
@@ -106,6 +105,7 @@ final class ExtensionStorageServiceTests: XCTestCase {
     }
 
     func testIsolationBetweenExtensions() throws {
+        let service = makeService()
         service.set(extensionID: "ext-a", items: ["k": "a"])
         service.set(extensionID: "ext-b", items: ["k": "b"])
         XCTAssertEqual(try service.get(extensionID: "ext-a", keys: "k")["k"] as? String, "a")
@@ -113,7 +113,8 @@ final class ExtensionStorageServiceTests: XCTestCase {
     }
 }
 
-private final class RecordingResponder: ExtensionMessageResponding, @unchecked Sendable {
+@MainActor
+private final class RecordingResponder: ExtensionMessageResponding {
     var responses: [(id: Int, success: Bool, value: Any?)] = []
     func respond(id: Int, success: Bool, value: Any?) {
         responses.append((id, success, value))
@@ -122,22 +123,21 @@ private final class RecordingResponder: ExtensionMessageResponding, @unchecked S
 
 @MainActor
 final class ExtensionMessageRouterTests: XCTestCase {
-    private var router: ExtensionMessageRouter!
-    private var responder: RecordingResponder!
-
-    override func setUp() {
+    private func makeRouter() -> (router: ExtensionMessageRouter, responder: RecordingResponder) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-ext-router-\(UUID().uuidString)", isDirectory: true)
         let defaults = UserDefaults(suiteName: "qwave-test-router-\(UUID().uuidString)")!
-        router = ExtensionMessageRouter(
+        let router = ExtensionMessageRouter(
             registry: WebExtensionRegistry(defaults: defaults),
             storage: ExtensionStorageService(directory: dir)
         )
-        responder = RecordingResponder()
+        let responder = RecordingResponder()
         router.responder = responder
+        return (router, responder)
     }
 
     func testStorageRouting() {
+        let (router, responder) = makeRouter()
         router.handle(
             ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: "e1")
         router.handle(ExtensionBridgeCall(id: 2, method: "storage.local.get", args: [NSNull()]), extensionID: "e1")
@@ -152,6 +152,7 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     func testTabQueryRouting() {
+        let (router, responder) = makeRouter()
         router.tabQueryHandler = { query in
             XCTAssertEqual(query["active"] as? Bool, true)
             return [["id": 7, "url": "https://example.com"]]
@@ -162,6 +163,7 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     func testTabCreateRouting() {
+        let (router, _) = makeRouter()
         var created: [String: Any]?
         router.tabCreateHandler = { props in created = props }
         router.handle(
@@ -170,6 +172,7 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     func testRuntimeSendMessageWithAsyncReply() {
+        let (router, responder) = makeRouter()
         router.runtimeMessageHandler = { payload, reply in
             XCTAssertEqual(payload as? String, "ping")
             reply("pong")
@@ -178,7 +181,49 @@ final class ExtensionMessageRouterTests: XCTestCase {
         XCTAssertEqual(responder.responses.first?.value as? String, "pong")
     }
 
+    func testRuntimeSendMessageWithDelayedReply() async {
+        let (router, responder) = makeRouter()
+        router.runtimeMessageHandler = { payload, reply in
+            XCTAssertEqual(payload as? String, "ping")
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 10_000_000)
+                reply("pong")
+            }
+        }
+
+        router.handle(ExtensionBridgeCall(id: 10, method: "runtime.sendMessage", args: ["ping"]), extensionID: "e1")
+        XCTAssertTrue(responder.responses.isEmpty)
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(responder.responses.count, 1)
+        XCTAssertEqual(responder.responses.first?.id, 10)
+        XCTAssertEqual(responder.responses.first?.value as? String, "pong")
+    }
+
+    func testNestedBridgeArgumentsRouteWithoutLeavingMainActor() throws {
+        let (router, responder) = makeRouter()
+        router.handle(
+            ExtensionBridgeCall(
+                id: 7,
+                method: "storage.local.set",
+                args: [["settings": ["theme": "dark", "zoom": 1.25]]]
+            ),
+            extensionID: "e1"
+        )
+        router.handle(
+            ExtensionBridgeCall(id: 8, method: "storage.local.get", args: [["settings"]]),
+            extensionID: "e1"
+        )
+
+        let settings = try XCTUnwrap(
+            (responder.responses.last?.value as? [String: Any])?["settings"] as? [String: Any]
+        )
+        XCTAssertEqual(settings["theme"] as? String, "dark")
+        XCTAssertEqual(settings["zoom"] as? Double, 1.25)
+    }
+
     func testUnknownMethodFails() {
+        let (router, responder) = makeRouter()
         router.handle(ExtensionBridgeCall(id: 9, method: "nope.nope", args: []), extensionID: "e1")
         XCTAssertEqual(responder.responses.first?.success, false)
     }

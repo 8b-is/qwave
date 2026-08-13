@@ -1,13 +1,10 @@
 // swift-tools-version:6.0
 import PackageDescription
 
-// Per-target Swift language mode. tools-version 6.0 defaults targets to
-// language mode 6, so every not-yet-migrated target is explicitly pinned to
-// `.v5` and modules are flipped to `.v6` one at a time (see docs and the
-// structural-foundations work). This lets each module's strict-concurrency
-// migration land as its own reviewable commit instead of one big-bang flip.
-let v5: [SwiftSetting] = [.swiftLanguageMode(.v5)]
-let v6: [SwiftSetting] = [.swiftLanguageMode(.v6)]
+let swift6: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .unsafeFlags(["-strict-concurrency=complete"]),
+]
 
 let package = Package(
     name: "QwaveKit",
@@ -51,7 +48,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Logging", package: "swift-log")
             ],
-            swiftSettings: v6
+            swiftSettings: swift6
         ),
         // Canonical (WHATWG) host identity. Kept out of QwaveTunnelKit so the
         // tunnel extension doesn't carry a URL parser it never uses.
@@ -61,19 +58,18 @@ let package = Package(
                 .product(name: "WebURL", package: "swift-url"),
                 .product(name: "WebURLFoundationExtras", package: "swift-url"),
             ],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
-        // MIGRATED to Swift 6 language mode.
-        .target(name: "Persistence", dependencies: ["QwaveSupport"], swiftSettings: v6),
+        .target(name: "Persistence", dependencies: ["QwaveSupport"], swiftSettings: swift6),
         .target(
             name: "Shields",
             dependencies: ["QwaveSupport", "Persistence", "URLIdentity"],
             resources: [
                 .process("Resources")
             ],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
-        .target(name: "FeatureFlags", dependencies: ["QwaveSupport"], swiftSettings: v5),
+        .target(name: "FeatureFlags", dependencies: ["QwaveSupport"], swiftSettings: swift6),
         .target(
             name: "BrowserCore",
             dependencies: [
@@ -83,17 +79,17 @@ let package = Package(
             resources: [
                 .process("Resources")
             ],
-            swiftSettings: v6
+            swiftSettings: swift6
         ),
         // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
         // and the hybrid construction used by the Stage B VPN negotiator.
-        .target(name: "PostQuantum", swiftSettings: v5),
-        .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"], swiftSettings: v5),
+        .target(name: "PostQuantum", swiftSettings: swift6),
+        .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"], swiftSettings: swift6),
         // WebExtensions Manifest V3 engine: browser.* bridge, storage, popups.
-        .target(name: "WebExtensions", dependencies: ["QwaveSupport"], swiftSettings: v5),
+        .target(name: "WebExtensions", dependencies: ["QwaveSupport"], swiftSettings: swift6),
         // MEM8 wave substrate: Cognitive/Nexus provenance, 79-byte WaveInt,
         // encrypted container-scoped store, AI-agnostic inference providers.
-        .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"], swiftSettings: v5),
+        .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"], swiftSettings: swift6),
 
         .testTarget(
             name: "QwaveSupportTests",
@@ -101,40 +97,40 @@ let package = Package(
                 "QwaveSupport",
                 .product(name: "Logging", package: "swift-log"),
             ],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
-        .testTarget(name: "URLIdentityTests", dependencies: ["URLIdentity"], swiftSettings: v5),
-        .testTarget(name: "PersistenceTests", dependencies: ["Persistence"], swiftSettings: v5),
+        .testTarget(name: "URLIdentityTests", dependencies: ["URLIdentity"], swiftSettings: swift6),
+        .testTarget(name: "PersistenceTests", dependencies: ["Persistence"], swiftSettings: swift6),
         .testTarget(
             name: "ShieldsTests",
             dependencies: [
                 "Shields",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
             ],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
-        .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: v5),
-        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"], swiftSettings: v5),
+        .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: swift6),
+        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"], swiftSettings: swift6),
         .testTarget(
             name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
-            swiftSettings: v5),
-        .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: v5),
+            swiftSettings: swift6),
+        .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: swift6),
         .testTarget(
             name: "VPNKitTests",
             dependencies: ["VPNKit"],
             resources: [
                 .process("Fixtures")
             ],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
         .testTarget(
-            name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"], swiftSettings: v5),
+            name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"], swiftSettings: swift6),
         // Egress regression gate: enforces the committed Category-A host
         // allowlist against every module that can make Qwave's own requests.
         .testTarget(
             name: "EgressGuardTests",
             dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave"],
-            swiftSettings: v5
+            swiftSettings: swift6
         ),
     ]
 )

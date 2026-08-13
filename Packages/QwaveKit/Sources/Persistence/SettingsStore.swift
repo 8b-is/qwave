@@ -35,6 +35,7 @@ public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable 
 
 /// Typed access to user preferences. All keys are namespaced to survive
 /// alongside anything else living in the same defaults domain.
+@MainActor
 public final class SettingsStore {
     private let defaults: UserDefaults
 

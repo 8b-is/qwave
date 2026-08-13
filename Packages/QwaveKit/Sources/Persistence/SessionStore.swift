@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TabSnapshot: Codable, Equatable {
+public struct TabSnapshot: Codable, Equatable, Sendable {
     public var url: URL?
     public var title: String
     public var containerID: UUID?
@@ -14,7 +14,7 @@ public struct TabSnapshot: Codable, Equatable {
     }
 }
 
-public struct WindowSnapshot: Codable, Equatable {
+public struct WindowSnapshot: Codable, Equatable, Sendable {
     public var tabs: [TabSnapshot]
     public var selectedIndex: Int
 
@@ -24,7 +24,7 @@ public struct WindowSnapshot: Codable, Equatable {
     }
 }
 
-public struct SessionSnapshot: Codable, Equatable {
+public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var windows: [WindowSnapshot]
     public var savedAt: Date
 
@@ -37,10 +37,10 @@ public struct SessionSnapshot: Codable, Equatable {
 /// Persists window/tab topology as JSON in Application Support. Ephemeral
 /// tabs are excluded by the caller before saving — a burner tab that survives
 /// relaunch wouldn't be a burner tab.
-public final class SessionStore {
+public actor SessionStore {
     private let fileURL: URL
 
-    public init(directory: URL) throws {
+    public init(directory: URL) async throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         self.fileURL = directory.appendingPathComponent("session.json")
     }

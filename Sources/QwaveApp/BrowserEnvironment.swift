@@ -33,8 +33,10 @@ final class BrowserEnvironment {
     let secrets: SecretStore
 
     private let directory: URL
+    private var startPageMemories: [StartMemoryChip] = []
+    private var timelineDays: [TimelineDayView] = []
 
-    private init(directory: URL) {
+    private init(directory: URL) async {
         self.directory = directory
         settings = SettingsStore()
         secrets = KeychainSecretStore()
@@ -46,10 +48,14 @@ final class BrowserEnvironment {
         httpsUpgrader = HTTPSFirstUpgrader()
         downloads = DownloadManager()
 
-        let database = try? SQLiteDatabase(url: directory.appendingPathComponent("browser.db"))
-        history = database.flatMap { try? HistoryStore(database: $0) }
-        bookmarks = database.flatMap { try? BookmarkStore(database: $0) }
-        sessionStore = try? SessionStore(directory: directory)
+        if let database = try? SQLiteDatabase(url: directory.appendingPathComponent("browser.db")) {
+            history = try? await HistoryStore(database: database)
+            bookmarks = try? await BookmarkStore(database: database)
+        } else {
+            history = nil
+            bookmarks = nil
+        }
+        sessionStore = try? await SessionStore(directory: directory)
 
         factory = WebViewFactory(
             containers: containers,
@@ -95,24 +101,31 @@ final class BrowserEnvironment {
     }
 
     func makeStartPageHTML() -> String {
-        let tagChips = memoryWave.nibbleTags(limit: 10).map {
-            StartMemoryChip(title: "#\($0)", preview: "nibble")
-        }
-        let records = (try? memoryWave.recall(containerID: nil, limit: 8)) ?? []
-        let chips =
-            tagChips
-            + records.map {
-                StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
-            }
         return InternalPages.startHTML(
-            memories: chips,
+            memories: startPageMemories,
             providerLabel: providerLabel,
             rememberEverything: memoryPreferences.rememberEverything
         )
     }
 
     func makeTimelinePageHTML() -> String {
-        let days = ((try? memoryWave.timeline(range: .all)) ?? []).map { day in
+        InternalPages.timelineHTML(
+            days: timelineDays,
+            summary: QwaveInternal.lastTimelineSummary.isEmpty ? nil : QwaveInternal.lastTimelineSummary,
+            rememberEverything: memoryPreferences.rememberEverything,
+            providerLabel: providerLabel
+        )
+    }
+
+    func refreshInternalPages() async {
+        let tagChips = memoryWave.nibbleTags(limit: 10).map {
+            StartMemoryChip(title: "#\($0)", preview: "nibble")
+        }
+        let records = (try? await memoryWave.recall(containerID: nil, limit: 8)) ?? []
+        startPageMemories = tagChips + records.map {
+            StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
+        }
+        timelineDays = ((try? await memoryWave.timeline(range: .all)) ?? []).map { day in
             TimelineDayView(
                 heading: day.heading,
                 items: day.items.prefix(24).map { item in
@@ -128,21 +141,16 @@ final class BrowserEnvironment {
                 }
             )
         }
-        let summary = QwaveInternal.lastTimelineSummary
-        return InternalPages.timelineHTML(
-            days: days,
-            summary: summary.isEmpty ? nil : summary,
-            rememberEverything: memoryPreferences.rememberEverything,
-            providerLabel: providerLabel
-        )
     }
 
-    static func bootstrap() -> BrowserEnvironment {
+    static func bootstrap() async -> BrowserEnvironment {
         let base =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let directory = base.appendingPathComponent("Qwave", isDirectory: true)
-        return BrowserEnvironment(directory: directory)
+        let environment = await BrowserEnvironment(directory: directory)
+        await environment.refreshInternalPages()
+        return environment
     }
 
     /// Builds a coordinator wired to this environment for one tab.

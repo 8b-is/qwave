@@ -133,25 +133,73 @@ final class UBORuleListCompilerTests: XCTestCase {
         let rules = try! JSONSerialization.jsonObject(with: Data(chunks[0].utf8)) as! [[String: Any]]
         XCTAssertEqual(rules.count, 11)
     }
+
+    func testBlocklistCompilationResultSurvivesDetachedWork() async throws {
+        let result = await Task.detached {
+            UBORuleListCompiler.compileJSON(from: "||ads.example^\n@@||ads.example/allowed^")
+        }.value
+
+        let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.0.utf8)) as? [[String: Any]])
+        XCTAssertEqual(rules.count, 2)
+        XCTAssertEqual(result.1, 0)
+        XCTAssertEqual(result.2, 1)
+    }
 }
 
 // MARK: - Updater with ETag caching
 
-private final class MockETagStore: ETagStoring, @unchecked Sendable {
+private actor MockETagStore: ETagStoring {
     var storage: [String: String] = [:]
     func etag(for key: String) -> String? { storage[key] }
     func setETag(_ etag: String?, for key: String) { storage[key] = etag }
 }
 
-private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
-    static var handler: ((URLRequest) -> (status: Int, body: String, etag: String?))?
-    static var lastRequest: URLRequest?
+private struct StubResponse: Sendable {
+    let status: Int
+    let body: String
+    let etag: String?
+}
+
+private final class StubState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable (URLRequest) -> StubResponse)?
+    private var lastRequest: URLRequest?
+
+    func setHandler(_ handler: @escaping @Sendable (URLRequest) -> StubResponse) {
+        lock.withLock {
+            self.handler = handler
+            lastRequest = nil
+        }
+    }
+
+    func handler(for request: URLRequest) -> (@Sendable (URLRequest) -> StubResponse)? {
+        lock.withLock {
+            lastRequest = request
+            return handler
+        }
+    }
+
+    func recordedRequest() -> URLRequest? {
+        lock.withLock { lastRequest }
+    }
+}
+
+private final class StubURLProtocol: URLProtocol {
+    private static let state = StubState()
+
+    static func setHandler(_ handler: @escaping @Sendable (URLRequest) -> StubResponse) {
+        state.setHandler(handler)
+    }
+
+    static var lastRequest: URLRequest? {
+        state.recordedRequest()
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        StubURLProtocol.lastRequest = request
-        guard let handler = StubURLProtocol.handler else {
+        let handler = Self.state.handler(for: request)
+        guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
@@ -180,8 +228,8 @@ final class RemoteBlocklistUpdaterTests: XCTestCase {
 
     func testFirstFetchCompilesAndStoresETag() async throws {
         let etags = MockETagStore()
-        StubURLProtocol.handler = { _ in
-            (200, "||ads.example^\n@@||ads.example/ok^", "W/\"abc123\"")
+        StubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, body: "||ads.example^\n@@||ads.example/ok^", etag: "W/\"abc123\"")
         }
         let updater = RemoteBlocklistUpdater(
             sourceURL: URL(string: "https://example.test/list.txt")!,
@@ -190,7 +238,8 @@ final class RemoteBlocklistUpdaterTests: XCTestCase {
         )
         let json = try await updater.fetchUpdatedBlocklistJSON()
         XCTAssertNotNil(json)
-        XCTAssertEqual(etags.etag(for: "https://example.test/list.txt"), "W/\"abc123\"")
+        let storedETag = await etags.etag(for: "https://example.test/list.txt")
+        XCTAssertEqual(storedETag, "W/\"abc123\"")
 
         let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json!.utf8)) as? [[String: Any]])
         XCTAssertEqual(rules.count, 2)
@@ -198,10 +247,9 @@ final class RemoteBlocklistUpdaterTests: XCTestCase {
 
     func test304ReturnsNilWithoutStoring() async throws {
         let etags = MockETagStore()
-        etags.setETag("W/\"abc123\"", for: "https://example.test/list.txt")
-        StubURLProtocol.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "If-None-Match"), "W/\"abc123\"")
-            return (304, "", nil)
+        await etags.setETag("W/\"abc123\"", for: "https://example.test/list.txt")
+        StubURLProtocol.setHandler { _ in
+            StubResponse(status: 304, body: "", etag: nil)
         }
         let updater = RemoteBlocklistUpdater(
             sourceURL: URL(string: "https://example.test/list.txt")!,
@@ -210,14 +258,19 @@ final class RemoteBlocklistUpdaterTests: XCTestCase {
         )
         let json = try await updater.fetchUpdatedBlocklistJSON()
         XCTAssertNil(json)
-        XCTAssertEqual(etags.etag(for: "https://example.test/list.txt"), "W/\"abc123\"")
+        XCTAssertEqual(
+            StubURLProtocol.lastRequest?.value(forHTTPHeaderField: "If-None-Match"),
+            "W/\"abc123\""
+        )
+        let storedETag = await etags.etag(for: "https://example.test/list.txt")
+        XCTAssertEqual(storedETag, "W/\"abc123\"")
     }
 
     func testChangedContentReplacesETag() async throws {
         let etags = MockETagStore()
-        etags.setETag("W/\"old\"", for: "https://example.test/list.txt")
-        StubURLProtocol.handler = { _ in
-            (200, "||new.example^", "W/\"new\"")
+        await etags.setETag("W/\"old\"", for: "https://example.test/list.txt")
+        StubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, body: "||new.example^", etag: "W/\"new\"")
         }
         let updater = RemoteBlocklistUpdater(
             sourceURL: URL(string: "https://example.test/list.txt")!,
@@ -226,6 +279,7 @@ final class RemoteBlocklistUpdaterTests: XCTestCase {
         )
         let json = try await updater.fetchUpdatedBlocklistJSON()
         XCTAssertNotNil(json)
-        XCTAssertEqual(etags.etag(for: "https://example.test/list.txt"), "W/\"new\"")
+        let storedETag = await etags.etag(for: "https://example.test/list.txt")
+        XCTAssertEqual(storedETag, "W/\"new\"")
     }
 }

@@ -63,22 +63,28 @@ private struct LibraryView: View {
                         subtitle: entry.url.absoluteString,
                         url: entry.url
                     ) {
-                        try? history?.delete(id: entry.id)
-                        reload()
+                        Task { @MainActor in
+                            try? await history?.delete(id: entry.id)
+                            reload()
+                        }
                     }
                 }
                 HStack {
                     Spacer()
                     Button("Clear All History", role: .destructive) {
-                        try? history?.deleteAll()
-                        reload()
+                        Task { @MainActor in
+                            try? await history?.deleteAll()
+                            reload()
+                        }
                     }
                 }
             case .bookmarks:
                 List(bookmarkEntries) { bookmark in
                     row(title: bookmark.title, subtitle: bookmark.url.absoluteString, url: bookmark.url) {
-                        try? bookmarks?.delete(id: bookmark.id)
-                        reload()
+                        Task { @MainActor in
+                            try? await bookmarks?.delete(id: bookmark.id)
+                            reload()
+                        }
                     }
                 }
             }
@@ -123,15 +129,17 @@ private struct LibraryView: View {
     }
 
     private func reload() {
-        let query = searchText.isEmpty ? nil : searchText
-        historyEntries = (try? history?.entries(matching: query, limit: 300)) ?? []
-        let allBookmarks = (try? bookmarks?.all()) ?? []
-        bookmarkEntries =
-            searchText.isEmpty
-            ? allBookmarks
-            : allBookmarks.filter {
-                $0.title.localizedCaseInsensitiveContains(searchText)
-                    || $0.url.absoluteString.localizedCaseInsensitiveContains(searchText)
-            }
+        Task { @MainActor in
+            let query = searchText.isEmpty ? nil : searchText
+            historyEntries = (try? await history?.entries(matching: query, limit: 300)) ?? []
+            let allBookmarks = (try? await bookmarks?.all()) ?? []
+            bookmarkEntries =
+                searchText.isEmpty
+                ? allBookmarks
+                : allBookmarks.filter {
+                    $0.title.localizedCaseInsensitiveContains(searchText)
+                        || $0.url.absoluteString.localizedCaseInsensitiveContains(searchText)
+                }
+        }
     }
 }
