@@ -1,0 +1,55 @@
+<svg viewBox="0 0 720 320" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      text {
+        font-family: monospace;
+        font-size: 11px;
+        fill: #e5e7eb;
+      }
+    </style>
+  </defs>
+
+  <rect width="720" height="320" fill="#0d1117"/>
+
+  <!-- Left Column -->
+  <text x="120" y="40" text-anchor="middle" font-size="13" fill="#10b981" font-weight="bold">catches</text>
+  <g transform="translate(60, 60)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#1a1f29" stroke="#10b981" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">extra allocations</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">per call</text>
+  </g>
+  <g transform="translate(60, 115)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#1a1f29" stroke="#10b981" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">leaked strings /</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">temporaries</text>
+  </g>
+  <g transform="translate(60, 170)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#1a1f29" stroke="#10b981" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">unbounded</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">collection growth</text>
+  </g>
+
+  <!-- Right Column -->
+  <text x="360" y="40" text-anchor="middle" font-size="13" fill="#f59e0b" font-weight="bold">misses</text>
+  <g transform="translate(300, 60)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#0d1117" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">out-of-process</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">memory (WebContent)</text>
+  </g>
+  <g transform="translate(300, 115)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#0d1117" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">instruction count /</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">CPU work</text>
+  </g>
+  <g transform="translate(300, 170)">
+    <rect x="0" y="0" width="120" height="40" rx="8" fill="#0d1117" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="60" y="22" text-anchor="middle" dominant-baseline="middle">main-thread</text>
+    <text x="60" y="32" text-anchor="middle" dominant-baseline="middle">stalls</text>
+  </g>
+
+  <!-- Bottom Line -->
+  <line x1="60" y1="250" x2="660" y2="250" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="360" y="270" text-anchor="middle" fill="#22d3ee">
+    each miss is covered by a dedicated tool: proc_pid_rusage, Instruments, heartbeat timer
+  </text>
+</svg>
