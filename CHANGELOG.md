@@ -2,6 +2,25 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [0.4.3] - 2026-08-13
+
+### Added
+- **Memory nibbles**: pages are cut into small tagged markdown files
+  (`~/Library/Application Support/Qwave/nibbles/YYYY/MM/*.md`) with YAML
+  front matter (`tags`, `url`, wave identity). Recall `#tag` from the start
+  page or Ask. Encrypted SQLite still holds the full Cognitive wave.
+
+## [0.4.2] - 2026-08-13
+
+### Added
+- **Remember Everything** (Settings → Memory Wave, off by default): every
+  non-private page is captured locally as a Cognitive `browse` wave. Private
+  and ephemeral tabs still never write.
+- **Timeline slate** (`qwave://timeline`): liquid-glass panel over the wave
+  scene with day groups and Summarize today / week / everything. Summaries
+  persist as even-lane waves. Remote providers receive titles and times only
+  — never page bodies.
+
 ## [0.4.1] - 2026-08-13
 
 Wave start page, error pages, and a real markdown reader.

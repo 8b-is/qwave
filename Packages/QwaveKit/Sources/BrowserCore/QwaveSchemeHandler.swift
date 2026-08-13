@@ -9,11 +9,16 @@ public enum QwaveInternal {
     public static var startPageHTML: () -> String = {
         InternalPages.startHTML(memories: [], providerLabel: "Remember only")
     }
+    public static var timelinePageHTML: () -> String = {
+        InternalPages.timelineHTML(days: [], summary: nil, rememberEverything: false, providerLabel: "Remember only")
+    }
+    public static var lastTimelineSummary: String = ""
 }
 
 public enum QwaveInternalAction: Equatable {
     case submit(String)
     case remember(scope: String, text: String)
+    case summarize(String)
 }
 
 public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
@@ -30,6 +35,11 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
 
         if host == "start" || (host.isEmpty && path == "/start") {
             finish(urlSchemeTask, url: url, mime: "text/html", body: Data(QwaveInternal.startPageHTML().utf8))
+            return
+        }
+
+        if host == "timeline" || (host.isEmpty && path == "/timeline") {
+            finish(urlSchemeTask, url: url, mime: "text/html", body: Data(QwaveInternal.timelinePageHTML().utf8))
             return
         }
 

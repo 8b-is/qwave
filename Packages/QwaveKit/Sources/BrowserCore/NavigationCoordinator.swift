@@ -26,6 +26,8 @@ public final class NavigationCoordinator: NSObject {
     public var onFaviconURL: ((URL) -> Void)?
     /// Start-page submit / markdown remember — handled by the app shell.
     public var onInternalAction: ((QwaveInternalAction) -> Void)?
+    /// Main-frame http(s) finished — Remember Everything hooks here.
+    public var onMainFrameFinished: ((WKWebView, Tab) -> Void)?
 
     private var observations: [NSKeyValueObservation] = []
     private let session: URLSession
@@ -233,6 +235,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
         }
         if let scheme = url.scheme, scheme == "http" || scheme == "https" {
             extractFaviconURL(from: webView)
+            onMainFrameFinished?(webView, tab)
         }
         onStateChange?()
     }
@@ -334,6 +337,10 @@ extension NavigationCoordinator: WKScriptMessageHandler {
             let scope = body["scope"] as? String ?? "page"
             let text = body["text"] as? String ?? ""
             onInternalAction?(.remember(scope: scope, text: text))
+        case "summarize":
+            if let range = body["range"] as? String {
+                onInternalAction?(.summarize(range))
+            }
         default:
             break
         }

@@ -19,6 +19,7 @@ public struct WaveAnswer: Equatable, Sendable {
 /// The browser is fully functional if `store` is nil — Memory Wave is optional.
 public final class WaveDirector {
     public let store: MemoryStore?
+    public let vault: NibbleVault?
     public let preferences: MemoryWavePreferences
     public var providerOverride: (any MemoryProviding)?
 
@@ -28,9 +29,10 @@ public final class WaveDirector {
         stored memories. If the text is insufficient, say so.
         """
 
-    public init(store: MemoryStore?, preferences: MemoryWavePreferences) {
+    public init(store: MemoryStore?, preferences: MemoryWavePreferences, vault: NibbleVault? = nil) {
         self.store = store
         self.preferences = preferences
+        self.vault = vault
     }
 
     public func remember(
@@ -41,6 +43,7 @@ public final class WaveDirector {
         containerID: UUID?,
         isEphemeral: Bool,
         isExplicit: Bool = true,
+        lane: MemoryLane = .odd,
         emotion: EmotionVector = .neutral
     ) throws -> MemoryRecord {
         let decision = MemoryWavePolicy.decide(
@@ -50,26 +53,133 @@ public final class WaveDirector {
                 inferenceAllowed: true,
                 provider: preferences.providerKind,
                 includeStoredMemory: false,
-                destination: .persist(lane: .odd)
+                destination: .persist(lane: lane),
+                rememberEverything: preferences.rememberEverything
             )
         )
         if case .deny(let reason) = decision { throw MemoryProviderError.denied(reason) }
         guard let store else { throw MemoryProviderError.unavailable }
         let clamped = String(body.prefix(MemoryWaveConstants.maxBodyCharacters))
-        return try store.insert(
-            title: title,
-            body: clamped,
-            url: url,
-            kind: kind,
-            lane: .odd,
-            containerID: containerID,
-            emotion: emotion
+        let record: MemoryRecord
+        if kind == .browse, let url {
+            record = try store.upsertBrowse(
+                title: title, body: clamped, url: url, containerID: containerID, emotion: emotion)
+        } else {
+            record = try store.insert(
+                title: title,
+                body: clamped,
+                url: url,
+                kind: kind,
+                lane: lane,
+                containerID: containerID,
+                emotion: emotion
+            )
+        }
+        writeNibbles(
+            title: title, body: clamped, url: url, kind: kind, containerID: containerID, lane: lane)
+        return record
+    }
+
+    @discardableResult
+    public func writeNibbles(
+        title: String,
+        body: String,
+        url: URL?,
+        kind: MemoryKind,
+        containerID: UUID?,
+        lane: MemoryLane
+    ) -> [MemoryNibble] {
+        guard let vault else { return [] }
+        let nibbles = NibbleCutter.cut(
+            title: title, body: body, url: url, kind: kind, containerID: containerID)
+        var written: [MemoryNibble] = []
+        for nibble in nibbles {
+            var copy = nibble
+            copy.lane = lane
+            if (try? vault.write(copy)) != nil {
+                written.append(copy)
+            }
+        }
+        return written
+    }
+
+    public func timeline(range: TimelineRange, limit: Int = 200) throws -> [TimelineDay] {
+        guard let store else { return [] }
+        let window = range.interval()
+        var records = try store.records(since: window.0, until: window.1, limit: limit)
+        if let vault, let nibbles = try? vault.all(limit: 400) {
+            var byURL: [String: [String]] = [:]
+            for nibble in nibbles {
+                guard let href = nibble.url?.absoluteString else { continue }
+                byURL[href, default: []].append(contentsOf: nibble.tags)
+            }
+            records = records.map { record in
+                var copy = record
+                if let href = record.url?.absoluteString {
+                    copy.tags = NibbleMarkdown.normalize(tags: record.tags + (byURL[href] ?? []))
+                }
+                return copy
+            }
+        }
+        return MemoryTimeline.group(records)
+    }
+
+    public func summarizeTimeline(
+        range: TimelineRange,
+        inferenceAllowed: Bool,
+        persist: Bool = true
+    ) async throws -> WaveAnswer {
+        let days = try timeline(range: range)
+        let records = days.flatMap(\.items)
+        guard !records.isEmpty else {
+            return WaveAnswer(
+                text: "Nothing stored in this window yet. Turn on Remember Everything, or pin a few pages.",
+                provider: preferences.providerKind,
+                usedStoredMemory: false,
+                salience: 0
+            )
+        }
+        let remote = preferences.providerKind == .openaiCompatible
+        let corpus = MemoryTimeline.summaryCorpus(records, includeSnippets: !remote)
+        let user = """
+            Write a first-person timeline summary of these locally stored browsing waves. \
+            Group by theme. Do not invent visits that are not listed. \
+            Window: \(range.displayName).
+
+            \(corpus)
+            """
+        let answer = try await infer(
+            user: user,
+            includeStoredMemory: false,
+            containerID: nil,
+            isEphemeral: false,
+            inferenceAllowed: inferenceAllowed,
+            salience: MarineDetector.score(text: corpus)
         )
+        if persist {
+            _ = try? remember(
+                title: "Timeline · \(range.displayName)",
+                body: answer.text,
+                url: URL(string: "qwave://timeline"),
+                kind: .summary,
+                containerID: nil,
+                isEphemeral: false,
+                isExplicit: true,
+                lane: .even
+            )
+        }
+        return answer
     }
 
     public func recall(containerID: UUID?, query: String? = nil, limit: Int = 8) throws -> [MemoryRecord] {
-        guard let store else { return [] }
-        var records = try store.records(containerID: containerID, limit: 64)
+        if let query, let vault {
+            let tags = NibbleMarkdown.tags(inQuery: query)
+            if !tags.isEmpty {
+                return try vault.matching(tags: tags, limit: limit).map { $0.asRecord() }
+            }
+        }
+
+        var records = (try store?.records(containerID: containerID, limit: 64)) ?? []
         if let query, !query.isEmpty {
             let identity = MemoryWaveConstants.consciousness.doubleValue
                 * MemoryWaveConstants.goldenRatio.doubleValue
@@ -88,14 +198,26 @@ public final class WaveDirector {
                 id: nil,
                 provenance: .cognitive
             )
-            let grid = try store.grid(containerID: containerID)
-            let ranked = grid.resonate(query: probe)
-            let order = Dictionary(uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
-            records.sort { lhs, rhs in
-                (order[lhs.wave.createdAt] ?? Int.max) < (order[rhs.wave.createdAt] ?? Int.max)
+            if let store {
+                let grid = try store.grid(containerID: containerID)
+                let ranked = grid.resonate(query: probe)
+                let order = Dictionary(uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
+                records.sort { lhs, rhs in
+                    (order[lhs.wave.createdAt] ?? Int.max) < (order[rhs.wave.createdAt] ?? Int.max)
+                }
+            }
+            if let vault, let hits = try? vault.matching(query: query, limit: limit) {
+                let extra = hits.map { $0.asRecord() }
+                records = extra + records.filter { record in
+                    !extra.contains(where: { $0.title == record.title && $0.url == record.url })
+                }
             }
         }
         return Array(records.prefix(limit))
+    }
+
+    public func nibbleTags(limit: Int = 16) -> [String] {
+        (try? vault?.tags(limit: limit)) ?? []
     }
 
     public func summarize(

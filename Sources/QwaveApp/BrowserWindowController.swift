@@ -44,6 +44,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var memoryPanelFootnote = "Cognitive waves stay on this Mac."
     private var memoryBusy = false
     private var memoryAskDraft = ""
+    private var lastAutoRemember: [UUID: (url: URL, at: Date)] = [:]
 
     // MARK: - Init
 
@@ -253,6 +254,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         coordinator.onInternalAction = { [weak self] action in
             self?.handleInternalAction(action)
+        }
+        coordinator.onMainFrameFinished = { [weak self] webView, finishedTab in
+            self?.autoRememberIfNeeded(webView: webView, tab: finishedTab)
         }
         coordinator.onFaviconURL = { [weak self, weak tab] iconURL in
             guard let self, let tab else { return }
@@ -553,6 +557,78 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             }
         case .remember(let scope, let text):
             Task { await rememberText(text, scope: scope) }
+        case .summarize(let range):
+            Task { await summarizeTimeline(range) }
+        }
+    }
+
+    @objc func openNibbleFolder(_ sender: Any?) {
+        if let directory = environment.memoryWave.vault?.directory {
+            NSWorkspace.shared.open(directory)
+        }
+    }
+
+    @objc func showTimeline(_ sender: Any?) {
+        let controller = (NSApp.delegate as? AppDelegate)?.frontmostBrowserWindow ?? self
+        let tab = controller.tabManager.selectedTab
+        if let tab {
+            controller.ensureWebView(for: tab).load(URLRequest(url: InternalPages.timelineURL))
+        } else {
+            controller.openNewTab(url: InternalPages.timelineURL, activate: true)
+        }
+    }
+
+    private func autoRememberIfNeeded(webView: WKWebView, tab: BrowserCore.Tab) {
+        guard environment.memoryPreferences.rememberEverything, !tab.isEphemeral else { return }
+        guard let url = webView.url, url.scheme == "http" || url.scheme == "https" else { return }
+        if let previous = lastAutoRemember[tab.id], previous.url == url, Date().timeIntervalSince(previous.at) < 45 {
+            return
+        }
+        lastAutoRemember[tab.id] = (url, Date())
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = try? await webView.evaluateJavaScript(ArticleExtractor.userScript)
+            let extract =
+                result.flatMap(ArticleExtractor.decode)
+                ?? ArticleExtract(title: tab.title, text: tab.title, href: url.absoluteString)
+            let title = extract.title.isEmpty ? (url.host ?? "Page") : extract.title
+            _ = try? self.environment.memoryWave.remember(
+                title: title,
+                body: extract.text,
+                url: url,
+                kind: .browse,
+                containerID: tab.containerID,
+                isEphemeral: tab.isEphemeral,
+                isExplicit: false
+            )
+        }
+    }
+
+    private func summarizeTimeline(_ raw: String) async {
+        let range = TimelineRange(rawValue: raw) ?? .today
+        memoryBusy = true
+        showMemoryWaveIfNeeded()
+        refreshMemoryPopover()
+        defer {
+            memoryBusy = false
+            refreshMemoryPopover()
+        }
+        do {
+            let answer = try await environment.memoryWave.summarizeTimeline(
+                range: range, inferenceAllowed: inferenceAllowed(), persist: true)
+            QwaveInternal.lastTimelineSummary = answer.text
+            memoryPanelTitle = "Timeline · \(range.displayName)"
+            memoryPanelBody = answer.text
+            memoryPanelFootnote = "Local slate · \(answer.provider.rawValue)"
+            if let tab = tabManager.selectedTab {
+                ensureWebView(for: tab).load(URLRequest(url: InternalPages.timelineURL))
+            }
+        } catch MemoryProviderError.denied(let reason) {
+            memoryPanelBody = denialMessage(reason)
+        } catch MemoryProviderError.unavailable {
+            memoryPanelBody = "Pick a provider in Settings → Memory Wave to write the slate."
+        } catch {
+            memoryPanelBody = "Could not summarize the timeline."
         }
     }
 
