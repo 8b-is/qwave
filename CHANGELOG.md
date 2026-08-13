@@ -17,6 +17,17 @@ Wave start page, error pages, and a real markdown reader.
   then a listing. File → Open…, drag-and-drop, and omnibox `/path` or `~`.
 - **Remember page or selection** from the markdown chrome or ⌘⇧R.
 
+### Changed
+- **CI runs the test suite in Release** — the Classic McEliece keygen KATs
+  dominate the suite and are ~10× faster optimized (a keygen vector: ~40s →
+  ~3.7s), keeping the run comfortably inside the job timeout. KATs are
+  deterministic, so this changes only speed, not outcomes.
+- Added `research/BLEEDING-EDGE-2026.md` (Apple Silicon M5 / Metal 4,
+  WebGPU, Wasm 3.0 / WASI, Swift 6.3/6.4, Zig 0.16, Mac interop) with a
+  repo-verified correction: WebGPU in `WKWebView` is not on by default —
+  it is the `_WKFeature` `WebGPUEnabled` plus a secure context, reachable
+  through `FeatureFlagService`'s existing reflection.
+
 ## [0.4.0] - 2026-08-13
 
 Memory Wave — the browser node of the MEM8 substrate.

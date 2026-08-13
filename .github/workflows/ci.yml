@@ -66,8 +66,12 @@ jobs:
             exit 1
           }
 
+      # Release, not debug: the Classic McEliece keygen KATs dominate the
+      # suite and are ~10× faster optimized (a single keygen vector drops
+      # from ~40s to ~3.7s), keeping the full suite well inside the timeout.
+      # KATs are deterministic, so release vs debug does not change outcomes.
       - name: Run unit tests
-        run: swift test --package-path Packages/QwaveKit
+        run: swift test -c release --package-path Packages/QwaveKit
 
   build-app:
     name: Build Qwave.app (unsigned)
