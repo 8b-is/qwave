@@ -4,6 +4,8 @@
 [![Release v0.3.0](https://img.shields.io/github/v/release/8b-is/qwave?color=00f2fe&style=flat-square)](https://github.com/8b-is/qwave/releases/tag/v0.3.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%2014.0%2B-black?style=flat-square&logo=apple)](https://apple.com)
+[![Swift](https://img.shields.io/badge/Swift-5.10-orange?style=flat-square&logo=swift)](https://swift.org)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-999?style=flat-square&logo=apple)](https://apple.com/mac)
 
 ![Qwave Hero Banner](docs/assets/hero.jpg)
 
@@ -113,7 +115,8 @@ Bleeding-edge Apple Silicon Swift packages evaluated **for Qwave specifically**
 — 41 package notes across 12 categories, each with a fact table (repo ·
 version · license · platforms · Apple Silicon status), adoption sketch, risks
 and an **Adopt / Trial / Assess / Hold** verdict. See
-[research/README.md](research/README.md) for the index and
+[research/README.md](research/README.md) for the index,
+[research/DIGEST.md](research/DIGEST.md) for the consolidated digest, and
 [research/PLATFORM-BASELINE.md](research/PLATFORM-BASELINE.md) for the assumed
 platform floor.
 
