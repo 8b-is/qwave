@@ -15,8 +15,9 @@
 
 The repo is in strong shape: the entire v0.3.0 "Trust & Distribution" security
 and distribution DoD is **shipped and tested**, and the Swift 6 migration is
-complete. Four findings, however, contradict claims that prior kickoffs have
-been repeating as settled fact. They are the honest output of this audit:
+complete in configuration — though it did not compile on `main` (finding 5).
+Five findings contradict claims that prior kickoffs have been repeating as
+settled fact. They are the honest output of this audit:
 
 1. **The "391-malloc gate" is not the enforced gate.** The committed, CI-blocking
    `mallocCountTotal` baseline for `HistoryStore.entries(matching:) @ 50k rows`
@@ -45,6 +46,20 @@ been repeating as settled fact. They are the honest output of this audit:
    `docs/VPN_STAGE_B.md:19-21` cites ML-KEM-**1024** + McEliece **460896f** in its
    Mullvad-reference section while Qwave actually ships ML-KEM-**768** +
    McEliece **348864** (stated correctly later at `VPN_STAGE_B.md:73-87`).
+
+5. **"Swift 6 migration complete" was configuration, not a green build.** Every
+   `QwaveKit` target carries `.swiftLanguageMode(.v6)` +
+   `-strict-concurrency=complete` (`Packages/QwaveKit/Package.swift:4-7`) as of
+   `307a68e`, but `main` did **not** compile under it: the `QwaveKit unit tests
+   (swift test)` job failed on the two most recent `main` pushes with three
+   non-Sendable errors in `Sources/VPNKit/TunnelManager.swift` (`loadAllFromPreferences()`
+   ×2, the `NEVPNStatusDidChange` notification loop), plus a main-actor-inferred
+   `QwaveSchemeHandler.shouldShowWaveError` that its own test could not call
+   (GitHub Actions run `31754774466`). `swift-format lint (--strict)` was red on
+   `main` for the same window. Fixed on this branch by `8003898`, `6b2e41b`,
+   `b929493` — the only non-docs commits here, carried because the repo-wide
+   gates block this PR. The migration's *language mode* is real; its *"complete
+   and green"* status was not, and no table row cited build evidence for it.
 
 **What is solidly shipped** (so it is *not* a gap): fail-closed PQ downgrade
 (`QuantumSessionPolicy.negotiateFailClosed` + `FailClosedNegotiationTests`),
