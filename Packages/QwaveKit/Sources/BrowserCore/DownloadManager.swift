@@ -88,7 +88,9 @@ extension DownloadManager: WKDownloadDelegate {
         _ download: WKDownload,
         decideDestinationUsing response: URLResponse,
         suggestedFilename: String,
-        completionHandler: @escaping (URL?) -> Void
+        // Swift 6 / macOS 26 SDK types this closure @MainActor @Sendable; match it
+        // exactly or the WKDownloadDelegate conformance is not satisfied.
+        completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
     ) {
         let destination = uniqueDestination(for: suggestedFilename)
         if let itemID = itemIDs[ObjectIdentifier(download)] {
