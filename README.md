@@ -1,7 +1,7 @@
 # 🌊 Qwave — Sovereign WebKit-Native macOS Browser Engine
 
-[![Qwave CI](https://github.com/peterlodri-sec/qwave/actions/workflows/ci.yml/badge.svg)](https://github.com/peterlodri-sec/qwave/actions/workflows/ci.yml)
-[![Release v0.2.0](https://img.shields.io/github/v/release/peterlodri-sec/qwave?color=00f2fe&style=flat-square)](https://github.com/peterlodri-sec/qwave/releases/tag/v0.2.0)
+[![Qwave CI](https://github.com/8b-is/qwave/actions/workflows/ci.yml/badge.svg)](https://github.com/8b-is/qwave/actions/workflows/ci.yml)
+[![Release v0.3.0](https://img.shields.io/github/v/release/8b-is/qwave?color=00f2fe&style=flat-square)](https://github.com/8b-is/qwave/releases/tag/v0.3.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%2014.0%2B-black?style=flat-square&logo=apple)](https://apple.com)
 
@@ -117,15 +117,20 @@ and an **Adopt / Trial / Assess / Hold** verdict. See
 [research/PLATFORM-BASELINE.md](research/PLATFORM-BASELINE.md) for the assumed
 platform floor.
 
-The four findings that drive the roadmap:
-1. **Code signing** is the highest-leverage work — it gates Sparkle, the VPN
-   extension, and Stage B end-to-end.
-2. Foundation `URL` and WebKit disagree about host identity — `WebURL` closes
-   a `ShieldsPolicy` bypass class.
-3. The 51-rule starter list is a demonstration; **SafariConverterLib** (build
-   time) scales Shields to EasyList size — gated on a copyleft license review.
+The four findings that drove the v0.3.0 roadmap (all landed):
+1. **Code signing** was the highest-leverage work — the release pipeline now
+   signs, notarises and ships Sparkle auto-updates when the Developer ID
+   secrets are configured (see [docs/SIGNING.md](docs/SIGNING.md)).
+2. Foundation `URL` and WebKit disagree about host identity — `WebURL`
+   (the `URLIdentity` module) now derives every policy host, closing a
+   `ShieldsPolicy` bypass class.
+3. The 51-rule starter list was a demonstration; the bundled list is now a
+   compiled EasyList snapshot (~59k rules) produced by SafariConverterLib as
+   an external build-time tool — license boundary documented in
+   [docs/BLOCKLIST.md](docs/BLOCKLIST.md).
 4. The energy claim needs real measurement; hibernated memory lives in
-   WebKit's out-of-process content processes, so benchmarks can't see it.
+   WebKit's out-of-process content processes, so in-process benchmarks can't
+   see it — measurement protocol in [docs/ENERGY.md](docs/ENERGY.md).
 
 ---
 
@@ -140,15 +145,18 @@ The four findings that drive the roadmap:
 | Post-quantum Stage B (ML-KEM-768 + McEliece hybrid) | ✅ v0.2.0 |
 | uBO/EasyList rule compiler + ETag updater | ✅ v0.2.0 |
 | Menu-bar VPN widget (throughput + server switch) | ✅ v0.2.0 |
-| Code signing + notarisation + Sparkle updates | 🔜 planned |
-| Shields list scale-up (SafariConverterLib) | 🔜 gated on license review |
+| Signing/notarisation pipeline + Sparkle 2.9.5 auto-updates | ✅ v0.3.0 |
+| Canonical host identity (`WebURL`) — shielding bypass fix | ✅ v0.3.0 |
+| Compiled EasyList snapshot (~59k rules) | ✅ v0.3.0 |
+| swift-log structured logging with privacy redaction | ✅ v0.3.0 |
+| VPN extension in CI-signed builds | 🔜 needs Apple NE Developer ID approval |
 | Local AI features (MLX) | 🧪 research only |
 
 ---
 
 ## 📦 Releases
 
-Download pre-compiled unsigned `Qwave.app` builds directly from [GitHub Releases](https://github.com/peterlodri-sec/qwave/releases).
+Download pre-compiled unsigned `Qwave.app` builds directly from [GitHub Releases](https://github.com/8b-is/qwave/releases).
 
 ---
 
