@@ -29,8 +29,9 @@ Three narrow cases, in rough order of plausibility:
 2. **On-device model inference.** Covered in [02 · On-Device AI](../02-on-device-ai/). MLX
    already sits on Metal; you would not hand-write those kernels.
 3. **Reading the GPU as an energy signal.** Not issuing work — *observing* it.
-   `EnergyGovernor` currently reasons about memory pressure. GPU utilisation is a legitimate
-   second input to a hibernation decision, and it costs no GPU time to sample.
+   `EnergyGovernor` currently maps three inputs to a tier: thermal state, low-power mode, and
+   window occlusion. GPU utilisation is a legitimate fourth, it costs no GPU time to sample, and
+   the governor's pure-function design makes adding it a small, testable change.
 
 Case 3 is the interesting one, and it is the only one that plays to Qwave's actual
 differentiation.

@@ -81,21 +81,30 @@ Qwave's generation pipeline.
 // Gate every inference call on the existing energy policy
 @available(macOS 26.2, *)
 func summarise(_ text: String) async throws -> String {
-    guard EnergyGovernor.shared.allowsDiscretionaryWork else { throw AIError.deferred }
+    // EnergyGovernor is a pure mapping: conditions → tier → policy.
+    // Discretionary work runs only at .normal.
+    guard EnergyGovernor.tier(for: currentConditions) == .normal else { throw AIError.deferred }
     // ... MLX inference
 }
 ```
 
-`EnergyGovernor` is already the arbiter for hibernation decisions. Reusing it here keeps one
-policy surface instead of two.
+`EnergyGovernor` is already the arbiter for hibernation policy, and it is a **pure function** —
+`tier(for:)` maps `EnergyConditions` (thermal state, low-power mode, window occlusion) to a tier,
+and `policy(for:baseHibernationTimeout:)` maps that to behaviour. Reusing it keeps one policy
+surface instead of two, and its statelessness makes the gate trivially testable.
+
+Note that today's `EnergyConditions` does **not** include memory pressure. Inference is the one
+feature that would genuinely warrant adding it — see Risks.
 
 ## Risks
 
 - **Model distribution.** Multi-gigabyte weights cannot ship in the app bundle. That means a
   download flow, integrity verification, storage management, and update handling — a real
   subsystem, larger than the inference code itself.
-- **Memory contention with WebKit.** The direct conflict with `TabHibernator`'s purpose.
-  Non-negotiable: no inference under memory pressure.
+- **Memory contention with WebKit.** The direct conflict with `TabHibernator`'s purpose, and
+  today's `EnergyConditions` cannot see it — the governor samples thermal state, low-power mode,
+  and window occlusion, not memory. Gating inference properly means **extending
+  `EnergyConditions` with a memory-pressure input**, which is a prerequisite, not a detail.
 - **Energy.** Sustained GPU inference is the most power-hungry thing this app could do, in a
   browser whose pitch is battery life.
 - **Pre-1.0 with a fast cadence.** Releases every few weeks and a 0.x version. Pin exactly.

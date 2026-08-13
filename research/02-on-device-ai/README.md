@@ -44,7 +44,9 @@ Any AI feature in Qwave must satisfy all four, or it does not ship:
    entire module absent.
 2. **Local.** No network egress. That is the whole premise.
 3. **Energy-aware.** Inference is the single most power-hungry thing a browser could do. It must
-   consult `EnergyGovernor` and must not run under memory or thermal pressure.
+   consult `EnergyGovernor` — running only at the `.normal` tier — and must not run under thermal
+   or memory pressure. Note that today's `EnergyConditions` samples thermal state, low-power mode,
+   and window occlusion, but **not memory**; inference is the feature that would warrant adding it.
 4. **Explicit.** User-invoked, per-invocation. Never speculative, never background, never
    "helpfully" summarising pages nobody asked about.
 

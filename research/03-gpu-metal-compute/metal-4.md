@@ -53,9 +53,11 @@ Metal 4 matters to Qwave in three secondary ways:
 
 ### The one direct opportunity
 
-**GPU utilisation as an energy signal.** `EnergyGovernor` decides when to hibernate tabs.
-It reasons about memory pressure today. A tab running a sustained WebGL or WebGPU workload is
-draining battery in a way memory pressure will never reveal.
+**GPU utilisation as an energy signal.** `EnergyGovernor` drives hibernation policy from
+`EnergyConditions` — today: **thermal state, low-power mode, and window occlusion**. A tab running
+a sustained WebGL or WebGPU workload is draining battery in a way none of those three reveals
+directly. Thermal state catches it eventually, after the machine has already heated up; GPU
+utilisation catches it immediately.
 
 Sampling `MTLDevice` counters and per-process GPU statistics is **observation, not submission** —
 it costs no GPU time and it feeds directly into the decision `TabHibernator` already makes. This
@@ -71,27 +73,36 @@ there is nothing to move — CPU, GPU, and Neural Engine address the same memory
 For a browser, the practical consequence is that **GPU memory pressure and system memory
 pressure are the same pressure**. A page allocating large WebGPU buffers is competing with
 `WKWebView` content processes and with anything MLX might be holding. That is a strong argument
-for `EnergyGovernor` learning about GPU state.
+for `EnergyConditions` learning about GPU state.
 
 ## Adoption sketch
 
 Not for rendering. For observation:
 
+`EnergyGovernor` is a **pure mapping** — the app layer samples the system and hands it an
+`EnergyConditions` value. So the change is additive and keeps the purity: sample GPU state in the
+app layer, add a field to `EnergyConditions`, and extend `tier(for:)`.
+
 ```swift
-// BrowserCore/EnergyGovernor.swift — read, never submit
+// QwaveApp — sampling lives in the app layer, alongside thermal/low-power/occlusion sampling
 @available(macOS 26.0, *)
-extension EnergyGovernor {
-    var gpuPressure: GPUPressure {
-        guard let device = MTLCreateSystemDefaultDevice() else { return .unknown }
-        let used = device.currentAllocatedSize
-        let budget = device.recommendedMaxWorkingSetSize
-        return GPUPressure(ratio: Double(used) / Double(budget))
-    }
+func sampleGPUPressure() -> Double {
+    guard let device = MTLCreateSystemDefaultDevice() else { return 0 }
+    return Double(device.currentAllocatedSize) / Double(device.recommendedMaxWorkingSetSize)
+}
+
+// BrowserCore/EnergyGovernor.swift — one more input, still a pure function
+public struct EnergyConditions: Equatable, Sendable {
+    public var thermalState: ProcessInfo.ThermalState
+    public var lowPowerMode: Bool
+    public var allWindowsOccluded: Bool
+    public var gpuPressure: Double        // new: 0.0…1.0, 0 when unavailable
 }
 ```
 
-Feed that into the existing hibernation heuristic beside memory pressure. `EnergyGovernorTests`
-already exists as the place to prove the policy behaves.
+`EnergyGovernorTests` already exercises `tier(for:)` as a pure function, which makes the new
+input trivially testable — construct conditions, assert the tier. That statelessness is the best
+property of the current design and is worth preserving.
 
 ## Risks
 

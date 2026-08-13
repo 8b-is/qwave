@@ -7,6 +7,14 @@ Bleeding-edge **Apple Silicon / Swift** package research, organised **per catego
 > Every package note records the version that was live on that date. Versions move fast —
 > re-verify before you pin anything in `Package.swift` or `project.yml`.
 
+### 📄 Want it all in one file?
+
+**[DIGEST.md](DIGEST.md)** consolidates this entire folder into a single document: the six
+headline findings, a phased action sequence, the full verdict matrix, cross-cutting themes, the
+deep research per category, what was rejected and why, and the open questions. Read that if you
+want the whole picture in one pass; read the per-package notes below when you are about to act on
+a specific one.
+
 ---
 
 ## 📚 Categories

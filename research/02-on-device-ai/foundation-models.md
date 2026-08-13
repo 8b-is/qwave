@@ -67,7 +67,10 @@ import FoundationModels
 @available(macOS 26.0, *)
 struct PageSummariser {
     func summarise(_ articleText: String) async throws -> String {
-        guard EnergyGovernor.shared.allowsDiscretionaryWork else { throw AssistError.deferred }
+        // EnergyGovernor is a pure conditions → tier mapping; .normal gates discretionary work.
+        guard EnergyGovernor.tier(for: currentConditions) == .normal else {
+            throw AssistError.deferred
+        }
         let session = LanguageModelSession()
         let response = try await session.respond(
             to: "Summarise the following page in three sentences:\n\n\(articleText)"

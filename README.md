@@ -125,7 +125,9 @@ These are enforced conventions, not preferences — see [AGENTS.md](AGENTS.md) f
 
 The [`research/`](research/) folder holds a structured evaluation of bleeding-edge **Apple Silicon / Swift** packages, organised **per category** and **per package**, scoped to what this browser actually needs. Every note carries a fact table, an Apple Silicon section, an adoption sketch, risks, and an **Adopt / Trial / Assess / Hold** verdict.
 
-Start with **[research/PLATFORM-BASELINE.md](research/PLATFORM-BASELINE.md)** — the macOS, toolchain, and silicon floor everything else assumes.
+📄 **[research/DIGEST.md](research/DIGEST.md) consolidates the whole folder into one document** — findings, phased action sequence, full verdict matrix, cross-cutting themes, per-category deep research, and open questions. Start there for the complete picture; the per-package notes below are for when you are about to act on a specific one.
+
+**[research/PLATFORM-BASELINE.md](research/PLATFORM-BASELINE.md)** records the macOS, toolchain, and silicon floor everything else assumes.
 
 | # | Category | Focus |
 |---|----------|-------|
