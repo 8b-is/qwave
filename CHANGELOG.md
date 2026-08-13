@@ -2,6 +2,40 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [0.4.4] - 2026-08-13
+
+"Prove what it sends" — network-egress hardening. A sovereign browser must
+be able to prove what it sends; now it can.
+
+### Added
+- **`docs/NETWORK.md`**: a complete, user-readable inventory of every
+  outbound connection, split into Qwave's own egress (Category A), page
+  loads (B), and WebKit's own service traffic (C). Linked from Settings.
+- **Egress regression gate**: a committed `EgressAllowlist` of the hosts
+  Qwave's own code may contact, enforced by `EgressGuardTests` — CI fails if
+  a change adds a connection to an un-allowlisted host, and the launch path
+  is asserted to make zero requests.
+- **Mullvad API certificate pinning**: `api.mullvad.net` is pinned to the
+  ISRG roots (X1 + X2 SPKI, in addition to system trust, fail-closed) so a
+  mis-issued certificate cannot feed a manipulated relay set. Full rotation
+  design and threat model in `docs/PINNING.md`.
+- **Visible auto-update consent**: Settings → General → "Check for updates
+  automatically"; off means zero background update requests. Sparkle still
+  gates the first automatic check behind its permission prompt.
+
+### Changed
+- **Removed the launch-time blocklist fetch** — it fetched the upstream
+  EasyList at every launch and discarded the result (egress that bought the
+  user nothing). The blocklist ships as a committed build-time snapshot;
+  Qwave now makes no network request at startup.
+
+### Fixed
+- The category-C finding: WebKit's fraudulent-website warning (Safe
+  Browsing) is disclosed as on-by-default egress to Apple on navigation.
+- Release workflow verifies every embedded Sparkle helper is Developer ID
+  signed + hardened before notarization (the deep-sign gap that cost a
+  release cycle now fails fast and clearly).
+
 ## [0.4.3] - 2026-08-13
 
 ### Added
