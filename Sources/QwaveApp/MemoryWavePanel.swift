@@ -24,10 +24,13 @@ struct MemoryWavePanelView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             ScrollView {
-                Text(bodyText.isEmpty ? "Nothing yet. Remember a page, summarize it, or ask — never automatic." : bodyText)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(
+                    bodyText.isEmpty
+                        ? "Nothing yet. Remember a page, summarize it, or ask — never automatic." : bodyText
+                )
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 140, maxHeight: 260)
             HStack {

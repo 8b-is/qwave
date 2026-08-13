@@ -14,19 +14,25 @@ struct MemoryWavePane: View {
     var body: some View {
         Form {
             Section("Substrate") {
-                Text("Stored memories are Cognitive waves: encrypted on this Mac, scoped to the container, never written from ephemeral or private tabs.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Remote providers never receive stored memory. They see only the current prompt and, if you include it, the current page.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Stored memories are Cognitive waves: encrypted on this Mac, scoped to the container, never written from ephemeral or private tabs."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text(
+                    "Remote providers never receive stored memory. They see only the current prompt and, if you include it, the current page."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 Toggle("Remember everything (local)", isOn: $rememberEverything)
                     .onChange(of: rememberEverything) { _, newValue in
                         environment.memoryPreferences.rememberEverything = newValue
                     }
-                Text("When on, every non-private page is captured as a Cognitive wave on this Mac. Private and ephemeral tabs are still never written. Timeline summaries stay local; remote providers only see titles and times, never page bodies.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "When on, every non-private page is captured as a Cognitive wave on this Mac. Private and ephemeral tabs are still never written. Timeline summaries stay local; remote providers only see titles and times, never page bodies."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Inference provider") {

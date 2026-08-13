@@ -181,7 +181,8 @@ public final class WaveDirector {
 
         var records = (try store?.records(containerID: containerID, limit: 64)) ?? []
         if let query, !query.isEmpty {
-            let identity = MemoryWaveConstants.consciousness.doubleValue
+            let identity =
+                MemoryWaveConstants.consciousness.doubleValue
                 * MemoryWaveConstants.goldenRatio.doubleValue
             let signature = WaveSignature.fromContent(Data(query.utf8), identityFrequency: identity)
             let probe = WaveInt(
@@ -201,7 +202,8 @@ public final class WaveDirector {
             if let store {
                 let grid = try store.grid(containerID: containerID)
                 let ranked = grid.resonate(query: probe)
-                let order = Dictionary(uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
+                let order = Dictionary(
+                    uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
                 records.sort { lhs, rhs in
                     (order[lhs.wave.createdAt] ?? Int.max) < (order[rhs.wave.createdAt] ?? Int.max)
                 }
@@ -229,7 +231,8 @@ public final class WaveDirector {
     ) async throws -> WaveAnswer {
         let clamped = extract.clamped()
         let salience = MarineDetector.score(text: clamped.text)
-        let user = "Summarise the following page in three short sentences.\n\nTitle: \(clamped.title)\n\n\(clamped.text)"
+        let user =
+            "Summarise the following page in three short sentences.\n\nTitle: \(clamped.title)\n\n\(clamped.text)"
         let answer = try await infer(
             user: user,
             includeStoredMemory: false,

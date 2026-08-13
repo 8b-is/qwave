@@ -117,7 +117,9 @@ Bleeding-edge Apple Silicon Swift packages evaluated **for Qwave specifically**
 version · license · platforms · Apple Silicon status), adoption sketch, risks
 and an **Adopt / Trial / Assess / Hold** verdict. See
 [research/README.md](research/README.md) for the index,
-[research/DIGEST.md](research/DIGEST.md) for the consolidated digest, and
+[research/DIGEST.md](research/DIGEST.md) for the consolidated digest,
+[research/BLEEDING-EDGE-2026.md](research/BLEEDING-EDGE-2026.md) for the
+wider Mac-stack brief (M5/Metal 4, WebGPU, Wasm/WASI, Swift, Zig), and
 [research/PLATFORM-BASELINE.md](research/PLATFORM-BASELINE.md) for the assumed
 platform floor.
 

@@ -36,7 +36,8 @@ public struct WaveSignature: Equatable, Sendable {
 
         for i in 0..<harmonicCount {
             let base = i * 4
-            let val = UInt32(hash[base])
+            let val =
+                UInt32(hash[base])
                 | (UInt32(hash[base + 1]) << 8)
                 | (UInt32(hash[base + 2]) << 16)
                 | (UInt32(hash[base + 3]) << 24)
@@ -50,7 +51,8 @@ public struct WaveSignature: Equatable, Sendable {
             frequencies: frequencies,
             phases: phases,
             amplitudes: amplitudes,
-            interferenceHash: Array(interferenceDigest(frequencies: frequencies, phases: phases, amplitudes: amplitudes))
+            interferenceHash: Array(
+                interferenceDigest(frequencies: frequencies, phases: phases, amplitudes: amplitudes))
         )
     }
 

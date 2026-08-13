@@ -143,8 +143,7 @@ public enum MarkdownCompiler {
         if trimmed.hasPrefix("> ") || trimmed.hasPrefix(">") {
             let quoted = trimmed.split(whereSeparator: \.isNewline).map { line -> String in
                 var s = String(line)
-                if s.hasPrefix("> ") { s.removeFirst(2) }
-                else if s.hasPrefix(">") { s.removeFirst() }
+                if s.hasPrefix("> ") { s.removeFirst(2) } else if s.hasPrefix(">") { s.removeFirst() }
                 return s
             }.joined(separator: "\n")
             return "<blockquote>\(renderBlock(quoted, park: park))</blockquote>"
@@ -180,7 +179,8 @@ public enum MarkdownCompiler {
                 return "<li class=\"task\"><input type=\"checkbox\" disabled> \(inline(String(body.dropFirst(4))))</li>"
             }
             if body.hasPrefix("[x] ") || body.hasPrefix("[X] ") {
-                return "<li class=\"task\"><input type=\"checkbox\" disabled checked> \(inline(String(body.dropFirst(4))))</li>"
+                return
+                    "<li class=\"task\"><input type=\"checkbox\" disabled checked> \(inline(String(body.dropFirst(4))))</li>"
             }
             return "<li>\(inline(body))</li>"
         }
