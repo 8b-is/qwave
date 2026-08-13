@@ -4,10 +4,28 @@ import WireGuardKit
 import VPNKit
 import QwaveSupport
 
+// Zig packet filter (zig-core/src/packet.zig, built via preBuildScript).
+// C function declarations — the header is included as a target source.
+private let QPACKET_ALLOW: Int32 = 0
+private let QPACKET_DROP: Int32 = 1
+
+@_silgen_name("qpacket_filter_init")
+private func qpacket_filter_init() -> UnsafeMutableRawPointer?
+
+@_silgen_name("qpacket_filter")
+private func qpacket_filter(_ state: UnsafeMutableRawPointer?, _ packet: UnsafePointer<UInt8>?, _ len: Int) -> Int32
+
+@_silgen_name("qpacket_filter_stats")
+private func qpacket_filter_stats(_ state: UnsafeMutableRawPointer?, _ seen: UnsafeMutablePointer<UInt64>, _ dropped: UnsafeMutablePointer<UInt64>)
+
+@_silgen_name("qpacket_filter_deinit")
+private func qpacket_filter_deinit(_ state: UnsafeMutableRawPointer?)
+
 enum PacketTunnelError: Error {
     case missingConfiguration
     case missingPrivateKey
     case invalidConfiguration(String)
+    case filterInitFailed
 }
 
 /// WireGuard packet tunnel. The app hands over a `TunnelSessionConfig` via
@@ -27,6 +45,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let negotiator: EphemeralPeerNegotiating = MullvadQuantumPeerNegotiator()
     private let secrets = KeychainSecretStore()
+
+    // Zig packet filter handle (nil when filter is not active).
+    private var filterHandle: UnsafeMutableRawPointer?
 
     // Rekey state, confined to the main queue (timer + wake both hop there).
     private var sessionConfig: TunnelSessionConfig?
@@ -48,6 +69,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler(PacketTunnelError.missingPrivateKey)
             return
         }
+
+        // Initialise the Zig packet filter.
+        guard let handle = qpacket_filter_init() else {
+            completionHandler(PacketTunnelError.filterInitFailed)
+            return
+        }
+        filterHandle = handle
+        QwaveLog.tunnel.info("Zig packet filter initialised")
 
         Task {
             do {
@@ -101,6 +130,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        // Tear down the Zig packet filter.
+        if let handle = filterHandle {
+            qpacket_filter_deinit(handle)
+            filterHandle = nil
+            QwaveLog.tunnel.info("Zig packet filter torn down")
+        }
         DispatchQueue.main.async {
             self.rekeyTimer?.cancel()
             self.rekeyTimer = nil

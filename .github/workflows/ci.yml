@@ -230,6 +230,11 @@ jobs:
           cd zig-core
           zig build
 
+      - name: Build static library
+        run: |
+          cd zig-core
+          zig build-lib src/packet.zig -O ReleaseSafe -target aarch64-macos -femit-bin=libqpacket.a
+
       - name: Test
         run: |
           cd zig-core

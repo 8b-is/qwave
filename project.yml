@@ -85,6 +85,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources/PacketTunnel
+      - path: zig-core/include
+        headerVisibility: public
     dependencies:
       - package: QwaveKit
         product: QwaveTunnelKit
@@ -96,7 +98,9 @@ targets:
         PRODUCT_NAME: PacketTunnel
         # libwg-go.a is produced into BUILT_PRODUCTS_DIR by the pre-build
         # make step; WireGuardKitGo links it via -lwg-go.
+        # libqpacket.a is produced by the Zig pre-build script below.
         LIBRARY_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
+        OTHER_LDFLAGS: "$(inherited) -lqpacket"
     preBuildScripts:
       - name: Build WireGuard Go Bridge
         shell: /bin/bash
@@ -119,6 +123,21 @@ targets:
           make -C "${wg_go_dir}" build
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/libwg-go.a
+      - name: Build Zig packet filter
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          if ! command -v zig >/dev/null 2>&1; then
+            echo "error: Zig not found — install with: brew install zig" >&2
+            exit 1
+          fi
+          cd "${PROJECT_DIR}/zig-core"
+          zig build-lib src/packet.zig \
+            -O ReleaseSafe \
+            -target aarch64-macos \
+            -femit-bin="${BUILT_PRODUCTS_DIR}/libqpacket.a"
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/libqpacket.a
     info:
       path: Resources/PacketTunnel/Info.plist
       properties:
