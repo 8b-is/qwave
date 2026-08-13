@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qwave — Deep Signal Design System</title>
+  <meta name="description" content="Deep Signal: the design system behind Qwave. Tokens, type, color, motion, and components.">
+  <meta name="theme-color" content="#050b14">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="qwave.css">
+  <style>
+    .ds-nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px); background: color-mix(in oklab, var(--ink-999) 72%, transparent); border-bottom: 1px solid var(--hairline-soft); }
+    .ds-nav-inner { display: flex; align-items: center; justify-content: space-between; padding-block: 1rem; }
+    .ds-brand { display: flex; align-items: center; gap: 0.7rem; font-family: var(--font-display); font-weight: 700; color: white; }
+    .ds-brand .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--grad-brand); display: grid; place-items: center; }
+    .ds-brand .mark svg { width: 20px; height: 20px; }
+
+    .block { padding-block: clamp(2.5rem, 5vw, 4rem); border-bottom: 1px solid var(--hairline-soft); }
+    .block > .container > h2 { font-family: var(--font-display); font-size: var(--step-3); margin-bottom: 0.5rem; }
+    .block .note { color: var(--text-muted); margin-bottom: 2rem; max-width: 60ch; }
+    .grid-auto { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+
+    /* Color swatches */
+    .swatch { border-radius: var(--r-2); overflow: hidden; border: 1px solid var(--hairline-soft); background: var(--surface); }
+    .swatch .chip { height: 84px; }
+    .swatch .meta { padding: 0.7rem 0.9rem; }
+    .swatch .name { font-family: var(--font-mono); font-size: 0.8rem; }
+    .swatch .val { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-faint); }
+
+    /* Type ramp */
+    .ramp-row { display: flex; align-items: baseline; gap: 1.5rem; padding-block: 0.6rem; border-bottom: 1px dashed var(--hairline-soft); }
+    .ramp-row .lbl { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-faint); width: 5.5rem; flex: none; }
+    .ramp-row .txt { font-family: var(--font-display); font-weight: 600; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Space / radius scales */
+    .scale-item { display: flex; align-items: center; gap: 1rem; padding-block: 0.4rem; }
+    .scale-item .bar { height: 22px; background: var(--grad-brand); border-radius: 4px; }
+    .scale-item .lbl { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); width: 8rem; flex: none; }
+    .radius-demo { display: grid; place-items: center; height: 90px; background: color-mix(in oklab, var(--aqua) 12%, transparent); border: 1px solid var(--hairline); font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); }
+
+    .shadow-demo { height: 110px; border-radius: var(--r-2); background: var(--surface-2); display: grid; place-items: end center; padding-bottom: 0.6rem; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); }
+
+    .swatch-row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+    .spec { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-faint); margin-top: 0.8rem; }
+    .callout { padding: 1rem 1.2rem; border-radius: var(--r-2); border: 1px solid var(--hairline); background: color-mix(in oklab, var(--aqua) 7%, transparent); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="scroll-progress" aria-hidden="true"></div>
+
+  <header class="ds-nav">
+    <div class="container ds-nav-inner">
+      <a class="ds-brand" href="index.html">
+        <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#050b14" stroke-width="2.4" stroke-linecap="round"><path d="M2 14c2.5 0 2.5-5 5-5s2.5 5 5 5 2.5-5 5-5 2.5 5 5 5"/></svg></span>
+        Deep Signal
+      </a>
+      <a class="btn btn-ghost" href="index.html">← Back to Qwave</a>
+    </div>
+  </header>
+
+  <section class="section" style="padding-block:clamp(3rem,6vw,5rem)">
+    <div class="container">
+      <span class="eyebrow">Design system</span>
+      <h1 class="display h2" style="margin-block:1rem">Deep&nbsp;Signal</h1>
+      <p class="lead" style="max-width:58ch">The visual language of a sovereign browser: deep-space navy, aurora gradients, and the wave. Tokens are defined once in <code class="mono">qwave.css</code> and drive both this guide and the landing page &mdash; edit a token, both update.</p>
+    </div>
+  </section>
+
+  <!-- COLOR -->
+  <section class="block">
+    <div class="container">
+      <h2>Color</h2>
+      <p class="note">An oklch palette for perceptually even ramps, composed at runtime with <code class="mono">color-mix()</code>. Aqua is the wave; violet marks post-quantum; green means verified.</p>
+      <div class="grid-auto">
+        <div class="swatch"><div class="chip" style="background:var(--aqua)"></div><div class="meta"><div class="name">--aqua</div><div class="val">brand · the wave</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--blue)"></div><div class="meta"><div class="name">--blue</div><div class="val">signal</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--green)"></div><div class="meta"><div class="name">--green</div><div class="val">verified · allow</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--violet)"></div><div class="meta"><div class="name">--violet</div><div class="val">post-quantum</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--rose)"></div><div class="meta"><div class="name">--rose</div><div class="val">blocked</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--amber)"></div><div class="meta"><div class="name">--amber</div><div class="val">caution</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--ink-900)"></div><div class="meta"><div class="name">--ink-900</div><div class="val">surface base</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--ink-999)"></div><div class="meta"><div class="name">--ink-999</div><div class="val">page bg</div></div></div>
+      </div>
+      <div style="margin-top:1.5rem" class="grid-auto">
+        <div class="swatch"><div class="chip" style="background:var(--grad-brand)"></div><div class="meta"><div class="name">--grad-brand</div><div class="val">primary actions</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--grad-aurora)"></div><div class="meta"><div class="name">--grad-aurora</div><div class="val">accents · progress</div></div></div>
+        <div class="swatch"><div class="chip" style="background:var(--grad-text)"></div><div class="meta"><div class="name">--grad-text</div><div class="val">headline fills</div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TYPE -->
+  <section class="block">
+    <div class="container">
+      <h2>Typography</h2>
+      <p class="note">Space Grotesk for display, Inter for body, JetBrains Mono for code and system labels. The scale is fluid &mdash; every step is a <code class="mono">clamp()</code> that breathes with the viewport.</p>
+      <div class="ramp-row"><span class="lbl">step-5</span><span class="txt gradient-text" style="font-size:var(--step-5)">Qwave</span></div>
+      <div class="ramp-row"><span class="lbl">step-4</span><span class="txt" style="font-size:var(--step-4)">Sovereign browser</span></div>
+      <div class="ramp-row"><span class="lbl">step-3</span><span class="txt" style="font-size:var(--step-3)">Prove what it sends</span></div>
+      <div class="ramp-row"><span class="lbl">step-2</span><span class="txt" style="font-size:var(--step-2)">Container universes</span></div>
+      <div class="ramp-row"><span class="lbl">step-1</span><span class="txt" style="font-size:var(--step-1)">Post-quantum by construction</span></div>
+      <div class="ramp-row"><span class="lbl">step-0</span><span class="txt" style="font-size:var(--step-0);font-family:var(--font-body);font-weight:400">Body copy runs at step-0 in Inter, 1.65 line height.</span></div>
+      <div class="ramp-row" style="border:0"><span class="lbl">mono</span><span class="txt mono" style="font-size:var(--step-0);font-weight:500">swift test -c release</span></div>
+    </div>
+  </section>
+
+  <!-- SPACE + RADIUS -->
+  <section class="block">
+    <div class="container" style="display:grid;grid-template-columns:1fr 1fr;gap:3rem">
+      <div style="grid-column:1/-1"><h2>Space &amp; radius</h2><p class="note">A single geometric spacing scale and five radii, from control corners to the big hero card.</p></div>
+      <div>
+        <div class="scale-item"><span class="lbl">--sp-1 · 4px</span><div class="bar" style="width:4px"></div></div>
+        <div class="scale-item"><span class="lbl">--sp-2 · 8px</span><div class="bar" style="width:8px"></div></div>
+        <div class="scale-item"><span class="lbl">--sp-4 · 16px</span><div class="bar" style="width:16px"></div></div>
+        <div class="scale-item"><span class="lbl">--sp-6 · 32px</span><div class="bar" style="width:32px"></div></div>
+        <div class="scale-item"><span class="lbl">--sp-8 · 64px</span><div class="bar" style="width:64px"></div></div>
+        <div class="scale-item"><span class="lbl">--sp-9 · 96px</span><div class="bar" style="width:96px"></div></div>
+      </div>
+      <div class="grid-auto" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
+        <div class="radius-demo" style="border-radius:var(--r-1)">r-1</div>
+        <div class="radius-demo" style="border-radius:var(--r-2)">r-2</div>
+        <div class="radius-demo" style="border-radius:var(--r-3)">r-3</div>
+        <div class="radius-demo" style="border-radius:var(--r-4)">r-4</div>
+        <div class="radius-demo" style="border-radius:var(--r-pill)">pill</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ELEVATION -->
+  <section class="block">
+    <div class="container">
+      <h2>Elevation &amp; glow</h2>
+      <p class="note">Three shadow tiers plus a brand glow reserved for primary actions and live surfaces.</p>
+      <div class="grid-auto">
+        <div class="shadow-demo" style="box-shadow:var(--shadow-1)">--shadow-1</div>
+        <div class="shadow-demo" style="box-shadow:var(--shadow-2)">--shadow-2</div>
+        <div class="shadow-demo" style="box-shadow:var(--shadow-3)">--shadow-3</div>
+        <div class="shadow-demo" style="box-shadow:var(--glow-brand)">--glow-brand</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPONENTS -->
+  <section class="block">
+    <div class="container">
+      <h2>Components</h2>
+      <p class="note">The reusable pieces, straight from the shipped stylesheet.</p>
+
+      <h3 class="mono muted" style="font-size:0.8rem;margin:1.5rem 0 0.8rem">buttons</h3>
+      <div class="swatch-row">
+        <a class="btn btn-primary" href="#">Primary</a>
+        <a class="btn btn-ghost" href="#">Ghost</a>
+        <a class="btn btn-primary btn-lg" href="#">Large</a>
+        <button class="btn">Neutral</button>
+      </div>
+
+      <h3 class="mono muted" style="font-size:0.8rem;margin:2rem 0 0.8rem">pills &amp; tags</h3>
+      <div class="swatch-row">
+        <span class="pill"><span class="dot-live"></span> live · v0.4.4</span>
+        <span class="tag">FIPS 203</span>
+        <span class="tag">Constant-time</span>
+        <span class="tag">Fail-closed</span>
+      </div>
+
+      <h3 class="mono muted" style="font-size:0.8rem;margin:2rem 0 0.8rem">cards (hover for spotlight + gradient border)</h3>
+      <div class="grid-auto" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+        <article class="card"><div class="card-icon">🛡️</div><h3>Standard card</h3><p>Glass surface, pointer-tracked spotlight, lift on hover.</p></article>
+        <article class="card grad-border"><div class="card-icon">🌊</div><h3>Featured</h3><p>Adds the animated conic <code class="mono">--qw-angle</code> gradient border.</p></article>
+      </div>
+
+      <h3 class="mono muted" style="font-size:0.8rem;margin:2rem 0 0.8rem">terminal</h3>
+      <div class="terminal">
+        <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-title">example</span></div>
+<pre><span class="cmt"># build the release binary</span>
+<span class="cmd">xcodegen</span> generate &amp;&amp; <span class="cmd">xcodebuild</span> -scheme Qwave build</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- MOTION -->
+  <section class="block">
+    <div class="container">
+      <h2>Motion</h2>
+      <p class="note">Motion is purposeful and always honors <code class="mono">prefers-reduced-motion</code>. Tokens: four durations, three easings.</p>
+      <div class="callout">
+        <b>Bleeding-edge, progressively enhanced.</b> The top progress bar is a native CSS scroll-driven animation
+        (<code class="mono">animation-timeline: scroll()</code>) where supported. Animated borders use registered
+        <code class="mono">@property</code> custom properties. Cross-page navigation uses the View Transitions API.
+        None of it is required for the page to work.
+      </div>
+      <div class="spec" style="margin-top:1.5rem">
+        --ease-out · cubic-bezier(0.22, 1, 0.36, 1)<br>
+        --ease-spring · cubic-bezier(0.34, 1.56, 0.64, 1)<br>
+        --dur-1 0.16s &nbsp; --dur-2 0.3s &nbsp; --dur-3 0.6s &nbsp; --dur-4 1s
+      </div>
+    </div>
+  </section>
+
+  <footer class="site" style="border-top:1px solid var(--hairline-soft);padding-block:2.5rem">
+    <div class="container">
+      <p class="muted" style="font-size:0.85rem">Deep Signal · the Qwave design system · MIT · <a style="color:var(--brand)" href="index.html">back to the site →</a></p>
+    </div>
+  </footer>
+</body>
+</html>

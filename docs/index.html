@@ -3,362 +3,589 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Qwave — Sovereign WebKit-Native macOS Browser</title>
-  <meta name="description" content="Qwave is a high-performance, WebKit-native, battery-optimized sovereign macOS web browser combining Firefox Containers, Brave Shields, Tab Hibernation, and WireGuard VPN.">
-  <meta property="og:title" content="Qwave — Sovereign WebKit-Native macOS Browser">
-  <meta property="og:description" content="High-performance, WebKit-native sovereign macOS web browser combining Firefox Containers, Brave Shields, Tab Hibernation, and WireGuard VPN.">
+  <title>Qwave — Sovereign macOS Browser</title>
+  <meta name="description" content="Qwave is a WebKit-native, post-quantum, battery-optimized macOS browser. Container universes, Brave-style shields, a Mullvad WireGuard VPN with certificate pinning, and a committed egress allowlist that proves what it sends.">
+  <meta name="theme-color" content="#050b14">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Qwave — Sovereign macOS Browser">
+  <meta property="og:description" content="WebKit-native. Post-quantum. Signed & notarized. A browser that proves what it sends.">
   <meta property="og:image" content="assets/hero.jpg">
-  <meta property="og:url" content="https://peterlodri-sec.github.io/qwave/">
+  <meta property="og:url" content="https://8b-is.github.io/qwave/">
   <meta name="twitter:card" content="summary_large_image">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="qwave.css">
 
   <style>
-    :root {
-      --bg: #050b14;
-      --bg-card: rgba(13, 25, 45, 0.7);
-      --border: rgba(0, 242, 254, 0.2);
-      --border-hover: rgba(0, 242, 254, 0.5);
-      --primary: #00f2fe;
-      --primary-glow: rgba(0, 242, 254, 0.35);
-      --secondary: #4facfe;
-      --text: #e2e8f0;
-      --text-muted: #94a3b8;
-      --accent: #38ef7d;
-      --font-heading: 'Space Grotesk', sans-serif;
-      --font-body: 'Inter', sans-serif;
-      --font-code: 'JetBrains Mono', monospace;
+    /* ---- Page-local layout ------------------------------------------- */
+    .nav {
+      position: sticky; top: 0; z-index: 50;
+      transition: background var(--dur-2), border-color var(--dur-2), backdrop-filter var(--dur-2);
+      border-bottom: 1px solid transparent;
     }
+    .nav.scrolled {
+      background: color-mix(in oklab, var(--ink-999) 72%, transparent);
+      border-bottom-color: var(--hairline-soft);
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+    }
+    .nav-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-block: 1rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.7rem; font-family: var(--font-display); font-weight: 700; font-size: 1.3rem; color: white; }
+    .brand .mark {
+      width: 34px; height: 34px; border-radius: 10px;
+      background: var(--grad-brand); display: grid; place-items: center;
+      box-shadow: var(--glow-soft);
+    }
+    .brand .mark svg { width: 22px; height: 22px; }
+    .nav-links { display: flex; align-items: center; gap: 1.6rem; }
+    .nav-links a.link { color: var(--text-muted); font-size: 0.95rem; font-weight: 500; transition: color var(--dur-1); }
+    .nav-links a.link:hover { color: var(--brand); }
+    @media (max-width: 820px) { .nav-links .link { display: none; } }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: var(--font-body);
-      line-height: 1.6;
-      overflow-x: hidden;
-      background-image: 
-        radial-gradient(circle at 50% -20%, rgba(0, 242, 254, 0.15), transparent 70%),
-        radial-gradient(circle at 10% 80%, rgba(79, 172, 254, 0.08), transparent 50%);
+    /* ---- Hero -------------------------------------------------------- */
+    .hero { position: relative; padding-block: clamp(3rem, 7vw, 6rem) clamp(3rem, 6vw, 5rem); text-align: center; isolation: isolate; }
+    #wave-canvas {
+      position: absolute; inset: -10% -5% auto -5%;
+      width: 110%; height: 130%;
+      z-index: -1;
+      opacity: 0.9;
+      mask-image: radial-gradient(80% 75% at 50% 30%, black 30%, transparent 78%);
+      -webkit-mask-image: radial-gradient(80% 75% at 50% 30%, black 30%, transparent 78%);
     }
+    /* CSS fallback aurora used when WebGL/reduced-motion is unavailable. */
+    .hero.no-webgl::before {
+      content: ""; position: absolute; inset: 0; z-index: -1;
+      background: conic-gradient(from 200deg at 50% 0%,
+        color-mix(in oklab, var(--blue) 30%, transparent),
+        color-mix(in oklab, var(--aqua) 30%, transparent),
+        color-mix(in oklab, var(--violet) 24%, transparent),
+        color-mix(in oklab, var(--blue) 30%, transparent));
+      filter: blur(60px); opacity: 0.5;
+      mask-image: radial-gradient(70% 60% at 50% 20%, black, transparent 75%);
+    }
+    .hero h1 { font-size: var(--step-5); margin-block: 1.4rem; }
+    .hero .lead { max-width: 46ch; margin-inline: auto; }
+    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 2.4rem; }
+    .hero-note { margin-top: 1.1rem; font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-faint); }
 
-    header {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      font-family: var(--font-heading);
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #fff;
-      text-decoration: none;
-    }
-    .brand-icon {
-      width: 32px;
-      height: 32px;
-      background: linear-gradient(135deg, var(--primary), var(--secondary));
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #050b14;
-      font-weight: 900;
-    }
-
-    nav {
-      display: flex;
-      gap: 1.5rem;
-      align-items: center;
-    }
-    nav a {
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.95rem;
-      font-weight: 500;
-      transition: color 0.2s;
-    }
-    nav a:hover { color: var(--primary); }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1.5rem;
-      border-radius: 99px;
-      font-weight: 600;
-      text-decoration: none;
-      transition: all 0.2s ease;
-      font-size: 0.95rem;
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, var(--primary), var(--secondary));
-      color: #050b14;
-      box-shadow: 0 0 20px var(--primary-glow);
-    }
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 0 30px rgba(0, 242, 254, 0.6);
-    }
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.05);
-      color: #fff;
-      border: 1px solid var(--border);
-    }
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: var(--primary);
-    }
-
-    .hero {
-      max-width: 1200px;
-      margin: 3rem auto 5rem;
-      padding: 0 2rem;
-      text-align: center;
-    }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.35rem 1rem;
-      border-radius: 99px;
-      background: rgba(0, 242, 254, 0.1);
-      border: 1px solid var(--border);
-      color: var(--primary);
-      font-size: 0.85rem;
-      font-family: var(--font-code);
-      margin-bottom: 1.5rem;
-    }
-    .hero h1 {
-      font-family: var(--font-heading);
-      font-size: 4rem;
-      line-height: 1.1;
-      font-weight: 700;
-      margin-bottom: 1.5rem;
-      background: linear-gradient(135deg, #ffffff 0%, #a5f3fc 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .hero p {
-      font-size: 1.25rem;
-      color: var(--text-muted);
-      max-width: 750px;
-      margin: 0 auto 2.5rem;
-    }
-
-    .hero-actions {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      margin-bottom: 4rem;
-    }
-
-    .preview-container {
-      position: relative;
-      border-radius: 16px;
+    /* Floating app preview */
+    .preview {
+      margin: clamp(3rem, 6vw, 5rem) auto 0;
+      max-width: 980px;
+      border-radius: var(--r-4);
+      border: 1px solid var(--hairline);
       overflow: hidden;
-      border: 1px solid var(--border);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+      box-shadow: var(--shadow-3), var(--glow-soft);
+      transform: perspective(1600px) rotateX(7deg);
+      transform-origin: 50% 100%;
     }
-    .preview-container img {
-      width: 100%;
-      display: block;
-    }
+    .preview img { width: 100%; }
 
-    .features {
-      max-width: 1200px;
-      margin: 0 auto 6rem;
-      padding: 0 2rem;
-    }
-    .section-title {
-      font-family: var(--font-heading);
-      font-size: 2.25rem;
-      text-align: center;
-      margin-bottom: 3rem;
-      color: #fff;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 2rem;
-    }
-    .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 2rem;
-      backdrop-filter: blur(12px);
-      transition: all 0.3s ease;
-    }
-    .card:hover {
-      border-color: var(--border-hover);
-      transform: translateY(-4px);
-    }
-    .card-icon {
-      font-size: 2rem;
-      margin-bottom: 1rem;
-      display: inline-block;
-    }
-    .card h3 {
-      font-family: var(--font-heading);
-      font-size: 1.35rem;
-      margin-bottom: 0.75rem;
-      color: #fff;
-    }
-    .card p {
-      color: var(--text-muted);
-      font-size: 0.95rem;
-    }
-
-    .quickstart {
-      max-width: 900px;
-      margin: 0 auto 6rem;
-      padding: 0 2rem;
-    }
-    .terminal {
-      background: #020617;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-      font-family: var(--font-code);
-      font-size: 0.9rem;
-      color: #38bdf8;
-      overflow-x: auto;
-    }
-    .terminal pre { white-space: pre-wrap; }
-    .terminal-header {
-      display: flex;
-      gap: 0.4rem;
-      margin-bottom: 1rem;
-    }
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
-    .dot-red { background: #ef4444; }
-    .dot-yellow { background: #f59e0b; }
-    .dot-green { background: #22c55e; }
-
-    footer {
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      padding: 3rem 2rem;
-      text-align: center;
+    /* ---- Trust strip ------------------------------------------------- */
+    .trust {
+      display: flex; flex-wrap: wrap; gap: 1rem 2.4rem; justify-content: center;
+      padding-block: 2.2rem;
+      border-block: 1px solid var(--hairline-soft);
       color: var(--text-muted);
       font-size: 0.9rem;
     }
-    footer a { color: var(--primary); text-decoration: none; }
+    .trust b { color: var(--text); font-weight: 600; }
+    .trust .i { display: inline-flex; align-items: center; gap: 0.5rem; }
 
-    @media (max-width: 768px) {
-      .hero h1 { font-size: 2.75rem; }
-      .hero-actions { flex-direction: column; }
+    /* ---- Stats ------------------------------------------------------- */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+    @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+    .stat { text-align: center; }
+    .stat .n { font-family: var(--font-display); font-size: var(--step-4); line-height: 1; }
+    .stat .l { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem; }
+
+    /* ---- Section header ---------------------------------------------- */
+    .sec-head { max-width: 62ch; margin: 0 auto 3.5rem; text-align: center; }
+    .sec-head .eyebrow { display: inline-block; margin-bottom: 1rem; }
+    .sec-head h2 { font-size: var(--step-3); }
+    .sec-head p { margin-top: 1rem; }
+
+    /* ---- Bento feature grid ------------------------------------------ */
+    .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1.25rem; }
+    .bento .card { grid-column: span 2; container-type: inline-size; }
+    .bento .wide { grid-column: span 3; }
+    .bento .full { grid-column: span 6; }
+    @media (max-width: 900px) { .bento { grid-template-columns: repeat(2, 1fr); } .bento .card, .bento .wide, .bento .full { grid-column: span 2; } }
+    @media (max-width: 540px) { .bento { grid-template-columns: 1fr; } .bento .card, .bento .wide, .bento .full { grid-column: span 1; } }
+    .card code { font-family: var(--font-mono); font-size: 0.82em; color: var(--aqua-bright); background: color-mix(in oklab, var(--aqua) 10%, transparent); padding: 0.1em 0.4em; border-radius: 5px; }
+
+    /* ---- Egress monitor showcase ------------------------------------ */
+    .egress { display: grid; grid-template-columns: 1fr 1.15fr; gap: 2.5rem; align-items: center; }
+    @media (max-width: 900px) { .egress { grid-template-columns: 1fr; } }
+    .monitor { border-radius: var(--r-3); overflow: hidden; border: 1px solid var(--hairline); background: color-mix(in oklab, var(--ink-999) 84%, black); box-shadow: var(--shadow-2); }
+    .monitor-head { display: flex; align-items: center; justify-content: space-between; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--hairline-soft); font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted); }
+    .monitor-row {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 0.9rem; align-items: center;
+      padding: 0.8rem 1.1rem; font-family: var(--font-mono); font-size: 0.82rem;
+      border-bottom: 1px solid color-mix(in oklab, white 4%, transparent);
     }
+    .monitor-row:last-child { border-bottom: 0; }
+    .monitor-row .host { color: var(--text); }
+    .monitor-row .why { color: var(--text-faint); font-size: 0.72rem; }
+    .verdict { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2em 0.6em; border-radius: var(--r-pill); font-size: 0.7rem; }
+    .verdict.pass { color: var(--green); background: color-mix(in oklab, var(--green) 14%, transparent); }
+    .verdict.block { color: var(--rose); background: color-mix(in oklab, var(--rose) 14%, transparent); }
+    .led { width: 8px; height: 8px; border-radius: 50%; }
+    .led.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .led.off { background: var(--rose); box-shadow: 0 0 8px var(--rose); }
+
+    /* ---- Post-quantum key exchange ----------------------------------- */
+    .pq { display: grid; grid-template-columns: 1.1fr 1fr; gap: 2.5rem; align-items: center; }
+    @media (max-width: 900px) { .pq { grid-template-columns: 1fr; } }
+    .kex { position: relative; padding: 2rem; border-radius: var(--r-3); }
+    .kex svg { width: 100%; height: auto; }
+    .kex .path { stroke-dasharray: 6 6; animation: dash 1.2s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -24; } }
+    .kex-legend { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.2rem; }
+
+    /* ---- Module map -------------------------------------------------- */
+    .modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.9rem; }
+    .mod { padding: 1.1rem 1.2rem; border-radius: var(--r-2); border: 1px solid var(--hairline-soft); background: var(--surface); transition: border-color var(--dur-2), transform var(--dur-2); }
+    .mod:hover { border-color: var(--border-strong); transform: translateY(-3px); }
+    .mod .name { font-family: var(--font-mono); font-weight: 600; color: var(--aqua-bright); font-size: 0.9rem; }
+    .mod .desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.3rem; }
+
+    /* ---- Marquee ----------------------------------------------------- */
+    .marquee { overflow: hidden; -webkit-mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent); mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent); }
+    .marquee-track { display: flex; gap: 3rem; width: max-content; animation: slide 32s linear infinite; }
+    .marquee:hover .marquee-track { animation-play-state: paused; }
+    @keyframes slide { to { transform: translateX(-50%); } }
+    .marquee span { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-faint); white-space: nowrap; }
+    .marquee b { color: var(--brand); }
+
+    /* ---- Download CTA ------------------------------------------------ */
+    .cta { text-align: center; border-radius: var(--r-4); padding: clamp(3rem, 6vw, 5rem) 2rem; }
+    .cta h2 { font-size: var(--step-4); }
+
+    footer.site { border-top: 1px solid var(--hairline-soft); padding-block: 3rem; color: var(--text-muted); font-size: 0.9rem; }
+    .foot-inner { display: flex; flex-wrap: wrap; gap: 1.5rem; justify-content: space-between; align-items: center; }
+    .foot-links { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+    .foot-links a { color: var(--text-muted); transition: color var(--dur-1); }
+    .foot-links a:hover { color: var(--brand); }
   </style>
 </head>
 <body>
+  <div class="scroll-progress" aria-hidden="true"></div>
 
-  <header>
-    <a href="#" class="brand">
-      <div class="brand-icon">🌊</div>
-      Qwave
-    </a>
-    <nav>
-      <a href="#features">Features</a>
-      <a href="#architecture">Architecture</a>
-      <a href="https://github.com/peterlodri-sec/qwave" target="_blank">GitHub</a>
-      <a href="https://github.com/peterlodri-sec/qwave/releases/tag/v0.1.0" class="btn btn-primary">Download v0.1.0</a>
-    </nav>
+  <!-- ============================ NAV ============================ -->
+  <header class="nav" id="nav">
+    <div class="container nav-inner">
+      <a href="#top" class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#050b14" stroke-width="2.4" stroke-linecap="round">
+            <path d="M2 14c2.5 0 2.5-5 5-5s2.5 5 5 5 2.5-5 5-5 2.5 5 5 5"/>
+          </svg>
+        </span>
+        Qwave
+      </a>
+      <nav class="nav-links">
+        <a class="link" href="#features">Features</a>
+        <a class="link" href="#egress">Transparency</a>
+        <a class="link" href="#quantum">Post-Quantum</a>
+        <a class="link" href="#architecture">Architecture</a>
+        <a class="link" href="design-system.html">Design</a>
+        <a class="btn btn-primary" href="https://github.com/8b-is/qwave/releases/latest">Download</a>
+      </nav>
+    </div>
   </header>
 
-  <section class="hero">
-    <div class="badge">🚀 Qwave v0.1.0 Released — macOS 14.0+</div>
-    <h1>Sovereign WebKit-Native Browser Engine</h1>
-    <p>Thin AppKit shell with Firefox Container Universes, Brave Content Shields, Tab Hibernation Memory Management, and Mullvad WireGuard VPN integration.</p>
-    
-    <div class="hero-actions">
-      <a href="https://github.com/peterlodri-sec/qwave/releases/download/v0.1.0/Qwave-v0.1.0-unsigned.zip" class="btn btn-primary">
-        <span>Download Qwave.app (Unsigned)</span>
-      </a>
-      <a href="https://github.com/peterlodri-sec/qwave" class="btn btn-secondary" target="_blank">
-        <span>View Source on GitHub</span>
-      </a>
+  <!-- ============================ HERO ============================ -->
+  <main id="top">
+  <section class="hero" id="hero">
+    <canvas id="wave-canvas" aria-hidden="true"></canvas>
+    <div class="container">
+      <span class="pill reveal"><span class="dot-live"></span> v0.4.4 &middot; Signed &amp; Notarized &middot; macOS 14+</span>
+      <h1 class="display reveal" data-delay="1">
+        The browser that <span class="gradient-text">proves</span><br>what it sends.
+      </h1>
+      <p class="lead reveal" data-delay="2">
+        Qwave is a WebKit-native, post-quantum, battery-optimized macOS browser.
+        Container universes, Brave-style shields, a Mullvad WireGuard VPN with
+        certificate pinning &mdash; and a committed egress allowlist you can audit line by line.
+      </p>
+      <div class="hero-actions reveal" data-delay="3">
+        <a class="btn btn-primary btn-lg" href="https://github.com/8b-is/qwave/releases/latest">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Download Qwave v0.4.4
+        </a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/8b-is/qwave">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2A10 10 0 0 0 8.8 21.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.4-2.2-.2-4.6-1.1-4.6-4.9 0-1.1.4-2 1-2.7 0-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.4 4.7-4.6 4.9.3.3.6.9.6 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg>
+          View source
+        </a>
+      </div>
+      <p class="hero-note reveal" data-delay="4">Apple Silicon &amp; Intel &middot; open source (MIT) &middot; auto-updates via Sparkle</p>
     </div>
 
-    <div class="preview-container">
-      <img src="assets/hero.jpg" alt="Qwave macOS Web Browser Mockup">
+    <div class="preview reveal container" data-delay="4">
+      <img src="assets/hero.jpg" alt="Qwave browser running on macOS" width="1376" height="768" loading="eager">
     </div>
   </section>
 
-  <section class="features" id="features">
-    <h2 class="section-title">Engineered for Battery, Privacy & Speed</h2>
-    <div class="grid">
-      <div class="card">
-        <div class="card-icon">🪐</div>
-        <h3>Firefox Container Universes</h3>
-        <p>Isolated <code>WKWebsiteDataStore</code> instances per tab container (Personal, Work, Banking) plus ephemeral burner tabs that wipe state on close.</p>
-      </div>
+  <!-- ============================ TRUST ============================ -->
+  <div class="trust">
+    <span class="i"><b>Developer ID</b> signed &amp; notarized</span>
+    <span class="i"><b>Fail-closed</b> certificate pinning</span>
+    <span class="i"><b>261+</b> tests, green CI</span>
+    <span class="i"><b>Zero</b> telemetry</span>
+  </div>
 
-      <div class="card">
-        <div class="card-icon">🛡️</div>
-        <h3>Brave Content Shields</h3>
-        <p>Curated 51-rule <code>WKContentRuleList</code> blocking engine, per-host JavaScript toggles, and automatic HTTPS-First upgrader.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-icon">🔋</div>
-        <h3>Energy Governor</h3>
-        <p>Smart <code>TabHibernator</code> that unloads background WebKit process memory while instantly preserving interaction state and scroll position.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-icon">🎛️</div>
-        <h3>Safari SPI Feature Flags</h3>
-        <p>Safely exposes 100+ Safari Technology Preview experimental feature toggles via runtime ObjC reflection with <code>responds(to:)</code> guards.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-icon">🔒</div>
-        <h3>Mullvad WireGuard VPN</h3>
-        <p>System extension architecture (<code>PacketTunnel.systemextension</code>) integrating WireGuardKit and Mullvad REST API for 1-click encryption.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-icon">💾</div>
-        <h3>SQLite WAL Persistence</h3>
-        <p>Raw WAL-mode SQLite storage engine for lightning-fast history, bookmarks, and persistent session restoration without ORM overhead.</p>
+  <!-- ============================ STATS ============================ -->
+  <section class="section" id="stats">
+    <div class="container">
+      <div class="stats">
+        <div class="stat reveal"><div class="n gradient-text" data-count="10">0</div><div class="l">Swift modules</div></div>
+        <div class="stat reveal" data-delay="1"><div class="n gradient-text" data-count="768" data-suffix="-bit">0</div><div class="l">ML-KEM + McEliece hybrid</div></div>
+        <div class="stat reveal" data-delay="2"><div class="n gradient-text" data-count="3">0</div><div class="l">Allowlisted egress hosts</div></div>
+        <div class="stat reveal" data-delay="3"><div class="n gradient-text" data-count="0">0</div><div class="l">Trackers phoned home</div></div>
       </div>
     </div>
   </section>
 
-  <section class="quickstart" id="architecture">
-    <h2 class="section-title">Build & Run in Seconds</h2>
-    <div class="terminal">
-      <div class="terminal-header">
-        <div class="dot dot-red"></div>
-        <div class="dot dot-yellow"></div>
-        <div class="dot dot-green"></div>
+  <!-- ============================ FEATURES ============================ -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">The engine</span>
+        <h2 class="display">Sovereignty, built into every layer</h2>
+        <p class="lead">A thin AppKit shell over ten focused Swift modules. Every capability below is real code with tests &mdash; not a roadmap.</p>
       </div>
-      <pre><code># 1. Clone Qwave public repository
-git clone https://github.com/peterlodri-sec/qwave.git
-cd qwave
 
-# 2. Run 94/94 SPM unit tests
-swift test --package-path Packages/QwaveKit
-
-# 3. Generate Xcode project & build Release binary
-xcodegen generate --spec project.yml
-xcodebuild -project Qwave.xcodeproj -scheme Qwave -configuration Release CODE_SIGNING_ALLOWED=NO build</code></pre>
+      <div class="bento">
+        <article class="card wide reveal">
+          <div class="card-icon">🪐</div>
+          <h3>Container Universes</h3>
+          <p>Per-container isolated <code>WKWebsiteDataStore(forIdentifier:)</code> contexts &mdash; Personal, Work, Banking &mdash; plus ephemeral burner tabs that wipe all state on close.</p>
+        </article>
+        <article class="card wide reveal" data-delay="1">
+          <div class="card-icon">🛡️</div>
+          <h3>Brave-style Shields</h3>
+          <p>A native <code>WKContentRuleList</code> engine compiled from uBO/EasyList syntax, per-host JavaScript toggles, and an automatic HTTPS-First upgrader.</p>
+        </article>
+        <article class="card reveal" data-delay="2">
+          <div class="card-icon">🔋</div>
+          <h3>Energy Governor</h3>
+          <p><code>TabHibernator</code> unloads background WebKit processes while preserving scroll and form state.</p>
+        </article>
+        <article class="card reveal" data-delay="3">
+          <div class="card-icon">🎛️</div>
+          <h3>Safari SPI Flags</h3>
+          <p><code>responds(to:)</code>-guarded reflection over experimental <code>_WKFeature</code> toggles.</p>
+        </article>
+        <article class="card reveal" data-delay="4">
+          <div class="card-icon">🧩</div>
+          <h3>WebExtensions MV3</h3>
+          <p>A <code>browser.*</code> bridge with <code>tabs</code>, <code>storage.local</code>, messaging, and popover UIs.</p>
+        </article>
+        <article class="card wide reveal">
+          <div class="card-icon">🌊</div>
+          <h3>MemoryWave &middot; MEM8</h3>
+          <p>A wave-based cognitive substrate with container-scoped AES-GCM storage and AI-agnostic providers. Stored memories <b>never leave the Mac.</b></p>
+        </article>
+        <article class="card wide reveal" data-delay="1">
+          <div class="card-icon">💾</div>
+          <h3>Raw SQLite, WAL mode</h3>
+          <p>A hand-rolled, prepared-statement store for history, bookmarks, and session restore &mdash; measured at 391 allocations per 50k-row query, and held there by a CI gate.</p>
+        </article>
+      </div>
     </div>
   </section>
 
-  <footer>
-    <p>Qwave is open-source software under the <a href="https://github.com/peterlodri-sec/qwave/blob/main/LICENSE" target="_blank">MIT License</a>. Built with ❤️ by 8b.is / Peter Lodri.</p>
+  <!-- ============================ EGRESS ============================ -->
+  <section class="section" id="egress">
+    <div class="container egress">
+      <div class="reveal">
+        <span class="eyebrow">Prove what it sends</span>
+        <h2 class="display" style="font-size:var(--step-3);margin-block:1rem">A network you can audit</h2>
+        <p class="lead">Most "private" browsers ask for trust. Qwave ships a <b>committed allowlist</b> of every host it is allowed to contact on its own behalf. A regression test fails the build if a module tries to reach anything else.</p>
+        <p class="muted" style="margin-top:1rem">Page traffic is yours; Qwave's own traffic is exactly these three hosts &mdash; documented in <a class="mono" style="color:var(--brand)" href="https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md">NETWORK.md</a>.</p>
+        <a class="btn btn-ghost" style="margin-top:1.6rem" href="https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md">Read the egress inventory →</a>
+      </div>
+
+      <div class="monitor reveal grad-border" data-delay="1">
+        <div class="monitor-head"><span>EGRESS GUARD &middot; category A</span><span>enforced in CI</span></div>
+        <div class="monitor-row"><span class="led on"></span><div><div class="host">github.com</div><div class="why">update feed &amp; appcast</div></div><span class="verdict pass">✓ allow</span></div>
+        <div class="monitor-row"><span class="led on"></span><div><div class="host">api.mullvad.net</div><div class="why">VPN relays &middot; SPKI-pinned</div></div><span class="verdict pass">✓ allow</span></div>
+        <div class="monitor-row"><span class="led on"></span><div><div class="host">api.x.ai</div><div class="why">opt-in inference</div></div><span class="verdict pass">✓ allow</span></div>
+        <div class="monitor-row"><span class="led off"></span><div><div class="host">telemetry.example</div><div class="why">not on the list</div></div><span class="verdict block">✕ blocked</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ POST-QUANTUM ============================ -->
+  <section class="section" id="quantum">
+    <div class="container pq">
+      <div class="kex reveal grad-border">
+        <svg viewBox="0 0 420 220" role="img" aria-label="Hybrid post-quantum key exchange between client and relay">
+          <defs>
+            <linearGradient id="wire" x1="0" x2="1">
+              <stop offset="0" stop-color="var(--aqua)"/><stop offset="1" stop-color="var(--violet)"/>
+            </linearGradient>
+          </defs>
+          <g font-family="var(--font-mono)" font-size="11" fill="var(--text-muted)">
+            <rect x="16" y="70" width="120" height="80" rx="12" fill="color-mix(in oklab, var(--aqua) 10%, transparent)" stroke="var(--hairline)"/>
+            <text x="76" y="104" text-anchor="middle" fill="var(--text)">Qwave</text>
+            <text x="76" y="122" text-anchor="middle">client</text>
+            <rect x="284" y="70" width="120" height="80" rx="12" fill="color-mix(in oklab, var(--violet) 10%, transparent)" stroke="var(--hairline)"/>
+            <text x="344" y="104" text-anchor="middle" fill="var(--text)">Mullvad</text>
+            <text x="344" y="122" text-anchor="middle">relay</text>
+            <line class="path" x1="136" y1="98" x2="284" y2="98" stroke="url(#wire)" stroke-width="2.5"/>
+            <line class="path" x1="284" y1="126" x2="136" y2="126" stroke="url(#wire)" stroke-width="2.5"/>
+            <text x="210" y="90" text-anchor="middle" fill="var(--aqua)">ML-KEM-768</text>
+            <text x="210" y="146" text-anchor="middle" fill="var(--violet)">McEliece 348864</text>
+          </g>
+        </svg>
+        <div class="kex-legend">
+          <span class="tag">FIPS 203</span>
+          <span class="tag">Hybrid KEM</span>
+          <span class="tag">Constant-time</span>
+          <span class="tag">Fail-closed downgrade</span>
+        </div>
+      </div>
+      <div class="reveal" data-delay="1">
+        <span class="eyebrow">Harvest-now, decrypt-never</span>
+        <h2 class="display" style="font-size:var(--step-3);margin-block:1rem">Post-quantum by construction</h2>
+        <p class="lead">Qwave's Stage-B tunnel negotiates a pre-shared key with a <b>hybrid KEM</b>: ML-KEM-768 (FIPS 203) combined with Classic McEliece 348864. Break one and the other still stands.</p>
+        <p class="muted" style="margin-top:1rem">Pure-Swift Keccak/SHAKE, constant-time implicit rejection, negative known-answer tests, and a downgrade path that fails closed rather than falling back to classical-only. The crypto review lives in <a class="mono" style="color:var(--brand)" href="https://github.com/8b-is/qwave/blob/main/docs/CRYPTO_REVIEW.md">CRYPTO_REVIEW.md</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ MARQUEE ============================ -->
+  <div class="marquee section" style="padding-block:2rem" aria-hidden="true">
+    <div class="marquee-track">
+      <span><b>WebKit</b> native</span><span><b>Swift 6</b> language mode</span><span><b>WireGuard</b> system extension</span><span><b>Sparkle</b> EdDSA appcast</span><span><b>WebURL</b> canonical hosts</span><span><b>swift-log</b> os_log backend</span><span><b>XcodeGen</b> single source</span><span><b>Periphery</b> dead-code sweep</span>
+      <span><b>WebKit</b> native</span><span><b>Swift 6</b> language mode</span><span><b>WireGuard</b> system extension</span><span><b>Sparkle</b> EdDSA appcast</span><span><b>WebURL</b> canonical hosts</span><span><b>swift-log</b> os_log backend</span><span><b>XcodeGen</b> single source</span><span><b>Periphery</b> dead-code sweep</span>
+    </div>
+  </div>
+
+  <!-- ============================ ARCHITECTURE ============================ -->
+  <section class="section" id="architecture">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Module map</span>
+        <h2 class="display" style="font-size:var(--step-3)">Ten modules, one source of truth</h2>
+        <p class="lead"><code class="mono">Packages/QwaveKit/Package.swift</code> defines it all. No hidden Xcode state.</p>
+      </div>
+      <div class="modules reveal">
+        <div class="mod"><div class="name">BrowserCore</div><div class="desc">Tabs, containers, navigation, hibernation, downloads</div></div>
+        <div class="mod"><div class="name">Shields</div><div class="desc">Content blocking, uBO/EasyList compiler, HTTPS-first</div></div>
+        <div class="mod"><div class="name">FeatureFlags</div><div class="desc">Safari SPI toggles via guarded reflection</div></div>
+        <div class="mod"><div class="name">VPNKit</div><div class="desc">Mullvad client, relays, tunnel, PQ negotiation</div></div>
+        <div class="mod"><div class="name">PostQuantum</div><div class="desc">Keccak, ML-KEM-768, McEliece, HybridKEM</div></div>
+        <div class="mod"><div class="name">WebExtensions</div><div class="desc">MV3 registry, browser.* bridge, popups</div></div>
+        <div class="mod"><div class="name">Persistence</div><div class="desc">WAL-mode SQLite stores</div></div>
+        <div class="mod"><div class="name">MemoryWave</div><div class="desc">MEM8 substrate, AES-GCM, on-device</div></div>
+        <div class="mod"><div class="name">URLIdentity</div><div class="desc">WHATWG canonical host identity</div></div>
+        <div class="mod"><div class="name">QwaveSupport</div><div class="desc">Logging, keychain helpers</div></div>
+      </div>
+
+      <div class="terminal reveal" style="margin-top:3rem">
+        <div class="terminal-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="terminal-title">build &amp; run</span>
+          <button id="copy-btn" class="tag" style="margin-left:auto;cursor:pointer">copy</button>
+        </div>
+<pre id="build-cmd"><span class="cmt"># Clone and run the full 261-test suite (release mode)</span>
+<span class="cmd">git</span> clone https://github.com/8b-is/qwave.git &amp;&amp; <span class="cmd">cd</span> qwave
+<span class="cmd">swift</span> test -c release --package-path Packages/QwaveKit
+
+<span class="cmt"># Generate the Xcode project and build (project.yml is the source of truth)</span>
+<span class="cmd">xcodegen</span> generate
+<span class="cmd">xcodebuild</span> -scheme Qwave -configuration Release build</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ CTA ============================ -->
+  <section class="section">
+    <div class="container">
+      <div class="cta grad-border reveal">
+        <span class="eyebrow">Sovereign by default</span>
+        <h2 class="display" style="margin-block:1rem">Take back your browser.</h2>
+        <p class="lead" style="max-width:48ch;margin:0 auto 2rem">Signed, notarized, and auto-updating. Free and open source under the MIT license.</p>
+        <div class="hero-actions" style="margin-top:0">
+          <a class="btn btn-primary btn-lg" href="https://github.com/8b-is/qwave/releases/latest">Download for macOS</a>
+          <a class="btn btn-ghost btn-lg" href="design-system.html">Explore the design system</a>
+        </div>
+      </div>
+    </div>
+  </section>
+  </main>
+
+  <!-- ============================ FOOTER ============================ -->
+  <footer class="site">
+    <div class="container foot-inner">
+      <div>
+        <div class="brand" style="font-size:1.1rem;margin-bottom:0.5rem">
+          <span class="mark" style="width:28px;height:28px" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#050b14" stroke-width="2.4" stroke-linecap="round"><path d="M2 14c2.5 0 2.5-5 5-5s2.5 5 5 5 2.5-5 5-5 2.5 5 5 5"/></svg></span>
+          Qwave
+        </div>
+        <p class="muted" style="font-size:0.82rem">MIT licensed &middot; built by <a style="color:var(--brand)" href="https://8b.is">8b.is</a> &amp; Peter Lodri</p>
+      </div>
+      <nav class="foot-links">
+        <a href="https://github.com/8b-is/qwave">GitHub</a>
+        <a href="https://github.com/8b-is/qwave/releases/latest">Releases</a>
+        <a href="https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md">Transparency</a>
+        <a href="https://github.com/8b-is/qwave/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+        <a href="design-system.html">Design System</a>
+      </nav>
+    </div>
   </footer>
 
+  <script>
+  (() => {
+    "use strict";
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    /* ---- Nav elevation on scroll ---- */
+    const nav = document.getElementById("nav");
+    const onScroll = () => nav.classList.toggle("scrolled", scrollY > 12);
+    addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+    /* ---- Reveal on scroll (universal fallback for scroll-driven CSS) ---- */
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }, { threshold: 0.14, rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+    /* ---- Animated stat counters ---- */
+    const fmt = (n) => n.toLocaleString("en-US");
+    const countUp = (el) => {
+      const target = +el.dataset.count, suffix = el.dataset.suffix || "";
+      if (reduceMotion || target === 0) { el.textContent = fmt(target) + suffix; return; }
+      const dur = 1400, t0 = performance.now();
+      const tick = (t) => {
+        const p = Math.min(1, (t - t0) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = fmt(Math.round(target * eased)) + suffix;
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+    const statIo = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { countUp(e.target); statIo.unobserve(e.target); }
+    }, { threshold: 0.6 });
+    document.querySelectorAll("[data-count]").forEach((el) => statIo.observe(el));
+
+    /* ---- Card spotlight (pointer-tracked custom props) ---- */
+    if (matchMedia("(pointer:fine)").matches) {
+      document.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("pointermove", (ev) => {
+          const r = card.getBoundingClientRect();
+          card.style.setProperty("--mx", `${ev.clientX - r.left}px`);
+          card.style.setProperty("--my", `${ev.clientY - r.top}px`);
+        });
+      });
+    }
+
+    /* ---- Copy build command ---- */
+    const copyBtn = document.getElementById("copy-btn");
+    copyBtn?.addEventListener("click", async () => {
+      const text = document.getElementById("build-cmd").innerText;
+      try { await navigator.clipboard.writeText(text); copyBtn.textContent = "copied ✓"; }
+      catch { copyBtn.textContent = "select + ⌘C"; }
+      setTimeout(() => (copyBtn.textContent = "copy"), 1800);
+    });
+
+    /* ---- WebGL wave hero (interference field) ---- */
+    const hero = document.getElementById("hero");
+    const canvas = document.getElementById("wave-canvas");
+    const gl = reduceMotion ? null : (canvas.getContext("webgl", { antialias: true, alpha: true }) ||
+                                      canvas.getContext("experimental-webgl"));
+    if (!gl) { hero.classList.add("no-webgl"); canvas.remove(); return; }
+
+    const vsrc = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+    const fsrc = `
+      precision highp float;
+      uniform float u_time; uniform vec2 u_res; uniform vec2 u_mouse;
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res.xy;
+        vec2 p = (gl_FragCoord.xy - 0.5*u_res.xy) / u_res.y;
+        float t = u_time * 0.22;
+        vec2 m = (u_mouse - 0.5*u_res.xy) / u_res.y;
+        float w = 0.0;
+        w += sin((p.x*3.0 + t)*2.0 + cos(p.y*2.2 + t));
+        w += sin(length(p - m)*7.0 - t*2.0);
+        w += sin((p.y*4.0 - t*1.3) + sin(p.x*3.0 + t));
+        w += 0.6*sin(length(p + vec2(0.35,0.1))*9.0 - t*1.7);
+        w *= 0.25;
+        float g = smoothstep(-0.25, 0.95, w);
+        vec3 cyan = vec3(0.0,0.95,1.0);
+        vec3 blue = vec3(0.31,0.67,1.0);
+        vec3 green = vec3(0.22,0.94,0.49);
+        vec3 col = mix(blue, cyan, g);
+        col = mix(col, green, smoothstep(0.65,1.0,g)*0.45);
+        float v = smoothstep(1.25, 0.15, length(p));
+        col *= 0.5 * v;
+        gl_FragColor = vec4(col, 1.0);
+      }`;
+    const compile = (type, src) => {
+      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsrc));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsrc));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { hero.classList.add("no-webgl"); canvas.remove(); return; }
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, "p");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    const uTime = gl.getUniformLocation(prog, "u_time");
+    const uRes = gl.getUniformLocation(prog, "u_res");
+    const uMouse = gl.getUniformLocation(prog, "u_mouse");
+    const mouse = { x: 0, y: 0 };
+
+    const resize = () => {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gl.viewport(0,0,w,h); }
+      gl.uniform2f(uRes, w, h);
+    };
+    addEventListener("resize", resize, { passive: true });
+    hero.addEventListener("pointermove", (e) => {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      const r = canvas.getBoundingClientRect();
+      mouse.x = (e.clientX - r.left) * dpr;
+      mouse.y = (r.height - (e.clientY - r.top)) * dpr;
+    });
+
+    let running = true, start = performance.now();
+    document.addEventListener("visibilitychange", () => {
+      running = !document.hidden;
+      if (running) { start = performance.now() - elapsed; requestAnimationFrame(frame); }
+    });
+    let elapsed = 0;
+    const frame = (now) => {
+      if (!running) return;
+      resize();
+      elapsed = now - start;
+      gl.uniform1f(uTime, elapsed * 0.001);
+      gl.uniform2f(uMouse, mouse.x, mouse.y);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      requestAnimationFrame(frame);
+    };
+    resize();
+    // Seed mouse at center-top so the field looks intentional before interaction.
+    mouse.x = canvas.width * 0.5; mouse.y = canvas.height * 0.7;
+    requestAnimationFrame(frame);
+  })();
+  </script>
 </body>
 </html>
