@@ -5,22 +5,27 @@
 
 | File | Status | Topic | Target |
 |---|---|---|---|
-| [measuring-memory-a-browser-doesnt-own.md](measuring-memory-a-browser-doesnt-own.md) | draft | proc_pid_rusage over WebContent pid-set difference | — |
+| [measuring-memory-a-browser-doesnt-own.md](measuring-memory-a-browser-doesnt-own.md) | draft | proc_pid_rusage over WebContent pid-set difference | — (long-form) |
 | [what-59657-blocking-rules-cost.md](what-59657-blocking-rules-cost.md) | draft | WKContentRuleList compile time, stale-while-revalidate | — |
-| [zero-allocation-text-on-the-keystroke-path.md](zero-allocation-text-on-the-keystroke-path.md) | draft | 4,370→1,011 mallocs, Substring, bounded heap | **pocoo.vaked.dev** (long-form) |
+| [zero-allocation-text-on-the-keystroke-path.md](zero-allocation-text-on-the-keystroke-path.md) | draft | 4,370→1,011 mallocs, Substring, bounded heap | **pocoo.vaked.dev** (published) |
 | [measured-cost-of-a-swift-module-boundary.md](measured-cost-of-a-swift-module-boundary.md) | draft | @inlinable experiment, null result | — |
 | [why-we-benchmark-allocations-not-wall-clock.md](why-we-benchmark-allocations-not-wall-clock.md) | draft | mallocCountTotal methodology, CI rationale | — |
 
 ## Assets
 
-Hand-authored SVGs (versioned alongside the drafts, render in GitHub markdown)
-live in [`assets/`](assets/):
+SVGs (versioned alongside the drafts, render in GitHub markdown) live in
+[`assets/`](assets/). The `hibernation-*` set was generated through the
+entheai engine (`vaked` provider, deepseek-v3.2) and hand-polished; the
+`omnibox-*` / `bounded-insertion-sort.svg` set was hand-authored.
 
 | Asset | Used by |
 |---|---|
 | [assets/omnibox-keystroke-path.svg](assets/omnibox-keystroke-path.svg) | keystroke pipeline diagram (before/after malloc counts per stage) |
 | [assets/omnibox-mallocs-before-after.svg](assets/omnibox-mallocs-before-after.svg) | headline bar chart: 4,370 → 1,011 mallocs (−77%) |
 | [assets/bounded-insertion-sort.svg](assets/bounded-insertion-sort.svg) | full-sort-then-prefix-6 vs bounded top-6 illustration |
+| [assets/hibernation-process-tree.svg](assets/hibernation-process-tree.svg) | app process vs out-of-process WebContent processes — *entheai-generated* |
+| [assets/hibernation-reclaim.svg](assets/hibernation-reclaim.svg) | 137 MB → 0 MB reclaim bar chart — *entheai-generated* |
+| [assets/hibernation-wake-latency.svg](assets/hibernation-wake-latency.svg) | wake-to-interactive phase breakdown — *entheai-generated* |
 
 ## Code provenance
 

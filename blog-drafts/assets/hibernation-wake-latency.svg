@@ -1,0 +1,47 @@
+<svg viewBox="0 0 760 260" xmlns="http://www.w3.org/2000/svg">
+  <rect width="760" height="260" fill="#0d1117"/>
+  
+  <!-- Main stacked bar -->
+  <g transform="translate(80 80)">
+    <!-- Bar background -->
+    <rect x="0" y="0" width="600" height="40" fill="#1f2937" rx="4"/>
+    
+    <!-- Segment 1: WebContent process spawn -->
+    <rect x="0" y="0" width="240" height="40" fill="#ef4444" rx="4"/>
+    
+    <!-- Segment 2: WKWebView construct + state restore -->
+    <rect x="240" y="0" width="60" height="40" fill="#22d3ee" rx="4"/>
+    
+    <!-- Segment 3: page load + JS + DOM ready -->
+    <rect x="300" y="0" width="240" height="40" fill="#10b981" rx="4"/>
+    
+    <!-- Bracket and total label -->
+    <path d="M0 50 L0 70 L600 70 L600 50" stroke="#9ca3af" fill="none" stroke-width="1"/>
+    <line x1="0" y1="60" x2="0" y2="70" stroke="#9ca3af" stroke-width="1"/>
+    <line x1="600" y1="60" x2="600" y2="70" stroke="#9ca3af" stroke-width="1"/>
+    <text x="300" y="95" text-anchor="middle" fill="#e5e7eb" font-family="monospace" font-size="11">
+      wake-to-interactive: 190-305 ms total
+    </text>
+  </g>
+  
+  <!-- Legend -->
+  <g transform="translate(80 160)">
+    <!-- Legend item 1 -->
+    <rect x="0" y="0" width="12" height="12" fill="#ef4444" rx="2"/>
+    <text x="20" y="10" fill="#e5e7eb" font-family="monospace" font-size="11">
+      WebContent process spawn ~100-200 ms
+    </text>
+    
+    <!-- Legend item 2 -->
+    <rect x="0" y="30" width="12" height="12" fill="#22d3ee" rx="2"/>
+    <text x="20" y="40" fill="#e5e7eb" font-family="monospace" font-size="11">
+      WKWebView construct + state restore ~50 ms
+    </text>
+    
+    <!-- Legend item 3 -->
+    <rect x="0" y="60" width="12" height="12" fill="#10b981" rx="2"/>
+    <text x="20" y="70" fill="#e5e7eb" font-family="monospace" font-size="11">
+      page load + JS + DOM ready ~100-200 ms
+    </text>
+  </g>
+</svg>
