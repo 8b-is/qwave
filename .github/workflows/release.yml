@@ -36,7 +36,9 @@ jobs:
       - name: Install tools
         # go: the WireGuardKitGo bridge builds libwg-go.a at compile time
         # (present on GitHub-hosted images, absent on Blacksmith's).
-        run: brew install xcodegen xcbeautify create-dmg go
+        # zig: the app's "Build Zig packet filter" preBuildScript compiles
+        # libqpacket.a and hard-errors if zig is absent.
+        run: brew install xcodegen xcbeautify create-dmg go zig
 
       - name: Verify tag matches project versions
         run: |

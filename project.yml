@@ -127,6 +127,7 @@ targets:
         shell: /bin/bash
         script: |
           set -euo pipefail
+          export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
           if ! command -v zig >/dev/null 2>&1; then
             echo "error: Zig not found — install with: brew install zig" >&2
             exit 1
