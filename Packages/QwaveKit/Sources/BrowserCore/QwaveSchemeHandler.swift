@@ -127,7 +127,11 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
         return nil
     }
 
-    public static func shouldShowWaveError(status: Int) -> Bool {
+    /// `nonisolated` because conforming to WKURLSchemeHandler infers @MainActor
+    /// for the whole type on Swift 6.1, which would otherwise force every caller
+    /// (including synchronous tests) onto the main actor. This is a pure status
+    /// predicate with no state, so it is safe to call from any isolation.
+    public nonisolated static func shouldShowWaveError(status: Int) -> Bool {
         status == 404 || status == 410 || status == 502 || status == 503 || status == 504
     }
 }
