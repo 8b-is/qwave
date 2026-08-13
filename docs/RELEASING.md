@@ -28,9 +28,10 @@ git tag v0.3.0 && git push origin v0.3.0             # the real thing
 |---|---|---|
 | `MACOS_CERTIFICATE_P12` | Developer ID signing | Export the "Developer ID Application" identity from Keychain Access as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
 | `MACOS_CERTIFICATE_PASSWORD` | — | the `.p12` password |
-| `APPLE_TEAM_ID` | signing + notarisation | 10-char team id from developer.apple.com |
-| `NOTARY_APPLE_ID` | notarisation | the Apple ID |
-| `NOTARY_PASSWORD` | notarisation | app-specific password (appleid.apple.com → Sign-In and Security) |
+| `APPLE_TEAM_ID` | signing | 10-char team id from developer.apple.com |
+| `NOTARY_KEY_B64` | notarisation | base64 of the App Store Connect API key `.p8` |
+| `NOTARY_KEY_ID` | notarisation | the ASC API key's Key ID |
+| `NOTARY_ISSUER_ID` | notarisation | ASC → Users & Access → Integrations → Issuer ID |
 | `SPARKLE_ED_PRIVATE_KEY` | appcast signing | single-line base64 Ed25519 seed (already set; rotation in docs/SIGNING.md) |
 
 Behavior by configuration:

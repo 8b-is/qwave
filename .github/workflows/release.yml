@@ -67,8 +67,9 @@ jobs:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_KEY_B64: ${{ secrets.NOTARY_KEY_B64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           if [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$MACOS_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
@@ -77,10 +78,11 @@ jobs:
             echo "sign=false" >> "$GITHUB_OUTPUT"
             echo "ℹ️ Developer ID secrets absent — building unsigned."
           fi
-          if [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+          if [ -n "$NOTARY_KEY_B64" ] && [ -n "$NOTARY_KEY_ID" ] && [ -n "$NOTARY_ISSUER_ID" ]; then
             echo "notarize=true" >> "$GITHUB_OUTPUT"
           else
             echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ App Store Connect API key secrets absent — skipping notarisation."
           fi
           if [ -n "$SPARKLE_ED_PRIVATE_KEY" ]; then
             echo "appcast=true" >> "$GITHUB_OUTPUT"
@@ -158,15 +160,16 @@ jobs:
       - name: Notarize & staple app
         if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_KEY_B64: ${{ secrets.NOTARY_KEY_B64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
+          echo "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
           ditto -c -k --keepParent "$APP_PATH" "Qwave-notarize.zip"
           xcrun notarytool submit "Qwave-notarize.zip" \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --password "$NOTARY_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
+            --key "$RUNNER_TEMP/notary-key.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
             --wait
           xcrun stapler staple "$APP_PATH"
           rm "Qwave-notarize.zip"
@@ -197,15 +200,16 @@ jobs:
       - name: Sign, notarize & staple DMG
         if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_KEY_B64: ${{ secrets.NOTARY_KEY_B64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
+          echo "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
           codesign --force --timestamp --sign "Developer ID Application" "$DMG_PATH"
           xcrun notarytool submit "$DMG_PATH" \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --password "$NOTARY_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
+            --key "$RUNNER_TEMP/notary-key.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
             --wait
           xcrun stapler staple "$DMG_PATH"
 

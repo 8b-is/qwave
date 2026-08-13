@@ -91,8 +91,9 @@ depends on which repository secrets exist:
 | `MACOS_CERTIFICATE_P12` | base64 of a `.p12` containing the **Developer ID Application** certificate + private key (`base64 -i cert.p12 \| pbcopy`) |
 | `MACOS_CERTIFICATE_PASSWORD` | password of that `.p12` |
 | `APPLE_TEAM_ID` | 10-char team id (e.g. `7CFQYBX575`) |
-| `NOTARY_APPLE_ID` | Apple ID for `notarytool` |
-| `NOTARY_PASSWORD` | app-specific password for that Apple ID |
+| `NOTARY_KEY_B64` | base64 App Store Connect API key `.p8` for `notarytool` |
+| `NOTARY_KEY_ID` | the ASC API key's Key ID |
+| `NOTARY_ISSUER_ID` | the ASC Issuer ID |
 | `SPARKLE_ED_PRIVATE_KEY` | single-line base64 Ed25519 seed for signing Sparkle updates |
 
 - **All signing secrets present** → Developer ID signed build (hardened
