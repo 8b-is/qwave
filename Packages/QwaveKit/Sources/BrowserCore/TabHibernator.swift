@@ -18,6 +18,9 @@ public final class TabHibernator {
     /// view hierarchy by the caller after this returns.
     public func hibernate(_ tab: Tab) async {
         guard let webView = tab.webView else { return }
+        let signpostID = QwaveSignposts.energy.makeSignpostID()
+        let interval = QwaveSignposts.energy.beginInterval("hibernate", id: signpostID)
+        defer { QwaveSignposts.energy.endInterval("hibernate", interval) }
 
         let snapshot: NSImage? = await withCheckedContinuation { continuation in
             let configuration = WKSnapshotConfiguration()
@@ -44,7 +47,10 @@ public final class TabHibernator {
 
     /// Rebuild the web view and restore captured state.
     public func restore(_ tab: Tab) -> WKWebView {
+        let signpostID = QwaveSignposts.energy.makeSignpostID()
+        let interval = QwaveSignposts.energy.beginInterval("wake", id: signpostID)
         let webView = factory.restoreWebView(for: tab)
+        QwaveSignposts.energy.endInterval("wake", interval)
         QwaveLog.energy.info("Restored tab \(tab.id, privacy: .public)")
         return webView
     }

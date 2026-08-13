@@ -26,6 +26,12 @@ public enum QwaveLog {
     public static let tunnel = QwaveLogger(category: "tunnel")
 }
 
+/// Signposters for Instruments — hibernate/wake cycles show up as intervals
+/// under the app's subsystem (Points of Interest / os_signpost instrument).
+public enum QwaveSignposts {
+    public static let energy = OSSignposter(subsystem: QwaveLog.subsystem, category: "energy")
+}
+
 // MARK: - Privacy-classified message
 
 /// Mirrors the os_log privacy annotations Qwave call sites already use.

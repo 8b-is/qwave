@@ -73,11 +73,31 @@ System Events for the menu action, and `footprint --json` parsing — but the
 numbers are only meaningful on an otherwise idle machine, so this stays a
 manual/semi-automated protocol rather than a CI job.
 
-## What "good" looks like
+## Measured: hibernation reclaim (2026-08-13)
 
-A hibernated tab should release its content process(es) entirely; with N
-hibernated tabs of ordinary pages, expect the helper-tree footprint to drop
-by roughly the sum of those tabs' WebContent footprints (hundreds of MB for
-ten heavy tabs). If the delta is near zero, suspect the hibernator is
-keeping a live `WKWebView` reference (snapshot restore path) — that is a
-regression even though every `EnergyGovernorTests` case still passes.
+Method: `BrowserCoreTests/HibernationReclaimTests` — deterministic, CI-safe
+(local file URLs only). It snapshots the system's set of
+`com.apple.WebKit.WebContent` pids *before* creating web views (set
+difference excludes other apps), loads 3 tabs of a ballast fixture
+(~24 MB JS-held doubles + 2,000 DOM nodes each), sums the new processes'
+`ri_phys_footprint` via `proc_pid_rusage` — the same number Activity
+Monitor shows — hibernates every tab through `TabHibernator`, and
+re-measures.
+
+| Metric | Measured (Apple Silicon laptop, debug) |
+|---|---|
+| WebContent processes for 3 ballast tabs | 3 |
+| Combined footprint before hibernation | **137.0 MB** |
+| Combined footprint after hibernation | **0.0 MB** — processes terminated |
+| Reclaimed per tab (ballast fixture) | **45.7 MB** |
+| Wake-to-interactive (restore + reload) | **138 ms** |
+
+Hibernation releases the tab's content process **entirely** — the reclaim
+is the whole per-tab WebContent footprint, not a partial trim. Real-world
+pages vary (the ballast fixture is deliberately synthetic and
+deterministic); the test's regression floor is >50% of the measured
+footprint reclaimed and >10 MB/tab, so a future leak — e.g. the hibernator
+retaining a live `WKWebView` reference — fails CI even while every
+`EnergyGovernorTests` decision case still passes. Hibernate/wake cycles
+are also visible in Instruments via `os_signpost` intervals
+(subsystem `is.8b.qwave`, category `energy`, names `hibernate`/`wake`).
