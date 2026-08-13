@@ -1,4 +1,5 @@
 import Foundation
+import URLIdentity
 
 /// HTTPS-first navigation state machine (pure logic, unit-tested).
 ///
@@ -39,7 +40,7 @@ public final class HTTPSFirstUpgrader {
         guard isMainFrame,
               policyAllowsUpgrade,
               url.scheme?.lowercased() == "http",
-              let host = url.host?.lowercased()
+              let host = CanonicalHost.host(of: url)
         else {
             return .allow
         }
@@ -78,7 +79,7 @@ public final class HTTPSFirstUpgrader {
     public func fallbackURL(afterFailureOf url: URL?, errorCode: Int) -> URL? {
         guard let url,
               url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(),
+              let host = CanonicalHost.host(of: url),
               let original = pendingUpgrades[host],
               Self.fallbackErrorCodes.contains(errorCode)
         else {
@@ -91,7 +92,7 @@ public final class HTTPSFirstUpgrader {
 
     /// Called when a navigation commits successfully, clearing bookkeeping.
     public func noteSuccessfulNavigation(to url: URL?) {
-        guard let host = url?.host?.lowercased() else { return }
+        guard let host = url.flatMap(CanonicalHost.host(of:)) else { return }
         pendingUpgrades.removeValue(forKey: host)
     }
 

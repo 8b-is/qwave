@@ -4,6 +4,7 @@ import BrowserCore
 import Shields
 import WebExtensions
 import SwiftUI
+import URLIdentity
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
 /// and the web view container. Owns a `TabManager` and per-tab coordinators.
@@ -270,7 +271,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
 
         if let button = shieldsButton {
-            let host = selected.url?.host
+            let host = selected.url.flatMap(CanonicalHost.host(of:))
             let blocked = environment.shieldsPolicy.resolvedPolicy(forHost: host).adsBlocked
             button.image = NSImage(
                 systemSymbolName: blocked ? "shield.fill" : "shield.slash",
@@ -457,7 +458,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func toggleShields(_ sender: Any?) {
-        guard let button = shieldsButton, let selected = tabManager.selectedTab, let host = selected.url?.host else {
+        guard let button = shieldsButton, let selected = tabManager.selectedTab,
+              let host = selected.url.flatMap(CanonicalHost.host(of:)) else {
             return
         }
         if let popover = shieldsPopover, popover.isShown {

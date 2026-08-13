@@ -1,4 +1,5 @@
 import XCTest
+import URLIdentity
 @testable import BrowserCore
 
 final class OmniboxParserTests: XCTestCase {
@@ -63,5 +64,44 @@ final class OmniboxParserTests: XCTestCase {
 
     func testWhitespaceTrimming() {
         assertURL("  example.com  ", "https://example.com")
+    }
+
+    // MARK: - WHATWG canonical identity (host-identity bypass class)
+
+    private func hostOf(_ input: String, file: StaticString = #filePath, line: UInt = #line) -> String? {
+        guard case .url(let url) = OmniboxParser.parse(input) else {
+            XCTFail("expected URL for \(input)", file: file, line: line)
+            return nil
+        }
+        // The identity WebKit will load — asserted via the same canonical
+        // derivation the shields policy uses.
+        return CanonicalHost.host(of: url)
+    }
+
+    func testIDNInputYieldsPunycodeIdentity() {
+        XCTAssertEqual(hostOf("例え.jp"), "xn--r8jz45g.jp")
+        XCTAssertEqual(hostOf("https://例え.jp/path"), "xn--r8jz45g.jp")
+    }
+
+    func testAuthorityConfusionResolvesToWebKitHost() {
+        // Foundation and WebKit historically disagree here; whatever URL the
+        // parser returns must carry WebKit's identity: the part after the
+        // last "@".
+        XCTAssertEqual(hostOf("https://user@evil.com@good.example/"), "good.example")
+    }
+
+    func testPercentEncodedHostCanonicalizes() {
+        XCTAssertEqual(hostOf("https://ex%61mple.com/"), "example.com")
+    }
+
+    func testNonDecimalIPv4Canonicalizes() {
+        XCTAssertEqual(hostOf("https://0x7f.0.0.1/"), "127.0.0.1")
+    }
+
+    func testCanonicalAndFoundationAgreeOnPlainASCII() {
+        // The guard must not disturb the common case: identical output to
+        // the pre-WebURL parser (no trailing slash added, case preserved).
+        assertURL("example.com", "https://example.com")
+        assertURL("Example.COM", "https://Example.COM")
     }
 }

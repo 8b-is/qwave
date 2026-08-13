@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import URLIdentity
 
 /// Per-site override of the global shield defaults. `nil` means "inherit".
 public struct SitePolicy: Codable, Equatable {
@@ -65,7 +66,13 @@ public final class ShieldsPolicy: ObservableObject {
            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
             self.defaultAdsBlocked = snapshot.defaultAdsBlocked
             self.defaultHTTPSFirst = snapshot.defaultHTTPSFirst
-            self.overrides = snapshot.overrides
+            // Re-key persisted overrides: pre-v0.3.0 keys used Foundation's
+            // reading of the host (e.g. unbracketed IPv6), which no longer
+            // matches the WHATWG-canonical lookups.
+            self.overrides = Dictionary(
+                snapshot.overrides.map { (Self.normalize($0.key), $0.value) },
+                uniquingKeysWith: { first, _ in first }
+            )
         } else {
             self.defaultAdsBlocked = defaultAdsBlocked
             self.defaultHTTPSFirst = defaultHTTPSFirst
@@ -101,10 +108,17 @@ public final class ShieldsPolicy: ObservableObject {
         save()
     }
 
-    /// Hosts are matched on their registrable form minus a leading "www.".
+    /// Hosts are matched on their WHATWG-canonical form (punycode, lowercase,
+    /// decoded percent-escapes, normalized IP literals — the identity WebKit
+    /// loads) minus a leading "www.". Bare IPv6 literals (Foundation's
+    /// bracket-stripped form, also the pre-v0.3.0 persisted form) are
+    /// re-bracketed so they land on the same canonical "[addr]" key. Strings
+    /// that don't parse as a host fall back to plain lowercasing so garbage
+    /// keys stay inert.
     static func normalize(_ host: String) -> String {
-        let lowered = host.lowercased()
-        return lowered.hasPrefix("www.") ? String(lowered.dropFirst(4)) : lowered
+        let candidate = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let canonical = CanonicalHost.host(ofURLString: "https://\(candidate)/") ?? host.lowercased()
+        return canonical.hasPrefix("www.") ? String(canonical.dropFirst(4)) : canonical
     }
 
     private func save() {

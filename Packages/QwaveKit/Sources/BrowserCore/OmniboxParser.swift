@@ -1,4 +1,6 @@
 import Foundation
+import WebURL
+import WebURLFoundationExtras
 
 public enum OmniboxInput: Equatable {
     case url(URL)
@@ -15,10 +17,7 @@ public enum OmniboxParser {
         let lower = trimmed.lowercased()
         for scheme in ["http://", "https://", "file://", "about:"] {
             if lower.hasPrefix(scheme) {
-                if let url = URL(string: trimmed) {
-                    return .url(url)
-                }
-                return .search(trimmed)
+                return url(from: trimmed) ?? .search(trimmed)
             }
         }
 
@@ -63,10 +62,24 @@ public enum OmniboxParser {
             return .search(trimmed)
         }
 
-        if let url = URL(string: "https://\(trimmed)") {
-            return .url(url)
+        return url(from: "https://\(trimmed)") ?? .search(trimmed)
+    }
+
+    /// Builds the returned URL through the WHATWG parser, so the identity we
+    /// hand out is the identity WebKit will load. When Foundation and WHATWG
+    /// agree on the host (the common ASCII case), Foundation's serialization
+    /// of the raw input is kept; when they disagree (IDN, percent-encoded or
+    /// non-decimal-IP hosts, multiple-@ authorities) the canonical WHATWG
+    /// serialization wins. Inputs the WHATWG parser rejects become searches.
+    private static func url(from string: String) -> OmniboxInput? {
+        guard let webURL = WebURL(string) else { return nil }
+        let canonicalHost = webURL.host?.serialized ?? ""
+        if let foundation = URL(string: string),
+           (foundation.host ?? "").lowercased() == canonicalHost {
+            return .url(foundation)
         }
-        return .search(trimmed)
+        guard let converted = URL(webURL) else { return nil }
+        return .url(converted)
     }
 
     private static func isIPv4(_ candidate: String) -> Bool {

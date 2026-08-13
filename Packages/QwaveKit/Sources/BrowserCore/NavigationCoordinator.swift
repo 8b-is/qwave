@@ -3,6 +3,7 @@ import WebKit
 import Shields
 import Persistence
 import QwaveSupport
+import URLIdentity
 
 /// Per-tab `WKNavigationDelegate`/`WKUIDelegate` hub. Routes policy decisions
 /// through shields (HTTPS-first, per-site JS), hands downloads to the
@@ -96,7 +97,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
     ) {
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
         let url = navigationAction.request.url
-        let host = url?.host
+        // Policy identity must be the host WebKit will load, not Foundation's
+        // reading of it (IDN/percent/authority divergences are a bypass).
+        let host = url.flatMap(CanonicalHost.host(of:))
 
         // Cmd-click → background tab in the same container.
         if isMainFrame,
