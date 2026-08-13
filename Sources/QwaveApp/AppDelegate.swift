@@ -61,8 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Windows
 
     @discardableResult
-    func openWindow(tabManager: TabManager? = nil) -> BrowserWindowController {
-        let controller = BrowserWindowController(environment: environment, tabManager: tabManager)
+    func openWindow(tabManager: TabManager? = nil, isPrivate: Bool = false) -> BrowserWindowController {
+        let controller = BrowserWindowController(environment: environment, tabManager: tabManager, isPrivate: isPrivate)
         controller.onWindowClosed = { [weak self] closed in
             self?.windowControllers.removeAll { $0 === closed }
         }
@@ -84,6 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newWindow(_ sender: Any?) {
         openWindow()
+    }
+
+    /// Every tab ephemeral, excluded from session restore (all-ephemeral
+    /// windows produce no snapshot), no frame autosave.
+    @objc func newPrivateWindow(_ sender: Any?) {
+        openWindow(isPrivate: true)
     }
 
     @objc func showSettings(_ sender: Any?) {

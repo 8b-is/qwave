@@ -43,6 +43,9 @@ public final class Tab: Identifiable {
     public internal(set) var isLoading = false
     public internal(set) var estimatedProgress: Double = 0
     public var isPinned = false
+    /// Site favicon, fetched by the app layer (per-container cache; the
+    /// fetch itself carries no cookies — see FaviconLoader).
+    public var favicon: NSImage?
     public private(set) var lastActivated = Date()
 
     /// The URL to load once a web view exists (set when a tab is created for

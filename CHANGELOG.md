@@ -45,6 +45,16 @@ All notable changes to Qwave will be documented in this file.
   thrown errors; constant-time FIPS 203 implicit-rejection comparison in
   `MLKEM768.decaps`; the audit lives in `docs/CRYPTO_REVIEW.md`.
 
+- **Browser UX debt**: history-backed omnibox suggestions dropdown (ranked
+  by match tier + frequency + recency; non-activating panel, arrow keys and
+  escape handled in the field editor so the omnibox never loses focus);
+  favicons in the tab strip (page-declared icon or `/favicon.ico`, fetched
+  with a cookie-free ephemeral session and cached per container so icon
+  fetches can never leak container identity); tab drag-reorder in the strip
+  (threshold drag, committed on mouse-up through `TabManager.move`); and
+  **Private Windows** (⌘⇧N — every tab ephemeral, dark-tinted window,
+  excluded from session restore and window-frame autosave).
+
 ### Changed
 - Repository moved to the **8b-is** organization
   (`github.com/8b-is/qwave`); the Sparkle feed URL points at the new home.

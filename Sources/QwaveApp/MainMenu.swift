@@ -42,6 +42,8 @@ enum MainMenu {
         let ephemeral = fileMenu.addItem(withTitle: "New Ephemeral Tab", action: #selector(BrowserWindowController.newEphemeralTab(_:)), keyEquivalent: "t")
         ephemeral.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
+        let privateWindow = fileMenu.addItem(withTitle: "New Private Window", action: #selector(AppDelegate.newPrivateWindow(_:)), keyEquivalent: "n")
+        privateWindow.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Open Location…", action: #selector(BrowserWindowController.openLocation(_:)), keyEquivalent: "l")
         fileMenu.addItem(.separator())

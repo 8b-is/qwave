@@ -12,6 +12,9 @@ import URLIdentity
 final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     let environment: BrowserEnvironment
     let tabManager: TabManager
+    /// Private windows: every tab is ephemeral, nothing touches history or
+    /// session restore, and the window frame is never autosaved.
+    let isPrivate: Bool
 
     var onWindowClosed: ((BrowserWindowController) -> Void)?
 
@@ -20,6 +23,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private let findBar = FindBarView()
     private let findController = FindInPageController()
     private let omnibox = OmniboxField()
+    private let suggestions = OmniboxSuggestionsController()
+    private let faviconLoader = FaviconLoader()
 
     private var backButton: NSButton!
     private var forwardButton: NSButton!
@@ -33,9 +38,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Init
 
-    init(environment: BrowserEnvironment, tabManager: TabManager? = nil) {
+    init(environment: BrowserEnvironment, tabManager: TabManager? = nil, isPrivate: Bool = false) {
         self.environment = environment
         self.tabManager = tabManager ?? TabManager()
+        self.isPrivate = isPrivate
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1240, height: 840),
@@ -45,7 +51,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         )
         window.tabbingMode = .disallowed
         window.center()
-        window.setFrameAutosaveName("QwaveBrowserWindow")
+        if isPrivate {
+            // No frame autosave: private geometry must not resurrect into
+            // (or leak from) normal windows' saved frames.
+            window.appearance = NSAppearance(named: .darkAqua)
+        } else {
+            window.setFrameAutosaveName("QwaveBrowserWindow")
+        }
         super.init(window: window)
 
         window.delegate = self
@@ -55,6 +67,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         wireTabManager()
         wireTabBar()
         wireFindBar()
+        wireSuggestions()
 
         if self.tabManager.isEmpty {
             appendFreshTab(activate: true)
@@ -138,6 +151,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         tabBar.containerProvider = { [weak self] in
             (self?.environment.containers.profiles ?? []).map { ($0.id, $0.name) }
         }
+        tabBar.onReorder = { [weak self] from, to in
+            self?.tabManager.move(fromIndex: from, toIndex: to)
+        }
+    }
+
+    private func wireSuggestions() {
+        omnibox.delegate = self
+        suggestions.onCommit = { [weak self] suggestion in
+            guard let self else { return }
+            self.omnibox.stringValue = suggestion.url.absoluteString
+            self.suggestions.hide()
+            self.omniboxCommitted(nil)
+        }
     }
 
     private func wireFindBar() {
@@ -153,7 +179,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Tabs
 
     private func appendFreshTab(activate: Bool) {
-        let tab = Tab()
+        let tab = isPrivate
+            ? Tab(containerID: ContainerRegistry.ephemeralProfileID, isEphemeral: true)
+            : Tab()
         tabManager.append(tab, select: activate)
         if activate {
             focusOmnibox()
@@ -166,9 +194,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         ephemeral: Bool = false,
         activate: Bool = true
     ) {
+        // Every tab in a private window is ephemeral, whatever the caller asked.
+        let makeEphemeral = ephemeral || isPrivate
         let tab = Tab(
-            containerID: ephemeral ? ContainerRegistry.ephemeralProfileID : containerID,
-            isEphemeral: ephemeral,
+            containerID: makeEphemeral ? ContainerRegistry.ephemeralProfileID : containerID,
+            isEphemeral: makeEphemeral,
             pendingURL: url
         )
         tabManager.insertAfterSelection(tab, select: activate)
@@ -200,6 +230,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         coordinator.onStateChange = { [weak self] in
             self?.refreshChromeState()
+        }
+        coordinator.onFaviconURL = { [weak self, weak tab] iconURL in
+            guard let self, let tab else { return }
+            self.faviconLoader.load(
+                iconURL: iconURL,
+                pageHost: tab.url.flatMap(CanonicalHost.host(of:)),
+                containerID: tab.containerID
+            ) { [weak self, weak tab] image in
+                guard let image, let tab else { return }
+                tab.favicon = image
+                self?.refreshChromeState()
+            }
         }
         coordinator.attach(to: webView)
 
@@ -239,7 +281,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isHibernated: tab.isHibernated,
                 isLoading: tab.isLoading,
                 isEphemeral: tab.isEphemeral,
-                containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex
+                containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
+                favicon: tab.favicon
+                    ?? faviconLoader.cachedIcon(forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
             )
         }
         tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
@@ -255,7 +299,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         guard let selected = tabManager.selectedTab else { return }
         let webView = selected.webView
 
-        window?.title = selected.displayTitle
+        window?.title = isPrivate ? "🕶 Private — \(selected.displayTitle)" : selected.displayTitle
         backButton?.isEnabled = webView?.canGoBack ?? false
         forwardButton?.isEnabled = webView?.canGoForward ?? false
 
@@ -289,7 +333,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isHibernated: tab.isHibernated,
                 isLoading: tab.isLoading,
                 isEphemeral: tab.isEphemeral,
-                containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex
+                containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
+                favicon: tab.favicon
+                    ?? faviconLoader.cachedIcon(forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
             )
         }
         tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
@@ -350,6 +396,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Omnibox
 
     @objc private func omniboxCommitted(_ sender: Any?) {
+        suggestions.hide()
         let input = OmniboxParser.parse(omnibox.stringValue)
         let target: URL?
         switch input {
@@ -543,6 +590,57 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         omnibox.cell?.sendsActionOnEndEditing = false
         omnibox.font = .systemFont(ofSize: 13)
         return omnibox
+    }
+}
+
+// MARK: - Omnibox suggestions (NSTextFieldDelegate)
+
+extension BrowserWindowController: NSTextFieldDelegate {
+    func controlTextDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === omnibox else { return }
+        let query = omnibox.stringValue
+        guard query.count >= 2, let history = environment.history,
+              let entries = try? history.entries(matching: query, limit: 50)
+        else {
+            suggestions.hide()
+            return
+        }
+        let ranked = OmniboxSuggester.suggestions(for: query, history: entries)
+        if ranked.isEmpty {
+            suggestions.hide()
+        } else {
+            suggestions.show(ranked, below: omnibox)
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === omnibox else { return }
+        suggestions.hide()
+    }
+
+    /// Arrow keys and escape are handled here, in the omnibox's field editor
+    /// — the panel never becomes key (focus stays in the field).
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === omnibox, suggestions.isVisible else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)):
+            suggestions.moveHighlight(by: 1)
+            if let highlighted = suggestions.highlighted {
+                omnibox.stringValue = highlighted.url.absoluteString
+            }
+            return true
+        case #selector(NSResponder.moveUp(_:)):
+            suggestions.moveHighlight(by: -1)
+            if let highlighted = suggestions.highlighted {
+                omnibox.stringValue = highlighted.url.absoluteString
+            }
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            suggestions.hide()
+            return true
+        default:
+            return false
+        }
     }
 }
 

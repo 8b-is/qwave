@@ -9,6 +9,7 @@ struct TabDisplayModel: Equatable {
     let isLoading: Bool
     let isEphemeral: Bool
     let containerColorHex: String?
+    let favicon: NSImage?
 }
 
 /// Custom tab strip: scrollable row of tab items plus a new-tab button whose
@@ -18,6 +19,8 @@ final class TabBarView: NSView {
     var onClose: ((UUID) -> Void)?
     var onNewTab: (() -> Void)?
     var onNewContainerTab: ((UUID) -> Void)?
+    /// Drag-reorder commit: (fromIndex, toIndex) in the model's terms.
+    var onReorder: ((Int, Int) -> Void)?
     /// Supplies (id, name) pairs for the new-tab context menu.
     var containerProvider: (() -> [(UUID, String)])?
 
@@ -127,10 +130,14 @@ final class TabBarView: NSView {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        for model in tabs {
+        for (index, model) in tabs.enumerated() {
             let item = TabItemView(model: model, isSelected: model.id == selectedID)
             item.onSelect = { [weak self] in self?.onSelect?(model.id) }
             item.onClose = { [weak self] in self?.onClose?(model.id) }
+            item.onDragEnded = { [weak self, weak item] event in
+                guard let self, let item else { return }
+                self.commitReorder(of: item, from: index, with: event)
+            }
             stack.addArrangedSubview(item)
             NSLayoutConstraint.activate([
                 item.widthAnchor.constraint(equalToConstant: model.isPinned ? 120 : 180),
@@ -138,17 +145,37 @@ final class TabBarView: NSView {
             ])
         }
     }
+
+    /// Maps the drop x-position onto an index in the strip. The model is
+    /// only mutated here, on mouse-up — no mid-drag rebuilds, so the view
+    /// receiving the drag stays alive for the whole gesture.
+    private func commitReorder(of item: TabItemView, from index: Int, with event: NSEvent) {
+        let dropX = stack.convert(event.locationInWindow, from: nil).x
+        var target = stack.arrangedSubviews.count - 1
+        for (i, view) in stack.arrangedSubviews.enumerated() where dropX < view.frame.midX {
+            target = i
+            break
+        }
+        guard target != index else { return }
+        onReorder?(index, target)
+    }
 }
 
 /// One tab in the strip.
 private final class TabItemView: NSView {
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
+    /// Fired on mouse-up after a real drag (threshold exceeded).
+    var onDragEnded: ((NSEvent) -> Void)?
 
+    private let favicon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private let stripe = NSView()
     private let isSelected: Bool
+
+    private var dragOrigin: NSPoint?
+    private var isDragging = false
 
     init(model: TabDisplayModel, isSelected: Bool) {
         self.isSelected = isSelected
@@ -172,6 +199,13 @@ private final class TabItemView: NSView {
         }
         stripe.layer?.cornerRadius = 1.5
         addSubview(stripe)
+
+        favicon.image = model.favicon
+            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
+        favicon.imageScaling = .scaleProportionallyDown
+        favicon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(favicon)
 
         var title = model.title
         if model.isPinned { title = "📌 " + title }
@@ -197,7 +231,11 @@ private final class TabItemView: NSView {
             stripe.centerYAnchor.constraint(equalTo: centerYAnchor),
             stripe.widthAnchor.constraint(equalToConstant: 3),
             stripe.heightAnchor.constraint(equalToConstant: 16),
-            label.leadingAnchor.constraint(equalTo: stripe.trailingAnchor, constant: 6),
+            favicon.leadingAnchor.constraint(equalTo: stripe.trailingAnchor, constant: 5),
+            favicon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            favicon.widthAnchor.constraint(equalToConstant: 14),
+            favicon.heightAnchor.constraint(equalToConstant: 14),
+            label.leadingAnchor.constraint(equalTo: favicon.trailingAnchor, constant: 5),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
@@ -211,8 +249,29 @@ private final class TabItemView: NSView {
         fatalError("not supported")
     }
 
+    // Select on mouse-down (browser feel); a drag past the threshold turns
+    // the gesture into a reorder, committed on mouse-up.
     override func mouseDown(with event: NSEvent) {
+        dragOrigin = event.locationInWindow
+        isDragging = false
         onSelect?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let dragOrigin else { return }
+        if !isDragging, abs(event.locationInWindow.x - dragOrigin.x) > 5 {
+            isDragging = true
+            alphaValue = 0.6
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isDragging {
+            alphaValue = 1.0
+            onDragEnded?(event)
+        }
+        dragOrigin = nil
+        isDragging = false
     }
 
     @objc private func closeClicked(_ sender: Any?) {

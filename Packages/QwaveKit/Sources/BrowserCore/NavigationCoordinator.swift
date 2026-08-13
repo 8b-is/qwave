@@ -22,6 +22,8 @@ public final class NavigationCoordinator: NSObject {
     public var onOpenNewTab: ((URL?, Bool) -> Void)?
     /// Any observable state changed (title, url, progress, loading).
     public var onStateChange: (() -> Void)?
+    /// The page's declared (or default /favicon.ico) icon URL, once known.
+    public var onFaviconURL: ((URL) -> Void)?
 
     private var observations: [NSKeyValueObservation] = []
 
@@ -163,7 +165,28 @@ extension NavigationCoordinator: WKNavigationDelegate {
         if !tab.isEphemeral, let scheme = url.scheme, scheme == "http" || scheme == "https" {
             try? history?.recordVisit(url: url, title: webView.title, containerID: tab.containerID)
         }
+        if let scheme = url.scheme, scheme == "http" || scheme == "https" {
+            extractFaviconURL(from: webView)
+        }
         onStateChange?()
+    }
+
+    /// `<link rel~=icon>` if the page declares one, /favicon.ico otherwise.
+    private func extractFaviconURL(from webView: WKWebView) {
+        let script = """
+        (function() {
+          const links = document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon']");
+          for (const l of links) { if (l.href) { return l.href; } }
+          return new URL('/favicon.ico', location.origin).href;
+        })()
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            guard let string = result as? String,
+                  let iconURL = URL(string: string),
+                  iconURL.scheme == "http" || iconURL.scheme == "https"
+            else { return }
+            self?.onFaviconURL?(iconURL)
+        }
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
