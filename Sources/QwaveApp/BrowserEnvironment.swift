@@ -83,7 +83,8 @@ final class BrowserEnvironment {
         QwaveInternal.timelinePageHTML = { [weak self] in
             self?.makeTimelinePageHTML()
                 ?? InternalPages.timelineHTML(
-                    days: [], summary: QwaveInternal.lastTimelineSummary.isEmpty ? nil : QwaveInternal.lastTimelineSummary,
+                    days: [],
+                    summary: QwaveInternal.lastTimelineSummary.isEmpty ? nil : QwaveInternal.lastTimelineSummary,
                     rememberEverything: false, providerLabel: "Remember only")
         }
     }
@@ -101,9 +102,11 @@ final class BrowserEnvironment {
             StartMemoryChip(title: "#\($0)", preview: "nibble")
         }
         let records = (try? memoryWave.recall(containerID: nil, limit: 8)) ?? []
-        let chips = tagChips + records.map {
-            StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
-        }
+        let chips =
+            tagChips
+            + records.map {
+                StartMemoryChip(title: $0.title, preview: String($0.body.prefix(96)))
+            }
         return InternalPages.startHTML(
             memories: chips,
             providerLabel: providerLabel,

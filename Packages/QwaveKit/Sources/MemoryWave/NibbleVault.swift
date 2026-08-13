@@ -11,12 +11,12 @@ public final class NibbleVault {
         let readme = directory.appendingPathComponent("README.md")
         if !FileManager.default.fileExists(atPath: readme.path) {
             try """
-                # Memory Wave nibbles
+            # Memory Wave nibbles
 
-                Each file is a tagged Cognitive nibble. Wave recall matches `#tags`
-                in the front matter. These files stay on this Mac.
+            Each file is a tagged Cognitive nibble. Wave recall matches `#tags`
+            in the front matter. These files stay on this Mac.
 
-                """.write(to: readme, atomically: true, encoding: .utf8)
+            """.write(to: readme, atomically: true, encoding: .utf8)
         }
     }
 
@@ -26,7 +26,8 @@ public final class NibbleVault {
         let parts = cal.dateComponents([.year, .month], from: nibble.created)
         let year = parts.year ?? 1970
         let month = parts.month ?? 1
-        let folder = directory
+        let folder =
+            directory
             .appendingPathComponent(String(format: "%04d", year), isDirectory: true)
             .appendingPathComponent(String(format: "%02d", month), isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -95,7 +96,8 @@ public final class NibbleVault {
         for case let url as URL in enumerator {
             guard url.pathExtension.lowercased() == "md", url.lastPathComponent != "README.md" else { continue }
             let date =
-                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? .distantPast
             files.append((url, date))
         }
         return files.sorted { $0.1 > $1.1 }.map(\.0)

@@ -210,9 +210,11 @@ public final class WaveDirector {
             }
             if let vault, let hits = try? vault.matching(query: query, limit: limit) {
                 let extra = hits.map { $0.asRecord() }
-                records = extra + records.filter { record in
-                    !extra.contains(where: { $0.title == record.title && $0.url == record.url })
-                }
+                records =
+                    extra
+                    + records.filter { record in
+                        !extra.contains(where: { $0.title == record.title && $0.url == record.url })
+                    }
             }
         }
         return Array(records.prefix(limit))

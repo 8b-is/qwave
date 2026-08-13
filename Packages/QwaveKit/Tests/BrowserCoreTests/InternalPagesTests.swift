@@ -133,7 +133,9 @@ final class WavePageTests: XCTestCase {
             days: [
                 TimelineDayView(
                     heading: "Today",
-                    items: [TimelineItemView(title: "Example", detail: "9:00 · example.com", href: "https://example.com/")])
+                    items: [
+                        TimelineItemView(title: "Example", detail: "9:00 · example.com", href: "https://example.com/")
+                    ])
             ],
             summary: "A quiet morning of waves.",
             rememberEverything: true,

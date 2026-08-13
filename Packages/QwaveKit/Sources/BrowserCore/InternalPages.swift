@@ -150,7 +150,8 @@ public enum InternalPages {
         }
         let summaryBlock: String
         if let summary, !summary.isEmpty {
-            summaryBlock = "<div class=\"summary\">\(MarkdownCompiler.escape(summary).replacingOccurrences(of: "\n", with: "<br>"))</div>"
+            summaryBlock =
+                "<div class=\"summary\">\(MarkdownCompiler.escape(summary).replacingOccurrences(of: "\n", with: "<br>"))</div>"
         } else {
             summaryBlock = ""
         }
