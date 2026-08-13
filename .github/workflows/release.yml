@@ -27,7 +27,9 @@ jobs:
           xcodebuild -version
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify create-dmg
+        # go: the WireGuardKitGo bridge builds libwg-go.a at compile time
+        # (present on GitHub-hosted images, absent on Blacksmith's).
+        run: brew install xcodegen xcbeautify create-dmg go
 
       - name: Verify tag matches project versions
         run: |

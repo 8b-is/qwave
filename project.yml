@@ -102,6 +102,11 @@ targets:
         shell: /bin/bash
         script: |
           set -euo pipefail
+          if ! command -v go >/dev/null 2>&1 && [ ! -x /opt/homebrew/bin/go ] && [ ! -x /usr/local/bin/go ]; then
+            echo "error: Go toolchain not found — WireGuardKitGo needs it (brew install go)" >&2
+            exit 1
+          fi
+          export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
           derived_data="${BUILD_DIR%%/Build/*}"
           wg_go_dir="${PROJECT_DIR}/Packages/WireGuardKit/Sources/WireGuardKitGo"
           if [ ! -d "${wg_go_dir}" ]; then
