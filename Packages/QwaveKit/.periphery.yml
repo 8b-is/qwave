@@ -1,0 +1,28 @@
+# Periphery config for QwaveKit (report-only in CI — see M5 in the repo
+# history for the triage record).
+#
+# retain_public: QwaveKit is a library; its public API is consumed by the
+# app target Periphery cannot see from here. This deliberately blunts the
+# tool for public symbols — do a periodic manual pass with it off.
+# retain_objc_accessible: AppKit/WebKit reach delegates and selectors
+# through the Obj-C runtime; FeatureFlags' responds(to:) reflection over
+# _WKFeature is exactly the pattern that false-positives without this
+# (verified NOT flagged with it on).
+retain_public: true
+retain_objc_accessible: true
+
+# Tests are excluded from the report: Swift Testing @Test functions and
+# Decodable fixture fields are reached through macro/decoder machinery
+# Periphery cannot model, and test code is not part of the shipped audit
+# surface anyway.
+report_exclude:
+  - "Tests/**"
+
+# Known-intentional findings kept visible in the report (triaged 2026-08-13):
+# - QwaveSupport/Log.swift appendInterpolation(_ value:) — the parameter is
+#   deliberately dropped: that IS the privacy redaction.
+# - QwaveSupport/Log.swift OSLogBackend.init(label:...) — label kept for the
+#   swift-log factory signature.
+# - WebViewFactory.settings / WebExtensionHost.storageDirectory — stored but
+#   unread; removing them is an init-signature change across app call sites,
+#   deferred to a deliberate API cleanup rather than a sweep.

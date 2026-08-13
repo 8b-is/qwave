@@ -139,6 +139,40 @@ jobs:
           path: Qwave-v0.1.0-unsigned.zip
           retention-days: 14
 
+  # Report-only by design: a dead-code scanner that fails the build on day
+  # one gets disabled on day two. Findings land in the job log for triage;
+  # the tuned config + triage record live in Packages/QwaveKit/.periphery.yml.
+  dead-code-report:
+    name: Periphery dead-code report (non-blocking)
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 30
+    needs: unit-tests
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Pin Xcode
+        run: |
+          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # Assert the pin instead of globbing "latest" so an image update
+          # cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 16.4" || {
+            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+            exit 1
+          }
+
+      - name: Install Periphery
+        run: brew install peripheryapp/periphery/periphery
+
+      - name: Scan (report only)
+        run: |
+          cd Packages/QwaveKit
+          periphery scan --quiet || true
+
   benchmarks:
     name: Benchmark thresholds (mallocCountTotal)
     runs-on: blacksmith-6vcpu-macos-15

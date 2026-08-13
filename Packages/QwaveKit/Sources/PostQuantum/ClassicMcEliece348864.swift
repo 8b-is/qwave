@@ -70,10 +70,6 @@ public enum ClassicMcEliece348864 {
         return antilog[(Int(log[Int(a)]) + Int(log[Int(b)])) % 4095]
     }
 
-    static func gfSquare(_ a: UInt16) -> UInt16 {
-        gfMul(a, a)
-    }
-
     static func gfInverse(_ a: UInt16) throws -> UInt16 {
         guard a != 0 else { throw McElieceError.nonInvertible }
         return antilog[(4095 - Int(log[Int(a)])) % 4095]
@@ -161,14 +157,6 @@ public enum ClassicMcEliece348864 {
             r = gfMul(r, x) ^ c
         }
         return r
-    }
-
-    static func polySquare(_ p: [UInt16]) -> [UInt16] {
-        var out = [UInt16](repeating: 0, count: 2 * p.count - 1)
-        for i in 0..<p.count {
-            out[2 * i] = gfSquare(p[i])
-        }
-        return polyTrim(out)
     }
 
     /// Inverse of `a` modulo `m` (throws when gcd != 1).
