@@ -144,7 +144,11 @@ targets:
               *) echo "error: unsupported arch '$arch' for zig packet filter" >&2; exit 1 ;;
             esac
             out="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.a"
-            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -femit-bin="$out"
+            # -fcompiler-rt bundles Zig's compiler runtime into the archive.
+            # Without it the x86_64 slice leaves ___zig_probe_stack (and any
+            # other compiler-rt builtin) undefined at link time, since it links
+            # into a non-Zig binary that provides no Zig runtime.
+            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -fcompiler-rt -femit-bin="$out"
             slices+=("$out")
           done
           lipo -create "${slices[@]}" -output "${BUILT_PRODUCTS_DIR}/libqpacket.a"
