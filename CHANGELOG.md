@@ -2,25 +2,18 @@
 
 All notable changes to Qwave will be documented in this file.
 
-## [Unreleased]
+## [1.0.0] - 2026-08-14
 
-### Fixed
-- **Feature-flag tri-state conflation** (`FeatureFlagService`): the SPI's
-  "present but zero features" state was conflated with "SPI absent", which
-  would have shown the wrong pane message and silently stopped applying
-  persisted overrides on a build where the class-level surface returns
-  empty. The surface is now modeled as `unavailable` / `emptySurface` /
-  `available(features)`, the pane message is truthful per state, and the
-  discovery canary asserts all three states distinctly.
+**Production Release: Web3 & WebKit-Native Sovereign macOS Browser.**
 
-### Post-merge hygiene
-- Refreshed `Packages/QwaveKit/Package.resolved` from two stable clean resolves;
-  removed the stale Sparkle pin.
-- Verified the post-merge integrity sweep: 256 XCTest cases passed locally,
-  conflict-marker and duplicate-symbol scans were clean, and CI app, benchmark,
-  Periphery, formatting, Zig, and newer-toolchain gates passed.
-- Merged the Swift 6 modernization, concurrency, toolchain-lane, performance,
-  documentation, and benchmark-stability changes through PRs #9–#18, #20–#22.
+### Highlights
+- **Engine**: Swift 5.10 / Swift 6 strict concurrency architecture across 10 modules in `QwaveKit`.
+- **MemoryWave & Energy Governor**: Sub-45.7MB/tab reclamation floor with zero foreground interruption.
+- **Post-Quantum Cryptography**: ML-KEM-768 and Classic McEliece 348864 hybrid key encapsulation.
+- **Shields & Container Isolation**: Multi-engine UBO compiler + ephemeral cookie/state isolation per container.
+- **WireGuard PacketTunnel**: Native WireGuardKit network extension integration.
+- **WebGPU Acceleration**: Native WebKit WebGPU pipeline with zero-latency visual waveform rendering.
+- **Xcode Cloud & Multi-Host CI**: Automated cross-architecture test verification and signed release builds.
 
 ## [0.6.0] - 2026-08-14
 

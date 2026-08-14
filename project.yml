@@ -49,10 +49,10 @@ targets:
       properties:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
-        CFBundleShortVersionString: "0.6.0"
+        CFBundleShortVersionString: "1.0.0"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "600"
+        CFBundleVersion: "10000"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -197,8 +197,8 @@ targets:
       properties:
         CFBundleName: PacketTunnel
         CFBundleDisplayName: Qwave VPN Tunnel
-        CFBundleShortVersionString: "0.6.0"
-        CFBundleVersion: "600"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "10000"
         NetworkExtension:
           NEMachServiceName: $(TeamIdentifierPrefix)group.is.8b.qwave.tunnel
           NEProviderClasses:
