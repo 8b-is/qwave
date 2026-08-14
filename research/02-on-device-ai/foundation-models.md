@@ -22,9 +22,11 @@ The entire integration is three moving parts: `import FoundationModels`, create 
 `LanguageModelSession`, call `respond`.
 
 **WWDC26 removed the framework's one hard rule.** Until this year it was Apple's on-device model
-or nothing. Session 339 introduced a public protocol layer that *any* LLM can implement — a
-cloud API, a local open-source model, a self-hosted fine-tune. Once a provider ships a
-conforming Swift package, existing `LanguageModelSession` code works against it unchanged.
+or nothing. Session 339 introduced the *adapter* seam: `SystemLanguageModel.Adapter`
+(`init(name:)` / `init(fileURL:)` + `compile()`), so model files packaged as adapter assets can
+plug in alongside the system model. ⚠️ Verified 2026-08-14: the macOS 26.4 SDK has **no public
+provider protocol** — an MLX-backed backend must ship as an adapter *asset*, not as a Swift
+protocol conformance. See [`foundation-models-probe`](foundation-models-probe/README.md).
 
 ## Why it matters for Qwave
 
@@ -94,7 +96,9 @@ prototyping first, because it is required regardless of which model backend wins
   absent — not error, not grey out with an explanation nobody reads.
 - **~3B is small.** Fine for summarisation and extraction. Not fine for long-context reasoning
   over a full page of dense technical content. Set the feature's scope to what the model can
-  actually do.
+  actually do. ⚠️ The reasoning ceiling is *unverified* as of 2026-08-14: the probe's one
+  in-scope reasoning attempt succeeded, and the model showed strong hallucination-resistance
+  (refused to invent a non-existent spec detail). Don't assume the ceiling; measure it.
 - **No control over model updates.** The model changes when the OS changes. Prompts that work
   today can drift. Keep prompts simple and outputs loosely validated.
 - **Apple Intelligence carries user-facing settings.** The user may have it disabled entirely.

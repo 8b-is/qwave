@@ -1,0 +1,202 @@
+{
+  "_stamps" : {
+    "date" : "2026-08-14T17:01:34Z",
+    "machine" : "dev-main.local",
+    "macOS" : "Version 26.4.1 (Build 25E253)",
+    "mode" : "full"
+  },
+  "availability" : {
+    "contextSize" : 4096,
+    "isAvailable" : true,
+    "state" : "available",
+    "supportedLanguageCount" : 23,
+    "supportsCurrentLocale" : true
+  },
+  "guardrailsMatrix" : [
+    {
+      "guardrails" : "default",
+      "instructions" : "none",
+      "latencyMs" : 15073.894917,
+      "outcome" : "accepted",
+      "summary" : "The city council approved a three-year river restoration plan for the lower river corridor, allocating 4.2 million units"
+    },
+    {
+      "guardrails" : "default",
+      "instructions" : "set",
+      "latencyMs" : 13176.847874999999,
+      "outcome" : "accepted",
+      "summary" : "The city council approved a three-year restoration plan for the lower river corridor, allocating 4.2 million units for f"
+    },
+    {
+      "guardrails" : "permissive",
+      "instructions" : "none",
+      "latencyMs" : 9410.7227500000008,
+      "outcome" : "accepted",
+      "summary" : "The city council approved a three-year restoration plan for the lower river corridor, allocating 4.2 million units for f"
+    },
+    {
+      "guardrails" : "permissive",
+      "instructions" : "set",
+      "latencyMs" : 2355.0110839999998,
+      "outcome" : "accepted",
+      "summary" : "The city council approved a three-year restoration plan for the lower river corridor, allocating 4.2 million units for f"
+    }
+  ],
+  "providerSeam" : {
+    "adapterIdentifiersForExampleName" : [
+      "fmadapter-com.example.mlx-backend-9799725"
+    ],
+    "protocolsInModule" : [
+      "Generable",
+      "ConvertibleFromGeneratedContent",
+      "ConvertibleToGeneratedContent",
+      "InstructionsRepresentable",
+      "PromptRepresentable",
+      "Tool"
+    ],
+    "providerProtocolPresent" : false,
+    "seam" : "SystemLanguageModel.Adapter (init(name:)\/init(fileURL:) + compile())",
+    "sessionModelParameterType" : "SystemLanguageModel (concrete, not protocol)"
+  },
+  "runs" : [
+    {
+      "fixture" : "news-article",
+      "inputChars" : 1109,
+      "inputTokens" : 258,
+      "outputChars" : 417,
+      "refusalCount" : 0,
+      "sample" : 1,
+      "summary" : "The city council approved a three-year river restoration plan, allocating 4.2 million units for floodplain regrading, native planting, and a new pedestrian bridge. The plan was approved with a 9-2 vote, despite opposition from two council members who cited concerns about the bridge's impact on a nearby heron rookery. Construction is expected to begin in October, with a community open house scheduled for September.",
+      "totalMs" : 2742.5744169999998,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "news-article",
+      "inputChars" : 1109,
+      "inputTokens" : 258,
+      "outputChars" : 568,
+      "refusalCount" : 0,
+      "sample" : 2,
+      "summary" : "The city council approved a three-year restoration plan for the lower river corridor, allocating 4.2 million units for floodplain regrading, native planting, and a new pedestrian bridge, with construction set to begin in October. The vote was a milestone, with 9-2 approval after a two-hour debate, despite opposition from two council members who raised concerns about the bridge's potential disruption of a heron rookery. The restored corridor is expected to attract an additional forty thousand visitors annually, and a community open house is planned for September.",
+      "totalMs" : 3109.175917,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "docs-page",
+      "inputChars" : 732,
+      "inputTokens" : 214,
+      "outputChars" : 509,
+      "refusalCount" : 0,
+      "sample" : 1,
+      "summary" : "This page outlines the configuration keys that the bridge accepts, which are cached for the session and read upon launch. The bridge connects over the local socket with a default port of 7941 when `bridge.enabled` is true, and it uses an exponential backoff retry mechanism with a five-second cap. Logs are stored in the system journal under the bridge subsystem, and options to enable verbose logs or suppress the startup banner can be set through the `bridge.verbose` and `bridge.silent` keys, respectively.",
+      "totalMs" : 11956.638833000001,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "docs-page",
+      "inputChars" : 732,
+      "inputTokens" : 214,
+      "outputChars" : 504,
+      "refusalCount" : 0,
+      "sample" : 2,
+      "summary" : "The configuration keys for the bridge are read once at launch and cached for the session, with the bridge connecting over the local socket by default at port 7941 when enabled. Retries follow an exponential backoff with a five-second cap, and logs are written to the system journal under the bridge subsystem, with verbose mode off by default. Additional configuration options include setting bridge.enabled, bridge.port, bridge.timeout_ms, and bridge.verbose to modify the bridge's behavior and logging.",
+      "totalMs" : 15617.667458,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "dense-technical",
+      "inputChars" : 1200,
+      "inputTokens" : 275,
+      "outputChars" : 663,
+      "reasoningProbe" : {
+        "answer" : "The spec claims that the second cache index should be selected from the temperature table at link bring-up and then re-trained on crossing the 75-degree threshold instead of at fixed intervals. This is to reduce training events by roughly 60 percent in the observed workloads.\n\nHere is the relevant sentence from the spec:\n\n```\nFirmware should therefore select driver strength from the temperature table at link bring-up, then re-train on crossing the 75-degree threshold rather than at fixed intervals. This reduces training events by roughly 60 percent in the observed workloads.\n```",
+        "latencyMs" : 16103.629625
+      },
+      "refusalCount" : 0,
+      "sample" : 1,
+      "summary" : "Rising-edge sampling on a shared clock bus degrades when trace skew exceeds one quarter of the bit period, with a 200 MHz clock having a 2.5 ns bit period, leading to a 620 ps skew budget. Dominant contributors to skew include clock distribution, input hysteresis, and termination network temperature effects, with receiver equalisation capable of recovering up to 1.4 UI of skew with sufficient training, though it consumes bandwidth for metadata. Simulation and field data indicate that firmware should select driver strength based on temperature thresholds during link bring-up, reducing training events by 60%, as this approach aligns with observed workloads.",
+      "totalMs" : 11909.002,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "dense-technical",
+      "inputChars" : 1200,
+      "inputTokens" : 275,
+      "outputChars" : 588,
+      "refusalCount" : 0,
+      "sample" : 2,
+      "summary" : "Rising-edge sampling on a shared clock bus degrades when trace skew exceeds about 620 ps, primarily due to the clock distribution tree, input hysteresis, and termination network's temperature coefficient. Receiver equalisation can recover up to 1.4 UI of skew with sufficient training, but it incurs bandwidth loss for metadata channels, as outlined in the link layer specification. Simulation and field data confirm the need for firmware to select driver strength based on temperature tables and re-train on crossing the 75-degree threshold to reduce training events by about 60 percent.",
+      "totalMs" : 16450.485291000001,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "paywalled-teaser",
+      "inputChars" : 538,
+      "inputTokens" : 138,
+      "outputChars" : 455,
+      "refusalCount" : 0,
+      "sample" : 1,
+      "summary" : "The demand-side response program, initially enrolling 40,000 homes in its first winter, saw participation steadily increase to 25,000 by year three. Shifting evening loads by one hour helped reduce the winter peak network load by an average of 3.1%, with the largest impact observed in regions with electric heating. The program's success is discussed in detail, although the tariff design debate and co-location dataset are available in the paid section.",
+      "totalMs" : 15660.489625,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "paywalled-teaser",
+      "inputChars" : 538,
+      "inputTokens" : 138,
+      "outputChars" : 460,
+      "refusalCount" : 0,
+      "sample" : 2,
+      "summary" : "The demand response programme, initially enrolling forty thousand homes in its first winter, saw participation grow to twenty-five thousand by year three. By shifting evening loads by one hour, households helped reduce the network's winter peak by an average of 3.1 percent, particularly benefiting regions with electric heating. The programme's success led to increased participation over time, demonstrating its potential to effectively manage energy demand.",
+      "totalMs" : 13880.706958999999,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "spa-rendered",
+      "inputChars" : 824,
+      "inputTokens" : 200,
+      "outputChars" : 497,
+      "refusalCount" : 0,
+      "sample" : 1,
+      "summary" : "The article discusses the anatomy of a slow build process, highlighting the inefficiencies of dependency resolution and module interface generation in a cold build, which takes 81% of its time. A hot build is significantly faster, improving performance by 14 times. The warm-but-stale case is particularly interesting, as changes in dependencies can invalidate the module graph, leading to a rebuild time closer to cold than hot, despite caching the resolved graph by content hash of the manifest.",
+      "totalMs" : 13297.632458,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    },
+    {
+      "fixture" : "spa-rendered",
+      "inputChars" : 824,
+      "inputTokens" : 200,
+      "outputChars" : 499,
+      "refusalCount" : 0,
+      "sample" : 2,
+      "summary" : "The essay discusses the slow build process, highlighting the three stages: cold build, hot build, and the warm-but-stale case. The cold build spent 81% of its time on dependency resolution and module interface generation, while the hot build was significantly faster. The warm-but-stale scenario occurs when a changed dependency invalidates the module graph, causing rebuild times to resemble the cold build, and caching the resolved graph by content hash of the manifest reduces the remaining cost.",
+      "totalMs" : 15074.548624999999,
+      "ttftMs" : "unavailable (streamResponse refuses this content class on macOS 26.4.1 — see streamPathProbe)"
+    }
+  ],
+  "streamPathProbe" : [
+    {
+      "latencyMs" : 6448.0625829999999,
+      "outcome" : "accepted",
+      "path" : "respond-only"
+    },
+    {
+      "latencyMs" : 6135.6862920000003,
+      "outcome" : "accepted",
+      "path" : "tokenCount-then-respond",
+      "tokens" : 257
+    },
+    {
+      "error" : "refusal(FoundationModels.LanguageModelSession.GenerationError.Refusal(record: FoundationModels.LanguageModelSession.Gene",
+      "outcome" : "refused",
+      "path" : "stream-only"
+    },
+    {
+      "chars" : 6,
+      "latencyMs" : 7231.6254170000002,
+      "outcome" : "accepted",
+      "path" : "stream-innocuous",
+      "sample" : "Hello!"
+    }
+  ]
+}
