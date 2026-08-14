@@ -1,5 +1,10 @@
 import Foundation
-import NetworkExtension
+// NetworkExtension is not concurrency-audited: NEPacketTunnelProvider's
+// startTunnel/stopTunnel completion handlers import as non-Sendable, so the
+// @Sendable handlers these overrides need (they are captured by a Task and by
+// WireGuardAdapter callbacks) would otherwise be a sendability mismatch under
+// Swift 6.
+@preconcurrency import NetworkExtension
 import WireGuardKit
 import VPNKit
 import QwaveSupport
