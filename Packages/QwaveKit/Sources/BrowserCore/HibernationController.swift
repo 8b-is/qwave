@@ -8,6 +8,9 @@ public struct TabHibernationInfo: Equatable, Sendable {
     public var isPlayingMedia: Bool
     public var isHibernatable: Bool
     public var lastActivated: Date
+    /// A tab mid-load must not be hibernated: snapshotting it would both lose
+    /// in-flight state and cost a foreground pause competing with the load.
+    public var isLoading: Bool
 
     public init(
         id: UUID,
@@ -15,7 +18,8 @@ public struct TabHibernationInfo: Equatable, Sendable {
         isPinned: Bool,
         isPlayingMedia: Bool,
         isHibernatable: Bool,
-        lastActivated: Date
+        lastActivated: Date,
+        isLoading: Bool = false
     ) {
         self.id = id
         self.isSelected = isSelected
@@ -23,6 +27,7 @@ public struct TabHibernationInfo: Equatable, Sendable {
         self.isPlayingMedia = isPlayingMedia
         self.isHibernatable = isHibernatable
         self.lastActivated = lastActivated
+        self.isLoading = isLoading
     }
 }
 
@@ -46,12 +51,23 @@ public final class HibernationController {
     }
 
     /// Returns the ids of tabs that should hibernate now.
-    public func tabsToHibernate(now: Date, tabs: [TabHibernationInfo]) -> [UUID] {
-        tabs.filter { tab in
+    ///
+    /// `foregroundIsLoading` yields the whole tick to foreground activity: while
+    /// the visible tab is mid-load, no hibernation teardown runs, so a snapshot
+    /// pause never competes with the page. This is a deferral, not a shutdown —
+    /// the next idle tick hibernates normally (see the "resumes when idle" test).
+    /// The gate reads only load/activation state the tick never mutates, so it
+    /// cannot livelock: once the foreground goes idle, hibernation proceeds.
+    public func tabsToHibernate(
+        now: Date, tabs: [TabHibernationInfo], foregroundIsLoading: Bool = false
+    ) -> [UUID] {
+        guard !foregroundIsLoading else { return [] }
+        return tabs.filter { tab in
             guard tab.isHibernatable,
                 !tab.isSelected,
                 !tab.isPinned,
-                !tab.isPlayingMedia
+                !tab.isPlayingMedia,
+                !tab.isLoading
             else { return false }
             return now.timeIntervalSince(tab.lastActivated) >= timeout
         }

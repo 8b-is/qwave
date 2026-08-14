@@ -11,6 +11,7 @@ final class HibernationControllerTests: XCTestCase {
         pinned: Bool = false,
         media: Bool = false,
         hibernatable: Bool = true,
+        loading: Bool = false,
         idleFor: TimeInterval
     ) -> TabHibernationInfo {
         TabHibernationInfo(
@@ -19,7 +20,8 @@ final class HibernationControllerTests: XCTestCase {
             isPinned: pinned,
             isPlayingMedia: media,
             isHibernatable: hibernatable,
-            lastActivated: epoch.addingTimeInterval(-idleFor)
+            lastActivated: epoch.addingTimeInterval(-idleFor),
+            isLoading: loading
         )
     }
 
@@ -67,5 +69,41 @@ final class HibernationControllerTests: XCTestCase {
         XCTAssertTrue(controller.tabsToHibernate(now: epoch, tabs: [tab]).isEmpty)
         controller.updateTimeout(60)
         XCTAssertEqual(controller.tabsToHibernate(now: epoch, tabs: [tab]), [tab.id])
+    }
+
+    // MARK: - Energy-tick yield (Speedometer fix, suspect #2)
+
+    /// A long-idle background tab that is mid-load must NOT be snapshotted:
+    /// hibernating it would lose in-flight state and cost a foreground pause.
+    func testLoadingBackgroundTabNeverHibernates() {
+        let controller = HibernationController(timeout: 900)
+        let loading = info(loading: true, idleFor: 10_000)
+        XCTAssertTrue(controller.tabsToHibernate(now: epoch, tabs: [loading]).isEmpty)
+    }
+
+    /// While the visible tab is loading, the whole tick yields — even a
+    /// stale, idle, otherwise-hibernatable background tab is left alone so no
+    /// teardown snapshot competes with the foreground page load.
+    func testForegroundLoadingYieldsWholeTick() {
+        let controller = HibernationController(timeout: 900)
+        let stale = info(idleFor: 10_000)
+        let result = controller.tabsToHibernate(
+            now: epoch, tabs: [stale], foregroundIsLoading: true)
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    /// The yield is a deferral, not a shutdown: the SAME stale tab hibernates on
+    /// the next tick once the foreground finishes loading. This is the guarantee
+    /// that the battery story survives the benchmark fix.
+    func testTicksResumeWhenIdle() {
+        let controller = HibernationController(timeout: 900)
+        let stale = info(idleFor: 10_000)
+        XCTAssertTrue(
+            controller.tabsToHibernate(now: epoch, tabs: [stale], foregroundIsLoading: true).isEmpty,
+            "should yield while foreground loads")
+        XCTAssertEqual(
+            controller.tabsToHibernate(now: epoch, tabs: [stale], foregroundIsLoading: false),
+            [stale.id],
+            "should hibernate once foreground is idle")
     }
 }
