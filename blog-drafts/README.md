@@ -11,6 +11,7 @@
 | [measured-cost-of-a-swift-module-boundary.md](measured-cost-of-a-swift-module-boundary.md) | draft | @inlinable experiment, null result | — (long-form) |
 | [why-we-benchmark-allocations-not-wall-clock.md](why-we-benchmark-allocations-not-wall-clock.md) | draft | mallocCountTotal methodology, CI rationale | — (long-form) |
 | [app-intents-and-spotlight-ecosystem-integration.md](app-intents-and-spotlight-ecosystem-integration.md) | draft | App Intents + CoreSpotlight: zero-config OS integration, @MainActor bridge, Swift 6 sharp edges | — (long-form) |
+| [where-metal-pays-in-a-webkit-browser.md](where-metal-pays-in-a-webkit-browser.md) | draft | WebGL wave stays in WebKit's GPU process; GPU demand control (30 fps, visibility pause) | — (long-form) |
 
 ## Assets
 
