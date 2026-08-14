@@ -18,7 +18,7 @@ boundaries by default. Qwave's engine is split six ways inside the
 ranking) live in one module while the benchmarks that measure them live in
 another. The natural question, and one that shows up in every Swift code
 review eventually: *does that boundary cost us anything measurable, and is
-`@inlinable` the fix?*
+[`@inlinable`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#inlinable) the fix?*
 
 The answer, after a proper experiment: **no, and no.** The boundary is free
 on the metrics that matter; `@inlinable` changes none of them. The honest
@@ -36,7 +36,7 @@ calls. So the method was tightened
 ([commit `28c3d9e`](https://github.com/8b-is/qwave/commit/28c3d9eab0a7b4316bf0a96daad0bc29e346eff2),
 [`dac7187`](https://github.com/8b-is/qwave/commit/dac7187919701d36b5fff2166bab89828f713bdd)):
 
-1. Measure all five benchmarks **with** `@inlinable` / `@usableFromInline` on
+1. Measure all five benchmarks **with** [`@inlinable`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#inlinable) / [`@usableFromInline`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#usableFromInline) on
    the hot functions (`OmniboxParser.parse`, `OmniboxParser.url(from:)`,
    `OmniboxParser.isIPv4(_:)`, `OmniboxSuggester.suggestions`,
    `OmniboxSuggester.matchScore`).
@@ -113,11 +113,11 @@ The null result bought back the `private` keyword. That is a null result
 
 ## What was checked but not measured
 
-* **WMO (whole-module optimization)** — already the default for SPM Release
+* **WMO ([whole-module optimization](https://github.com/swiftlang/swift/blob/main/docs/Driver.md))** — already the default for SPM Release
   builds, so nothing to enable.
-* **`final` classes** — all 34 public classes were already `final`; no devirtualization left on the table.
-* **`any Protocol` existentials** — none on the hot paths.
-* **`-cross-module-optimization` / `-enable-cmo`** — *not* enabled. This is
+* **[`final`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/inheritance/#Preventing-Overrides) classes** — all 34 public classes were already `final`; no devirtualization left on the table.
+* **[`any` Protocol](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/opaquetypes/) existentials** — none on the hot paths.
+* **[`-cross-module-optimization`](https://github.com/swiftlang/swift/blob/main/docs/Driver.md) / `-enable-cmo`** — *not* enabled. This is
   the one genuine lever left untested, and it's a build-system change outside
   the SPM package's scope. If someone later cares about cross-module
   specialization, this is the flag to reach for — not `@inlinable` spray.
@@ -131,13 +131,13 @@ The null result bought back the `private` keyword. That is a null result
 1. **A null result is only credible if the instrument could have caught the
    effect.** The first pass (malloc-only) was right but for the wrong reason;
    adding ARC metrics is what made "0%" mean something.
-2. **`@inlinable` is not a performance flag; it is an ABI commitment.** On
+2. **[`@inlinable`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#inlinable) is not a performance flag; it is an ABI commitment.** On
    simple, monomorphic, cheap functions it measures as zero and costs you a
    rebuild cascade plus a widened access level.
 3. **Measure, then delete.** The annotations were removed because the
-   evidence said to, and the code got *simpler* — `@usableFromInline`
+   evidence said to, and the code got *simpler* — [`@usableFromInline`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#usableFromInline)
    functions became `private` again.
-4. **Reach for `-cross-module-optimization` before `@inlinable`.** One is a
+4. **Reach for [`-cross-module-optimization`](https://github.com/swiftlang/swift/blob/main/docs/Driver.md) before [`@inlinable`](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/#inlinable).** One is a
    whole-program compiler flag; the other is a permanent promise you make to
    every future consumer.
 
