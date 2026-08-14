@@ -1,0 +1,9 @@
+How the grid learned to flex
+
+A look at demand-side response, five years on.
+
+The first large-scale demand response programme enrolled forty thousand homes in the first winter. Participation grew in steps: ten thousand in year two, twenty-five thousand by year three.
+
+Households that shifted their evening load by one hour reduced the network's winter peak by an average of 3.1 percent. The effect was largest in regions with electric heating.
+
+The tariff design debate is covered in the paid section, along with the co-location dataset.
