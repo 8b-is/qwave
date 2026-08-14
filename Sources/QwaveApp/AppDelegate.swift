@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updaterController = updater
         NSApp.mainMenu = MainMenu.build(updater: updater)
         startMemoryPressureSource()
+        startEnergyObservers()
         Task {
             environment = await BrowserEnvironment.bootstrap()
             vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
@@ -65,6 +66,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // bought the user nothing. See docs/NETWORK.md and docs/BLOCKLIST.md.
 
         QwaveLog.browser.info("Qwave launched")
+    }
+
+    /// Notification-driven energy reactions: thermal-state, low-power-mode
+    /// and window-occlusion changes apply the governor's new tier within
+    /// milliseconds instead of at the next 30 s tick (leeway 10 s).
+    /// Occlusion storms while stacking windows are coalesced by the
+    /// interval gate; the 30 s timer remains the steady cadence.
+    private var energyObservers: [NSObjectProtocol] = []
+    private var lastNotificationEnergyTick = Date.distantPast
+    private let energyNotificationMinInterval: TimeInterval = 5
+
+    private func startEnergyObservers() {
+        func observe(_ name: Notification.Name) {
+            energyObservers.append(
+                NotificationCenter.default.addObserver(
+                    forName: name, object: nil, queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        await self?.energyTickFromNotification()
+                    }
+                }
+            )
+        }
+        observe(ProcessInfo.thermalStateDidChangeNotification)
+        observe(NSNotification.Name.NSProcessInfoPowerStateDidChange)
+        observe(NSWindow.didChangeOcclusionStateNotification)
+    }
+
+    private func energyTickFromNotification() async {
+        // The environment is built asynchronously after launch; the first
+        // notifications can arrive before it exists.
+        guard environment != nil else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastNotificationEnergyTick) >= energyNotificationMinInterval
+        else { return }
+        lastNotificationEnergyTick = now
+        await energyTick()
     }
 
     private func restoreOrOpenFirstWindow() async {
@@ -140,6 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         energyTimer?.cancel()
+        for observer in energyObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

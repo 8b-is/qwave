@@ -101,3 +101,17 @@ retaining a live `WKWebView` reference — fails CI even while every
 `EnergyGovernorTests` decision case still passes. Hibernate/wake cycles
 are also visible in Instruments via `os_signpost` intervals
 (subsystem `is.8b.qwave`, category `energy`, names `hibernate`/`wake`).
+
+## Notification-driven policy reaction (2026-08-14)
+
+The governor used to re-evaluate only on the 30 s tick (leeway 10 s — up to
+40 s to react to a system-state change). The app now also observes
+`ProcessInfo.thermalStateDidChangeNotification`,
+`NSNotification.Name.NSProcessInfoPowerStateDidChange`, and
+`NSWindow.didChangeOcclusionStateNotification` and runs the same tick
+immediately (throttled to one per 5 s so occlusion storms while stacking
+windows coalesce; the 30 s timer remains the steady cadence and is never
+throttled). Effect: toggling Low Power Mode, a thermal spike, or the last
+window being occluded applies the conserve/critical policy (3× shorter
+hibernation timeout, media suspend, zero warm processes) within
+milliseconds instead of up to 40 s.
