@@ -55,7 +55,7 @@ fn fbm(st: vec2<f16>) -> f16 {
   }
   return v;
 }
-@group(0) @binding(0) var<storage, read_write> out: array<f16>;
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
 @group(0) @binding(1) var<uniform> res: vec2<u32>;
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -64,7 +64,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   st.x = st.x * (resolution.x / resolution.y);
   let q = vec2<f16>(fbm(st), fbm(st + vec2<f16>(f16(1), f16(0))));
   let r = vec2<f16>(fbm(st + q + vec2<f16>(f16(1.7), f16(9.2))), fbm(st + q + vec2<f16>(f16(8.3), f16(2.8))));
-  out[gid.y * res.x + gid.x] = fbm(st + r);
+  out[gid.y * res.x + gid.x] = f32(fbm(st + r));
 }`;
 
 (async () => {
@@ -85,9 +85,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     const device = await adapter.requestDevice({ requiredFeatures: f16 ? ["shader-f16"] : [] });
     const module = device.createShaderModule({ code: f16 ? SHADER_F16 : SHADER_F32 });
     const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
-    const elemSize = f16 ? 2 : 4;
-    const storage = device.createBuffer({ size: PX * elemSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const readback = device.createBuffer({ size: PX * elemSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const storage = device.createBuffer({ size: PX * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readback = device.createBuffer({ size: PX * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     const resBuf = device.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(resBuf, 0, new Uint32Array([W, H]));
     const bg = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
@@ -100,7 +99,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       pass.setPipeline(pipeline); pass.setBindGroup(0, bg);
       pass.dispatchWorkgroups(Math.ceil(W / 16), Math.ceil(H / 16));
       pass.end();
-      enc.copyBufferToBuffer(storage, 0, readback, 0, PX * elemSize);
+      enc.copyBufferToBuffer(storage, 0, readback, 0, PX * 4);
       device.queue.submit([enc.finish()]);
     }
     frame(); await device.queue.onSubmittedWorkDone();
@@ -124,14 +123,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     out.samplesMs = windows;
     out.medianMs = windows[2];
     await readback.mapAsync(GPUMapMode.READ);
+    const arr = new Float32Array(readback.getMappedRange());
     let sum = 0;
-    if (f16) {
-      const arr = new Float16Array(readback.getMappedRange());
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-    } else {
-      const arr = new Float32Array(readback.getMappedRange());
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-    }
+    for (let i = 0; i < arr.length; i++) sum += arr[i];
     out.checksumSum = sum;
     readback.unmap();
   } catch (e) { out.error = String(e).slice(0, 300); }

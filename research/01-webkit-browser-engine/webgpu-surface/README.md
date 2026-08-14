@@ -72,7 +72,7 @@ quantization is material, so frames are batched per window).
 | CPU (scalar Swift, 1 core) | 757.72 (quiet-machine canonical; 200–757 across today's noisy samples) | checksum 732,590 — different sin library, ~18% loose |
 | Metal compute (M1 Pro) | 1.85 (kernel ~1.6; 1.8–4.0 across noisy samples) | checksum 877,955 |
 | **WebGPU-in-WKWebView (f32)** | **1.9–2.2** | **checksum 891,444 — 1.5% vs Metal (same-sin path)** |
-| WebGPU-in-WKWebView (f16 variant) | 1.9–2.2 | labeled variant — f16 buys nothing on this kernel; checksum readback parked (Float16Array harness detail) |
+| WebGPU-in-WKWebView (f16 variant) | 1.9–2.2 | **numerically invalid** — `rand2`'s ×43758 overflows f16 (max 65504) → NaN sink; timing valid, checksum meaningless. f16 buys nothing on this kernel. |
 
 Headline: **Qwave's embedded engine runs the wave at ~Metal kernel speed**
 (WebGPU adds ~0.3 ms over the raw Metal leg — both land on the same GPU).
