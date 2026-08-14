@@ -48,8 +48,10 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: OpenURLIntent(),
             phrases: [
-                "Open \(\.$url) in Qwave",
-                "Open \(\.$url) with Qwave",
+                // Every phrase MUST interpolate \(.applicationName) exactly
+                // once, or ExtractAppIntentsMetadata fails the build.
+                "Open \(\.$url) in \(.applicationName)",
+                "Open \(\.$url) with \(.applicationName)",
             ],
             shortTitle: "Open in Qwave",
             systemImageName: "globe"

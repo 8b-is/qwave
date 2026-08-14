@@ -185,8 +185,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: OpenURLIntent(),
             phrases: [
-                "Open \(\.$url) in Qwave",
-                "Open \(\.$url) with Qwave",
+                "Open \(\.$url) in \(.applicationName)",
+                "Open \(\.$url) with \(.applicationName)",
             ],
             shortTitle: "Open in Qwave",
             systemImageName: "globe"
@@ -194,8 +194,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: NewTabIntent(),
             phrases: [
-                "New Qwave tab",
-                "Open a new tab in Qwave",
+                "New \(.applicationName) tab",
+                "Open a new tab in \(.applicationName)",
             ],
             shortTitle: "New Tab",
             systemImageName: "plus.square.on.square"
@@ -203,8 +203,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: ToggleShieldsIntent(),
             phrases: [
-                "Turn shields off for \(\.$host) in Qwave",
-                "Turn shields on for \(\.$host) in Qwave",
+                "Turn shields off for \(\.$host) in \(.applicationName)",
+                "Turn shields on for \(\.$host) in \(.applicationName)",
             ],
             shortTitle: "Toggle Shields",
             systemImageName: "shield"
@@ -212,8 +212,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: ConnectVPNIntent(),
             phrases: [
-                "Connect Qwave VPN",
-                "Connect to Qwave VPN",
+                "Connect \(.applicationName) VPN",
+                "Connect to \(.applicationName) VPN",
             ],
             shortTitle: "Connect VPN",
             systemImageName: "lock.shield"
@@ -221,8 +221,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: DisconnectVPNIntent(),
             phrases: [
-                "Disconnect Qwave VPN",
-                "Disconnect from Qwave VPN",
+                "Disconnect \(.applicationName) VPN",
+                "Disconnect from \(.applicationName) VPN",
             ],
             shortTitle: "Disconnect VPN",
             systemImageName: "lock.open"
