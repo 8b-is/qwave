@@ -1,0 +1,42 @@
+{
+  "_comment": "Speedometer 3 baseline for Qwave — the comparison anchor for the perf phase. Captured from a committed run (10 iterations). This is the suite + iteration + score summary the Score, geomean, and iteration-0 gap derive from; full per-subtest exports from scripts/benchmark.sh land in Benchmarks/Speedometer/runs/ (gitignored). Regenerate the derived metrics with `node parse.mjs baseline.json`. Do NOT hand-edit the numbers; replace by committing a fresh anchor run.",
+  "source": "Speedometer 3",
+  "iterations": 10,
+  "capturedNote": "cold profile per run, energy governor ACTIVE (no tier pinning) — see docs/PERF.md",
+  "score": { "mean": 23.88044320830195, "min": 15.824256492274825, "max": 26.44724654106816 },
+  "geomean": { "unit": "ms", "mean": 42.70547377604088, "min": 37.8111195222976, "max": 63.19412229498338 },
+  "iterationTotals": [
+    { "iteration": 0, "unit": "ms", "mean": 76.73699999999978, "min": 17.18000000000211, "max": 161.93999999999687 },
+    { "iteration": 1, "unit": "ms", "mean": 49.34300000000003 },
+    { "iteration": 2, "unit": "ms", "mean": 58.82199999999921 },
+    { "iteration": 3, "unit": "ms", "mean": 50.07599999999893 },
+    { "iteration": 4, "unit": "ms", "mean": 49.233000000000175 },
+    { "iteration": 5, "unit": "ms", "mean": 49.566000000001075 },
+    { "iteration": 6, "unit": "ms", "mean": 47.77599999999802 },
+    { "iteration": 7, "unit": "ms", "mean": 51.49799999999959 },
+    { "iteration": 8, "unit": "ms", "mean": 48.01900000000096 },
+    { "iteration": 9, "unit": "ms", "mean": 53.198000000001045 }
+  ],
+  "suites": {
+    "TodoMVC-JavaScript-ES5": { "unit": "ms", "mean": 40.96199999999944, "min": 31.799999999995634, "max": 101.19999999999982 },
+    "TodoMVC-JavaScript-ES6-Webpack-Complex-DOM": { "unit": "ms", "mean": 35.6040000000005, "min": 32.96000000001368, "max": 40.95999999999958 },
+    "TodoMVC-WebComponents": { "unit": "ms", "mean": 15.611999999998261, "min": 14.079999999987194, "max": 18.540000000002692 },
+    "TodoMVC-React-Complex-DOM": { "unit": "ms", "mean": 39.11400000000022, "min": 33.73999999999069, "max": 53.99999999999909 },
+    "TodoMVC-React-Redux": { "unit": "ms", "mean": 40.0800000000002, "min": 32.320000000006985, "max": 54.08000000000084 },
+    "TodoMVC-Backbone": { "unit": "ms", "mean": 30.686000000000785, "min": 23.820000000006985, "max": 50.840000000000146 },
+    "TodoMVC-Angular-Complex-DOM": { "unit": "ms", "mean": 47.9960000000021, "min": 35.70000000001892, "max": 77.95999999999913 },
+    "TodoMVC-Vue": { "unit": "ms", "mean": 27.602000000001134, "min": 22.15999999999258, "max": 35.15999999999622 },
+    "TodoMVC-jQuery": { "unit": "ms", "mean": 99.06799999999876, "min": 89.15999999999622, "max": 114.06000000000859, "engineBound": true },
+    "TodoMVC-Preact-Complex-DOM": { "unit": "ms", "mean": 16.074000000001796, "min": 13.139999999999418, "max": 20.119999999995343 },
+    "TodoMVC-Svelte-Complex-DOM": { "unit": "ms", "mean": 15.736000000000422, "min": 10.580000000001746, "max": 24.100000000002183 },
+    "TodoMVC-Lit-Complex-DOM": { "unit": "ms", "mean": 20.067999999997664, "min": 16.080000000001746, "max": 34.81999999999789 },
+    "NewsSite-Next": { "unit": "ms", "mean": 155.99999999999946, "min": 128.37999999999738, "max": 286.4800000000032 },
+    "NewsSite-Nuxt": { "unit": "ms", "mean": 125.59399999999604, "min": 118.11999999998807, "max": 138.00000000000364 },
+    "Editor-CodeMirror": { "unit": "ms", "mean": 36.29199999999655, "min": 25.099999999983993, "max": 69.05999999999767 },
+    "Editor-TipTap": { "unit": "ms", "mean": 57.58400000000074, "min": 50.42000000000189, "max": 96.08000000000538 },
+    "Charts-observable-plot": { "unit": "ms", "mean": 51.51400000000249, "min": 42.840000000018335, "max": 70.79999999999927 },
+    "Charts-chartjs": { "unit": "ms", "mean": 55.83199999999815, "min": 42.99999999999636, "max": 124.79999999999927 },
+    "React-Stockcharts-SVG": { "unit": "ms", "mean": 94.4740000000038, "min": 79.200000000008, "max": 152.86000000000422, "engineBound": true },
+    "Perf-Dashboard": { "unit": "ms", "mean": 62.64399999999914, "min": 52.60000000000582, "max": 109.55999999999403 }
+  }
+}

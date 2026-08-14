@@ -40,6 +40,13 @@ public final class ShieldsDirector {
     /// Installs the correct rule lists for a navigation to `host`.
     /// Safe to call repeatedly; it reconciles rather than appends.
     public func applyLists(to controller: WKUserContentController, forHost host: String?) {
+        // P0 instrumentation: runs on the synchronous navigation-decision path
+        // for every main-frame load. The interval's slow-path event count is
+        // the redundant-rebuild signal the cache fix targets. See docs/PERF.md.
+        let signpostID = QwaveSignposts.shields.makeSignpostID()
+        let interval = QwaveSignposts.shields.beginInterval("applyLists", id: signpostID)
+        defer { QwaveSignposts.shields.endInterval("applyLists", interval) }
+
         let resolved = policy.resolvedPolicy(forHost: host)
         controller.removeAllContentRuleLists()
         if resolved.adsBlocked, let adsList {

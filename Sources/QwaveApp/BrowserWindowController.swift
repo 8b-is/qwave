@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import BrowserCore
+import QwaveSupport
 import Shields
 import WebExtensions
 import SwiftUI
@@ -324,6 +325,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func refreshChromeState() {
+        // P0 instrumentation: fired from every NavigationCoordinator KVO tick
+        // (incl. estimatedProgress). The interval count per page load in an
+        // Instruments capture is the coalescing target. See docs/PERF.md.
+        let signpostID = QwaveSignposts.browser.makeSignpostID()
+        let interval = QwaveSignposts.browser.beginInterval("chrome-refresh", id: signpostID)
+        defer { QwaveSignposts.browser.endInterval("chrome-refresh", interval) }
+
         guard let selected = tabManager.selectedTab else { return }
         let webView = selected.webView
 

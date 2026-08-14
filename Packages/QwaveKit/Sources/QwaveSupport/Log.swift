@@ -29,8 +29,14 @@ public enum QwaveLog {
 
 /// Signposters for Instruments — hibernate/wake cycles show up as intervals
 /// under the app's subsystem (Points of Interest / os_signpost instrument).
+/// One signposter per category so a Speedometer capture groups the chrome-tax
+/// suspects (energy tick, chrome refresh, shield reconciliation, web-view
+/// cold start) as distinct Points-of-Interest lanes. See docs/PERF.md.
 public enum QwaveSignposts {
     public static let energy = OSSignposter(subsystem: QwaveLog.subsystem, category: "energy")
+    public static let browser = OSSignposter(subsystem: QwaveLog.subsystem, category: "browser")
+    public static let shields = OSSignposter(subsystem: QwaveLog.subsystem, category: "shields")
+    public static let coldstart = OSSignposter(subsystem: QwaveLog.subsystem, category: "coldstart")
 }
 
 // MARK: - Privacy-classified message
