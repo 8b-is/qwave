@@ -22,6 +22,8 @@ public enum MarkdownCompiler {
             html.append(renderBlock(block, park: park))
         }
         var joined = html.joined(separator: "\n")
+        // Reversed order so nested parks resolve: an outer park's value can
+        // contain a marker for an inner park (math block wrapping a fence).
         for (index, value) in store.enumerated().reversed() {
             joined = joined.replacingOccurrences(of: "\u{0000}MD\(index)\u{0000}", with: value)
         }
@@ -81,9 +83,9 @@ public enum MarkdownCompiler {
     }
 
     private static func splitBlocks(_ source: String) -> [String] {
-        let lines = source.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        let lines = source.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         var blocks: [String] = []
-        var current: [String] = []
+        var current: [Substring] = []
 
         func flush() {
             let text = current.joined(separator: "\n").trimmingCharacters(in: .newlines)
@@ -93,7 +95,7 @@ public enum MarkdownCompiler {
             current = []
         }
 
-        func kind(_ line: String) -> String {
+        func kind(_ line: Substring) -> String {
             let t = line.trimmingCharacters(in: .whitespaces)
             if t.hasPrefix("#") { return "heading" }
             if t.hasPrefix(">") { return "quote" }
@@ -220,47 +222,67 @@ public enum MarkdownCompiler {
 
     // MARK: - Inline
 
+    /// Compiled once per process, not per call. `inline()` runs eight regex
+    /// passes per invocation; the old code recompiled every pattern on every
+    /// pass. NSRegularExpression is documented thread-safe.
+    private final class RegexBox: @unchecked Sendable {
+        let value: NSRegularExpression
+        init(_ pattern: String) {
+            value = try! NSRegularExpression(pattern: pattern)
+        }
+    }
+
+    private static let imageRegex = RegexBox(#"!\[([^\]]*)\]\(([^)]+)\)"#)
+    private static let linkRegex = RegexBox(#"\[([^\]]+)\]\(([^)]+)\)"#)
+    private static let mathRegex = RegexBox(#"(?<!\$)\$(?!\$)([^$\n]+)\$(?!\$)"#)
+    private static let codeRegex = RegexBox(#"`([^`]+)`"#)
+    private static let strongStarRegex = RegexBox(#"\*\*([^*]+)\*\*"#)
+    private static let strongUnderscoreRegex = RegexBox(#"__([^_]+)__"#)
+    private static let emRegex = RegexBox(#"(?<!\*)\*([^*]+)\*(?!\*)"#)
+    private static let delRegex = RegexBox(#"~~([^~]+)~~"#)
+
     private static func inline(_ raw: String) -> String {
         var text = raw
         // Images then links.
-        text = replace(text, pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) { match in
+        text = replace(text, regex: imageRegex) { match in
             "<img src=\"\(escape(match[2]))\" alt=\"\(escape(match[1]))\">"
         }
-        text = replace(text, pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) { match in
+        text = replace(text, regex: linkRegex) { match in
             "<a href=\"\(escape(match[2]))\">\(escape(match[1]))</a>"
         }
         // Inline math $...$ (not $$)
-        text = replace(text, pattern: #"(?<!\$)\$(?!\$)([^$\n]+)\$(?!\$)"#) { match in
+        text = replace(text, regex: mathRegex) { match in
             "<span class=\"math-inline\">\(escape(match[1]))</span>"
         }
-        text = replace(text, pattern: #"`([^`]+)`"#) { match in
+        text = replace(text, regex: codeRegex) { match in
             "<code>\(escape(match[1]))</code>"
         }
-        text = replace(text, pattern: #"\*\*([^*]+)\*\*"#) { match in
+        text = replace(text, regex: strongStarRegex) { match in
             "<strong>\(escape(match[1]))</strong>"
         }
-        text = replace(text, pattern: #"__([^_]+)__"#) { match in
+        text = replace(text, regex: strongUnderscoreRegex) { match in
             "<strong>\(escape(match[1]))</strong>"
         }
-        text = replace(text, pattern: #"(?<!\*)\*([^*]+)\*(?!\*)"#) { match in
+        text = replace(text, regex: emRegex) { match in
             "<em>\(escape(match[1]))</em>"
         }
-        text = replace(text, pattern: #"~~([^~]+)~~"#) { match in
+        text = replace(text, regex: delRegex) { match in
             "<del>\(escape(match[1]))</del>"
         }
         // Escape leftovers that aren't already tags.
         return escapeLoose(text)
     }
 
-    private static func replace(_ text: String, pattern: String, transform: ([String]) -> String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+    private static func replace(_ text: String, regex: RegexBox, transform: ([String]) -> String) -> String {
         let ns = text as NSString
-        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        let matches = regex.value.matches(in: text, range: NSRange(location: 0, length: ns.length))
         var result = ""
+        result.reserveCapacity(text.count + 16)
         var cursor = 0
         for match in matches {
             result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
             var groups = [String]()
+            groups.reserveCapacity(match.numberOfRanges)
             for i in 0..<match.numberOfRanges {
                 let range = match.range(at: i)
                 groups.append(range.location == NSNotFound ? "" : ns.substring(with: range))
@@ -273,23 +295,44 @@ public enum MarkdownCompiler {
     }
 
     public static func escape(_ string: String) -> String {
-        string
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
+        // Single pass, single output buffer: the old four chained
+        // replacingOccurrences calls allocated a full copy per pass.
+        var result = ""
+        result.reserveCapacity(string.count + string.count / 8)
+        var i = string.startIndex
+        while i < string.endIndex {
+            switch string[i] {
+            case "&": result.append("&amp;")
+            case "<": result.append("&lt;")
+            case ">": result.append("&gt;")
+            case "\"": result.append("&quot;")
+            default: result.append(string[i])
+            }
+            i = string.index(after: i)
+        }
+        return result
     }
 
     /// Escape text outside of already-emitted tags.
     private static func escapeLoose(_ string: String) -> String {
+        // Single pass like `escape`, but raw tag runs (<...>) pass through
+        // untouched. The old per-character `escape(String(string[i]))`
+        // allocated a String per character.
         var result = ""
+        result.reserveCapacity(string.count + 16)
         var i = string.startIndex
         while i < string.endIndex {
             if string[i] == "<", let close = string[i...].firstIndex(of: ">") {
-                result += string[i...close]
+                result.append(contentsOf: string[i...close])
                 i = string.index(after: close)
             } else {
-                result += escape(String(string[i]))
+                switch string[i] {
+                case "&": result.append("&amp;")
+                case "<": result.append("&lt;")
+                case ">": result.append("&gt;")
+                case "\"": result.append("&quot;")
+                default: result.append(string[i])
+                }
                 i = string.index(after: i)
             }
         }
