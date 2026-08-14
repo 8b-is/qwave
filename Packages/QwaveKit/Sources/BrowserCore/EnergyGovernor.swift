@@ -37,22 +37,15 @@ public struct EnergyPolicy: Equatable, Sendable {
     public var pauseBackgroundMedia: Bool
     /// Fully suspend media (stronger than pause; also blocks resume-by-page).
     public var suspendAllBackgroundMedia: Bool
-    /// Number of spare WebContent processes to keep warm for fast wake.
-    /// Zero at .conserve and .critical tiers; 1 at .normal is a memory-vs-latency
-    /// tradeoff — keeping one process warm costs ~45 MB but saves ~100-200 ms
-    /// on wake-to-interactive.
-    public var warmProcessCount: Int
 
     public init(
         hibernationTimeout: TimeInterval,
         pauseBackgroundMedia: Bool,
-        suspendAllBackgroundMedia: Bool,
-        warmProcessCount: Int = 0
+        suspendAllBackgroundMedia: Bool
     ) {
         self.hibernationTimeout = hibernationTimeout
         self.pauseBackgroundMedia = pauseBackgroundMedia
         self.suspendAllBackgroundMedia = suspendAllBackgroundMedia
-        self.warmProcessCount = warmProcessCount
     }
 }
 
@@ -90,22 +83,19 @@ public enum EnergyGovernor {
             return EnergyPolicy(
                 hibernationTimeout: baseHibernationTimeout,
                 pauseBackgroundMedia: false,
-                suspendAllBackgroundMedia: false,
-                warmProcessCount: 1
+                suspendAllBackgroundMedia: false
             )
         case .conserve:
             return EnergyPolicy(
                 hibernationTimeout: max(60, baseHibernationTimeout / 3),
                 pauseBackgroundMedia: false,
-                suspendAllBackgroundMedia: false,
-                warmProcessCount: 0
+                suspendAllBackgroundMedia: false
             )
         case .critical:
             return EnergyPolicy(
                 hibernationTimeout: 60,
                 pauseBackgroundMedia: true,
-                suspendAllBackgroundMedia: true,
-                warmProcessCount: 0
+                suspendAllBackgroundMedia: true
             )
         }
     }
