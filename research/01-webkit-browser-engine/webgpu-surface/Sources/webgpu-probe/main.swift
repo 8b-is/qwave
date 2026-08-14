@@ -67,7 +67,7 @@ func runPage(page: String, query: String = "", flags: [(String, String, NSObject
     var url = probeDir.appendingPathComponent(page)
     if !query.isEmpty { url = url.appending(queryItems: [URLQueryItem(name: "mode", value: query)]) }
     webView.loadFileURL(url, allowingReadAccessTo: probeDir)
-    let deadline = Date().addingTimeInterval(60)
+    let deadline = Date().addingTimeInterval(20)
     while runner.result == nil && Date() < deadline {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }

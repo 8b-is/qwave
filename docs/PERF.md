@@ -93,7 +93,7 @@ the code after each fix so a single capture settles the whole ledger.
 | 4 | Synchronous SQLite history write on the main actor | **acquitted** — already `async` over actors; no main-thread write | — | (uninstrumented) |
 | 5 | Warm process pool warmed ~30 s late (first energy tick) — apply launch policy before the first window | fixed — awaiting measurement | [#18](https://github.com/8b-is/qwave/pull/18) | `makeWebView` |
 | 5b | Prewarm hidden `about:blank`; whether `WKProcessPool` still helps on macOS 14+ | **deferred** — needs on-Mac verification of current WebKit | — | `makeWebView` |
-| 6 | Launch serialized behind `shields.prepare()` + `vpn.refresh()` | **deferred** — privacy review (shields-bypass on network homepage) | [issue #19](https://github.com/8b-is/qwave/issues/19) | `makeWebView` |
+| 6 | Launch serialized behind `shields.prepare()` + `vpn.refresh()` | **fixed** — shipped in 0.6.0 (`shields.whenReady()` gate + `applyListsThen`; launch no longer awaits warmup via async-let) | awaiting measurement (signpost benefit needs the human Speedometer trace) | `makeWebView` |
 
 **When the traces come back:** an `acquitted`/`fixed` row that the trace confirms
 closes its deferred sibling work (or promotes it if convicted); a newly convicted
