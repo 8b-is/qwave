@@ -49,10 +49,10 @@ targets:
       properties:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
-        CFBundleShortVersionString: "0.4.4"
+        CFBundleShortVersionString: "0.6.0"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "404"
+        CFBundleVersion: "600"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -169,12 +169,24 @@ targets:
               x86_64) ztarget="x86_64-macos" ;;
               *) echo "error: unsupported arch '$arch' for zig packet filter" >&2; exit 1 ;;
             esac
-            out="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.a"
+            zig_a="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.zig.a"
             # -fcompiler-rt bundles Zig's compiler runtime into the archive.
             # Without it the x86_64 slice leaves ___zig_probe_stack (and any
             # other compiler-rt builtin) undefined at link time, since it links
             # into a non-Zig binary that provides no Zig runtime.
-            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -fcompiler-rt -femit-bin="$out"
+            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -fcompiler-rt -femit-bin="$zig_a"
+            # Zig's archiver emits members that Apple's newer ld (Xcode 16.3+)
+            # rejects as "not 8-byte aligned". Re-pack the extracted objects with
+            # Apple's libtool, which aligns them correctly. Works on every
+            # toolchain, so it is a strict improvement over shipping zig's archive.
+            work="${BUILT_PRODUCTS_DIR}/qpacket-${arch}.objs"
+            rm -rf "$work"; mkdir -p "$work"
+            ( cd "$work" && ar x "$zig_a" )
+            # Zig stores archive members mode 0000; make them readable for libtool.
+            chmod u+rw "$work"/*.o
+            out="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.a"
+            rm -f "$out"
+            xcrun libtool -static -o "$out" "$work"/*.o
             slices+=("$out")
           done
           lipo -create "${slices[@]}" -output "${BUILT_PRODUCTS_DIR}/libqpacket.a"
@@ -185,8 +197,8 @@ targets:
       properties:
         CFBundleName: PacketTunnel
         CFBundleDisplayName: Qwave VPN Tunnel
-        CFBundleShortVersionString: "0.4.4"
-        CFBundleVersion: "404"
+        CFBundleShortVersionString: "0.6.0"
+        CFBundleVersion: "600"
         NetworkExtension:
           NEMachServiceName: $(TeamIdentifierPrefix)group.is.8b.qwave.tunnel
           NEProviderClasses:
