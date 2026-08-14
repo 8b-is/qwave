@@ -37,6 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
             await environment.shields.prepare()
             await environment.vpn.tunnel.refresh()
+            // Apply the launch energy policy BEFORE the first window is built, so
+            // the first tab's WKWebViewConfiguration gets the warm process pool
+            // immediately instead of ~30s later when the first energy tick fires
+            // — the pool must exist before makeWebView(for:) runs for the first
+            // tab. Starting in the correct tier is also simply correct: the app
+            // should not spend its first 30s at default policy. (This applies the
+            // EXISTING warm-pool mechanism earlier; whether process pooling still
+            // helps on current WebKit is a separate, deferred question.)
+            let launchPolicy = EnergyGovernor.policy(
+                for: currentConditions(),
+                baseHibernationTimeout: environment.settings.hibernationTimeout)
+            environment.factory.setWarmProcessCount(launchPolicy.warmProcessCount)
             await restoreOrOpenFirstWindow()
             startEnergyTimer()
         }
