@@ -13,6 +13,30 @@ All notable changes to Qwave will be documented in this file.
 - Merged the Swift 6 modernization, concurrency, toolchain-lane, performance,
   documentation, and benchmark-stability changes through PRs #9–#18, #20–#22.
 
+## [0.6.0] - 2026-08-14
+
+Speedometer chrome-tax pass and VPN system-extension test build.
+
+### Performance (chrome tax)
+- **Energy tick** yields to foreground activity: never hibernate a loading tab,
+  skip the whole tick while the visible tab is mid-load, skip the discarded
+  media-playback probe for the selected tab. Battery posture preserved
+  ("ticks resume when idle" test).
+- **Shields** `applyLists` caches the attached rule-list set by object identity
+  and no-ops when unchanged, instead of remove-all + re-add on every navigation.
+- **Chrome refresh** coalesced to one per runloop turn (was one per KVO tick,
+  incl. `estimatedProgress`, which drives no visible chrome).
+- **Cold start**: the warm process pool is warmed at launch instead of ~30s later.
+- **Launch**: first window + local start page paint without awaiting shields/VPN
+  warmup; the first network navigation gates on the rule-list compile, so shields
+  are never bypassed (issue #19).
+- Speedometer harness, committed baseline, `os_signpost` instrumentation, and a
+  non-blocking CI perf lane (`docs/PERF.md`).
+
+### VPN
+- App entitlement trimmed to the `packet-tunnel-provider-systemextension`
+  network-extension mode, matching the App ID capability / provisioning profile.
+
 ## [0.5.0] - 2026-08-14
 
 Swift 6 language mode throughout — structural foundations completed.
