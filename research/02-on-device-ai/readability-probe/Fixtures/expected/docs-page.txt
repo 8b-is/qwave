@@ -1,0 +1,20 @@
+Configuration reference
+This page documents the configuration keys accepted by the bridge. Keys are read once at launch and cached for the session.
+Connection settings
+The bridge connects over the local socket when bridge.enabled is true. The default port is 7941.
+bridge.enabled = true
+bridge.port = 7941
+bridge.timeout_ms = 1500
+Retry behaviour
+Retries follow an exponential backoff with a five-second cap. The first retry is immediate; subsequent retries wait 250 ms, 500 ms, 1 s, then the cap.
+bridge.enabled
+bool
+false
+bridge.port
+int
+7941
+Logging
+Logs are written to the system journal under the bridge subsystem. Verbose mode is off by default.
+Set bridge.verbose to true for per-message logs.
+Set bridge.silent to true to suppress the startup banner.
+See the release notes for the full list of removed keys.

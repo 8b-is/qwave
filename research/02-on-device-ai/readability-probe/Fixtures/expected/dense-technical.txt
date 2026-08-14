@@ -1,0 +1,7 @@
+Rising-edge sampling on a shared clock bus degrades once the trace skew exceeds roughly one quarter of the bit period. At 200 MHz with a 2.5 ns bit period, that budget is about 620 ps.
+The dominant contributors are the clock distribution tree, the input hysteresis, and the temperature coefficient of the termination network. Each contributes a bounded delay but the sum is unbounded across process corners.
+let skew = traceDelay - clockDelay
+assert(skew < bitPeriod / 4)
+Receiver equalisation can recover up to 1.4 UI of skew when the training sequence is long enough, but the training window itself steals bandwidth that the scheduler otherwise uses for the metadata channel. The trade-off is documented in the link layer specification, section 4.2.
+Simulation shows the eye diagram closing beyond 85 degrees Celsius without the revised driver strength; field data from two deployments confirms the simulation within measurement tolerance.
+Firmware should therefore select driver strength from the temperature table at link bring-up, then re-train on crossing the 75-degree threshold rather than at fixed intervals. This reduces training events by roughly 60 percent in the observed workloads.

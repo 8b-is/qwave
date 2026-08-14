@@ -1,0 +1,25 @@
+<!-- fixture: docs page — main.content, headings, code blocks, tables (original text) -->
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Configuration reference — WidgetKit bridge</title></head>
+<body>
+<header><nav>Docs · Guides · Reference · Changelog</nav></header>
+<main class="content">
+  <h1>Configuration reference</h1>
+  <p>This page documents the configuration keys accepted by the bridge. Keys are read once at launch and cached for the session.</p>
+  <h2>Connection settings</h2>
+  <p>The bridge connects over the local socket when <code>bridge.enabled</code> is true. The default port is 7941.</p>
+  <pre><code>bridge.enabled = true
+bridge.port = 7941
+bridge.timeout_ms = 1500</code></pre>
+  <h2>Retry behaviour</h2>
+  <p>Retries follow an exponential backoff with a five-second cap. The first retry is immediate; subsequent retries wait 250 ms, 500 ms, 1 s, then the cap.</p>
+  <table><tr><th>Setting</th><th>Type</th><th>Default</th></tr>
+  <tr><td>bridge.enabled</td><td>bool</td><td>false</td></tr>
+  <tr><td>bridge.port</td><td>int</td><td>7941</td></tr></table>
+  <h2>Logging</h2>
+  <p>Logs are written to the system journal under the bridge subsystem. Verbose mode is off by default.</p>
+  <ul><li>Set <code>bridge.verbose</code> to true for per-message logs.</li><li>Set <code>bridge.silent</code> to true to suppress the startup banner.</li></ul>
+  <p>See the release notes for the full list of removed keys.</p>
+</main>
+<aside class="sidebar"><p>Related: migration guide, socket protocol, security notes.</p></aside>
+</body></html>

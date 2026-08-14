@@ -1,0 +1,15 @@
+<!-- fixture: SPA-rendered — content in generic divs, no semantic article (original text) -->
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Anatomy of a slow build</title></head>
+<body>
+<div id="app">
+  <div class="topbar"><span>Home</span><span>Topics</span><span>About</span></div>
+  <div class="view">
+    <div class="title"><h2>Anatomy of a slow build</h2></div>
+    <div class="summary"><p>Incremental compilation hides its cost until the cache misses. This essay walks a real repository's cold build, hot build, and the surprising third case: the warm cache that is almost right.</p></div>
+    <div class="section"><p>The cold build spent 81 percent of its time in dependency resolution and module interface generation. The hot build was 14 times faster, which is the number every demo quotes.</p></div>
+    <div class="section"><p>The warm-but-stale case is the interesting one: one changed dependency invalidates the module graph, and the rebuild time is closer to cold than hot. The toolchain cannot know the graph is stale until it computes it, which is the work it is trying to avoid.</p></div>
+    <div class="section"><p>Caching the resolved graph by content hash of the manifest closes most of the gap. The remaining cost is the verification pass, which reads every module signature on disk.</p></div>
+  </div>
+</div>
+</body></html>

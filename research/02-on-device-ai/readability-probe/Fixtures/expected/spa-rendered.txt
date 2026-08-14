@@ -1,0 +1,5 @@
+Anatomy of a slow build
+Incremental compilation hides its cost until the cache misses. This essay walks a real repository's cold build, hot build, and the surprising third case: the warm cache that is almost right.
+The cold build spent 81 percent of its time in dependency resolution and module interface generation. The hot build was 14 times faster, which is the number every demo quotes.
+The warm-but-stale case is the interesting one: one changed dependency invalidates the module graph, and the rebuild time is closer to cold than hot. The toolchain cannot know the graph is stale until it computes it, which is the work it is trying to avoid.
+Caching the resolved graph by content hash of the manifest closes most of the gap. The remaining cost is the verification pass, which reads every module signature on disk.
