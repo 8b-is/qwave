@@ -1,0 +1,18 @@
+{
+  "_stamps": {
+    "date": "2026-08-14",
+    "macOS": "Version 26.4.1 (Build 25E253)",
+    "machine": "M1 Pro",
+    "fixture": "news-article (258 tokens)",
+    "build": "release"
+  },
+  "experiment": "Does prewarm(promptPrefix: nil) cut first-call respond latency?",
+  "method": "fresh process per run, --quick --skip-probes, alternating control/prewarm; prewarm call timed inline",
+  "runs": [
+    { "variant": "prewarm", "firstCallMs": 6396, "prewarmCallMs": 11.4 },
+    { "variant": "control", "firstCallMs": 7059 },
+    { "variant": "prewarm", "firstCallMs": 9538, "prewarmCallMs": 12.8 },
+    { "variant": "control", "firstCallMs": 9630 }
+  ],
+  "summary": "No meaningful delta: control 7059/9630 vs prewarm 6396/9538, well inside run-to-run variance (2717-12203 ms observed same-day for this fixture). The prewarm call itself costs ~12 ms. Verdict: keep the menu-open prewarm hook (free, harmless), claim no latency win; first-call warmth comes from the OS model service, not the app."
+}

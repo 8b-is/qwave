@@ -286,6 +286,7 @@ struct Probe {
         var args = Set(CommandLine.arguments.dropFirst())
         let mode = args.remove("--quick") != nil ? "quick" : "full"
         let skipProbes = args.remove("--skip-probes") != nil
+        let prewarm = args.remove("--prewarm") != nil
         let onlyFixture = args.first(where: { $0.hasPrefix("--fixture=") })?
             .replacingOccurrences(of: "--fixture=", with: "")
 
@@ -305,6 +306,22 @@ struct Probe {
         if #available(macOS 26.0, *) {
             results["availability"] = probeAvailability()
             results["providerSeam"] = probeProviderSeam()
+
+            if prewarm {
+                // prewarm experiment (P1c of docs/SUMMARIZE.md): time the
+                // prewarm call itself, then the fixture run below measures the
+                // first-response latency with the model already warm.
+                let clock = ContinuousClock()
+                let session = LanguageModelSession(
+                    model: SystemLanguageModel(useCase: .general, guardrails: .default)
+                )
+                let t = clock.now
+                session.prewarm(promptPrefix: nil)
+                results["prewarmExperiment"] = [
+                    "prewarmDurationMs": ms(clock.now - t),
+                    "note": "fixture first-sample latency below is post-prewarm",
+                ]
+            }
 
             if !skipProbes {
                 let controlText =
