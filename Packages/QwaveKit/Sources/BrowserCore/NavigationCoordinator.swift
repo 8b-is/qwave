@@ -197,7 +197,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 return
             }
             if let http = navigationResponse.response as? HTTPURLResponse,
-                QwaveSchemeHandler.shouldShowWaveError(status: http.statusCode)
+                QwaveSchemeHandler.shouldShowWaveError(status: QwaveHTTPStatus(rawValue: http.statusCode))
             {
                 decisionHandler(.cancel)
                 let host = http.url.flatMap(CanonicalHost.host(of:)) ?? http.url?.host ?? ""

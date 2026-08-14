@@ -158,9 +158,9 @@ final class WavePageTests: XCTestCase {
     }
 
     func testWaveErrorStatuses() {
-        XCTAssertTrue(QwaveSchemeHandler.shouldShowWaveError(status: 404))
-        XCTAssertTrue(QwaveSchemeHandler.shouldShowWaveError(status: 503))
-        XCTAssertFalse(QwaveSchemeHandler.shouldShowWaveError(status: 401))
-        XCTAssertFalse(QwaveSchemeHandler.shouldShowWaveError(status: 200))
+        XCTAssertTrue(QwaveSchemeHandler.shouldShowWaveError(status: .init(rawValue: 404)))
+        XCTAssertTrue(QwaveSchemeHandler.shouldShowWaveError(status: .init(rawValue: 503)))
+        XCTAssertFalse(QwaveSchemeHandler.shouldShowWaveError(status: .init(rawValue: 401)))
+        XCTAssertFalse(QwaveSchemeHandler.shouldShowWaveError(status: .init(rawValue: 200)))
     }
 }

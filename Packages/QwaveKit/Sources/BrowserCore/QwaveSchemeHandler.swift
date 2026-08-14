@@ -27,6 +27,30 @@ public enum QwaveInternalAction: Equatable {
     case summarize(String)
 }
 
+public enum QwaveHTTPStatus: Equatable, Sendable {
+    case ok
+    case unauthorized
+    case notFound
+    case gone
+    case badGateway
+    case serviceUnavailable
+    case gatewayTimeout
+    case other(Int)
+
+    public init(rawValue: Int) {
+        switch rawValue {
+        case 200: self = .ok
+        case 401: self = .unauthorized
+        case 404: self = .notFound
+        case 410: self = .gone
+        case 502: self = .badGateway
+        case 503: self = .serviceUnavailable
+        case 504: self = .gatewayTimeout
+        default: self = .other(rawValue)
+        }
+    }
+}
+
 public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
     public static let scheme = "qwave"
 
@@ -131,7 +155,12 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
     /// for the whole type on Swift 6.1, which would otherwise force every caller
     /// (including synchronous tests) onto the main actor. This is a pure status
     /// predicate with no state, so it is safe to call from any isolation.
-    public nonisolated static func shouldShowWaveError(status: Int) -> Bool {
-        status == 404 || status == 410 || status == 502 || status == 503 || status == 504
+    public nonisolated static func shouldShowWaveError(status: QwaveHTTPStatus) -> Bool {
+        switch status {
+        case .notFound, .gone, .badGateway, .serviceUnavailable, .gatewayTimeout:
+            true
+        case .ok, .unauthorized, .other:
+            false
+        }
     }
 }
