@@ -251,7 +251,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             )
         }
         coordinator.onStateChange = { [weak self] in
-            self?.refreshChromeState()
+            self?.setChromeNeedsRefresh()
         }
         coordinator.onInternalAction = { [weak self] action in
             self?.handleInternalAction(action)
@@ -322,6 +322,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             containerView.show(webView)
         }
         refreshChromeState()
+    }
+
+    private var chromeRefreshScheduled = false
+
+    /// Coalesces chrome refreshes to one per runloop turn. A page load fires a
+    /// burst of KVO ticks — `estimatedProgress` especially, which drives no
+    /// visible chrome — and each one would otherwise rebuild the whole tab-model
+    /// array. The first request in a turn schedules a single refresh; the rest
+    /// are no-ops until it fires, so a burst collapses to one refresh with the
+    /// same visible result. Explicit one-off refreshes (render, favicon, shields
+    /// toggles) still call `refreshChromeState()` directly.
+    private func setChromeNeedsRefresh() {
+        guard !chromeRefreshScheduled else { return }
+        chromeRefreshScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.chromeRefreshScheduled = false
+            self.refreshChromeState()
+        }
     }
 
     private func refreshChromeState() {
