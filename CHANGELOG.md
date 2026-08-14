@@ -4,6 +4,15 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Feature-flag tri-state conflation** (`FeatureFlagService`): the SPI's
+  "present but zero features" state was conflated with "SPI absent", which
+  would have shown the wrong pane message and silently stopped applying
+  persisted overrides on a build where the class-level surface returns
+  empty. The surface is now modeled as `unavailable` / `emptySurface` /
+  `available(features)`, the pane message is truthful per state, and the
+  discovery canary asserts all three states distinctly.
+
 ### Post-merge hygiene
 - Refreshed `Packages/QwaveKit/Package.resolved` from two stable clean resolves;
   removed the stale Sparkle pin.

@@ -21,11 +21,26 @@ struct FeatureFlagsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !service.isSPIAvailable {
-                ContentUnavailableView(
-                    "WebKit feature flags unavailable",
-                    systemImage: "flask",
-                    description: Text("This WebKit build doesn't expose the feature SPI. Browsing is unaffected.")
-                )
+                switch service.surfaceState {
+                case .unavailable:
+                    ContentUnavailableView(
+                        "WebKit feature flags unavailable",
+                        systemImage: "flask",
+                        description: Text("This WebKit build doesn't expose the feature SPI. Browsing is unaffected.")
+                    )
+                case .emptySurface:
+                    ContentUnavailableView(
+                        "WebKit feature flags unavailable",
+                        systemImage: "flask",
+                        description: Text(
+                            "This WebKit build reports no toggleable features"
+                                + (FeatureFlagService.webKitVersionString.map { " (WebKit \($0))." } ?? ".")
+                                + " Browsing is unaffected."
+                        )
+                    )
+                case .available:
+                    EmptyView()  // unreachable: isSPIAvailable is true here
+                }
             } else {
                 HStack {
                     TextField("Filter features", text: $searchText)

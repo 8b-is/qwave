@@ -15,16 +15,34 @@ final class FeatureFlagServiceTests: XCTestCase {
         return defaults
     }
 
-    func testDiscoveryEitherFindsFeaturesOrDegradesCleanly() {
+    func testDiscoveryCanaryDistinguishesAllThreeStates() {
+        // Pure derivation: all three states are distinct — "responds but
+        // empty" must never masquerade as "SPI absent" (or vice versa).
+        XCTAssertEqual(FeatureFlagService.surfaceState(found: false, parsed: []), .unavailable)
+        XCTAssertEqual(FeatureFlagService.surfaceState(found: true, parsed: []), .emptySurface)
+        let sample = WebFeature(
+            key: "k", name: "n", details: nil, status: .preview, defaultValue: false, isEnabled: false)
+        XCTAssertEqual(FeatureFlagService.surfaceState(found: true, parsed: [sample]), .available([sample]))
+
+        // Live service: whatever this WebKit exposes, the state must be
+        // consistent with isSPIAvailable and the feature list — the
+        // conflation that hid the regression is now a state mismatch, and a
+        // state mismatch fails here.
         let service = FeatureFlagService(defaults: makeDefaults())
-        if service.isSPIAvailable {
-            XCTAssertFalse(service.features.isEmpty, "SPI reported available but zero features found")
-            for feature in service.features.prefix(5) {
+        switch service.surfaceState {
+        case .unavailable:
+            XCTAssertTrue(service.features.isEmpty)
+            XCTAssertFalse(service.isSPIAvailable)
+        case .emptySurface:
+            XCTAssertTrue(service.features.isEmpty)
+            XCTAssertFalse(service.isSPIAvailable)
+        case .available(let discovered):
+            XCTAssertFalse(discovered.isEmpty)
+            XCTAssertTrue(service.isSPIAvailable)
+            for feature in discovered.prefix(5) {
                 XCTAssertFalse(feature.key.isEmpty)
                 XCTAssertFalse(feature.name.isEmpty)
             }
-        } else {
-            XCTAssertTrue(service.features.isEmpty)
         }
     }
 
