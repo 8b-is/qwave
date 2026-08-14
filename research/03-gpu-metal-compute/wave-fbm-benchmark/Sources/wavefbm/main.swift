@@ -34,20 +34,21 @@ static float fbm(float2 st) {
 kernel void wave_main(uint2 gid [[thread_position_in_grid]],
                       constant float2& resolution [[buffer(0)]],
                       constant float& time [[buffer(1)]],
-                      device float& out [[buffer(2)]]) {
+                      device float* out [[buffer(2)]]) {
     float2 st = float2(gid) / resolution;
     st.x *= resolution.x / resolution.y;
     float2 q; q.x = fbm(st); q.y = fbm(st + float2(1.0));
     float2 r; r.x = fbm(st + 1.0 * q + float2(1.7, 9.2) + 0.15 * time);
               r.y = fbm(st + 1.0 * q + float2(8.3, 2.8) + 0.126 * time);
-    out = fbm(st + r);
+    uint idx = (uint)(gid.y * resolution.x + gid.x);
+    out[idx] = fbm(st + r);
 }
 """
 
 // MARK: - CPU reference (same math, scalar Float)
 
 var sinCount: Int = 0
-func rand2(_ st: SIMD2<Float>) -> Float { sinCount += 1; let s = sin((st * SIMD2<Float>(12.9898, 78.233)).sum()); return (s - floor(s)) * 43758.5453123 }
+func rand2(_ st: SIMD2<Float>) -> Float { sinCount += 1; let s = sin((st * SIMD2<Float>(12.9898, 78.233)).sum()) * 43758.5453123; return s - floor(s) }
 
 func noise2(_ st: SIMD2<Float>) -> Float {
     let i = floor(st)
@@ -80,7 +81,8 @@ func fbmCPU(_ st: SIMD2<Float>) -> Float {
 // after timing cannot be.
 var cpuSink: Float = 0
 
-func cpuFrame() -> Double {
+func cpuFrame() -> (ms: Double, sum: Double) {
+    var frameSum: Double = 0
     let clock = ContinuousClock()
     let t = clock.measure {
         for y in 0..<height {
@@ -91,11 +93,13 @@ func cpuFrame() -> Double {
                 let r = SIMD2<Float>(
                     fbmCPU(st + q + SIMD2(1.7, 9.2)),
                     fbmCPU(st + q + SIMD2(8.3, 2.8)))
-                cpuSink += fbmCPU(st + r)
+                let v = fbmCPU(st + r)
+                cpuSink += v
+                frameSum += Double(v)
             }
         }
     }
-    return Double(t.components.attoseconds) / 1e18 * 1000  // ms
+    return (Double(t.components.attoseconds) / 1e18 * 1000, frameSum)  // ms, sum
 }
 
 // MARK: - GPU path
@@ -148,13 +152,19 @@ for _ in 0..<frames { gpuTimes.append(gpuFrame()) }
 let overhead = gpuOverhead()
 let gpuAvg = gpuTimes.reduce(0, +) / Double(frames)
 let gpuKernel = max(0, gpuAvg - overhead)
+let outPtr = outBuffer.contents().assumingMemoryBound(to: Float.self)
+var metalChecksum: Double = 0
+for i in 0..<pixels { metalChecksum += Double(outPtr[i]) }
 
 var cpuTimes: [Double] = []
-for _ in 0..<cpuFrames { cpuTimes.append(cpuFrame()) }
-let cpuAvg = cpuTimes.reduce(0, +) / Double(cpuFrames)
+var cpuSums: [Double] = []
+for _ in 0..<cpuFrames { let r = cpuFrame(); cpuTimes.append(r.ms); cpuSums.append(r.sum) }
+let cpuAvg = cpuTimes.reduce(0, +) / Double(cpuTimes.count)
+let cpuChecksum = cpuSums[0]
 // Observable read: without it the optimizer can prove the global dead and
 // eliminate the whole loop (confirmed twice the hard way).
 print("cpu sink (must be non-zero):", cpuSink)
+print("checksum cpu:", cpuChecksum, "metal:", metalChecksum)
 print("sin calls (expected ~740M for 5 frames):", sinCount)
 
 let formatter = { (ms: Double) -> String in String(format: "%8.2f", ms) }

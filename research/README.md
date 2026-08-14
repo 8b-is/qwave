@@ -16,7 +16,11 @@ wider Mac-stack brief (Apple Silicon M5/Metal 4, WebGPU, Wasm 3.0/WASI,
 Swift 6.3/6.4, Zig 0.16, interop playbook), including a Qwave-verified
 correction: WebGPU in `WKWebView` is **not** on by default — it's the
 `_WKFeature` `WebGPUEnabled` plus a secure context, reachable through
-`FeatureFlagService`'s existing reflection.
+`FeatureFlagService`'s existing reflection. **CORRECTED (2026-08-14):** on
+macOS 26.4.1 / WebKit 21624 `navigator.gpu` is default-on; `WebGPUEnabled`
+still exists on the class-level `_features` surface (596 features) but is
+inert — see `01-webkit-browser-engine/webgpu-surface/` for the probe and
+the three-way wave numbers.
 
 ## Categories
 
