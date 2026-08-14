@@ -21,22 +21,22 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
-          # CI validates Swift 6 language-mode gates with Xcode 16.4's Swift
-          # 6.1 compiler; local migration diagnostics use Swift 6.3.1.
+          # CI validates Swift 6 language-mode gates with Xcode 26.3's Swift
+          # 6.2 compiler; local migration diagnostics use Swift 6.3.1.
           swift --version
-          swift --version | grep -Eq 'Apple Swift version 6\.1(\.| )' || {
-            echo "❌ Xcode 16.4 must provide a Swift 6.1 compiler"
+          swift --version | grep -Eq 'Apple Swift version 6\.2(\.| )' || {
+            echo "❌ Xcode 26.3 must provide a Swift 6.2 compiler"
             exit 1
           }
 
@@ -61,22 +61,22 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
-          # CI validates Swift 6 language-mode gates with Xcode 16.4's Swift
-          # 6.1 compiler; local migration diagnostics use Swift 6.3.1.
+          # CI validates Swift 6 language-mode gates with Xcode 26.3's Swift
+          # 6.2 compiler; local migration diagnostics use Swift 6.3.1.
           swift --version
-          swift --version | grep -Eq 'Apple Swift version 6\.1(\.| )' || {
-            echo "❌ Xcode 16.4 must provide a Swift 6.1 compiler"
+          swift --version | grep -Eq 'Apple Swift version 6\.2(\.| )' || {
+            echo "❌ Xcode 26.3 must provide a Swift 6.2 compiler"
             exit 1
           }
 
@@ -97,22 +97,22 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
-          # CI validates Swift 6 language-mode gates with Xcode 16.4's Swift
-          # 6.1 compiler; local migration diagnostics use Swift 6.3.1.
+          # CI validates Swift 6 language-mode gates with Xcode 26.3's Swift
+          # 6.2 compiler; local migration diagnostics use Swift 6.3.1.
           swift --version
-          swift --version | grep -Eq 'Apple Swift version 6\.1(\.| )' || {
-            echo "❌ Xcode 16.4 must provide a Swift 6.1 compiler"
+          swift --version | grep -Eq 'Apple Swift version 6\.2(\.| )' || {
+            echo "❌ Xcode 26.3 must provide a Swift 6.2 compiler"
             exit 1
           }
 
@@ -180,15 +180,15 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
 
@@ -210,15 +210,15 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
 
