@@ -10,6 +10,7 @@
 | [zero-allocation-text-on-the-keystroke-path.md](zero-allocation-text-on-the-keystroke-path.md) | draft | 4,370→1,011 mallocs, Substring, bounded heap | **pocoo.vaked.dev** (published) |
 | [measured-cost-of-a-swift-module-boundary.md](measured-cost-of-a-swift-module-boundary.md) | draft | @inlinable experiment, null result | — (long-form) |
 | [why-we-benchmark-allocations-not-wall-clock.md](why-we-benchmark-allocations-not-wall-clock.md) | draft | mallocCountTotal methodology, CI rationale | — (long-form) |
+| [app-intents-and-spotlight-ecosystem-integration.md](app-intents-and-spotlight-ecosystem-integration.md) | draft | App Intents + CoreSpotlight: zero-config OS integration, @MainActor bridge, Swift 6 sharp edges | — (long-form) |
 
 ## Assets
 

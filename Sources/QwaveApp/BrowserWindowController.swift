@@ -554,7 +554,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     @objc func addBookmark(_ sender: Any?) {
         guard let selected = tabManager.selectedTab, let url = selected.url else { return }
         Task { @MainActor [weak self] in
-            try? await self?.environment.bookmarks?.add(title: selected.displayTitle, url: url)
+            if let bookmark = try? await self?.environment.bookmarks?.add(title: selected.displayTitle, url: url) {
+                // Surface the new bookmark to Spotlight (Command+Space search).
+                await SpotlightIndexer.index(bookmark)
+            }
         }
     }
 
