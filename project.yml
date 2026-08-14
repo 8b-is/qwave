@@ -63,6 +63,23 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsInWebContent: true
         LSApplicationCategoryType: public.app-category.productivity
+        # Register Qwave as an http/https handler so macOS lists it as a
+        # candidate default browser (System Settings, or the in-app "Set Qwave
+        # as Default Browser" action -> NSWorkspace.setDefaultApplication).
+        # macOS needs no entitlement for this: the scheme declaration plus a
+        # runtime call is sufficient. (com.apple.developer.web-browser is an
+        # iOS-only requirement and is deliberately not used here.)
+        CFBundleURLTypes:
+          - CFBundleURLName: is.8b.qwave.web
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - http
+              - https
+        # Handoff: advertise the active tab so browsing can resume on another
+        # device. The window controller only ever hands off non-private,
+        # non-ephemeral http(s) pages — see HandoffPolicy.
+        NSUserActivityTypes:
+          - NSUserActivityTypeBrowsingWeb
         # Sparkle 2 auto-updates: appcast lives on GitHub Releases; updates are
         # EdDSA-signed in CI (see .github/workflows/release.yml and docs/SIGNING.md).
         # SUEnableAutomaticChecks is deliberately NOT set: Sparkle asks the
