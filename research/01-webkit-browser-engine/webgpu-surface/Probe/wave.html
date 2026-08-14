@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>wave three-way</title></head>
+<body style="background:#0b0c0e;color:#7fd4ff;font:12px monospace"><pre id="result">running…</pre>
+<script>
+const SHADER_F32 = `
+const ROT: mat2x2<f32> = mat2x2<f32>(0.8775825619, 0.4794255386, -0.4794255386, 0.8775825619);
+fn rand2(st: vec2<f32>) -> f32 { return fract(sin(dot(st, vec2<f32>(12.9898, 78.233))) * 43758.5453123); }
+fn noise2(st: vec2<f32>) -> f32 {
+  let i = floor(st); let f = st - i;
+  let a = rand2(i); let b = rand2(i + vec2<f32>(1.0, 0.0));
+  let c = rand2(i + vec2<f32>(0.0, 1.0)); let d = rand2(i + vec2<f32>(1.0, 1.0));
+  let u = f * f * (3.0 - 2.0 * f);
+  return a + (b - a) * u.x + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+fn fbm(st: vec2<f32>) -> f32 {
+  var v = 0.0; var a = 0.5; var s = st;
+  let shift = vec2<f32>(100.0, 100.0);
+  for (var k = 0; k < 5; k = k + 1) {
+    v = v + a * noise2(s);
+    s = ROT * s * 2.0 + shift;
+    a = a * 0.5;
+  }
+  return v;
+}
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+@group(0) @binding(1) var<uniform> res: vec2<u32>;
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let resolution = vec2<f32>(f32(res.x), f32(res.y));
+  var st = vec2<f32>(f32(gid.x), f32(gid.y)) / resolution;
+  st.x = st.x * (resolution.x / resolution.y);
+  let q = vec2<f32>(fbm(st), fbm(st + vec2<f32>(1.0, 0.0)));
+  let r = vec2<f32>(fbm(st + q + vec2<f32>(1.7, 9.2)), fbm(st + q + vec2<f32>(8.3, 2.8)));
+  out[gid.y * res.x + gid.x] = fbm(st + r);
+}`;
+
+const SHADER_F16 = `
+enable f16;
+const ROT: mat2x2<f16> = mat2x2<f16>(f16(0.8775825619), f16(0.4794255386), f16(-0.4794255386), f16(0.8775825619));
+fn rand2(st: vec2<f16>) -> f16 { return fract(sin(dot(st, vec2<f16>(f16(12.9898), f16(78.233)))) * f16(43758.5453123)); }
+fn noise2(st: vec2<f16>) -> f16 {
+  let i = floor(st); let f = st - i;
+  let a = rand2(i); let b = rand2(i + vec2<f16>(f16(1), f16(0)));
+  let c = rand2(i + vec2<f16>(f16(0), f16(1))); let d = rand2(i + vec2<f16>(f16(1), f16(1)));
+  let u = f * f * (f16(3) - f16(2) * f);
+  return a + (b - a) * u.x + (c - a) * u.y * (f16(1) - u.x) + (d - b) * u.x * u.y;
+}
+fn fbm(st: vec2<f16>) -> f16 {
+  var v = f16(0); var a = f16(0.5); var s = st;
+  let shift = vec2<f16>(f16(100), f16(100));
+  for (var k = 0; k < 5; k = k + 1) {
+    v = v + a * noise2(s);
+    s = ROT * s * f16(2) + shift;
+    a = a * f16(0.5);
+  }
+  return v;
+}
+@group(0) @binding(0) var<storage, read_write> out: array<f16>;
+@group(0) @binding(1) var<uniform> res: vec2<u32>;
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let resolution = vec2<f16>(f16(res.x), f16(res.y));
+  var st = vec2<f16>(f16(gid.x), f16(gid.y)) / resolution;
+  st.x = st.x * (resolution.x / resolution.y);
+  let q = vec2<f16>(fbm(st), fbm(st + vec2<f16>(f16(1), f16(0))));
+  let r = vec2<f16>(fbm(st + q + vec2<f16>(f16(1.7), f16(9.2))), fbm(st + q + vec2<f16>(f16(8.3), f16(2.8))));
+  out[gid.y * res.x + gid.x] = fbm(st + r);
+}`;
+
+(async () => {
+  const mode = new URLSearchParams(location.search).get("mode") || "f32";
+  const W = 1512, H = 982, PX = W * H;
+  const out = { mode, resolution: W + "x" + H };
+  let minDelta = Infinity;
+  let last = performance.now();
+  for (let i = 0; i < 200000; i++) {
+    const t = performance.now(); const d = t - last;
+    if (d > 0 && d < minDelta) minDelta = d;
+    last = t;
+  }
+  out.timerResolutionMs = minDelta;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    const f16 = mode === "f16";
+    const device = await adapter.requestDevice({ requiredFeatures: f16 ? ["shader-f16"] : [] });
+    const module = device.createShaderModule({ code: f16 ? SHADER_F16 : SHADER_F32 });
+    const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
+    const elemSize = f16 ? 2 : 4;
+    const storage = device.createBuffer({ size: PX * elemSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readback = device.createBuffer({ size: PX * elemSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const resBuf = device.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(resBuf, 0, new Uint32Array([W, H]));
+    const bg = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: storage } },
+      { binding: 1, resource: { buffer: resBuf } },
+    ]});
+    function frame() {
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      pass.setPipeline(pipeline); pass.setBindGroup(0, bg);
+      pass.dispatchWorkgroups(Math.ceil(W / 16), Math.ceil(H / 16));
+      pass.end();
+      enc.copyBufferToBuffer(storage, 0, readback, 0, PX * elemSize);
+      device.queue.submit([enc.finish()]);
+    }
+    frame(); await device.queue.onSubmittedWorkDone();
+    let o0 = performance.now();
+    for (let i = 0; i < 10; i++) {
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, bg);
+      pass.dispatchWorkgroups(1, 1); pass.end();
+      device.queue.submit([enc.finish()]);
+    }
+    await device.queue.onSubmittedWorkDone();
+    out.emptyDispatchMs = (performance.now() - o0) / 10;
+    const windows = [];
+    for (let w = 0; w < 5; w++) {
+      const t0 = performance.now();
+      for (let i = 0; i < 10; i++) frame();
+      await device.queue.onSubmittedWorkDone();
+      windows.push((performance.now() - t0) / 10);
+    }
+    windows.sort((a, b) => a - b);
+    out.samplesMs = windows;
+    out.medianMs = windows[2];
+    await readback.mapAsync(GPUMapMode.READ);
+    let sum = 0;
+    if (f16) {
+      const arr = new Float16Array(readback.getMappedRange());
+      for (let i = 0; i < arr.length; i++) sum += arr[i];
+    } else {
+      const arr = new Float32Array(readback.getMappedRange());
+      for (let i = 0; i < arr.length; i++) sum += arr[i];
+    }
+    out.checksumSum = sum;
+    readback.unmap();
+  } catch (e) { out.error = String(e).slice(0, 300); }
+  const json = JSON.stringify(out, null, 1);
+  document.getElementById("result").textContent = json;
+  try { window.webkit.messageHandlers.probe.postMessage(json); } catch (e) {}
+})();
+</script></body></html>

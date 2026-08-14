@@ -1,0 +1,11 @@
+{
+  "_stamps" : {
+    "date" : "2026-08-14T15:24:54Z",
+    "macOS" : "Version 26.4.1 (Build 25E253)",
+    "swift" : "Swift 6.3 (Xcode 26.4.1)",
+    "webkit" : "21624"
+  },
+  "_workload" : "Lost in the Math fbm, 1512x982, 5 fbm calls\/px, baked rotation",
+  "webgpu-f16" : "{\n \"mode\": \"f16\",\n \"resolution\": \"1512x982\",\n \"timerResolutionMs\": 0.9999999999999982,\n \"emptyDispatchMs\": 0.1,\n \"samplesMs\": [\n  1.8,\n  1.9,\n  1.9,\n  2,\n  2.7\n ],\n \"medianMs\": 1.9,\n \"checksumSum\": null\n}",
+  "webgpu-f32" : "{\n \"mode\": \"f32\",\n \"resolution\": \"1512x982\",\n \"timerResolutionMs\": 0.9999999999999964,\n \"emptyDispatchMs\": 0.2000000000000007,\n \"samplesMs\": [\n  1.9,\n  1.9,\n  2,\n  2,\n  2.3999999999999995\n ],\n \"medianMs\": 2,\n \"checksumSum\": 891443.6031230688\n}"
+}

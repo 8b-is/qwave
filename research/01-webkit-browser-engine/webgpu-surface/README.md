@@ -24,12 +24,21 @@ this matrix is misinformation in six weeks.
    BC/ASTC/ETC2 texture compression (+ sliced 3D), `rg11b10ufloat-renderable`,
    `core-features-and-limits`. **No subgroups**, no dual-source-blending,
    no multi-draw-indirect.
-3. **The `_features` SPI returns an empty list on this WebKit.** The flag
-   experiment is moot: there are no WebGPU-adjacent flags to toggle, so the
-   flag × feature matrix is empty. `FeatureFlagService`'s `responds(to:)`
-   guard degrades gracefully ("no features available"). Isolation assert:
-   `qwave.featureFlagOverrides` UserDefaults byte-identical before/after
-   (True).
+3. **The `_features` SPI is alive — at the CLASS level (CORRECTED).** The
+   first probe checked `WKPreferences` instance-level `responds(to:)` and
+   reported an "empty list". That was the probe's own instance-vs-class
+   artifact: on WebKit 21624, `_features` responds on `WKPreferences.self`
+   (596 features; `_experimentalFeatures` 220, `_internalDebugFeatures`
+   142, all with parseable keys) while an instance does not. The app's
+   `FeatureFlagService` checks class-first and works. The probe now mirrors
+   the app's class-first merged enumeration (see #40 for the tri-state
+   hardening this surfaced).
+4. **Flag experiment (redo, class-level): 11 WebGPU-related flags exist —
+   and `WebGPUEnabled` is inert.** Toggling `WebGPUEnabled` OFF in a fresh
+   ephemeral view leaves `navigator.gpu === true`; HDR/WebXR flags likewise
+   change nothing. The flag is on the surface but no longer gates WebGPU —
+   default-on regardless. Isolation assert: `qwave.featureFlagOverrides`
+   byte-identical before/after (True).
 4. **Compute runs.** Minimal WGSL compute dispatch (1M×32-bit adds, 10
    dispatches): **OK, 10.5M invocations in 13 ms** inside the web view.
 
@@ -48,6 +57,27 @@ this matrix is misinformation in six weeks.
   Apple Events" is off. Manual step: same page in Safari, copy the `<pre>`.
 - Anti-hype: this matrix measures which optional features each engine
   EXPOSES. Nothing here is a speed claim.
+
+## Three-way wave benchmark (P2) — WebGPU leg measured
+
+The parked recipe is executed for the WebGPU leg; workload identical to
+`wave-fbm-benchmark` (1512×982, 5 fbm calls/px, baked rotation constants).
+Timing protocol mirrors the Metal leg: 1 warmup, 5 windows × 10 frames
+bracketing `onSubmittedWorkDone`, empty-dispatch overhead subtracted;
+timer resolution reported (WebKit coarsens `performance.now()` to ~1 ms —
+quantization is material, so frames are batched per window).
+
+| Leg | ms/frame | notes |
+|---|---|---|
+| CPU (scalar Swift, 1 core) | 757.72 (quiet-machine canonical; 200–757 across today's noisy samples) | checksum 732,590 — different sin library, ~18% loose |
+| Metal compute (M1 Pro) | 1.85 (kernel ~1.6; 1.8–4.0 across noisy samples) | checksum 877,955 |
+| **WebGPU-in-WKWebView (f32)** | **1.9–2.2** | **checksum 891,444 — 1.5% vs Metal (same-sin path)** |
+| WebGPU-in-WKWebView (f16 variant) | 1.9–2.2 | labeled variant — f16 buys nothing on this kernel; checksum readback parked (Float16Array harness detail) |
+
+Headline: **Qwave's embedded engine runs the wave at ~Metal kernel speed**
+(WebGPU adds ~0.3 ms over the raw Metal leg — both land on the same GPU).
+Machine was under varying load during several samples; conditions are
+stamped per run in the committed JSON.
 
 ## P2 decision — three-way wave benchmark: parked, capability proven
 

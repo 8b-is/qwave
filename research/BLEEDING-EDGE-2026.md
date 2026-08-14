@@ -17,13 +17,18 @@
 > WebGPU there; any test asserting it must stay local-only or
 > availability-guarded.)
 >
-> **RESOLVED (2026-08-14):** `research/01-webkit-browser-engine/webgpu-surface/`
-> re-probed this on macOS 26.4.1 / WebKit 21624: `navigator.gpu` is now
-> **default-on** in a plain WKWebView, 18-19 adapter features all granted
-> individually (incl. `shader-f16`, `timestamp-query`; no subgroups), WGSL
-> compute dispatches OK (13 ms / 10.5M invocations), and the `_features`
-> SPI returns an empty list — the `WebGPUEnabled` flag era is over on this
-> build. The flag-gated statement above is stale; the probe is the citation.
+> **RESOLVED (2026-08-14, CORRECTED):**
+> `research/01-webkit-browser-engine/webgpu-surface/` re-probed this on
+> macOS 26.4.1 / WebKit 21624: `navigator.gpu` is **default-on** in a plain
+> WKWebView, 18-19 adapter features all granted individually (incl.
+> `shader-f16`, `timestamp-query`; no subgroups), and WGSL compute
+> dispatches OK. The `_features` SPI is **alive at the CLASS level** (596
+> features on `WKPreferences.self`; instance responds-to is false — an
+> earlier probe's "empty list" was its own instance-level artifact).
+> `WebGPUEnabled` still exists on the surface but is **inert**: disabling
+> it leaves `navigator.gpu === true`. The three-way wave benchmark (CPU /
+> Metal / WebGPU-in-Qwave) ran at 757.72 ms / 1.85 ms / ~2 ms per frame.
+> The flag-gated statement above is stale; the probe is the citation.
 
 ---
 
