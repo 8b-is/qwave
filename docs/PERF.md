@@ -75,16 +75,30 @@ Run Speedometer under Instruments' Time Profiler + Points of Interest, and **fix
 only what the trace convicts** — the ledger below is informed prediction until a
 trace confirms it.
 
-## Suspect ledger (from the investigation fan-out)
+## Suspect ledger (the Instruments checklist)
 
-| # | Suspect | Verdict | Fix (feature-preserving) |
-|---|---|---|---|
-| 1 | Chrome re-render on every KVO tick (`estimatedProgress` drives no visible chrome, yet rebuilds the whole tab-model array each tick) | **confirmed** | coalesce refresh to one per runloop turn (dirty-flag + `DispatchQueue.main.async`); the per-item `TabBarView` diff is deferred (drag-reorder index-capture hazard) |
-| 2 | 30 s energy tick on the main queue awaiting `requestMediaPlaybackState` per tab | **confirmed** | yield the tick while the frontmost tab was active/loading recently; never hibernate while the key tab `isLoading`; skip the media probe for non-hibernatable tabs. **Guardrail: "ticks resume when idle" test** |
-| 3 | `ShieldsDirector.applyLists` does `removeAllContentRuleLists()` + re-add on every main-frame nav | **confirmed** | cache the attached list set by `WKContentRuleList` **object identity** (never by policy bools — that caches "ads on" before the list exists) and no-op when identical |
-| 4 | Synchronous SQLite history write on the main actor in `didFinish` | **acquitted** | already fixed — `recordVisit` is `async`, `HistoryStore`/`SQLiteDatabase` are actors; no main-thread write remains |
-| 5 | Per-tab `WKWebViewConfiguration` / cold process pool | **partly** | a shared `warmPool` already exists, but `setWarmProcessCount(1)` only fires ~30 s post-launch — warm it **before** the first window; prewarm a hidden `about:blank` view at idle (gated to `.normal`, torn down under conserve/critical). WKProcessPool is legacy on macOS 14+ — cite current WebKit before relying on pooling |
-| 6 | Rule-list compile + VPN refresh block first-tab creation at launch | **partly** | open the first window immediately; warm shields + VPN concurrently. Guard the shields-bypass risk for a network homepage |
+One row per suspect (a couple split where the fix has a shipped half and a
+deferred half). **State**: `confirmed` (evidence, not yet fixed) · `fixed —
+awaiting measurement` (code merged/open, trace confirms benefit) · `acquitted`
+(no fix needed) · `deferred` (held; reason given). The **signpost** column is
+what to watch in one Instruments Points-of-Interest run — the intervals stay in
+the code after each fix so a single capture settles the whole ledger.
+
+| # | Suspect | State | PR / issue | Signpost |
+|---|---|---|---|---|
+| 1 | Chrome re-render on every KVO tick (`estimatedProgress` drives no visible chrome) — coalesce to one refresh per runloop turn | fixed — awaiting measurement | [#17](https://github.com/8b-is/qwave/pull/17) | `chrome-refresh` |
+| 1b | Per-item `TabBarView` diff (avoid full teardown on title/isLoading) | **deferred** — drag-reorder index-capture hazard | — | `chrome-refresh` |
+| 2 | 30 s energy tick: main-queue media IPC per tab + snapshot mid-load — yield to foreground, `isLoading` gate, skip selected-tab probe | fixed — awaiting measurement | [#15](https://github.com/8b-is/qwave/pull/15) (merged) | `energy-tick` |
+| 3 | `ShieldsDirector.applyLists` redundant `removeAll` + re-add every nav — identity-keyed cache | fixed — awaiting measurement | [#16](https://github.com/8b-is/qwave/pull/16) (merged) | `applyLists` |
+| 4 | Synchronous SQLite history write on the main actor | **acquitted** — already `async` over actors; no main-thread write | — | (uninstrumented) |
+| 5 | Warm process pool warmed ~30 s late (first energy tick) — apply launch policy before the first window | fixed — awaiting measurement | [#18](https://github.com/8b-is/qwave/pull/18) | `makeWebView` |
+| 5b | Prewarm hidden `about:blank`; whether `WKProcessPool` still helps on macOS 14+ | **deferred** — needs on-Mac verification of current WebKit | — | `makeWebView` |
+| 6 | Launch serialized behind `shields.prepare()` + `vpn.refresh()` | **deferred** — privacy review (shields-bypass on network homepage) | [issue #19](https://github.com/8b-is/qwave/issues/19) | `makeWebView` |
+
+**When the traces come back:** an `acquitted`/`fixed` row that the trace confirms
+closes its deferred sibling work (or promotes it if convicted); a newly convicted
+finding becomes the next PR; before/after median Scores from `scripts/benchmark.sh`
+land here — and only then does any Score claim exist anywhere in the repo.
 
 ## Definition of Done (per the kickoff)
 
