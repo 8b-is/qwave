@@ -140,9 +140,39 @@ public enum WaveScene {
             gl.uniform1f(uTimeLocation, seconds);
             gl.uniform2f(uResolutionLocation, canvas.width, canvas.height);
             gl.drawArrays(gl.TRIANGLES, 0, 6);
-            if (!reduce) requestAnimationFrame(render);
           }
-          requestAnimationFrame(render);
+
+          // GPU demand control. The shader runs in WebKit's GPU process
+          // (Metal-backed on Apple Silicon), one instance per tab, full
+          // window. 30 fps is imperceptible for this slow FBM drift but
+          // halves GPU work on 60 Hz displays and quarters it on ProMotion;
+          // pausing on visibilitychange covers occluded windows.
+          const FPS_CAP_MS = 1000 / 30;
+          let lastRender = -1000;
+          let rafId = 0;
+
+          function frame(time) {
+            if (time - lastRender >= FPS_CAP_MS) {
+              lastRender = time;
+              render(time);
+            }
+            rafId = requestAnimationFrame(frame);
+          }
+
+          function onVisibility() {
+            if (document.hidden) {
+              cancelAnimationFrame(rafId);
+            } else if (!reduce) {
+              rafId = requestAnimationFrame(frame);
+            }
+          }
+          document.addEventListener("visibilitychange", onVisibility);
+
+          if (reduce) {
+            render(8000);
+          } else if (!document.hidden) {
+            rafId = requestAnimationFrame(frame);
+          }
         })();
         """
 

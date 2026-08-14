@@ -143,3 +143,4 @@ Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint w
 | WireGuardKit | Vendored dependency. Pinned at `2fec12a6e1f6`. |
 | Module collapse | The 6-way split is deliberate: build times, testability, `QwaveTunnelKit` boundary. |
 | FTS5 for history search | Would fix the `LIKE %query%` full table scan, but adds a dependency and migration complexity. Deferred. |
+| Wave background (WebGL) | Renders in WebKit's GPU process (Metal-backed on Apple Silicon); an app-side rebuild would double-composite. Demand control instead: 30 fps cap, `visibilitychange` pause, reduced-motion static frame (`WaveScene.canvasScript`). |
