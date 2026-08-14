@@ -5,7 +5,7 @@ import QwaveSupport
 import Sparkle
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private(set) var environment: BrowserEnvironment!
     private var windowControllers: [BrowserWindowController] = []
     private var settingsWindowController: SettingsWindowController?
@@ -168,6 +168,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         libraryWindowController?.showWindow(sender)
+    }
+
+    // MARK: - Default browser
+
+    /// True when Qwave is the current http handler — the scheme macOS keys the
+    /// default-browser designation on (https resolves to the same app).
+    static func isDefaultBrowser() -> Bool {
+        guard let probe = URL(string: "http://example.com"),
+            let handler = NSWorkspace.shared.urlForApplication(toOpen: probe),
+            let bundle = Bundle(url: handler)
+        else { return false }
+        return bundle.bundleIdentifier == Bundle.main.bundleIdentifier
+    }
+
+    /// Asks macOS to make Qwave the default browser. The system presents its own
+    /// confirmation before switching — this only requests it. No entitlement is
+    /// required on macOS; the http/https CFBundleURLTypes declaration
+    /// (project.yml) is what makes Qwave an eligible handler.
+    @objc func makeDefaultBrowser(_ sender: Any?) {
+        let appURL = Bundle.main.bundleURL
+        Task {
+            do {
+                // macOS keys the default-browser role on the http scheme; set
+                // https too so scheme-typed links also resolve to Qwave. Setting
+                // is per-scheme, so if the user declines the first consent
+                // prompt, stop rather than immediately prompting again.
+                try await NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: "http")
+                try await NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: "https")
+            } catch {
+                QwaveLog.browser.error("Failed to set Qwave as default browser: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(makeDefaultBrowser(_:)) {
+            let isDefault = Self.isDefaultBrowser()
+            menuItem.title = isDefault ? "Qwave Is the Default Browser" : "Set Qwave as Default Browser…"
+            return !isDefault
+        }
+        return true
     }
 
     // MARK: - Termination

@@ -46,6 +46,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var memoryBusy = false
     private var memoryAskDraft = ""
     private var lastAutoRemember: [UUID: (url: URL, at: Date)] = [:]
+    /// Continuity/Handoff advertisement for the active tab. Only ever set for
+    /// non-private, non-ephemeral http(s) pages (see HandoffPolicy); invalidated
+    /// otherwise and on window close.
+    private var browsingActivity: NSUserActivity?
 
     // MARK: - Init
 
@@ -355,6 +359,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         let webView = selected.webView
 
         window?.title = isPrivate ? "🕶 Private — \(selected.displayTitle)" : selected.displayTitle
+        updateHandoff(url: selected.url, isEphemeralTab: selected.isEphemeral)
         backButton?.isEnabled = webView?.canGoBack ?? false
         forwardButton?.isEnabled = webView?.canGoForward ?? false
 
@@ -1028,9 +1033,55 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Handoff
+
+    /// Keeps `browsingActivity` in step with the active tab. Suppressed contexts
+    /// (private window, ephemeral tab, non-web URL) invalidate the activity so
+    /// nothing private is ever advertised. `becomeCurrent()` is gated on key
+    /// window so a background window finishing a load cannot steal Continuity
+    /// from the window the user is actually looking at.
+    private func updateHandoff(url: URL?, isEphemeralTab: Bool) {
+        guard
+            let handoffURL = HandoffPolicy.webpageURL(
+                url: url, isPrivateWindow: isPrivate, isEphemeralTab: isEphemeralTab)
+        else {
+            browsingActivity?.invalidate()
+            browsingActivity = nil
+            return
+        }
+        let activity =
+            browsingActivity
+            ?? {
+                let created = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+                created.isEligibleForHandoff = true
+                browsingActivity = created
+                return created
+            }()
+        if activity.webpageURL != handoffURL {
+            activity.webpageURL = handoffURL
+        }
+        if window?.isKeyWindow == true {
+            activity.becomeCurrent()
+        }
+    }
+
     // MARK: - NSWindowDelegate
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        // Reclaim the app's current activity for the now-focused window.
+        browsingActivity?.becomeCurrent()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        // Stop advertising this window's page the moment focus leaves it, so
+        // Continuity never keeps offering a superseded window's page after the
+        // user moves to another window (which may have nothing to hand off).
+        browsingActivity?.resignCurrent()
+    }
+
     func windowWillClose(_ notification: Notification) {
+        browsingActivity?.invalidate()
+        browsingActivity = nil
         for tab in tabManager.tabs {
             teardown(tab: tab)
         }

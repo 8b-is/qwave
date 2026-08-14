@@ -25,6 +25,11 @@ enum MainMenu {
         checkForUpdates.target = updater
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+        // Title + enabled state are set in AppDelegate.validateMenuItem based on
+        // whether Qwave is already the default browser.
+        appMenu.addItem(
+            withTitle: "Set Qwave as Default Browser…",
+            action: #selector(AppDelegate.makeDefaultBrowser(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         let servicesItem = appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
         servicesItem.submenu = NSMenu()
