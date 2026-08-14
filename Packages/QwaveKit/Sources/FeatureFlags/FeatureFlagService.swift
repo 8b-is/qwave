@@ -3,6 +3,21 @@ import WebKit
 import Combine
 import QwaveSupport
 
+/// The state of WebKit's feature-toggle surface on this build.
+///
+/// Three states, deliberately: "selector absent", "selector present but
+/// zero features", and "features available". Conflating the first two made
+/// an empty surface masquerade as a missing SPI — the pane told a lie and
+/// persisted overrides silently stopped applying.
+public enum FeatureSurfaceState: Equatable, Sendable {
+    /// No SPI selector responds (class or instance) — surface truly absent.
+    case unavailable
+    /// Selectors respond but expose zero parseable features.
+    case emptySurface
+    /// Selectors respond and expose features.
+    case available([WebFeature])
+}
+
 /// Surfaces WebKit's experimental/preview feature toggles — the same set
 /// Safari Technology Preview exposes — via the `_WKFeature` SPI on
 /// `WKPreferences`, discovered at runtime through the ObjC runtime.
@@ -14,7 +29,13 @@ import QwaveSupport
 @MainActor
 public final class FeatureFlagService: ObservableObject {
     @Published public private(set) var features: [WebFeature] = []
-    public private(set) var isSPIAvailable = false
+    public private(set) var surfaceState: FeatureSurfaceState = .unavailable
+
+    /// True when the surface is present AND exposes features.
+    public var isSPIAvailable: Bool {
+        if case .available = surfaceState { return true }
+        return false
+    }
 
     private let defaults: UserDefaults
     private let safety: FeatureFlagSafety
@@ -26,7 +47,6 @@ public final class FeatureFlagService: ObservableObject {
 
     static let overridesKey = "qwave.featureFlagOverrides"
 
-    private static let featuresSelector = NSSelectorFromString("_features")
     private static let setEnabledSelector = NSSelectorFromString("_setEnabled:forFeature:")
     private static let isEnabledSelector = NSSelectorFromString("_isEnabledForFeature:")
 
@@ -39,13 +59,22 @@ public final class FeatureFlagService: ObservableObject {
 
     // MARK: - Discovery
 
-    public func loadFeatures() {
-        guard let rawFeatures = Self.copyRawFeatures(), !rawFeatures.isEmpty else {
-            isSPIAvailable = false
-            features = []
-            return
-        }
+    /// Pure tri-state derivation, unit-testable without WebKit.
+    static func surfaceState(found: Bool, parsed: [WebFeature]) -> FeatureSurfaceState {
+        if !found { return .unavailable }
+        if parsed.isEmpty { return .emptySurface }
+        return .available(parsed)
+    }
 
+    /// The WebKit framework version, for messages that need to say which
+    /// build the surface was read from.
+    public static var webKitVersionString: String? {
+        Bundle(path: "/System/Library/Frameworks/WebKit.framework")?
+            .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    }
+
+    public func loadFeatures() {
+        let (found, rawFeatures) = Self.rawFeatures()
         let probe = WKPreferences()
         let parsed = rawFeatures.compactMap { raw -> WebFeature? in
             guard
@@ -72,27 +101,61 @@ public final class FeatureFlagService: ObservableObject {
         }
         .sorted { ($0.name.lowercased(), $0.key) < ($1.name.lowercased(), $1.key) }
 
-        isSPIAvailable = !parsed.isEmpty
+        surfaceState = Self.surfaceState(found: found, parsed: parsed)
         features = parsed
-        QwaveLog.features.info("Discovered \(self.features.count) WebKit features via SPI")
+        switch surfaceState {
+        case .unavailable:
+            QwaveLog.features.info("WebKit feature SPI unavailable on this build")
+        case .emptySurface:
+            QwaveLog.features.info("WebKit feature SPI present but exposed zero features")
+        case .available:
+            QwaveLog.features.info("Discovered \(parsed.count) WebKit features via SPI")
+        }
     }
 
-    /// Raw `_WKFeature` objects, or nil when the SPI is unavailable.
-    private static func copyRawFeatures() -> [NSObject]? {
-        let cls: AnyObject = WKPreferences.self
-        if cls.responds(to: featuresSelector),
-            let result = cls.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject]
-        {
-            return result
-        }
+    /// Raw `_WKFeature` objects merged across every guarded selector, plus
+    /// whether ANY selector responded. The distinction matters: `found ==
+    /// false` means the surface is absent; `found == true` with an empty list
+    /// is the `.emptySurface` state. Class-level first, then instance — the
+    /// SPI lives at the class level on recent WebKit builds (WebKit 21624:
+    /// `_features` responds on `WKPreferences.self` but not on an instance).
+    private static func rawFeatures() -> (found: Bool, features: [NSObject]) {
+        var found = false
+        var seenKeys = Set<String>()
+        var merged: [NSObject] = []
         let instance = WKPreferences()
-        if instance.responds(to: featuresSelector),
-            let result = instance.perform(featuresSelector)?.takeUnretainedValue() as? [NSObject]
-        {
-            return result
+        for selectorName in legacyFeatureSelectors {
+            let selector = NSSelectorFromString(selectorName)
+            let source: [NSObject]?
+            if WKPreferences.self.responds(to: selector),
+                let result = (WKPreferences.self as AnyObject).perform(selector)?.takeUnretainedValue()
+                    as? [NSObject]
+            {
+                source = result
+            } else if instance.responds(to: selector),
+                let result = instance.perform(selector)?.takeUnretainedValue() as? [NSObject]
+            {
+                source = result
+            } else {
+                source = nil
+            }
+            guard let source else { continue }
+            found = true
+            for raw in source {
+                let key = Self.string(from: raw, key: "key") ?? Self.string(from: raw, key: "keyName") ?? ""
+                if !key.isEmpty {
+                    if seenKeys.insert(key).inserted { merged.append(raw) }
+                } else {
+                    merged.append(raw)  // unkeyed objects are filtered downstream
+                }
+            }
         }
-        return nil
+        return (found, merged)
     }
+
+    private static let legacyFeatureSelectors = [
+        "_features", "_experimentalFeatures", "_internalDebugFeatures",
+    ]
 
     // MARK: - Toggling
 
@@ -118,7 +181,8 @@ public final class FeatureFlagService: ObservableObject {
     /// `WebViewFactory` for every new configuration.
     public func apply(to preferences: WKPreferences) {
         guard isSPIAvailable, !overrides.isEmpty else { return }
-        guard let rawFeatures = Self.copyRawFeatures() else { return }
+        let (_, rawFeatures) = Self.rawFeatures()
+        guard !rawFeatures.isEmpty else { return }
         guard preferences.responds(to: Self.setEnabledSelector) else { return }
 
         typealias SetEnabledIMP = @convention(c) (NSObject, Selector, ObjCBool, NSObject) -> Void
