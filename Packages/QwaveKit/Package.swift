@@ -107,6 +107,9 @@ let package = Package(
                 "Shields",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
             ],
+            resources: [
+                .process("__Snapshots__")
+            ],
             swiftSettings: swift6
         ),
         .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: swift6),

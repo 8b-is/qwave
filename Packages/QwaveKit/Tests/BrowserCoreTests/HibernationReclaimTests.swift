@@ -30,7 +30,10 @@ final class HibernationReclaimTests: XCTestCase {
             for pid in pids.prefix(count) where pid > 0 {
                 nameBuffer[0] = 0
                 _ = proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))
-                if String(cString: nameBuffer) == "com.apple.WebKit.WebContent" {
+                let processName = nameBuffer.withUnsafeBufferPointer { ptr in
+                    ptr.baseAddress.map { String(cString: $0) } ?? ""
+                }
+                if processName == "com.apple.WebKit.WebContent" {
                     result.insert(pid)
                 }
             }
