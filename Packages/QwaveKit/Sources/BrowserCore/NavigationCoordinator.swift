@@ -174,13 +174,23 @@ extension NavigationCoordinator: WKNavigationDelegate {
             }
         }
 
-        // Reconcile rule lists for the destination site before content loads.
-        if isMainFrame {
-            shields.applyLists(to: webView.configuration.userContentController, forHost: host)
+        preferences.allowsContentJavaScript = policy.jsEnabled
+
+        // Subframes don't reconcile shields (the config-wide lists are already
+        // attached to the web view) — allow immediately.
+        guard isMainFrame else {
+            decisionHandler(.allow, preferences)
+            return
         }
 
-        preferences.allowsContentJavaScript = policy.jsEnabled
-        decisionHandler(.allow, preferences)
+        // Reconcile rule lists for the destination site, THEN allow the load.
+        // On a cold launch this waits for the first rule-list compile, so a
+        // network page never loads with shields on but no lists attached — the
+        // launch-gate guarantee. Steady state (already prepared) is synchronous.
+        let controller = webView.configuration.userContentController
+        shields.applyListsThen(to: controller, forHost: host) {
+            decisionHandler(.allow, preferences)
+        }
     }
 
     public func webView(
