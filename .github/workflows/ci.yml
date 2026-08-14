@@ -298,3 +298,28 @@ jobs:
 
       - name: Run unit tests (non-blocking)
         run: swift test -c release --package-path Packages/QwaveKit
+
+  # ---------------------------------------------------------------------------
+  # Speedometer anchor + parser check (NON-BLOCKING). A GUI browser benchmark
+  # cannot run headlessly on a CI runner — the authoritative Score numbers come
+  # from the on-Mac scripts/benchmark.sh runs recorded in each perf PR. This job
+  # only guards the committed baseline + parser from drift, and prints the
+  # baseline summary. continue-on-error so it can never gate a merge; keep it
+  # out of branch-protection required checks. See docs/PERF.md.
+  # ---------------------------------------------------------------------------
+  perf-anchor:
+    name: Speedometer anchor + parser (non-blocking)
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Ensure node
+        run: command -v node >/dev/null 2>&1 || brew install node
+
+      - name: Validate parser against committed baseline
+        run: node Benchmarks/Speedometer/parse.test.mjs
+
+      - name: Print baseline summary
+        run: node Benchmarks/Speedometer/parse.mjs Benchmarks/Speedometer/baseline.json --baseline Benchmarks/Speedometer/baseline.json

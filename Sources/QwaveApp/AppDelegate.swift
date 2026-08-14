@@ -193,6 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func energyTick() async {
+        // P0 instrumentation: the whole tick runs on the main actor, so an
+        // Instruments Points-of-Interest capture during Speedometer shows
+        // exactly when (and for how long) it stalls the foreground. See docs/PERF.md.
+        let signpostID = QwaveSignposts.energy.makeSignpostID()
+        let interval = QwaveSignposts.energy.beginInterval("energy-tick", id: signpostID)
+        defer { QwaveSignposts.energy.endInterval("energy-tick", interval) }
+
         let policy = EnergyGovernor.policy(
             for: currentConditions(),
             baseHibernationTimeout: environment.settings.hibernationTimeout

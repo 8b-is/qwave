@@ -2,6 +2,7 @@ import WebKit
 import Shields
 import FeatureFlags
 import Persistence
+import QwaveSupport
 
 /// The convergence point: everything that shapes a page's environment —
 /// container isolation, shields, feature flags, energy settings — flows into
@@ -41,6 +42,13 @@ public final class WebViewFactory {
     }
 
     public func makeWebView(for tab: Tab) -> WKWebView {
+        // P0 instrumentation: the interval spans configuration build + rule-list
+        // attach + WebContent process spin-up. At iteration 0 the warm pool is
+        // cold, so this interval is where the +57% cold-start gap lands. See docs/PERF.md.
+        let signpostID = QwaveSignposts.coldstart.makeSignpostID()
+        let interval = QwaveSignposts.coldstart.beginInterval("makeWebView", id: signpostID)
+        defer { QwaveSignposts.coldstart.endInterval("makeWebView", interval) }
+
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = containers.dataStore(for: tab.containerID)
         if let warmPool {
