@@ -75,6 +75,12 @@ targets:
             CFBundleURLSchemes:
               - http
               - https
+          # qwave:// — deep links (open "qwave://example.com") and
+          # automation; see Sources/QwaveApp/QwaveURL.swift.
+          - CFBundleURLName: is.8b.qwave
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - qwave
         # Handoff: advertise the active tab so browsing can resume on another
         # device. The window controller only ever hands off non-private,
         # non-ephemeral http(s) pages — see HandoffPolicy.
