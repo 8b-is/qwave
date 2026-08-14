@@ -25,6 +25,17 @@ let package = Package(
             plugins: [
                 .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
             ]
+        ),
+        .executableTarget(
+            name: "QwaveAllocationBenchmarks",
+            dependencies: [
+                .product(name: "Benchmark", package: "package-benchmark"),
+                .product(name: "QwaveKit", package: "QwaveKit"),
+            ],
+            path: "Benchmarks/QwaveAllocationBenchmarks",
+            plugins: [
+                .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
+            ]
         )
     ]
 )
