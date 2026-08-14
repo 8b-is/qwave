@@ -396,11 +396,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         hibernator: TabHibernator
     ) async {
         environment.factory.setWarmProcessCount(policy.warmProcessCount)
+        let selectedIsLoading = tabManager.selectedTab?.isLoading ?? false
         var infos: [TabHibernationInfo] = []
         for tab in tabManager.tabs {
             let isSelected = tab.id == tabManager.selectedTabID
             var isPlaying = false
-            if let webView = tab.webView {
+            // Skip the media-playback IPC for the selected tab: its result is
+            // discarded on both consumers (applyMediaPolicy guards !isSelected;
+            // tabsToHibernate exempts the selected tab), so probing it is pure
+            // per-tick main-thread round-trip waste. Non-selected tabs still get
+            // the probe so their background-media policy is applied.
+            if let webView = tab.webView, !isSelected {
                 isPlaying = await mediaPlaybackState(of: webView) == .playing
                 if !isPlaying {
                     hibernator.applyMediaPolicy(policy, to: tab, isSelected: isSelected)
@@ -413,12 +419,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                     isPinned: tab.isPinned,
                     isPlayingMedia: isPlaying,
                     isHibernatable: tab.webView != nil,
-                    lastActivated: tab.lastActivated
+                    lastActivated: tab.lastActivated,
+                    isLoading: tab.isLoading
                 )
             )
         }
 
-        let victims = hibernation.tabsToHibernate(now: Date(), tabs: infos)
+        let victims = hibernation.tabsToHibernate(
+            now: Date(), tabs: infos, foregroundIsLoading: selectedIsLoading)
         guard !victims.isEmpty else { return }
         for id in victims {
             if let tab = tabManager.tab(withID: id) {
