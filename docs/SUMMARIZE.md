@@ -84,5 +84,13 @@ for "future MLX" is architecture the platform contradicts).
 - Summarisation quality: strong at this model's scope (accurate on the
   dense-technical fixture); hallucination-resistance observed; reasoning
   ceiling **unverified** (v2 probe deferred).
-- Prewarm delta: *to be measured in P1c* — if it meaningfully cuts 12–16 s,
-  it becomes a footnote with numbers; if not, that is also a finding.
+- **Prewarm: measured, no win — hook kept because it is free.**
+  `prewarm(promptPrefix: nil)` costs ~12 ms and does not meaningfully cut
+  first-call `respond` latency: alternating fresh-process runs on
+  news-article (2 samples each, M1 Pro, macOS 26.4.1, release): control
+  **7059 / 9630 ms** vs prewarm **6396 / 9538 ms** — well inside the
+  same-day run-to-run variance (2.7–12.2 s observed for this fixture).
+  The menu-open hook stays (explicit intent, zero cost), but claims no
+  win; first-call warmth comes from the OS model service, not the app.
+  Reproducible via `--prewarm` in the foundation-models-probe
+  (`results/prewarm-2026-08-14.json`).

@@ -1,3 +1,4 @@
+import Summarize
 import AppKit
 import BrowserCore
 import Persistence
@@ -31,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         updaterController = updater
         NSApp.mainMenu = MainMenu.build(updater: updater)
+        refreshSummarizePresence()
         startMemoryPressureSource()
         startEnergyObservers()
         Task {
@@ -58,6 +60,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // bought the user nothing. See docs/NETWORK.md and docs/BLOCKLIST.md.
 
         QwaveLog.browser.info("Qwave launched")
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // modelNotReady self-heals: re-check availability on foreground so a
+        // Summarize menu/button hidden at launch can appear without relaunch.
+        refreshSummarizePresence()
+    }
+
+    /// Vanish-cleanly across all surfaces: the whole Summarize menu and every
+    /// window's toolbar button disappear unless the model is available now.
+    func refreshSummarizePresence() {
+        let available = SummarizeSession.availability() == .available
+        MainMenu.summarizeTopLevelItem?.isHidden = !available
+        for controller in windowControllers {
+            controller.refreshSummarizePresence()
+        }
     }
 
     /// Notification-driven energy reactions: thermal-state, low-power-mode
@@ -236,6 +254,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let isDefault = Self.isDefaultBrowser()
             menuItem.title = isDefault ? "Qwave Is the Default Browser" : "Set Qwave as Default Browser…"
             return !isDefault
+        }
+        if menuItem.action == #selector(BrowserWindowController.summarizeThisPage(_:)) {
+            // Vanish-cleanly: the item is hidden unless the model is actually
+            // available (re-checked fresh — modelNotReady self-heals). Energy
+            // law: hidden this moment while the tier is not .normal.
+            let available = SummarizeSession.availability() == .available
+            menuItem.isHidden = !available || !inferenceAllowedNow()
+            return !menuItem.isHidden
         }
         return true
     }

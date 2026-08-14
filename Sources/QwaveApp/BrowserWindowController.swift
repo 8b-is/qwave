@@ -1,3 +1,4 @@
+import Summarize
 import AppKit
 import WebKit
 import BrowserCore
@@ -35,6 +36,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var shieldsButton: NSButton!
     private var extensionsButton: NSButton!
     private var memoryButton: NSButton!
+    private var summarizeButton: NSButton!
 
     private var coordinators: [UUID: NavigationCoordinator] = [:]
     private var shieldsPopover: NSPopover?
@@ -45,6 +47,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var memoryPanelFootnote = "Cognitive waves stay on this Mac."
     private var memoryBusy = false
     private var memoryAskDraft = ""
+    private var summarizePopover: NSPopover?
+    private var summarizeTitle = ""
+    private var summarizeBody = ""
+    private var summarizeFootnote = "On-device · text never leaves this Mac."
+    private var summarizeBusy = false
+    private var summarizeTask: Task<Void, Never>?
     private var lastAutoRemember: [UUID: (url: URL, at: Date)] = [:]
     /// Continuity/Handoff advertisement for the active tab. Only ever set for
     /// non-private, non-ephemeral http(s) pages (see HandoffPolicy); invalidated
@@ -83,6 +91,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         wireTabBar()
         wireFindBar()
         wireSuggestions()
+        // Toolbar items materialise lazily; the summarize button may not exist
+        // yet, so refresh again once the window is on screen (vanish-cleanly).
+        DispatchQueue.main.async { [weak self] in self?.refreshSummarizePresence() }
 
         if self.tabManager.isEmpty {
             appendFreshTab(activate: true)
@@ -952,6 +963,128 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         presentMemoryPopover(relativeTo: button)
     }
 
+    // MARK: - Summarize (on-device, FoundationModels)
+
+    /// Toolbar action. Availability is re-checked fresh on every invocation:
+    /// `modelNotReady` self-heals, so a cached "unavailable" would be a lie.
+    /// Vanish-cleanly law: unavailable → nothing visible happens, no error,
+    /// no grey-out. Energy law: not `.normal` tier → quietly absent this
+    /// moment (the memory-pressure input demotes the tier before this check).
+    @objc func summarizeThisPage(_ sender: Any?) {
+        switch SummarizeSession.availability() {
+        case .available:
+            break
+        case .notReadyYet, .unavailable:
+            return
+        }
+        guard (NSApp.delegate as? AppDelegate)?.inferenceAllowedNow() == true else {
+            QwaveLog.summarize.info("summarize deferred: energy tier != normal")
+            return
+        }
+        presentSummarizePopover()
+    }
+
+    private func presentSummarizePopover() {
+        guard let button = summarizeButton else { return }
+        if let popover = summarizePopover, popover.isShown {
+            popover.close()
+            summarizePopover = nil
+            summarizeTask?.cancel()
+            summarizeTask = nil
+            return
+        }
+        summarizeTitle = tabManager.selectedTab?.displayTitle ?? ""
+        summarizeBody = ""
+        summarizeBusy = true
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: summarizePanelRoot())
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        summarizePopover = popover
+        summarizeTask = Task { await runSummarize() }
+    }
+
+    private func runSummarize() async {
+        guard let tab = tabManager.selectedTab else {
+            summarizeBusy = false
+            return
+        }
+        let webView = ensureWebView(for: tab)
+        guard
+            let json = await ArticleExtractor.extract(from: webView),
+            let text = ArticleExtractor.text(from: json)
+        else {
+            summarizeBody = "Couldn't read the page."
+            summarizeBusy = false
+            refreshSummarizePopover()
+            return
+        }
+        do {
+            let result = try await SummarizeSession.summarize(text)
+            guard !Task.isCancelled else { return }
+            summarizeTitle = tab.displayTitle
+            summarizeBody = result.text
+            summarizeFootnote =
+                result.refusalCount > 0
+                ? "On-device · retried \(result.refusalCount)× · text never leaves this Mac."
+                : "On-device · text never leaves this Mac."
+            QwaveLog.summarize.info(
+                "summarized \(text.count) chars in \(Int(result.totalMs)) ms (refusals: \(result.refusalCount))"
+            )
+        } catch let e as SummarizeError {
+            guard !Task.isCancelled else { return }
+            switch e {
+            case .generationFailed(let refusals, let detail):
+                // Refusal copy is radioactive: the real error goes to the log,
+                // the neutral string to the panel.
+                QwaveLog.summarize.warning(
+                    "\(SummarizeUI.logLine(refusalCount: refusals, detail: detail))"
+                )
+            case .unavailable, .notReadyYet:
+                QwaveLog.summarize.info("summarize unavailable: \(e)")
+            case .extractionFailed, .deferredByEnergy:
+                QwaveLog.summarize.info("summarize not run: \(e)")
+            }
+            summarizeBody = SummarizeUI.failureMessage
+        } catch {
+            guard !Task.isCancelled else { return }
+            QwaveLog.summarize.error("summarize failed: \(String(describing: error))")
+            summarizeBody = SummarizeUI.failureMessage
+        }
+        summarizeBusy = false
+        refreshSummarizePopover()
+    }
+
+    private func cancelSummarize() {
+        summarizeTask?.cancel()
+        summarizeTask = nil
+        summarizeBusy = false
+        refreshSummarizePopover()
+    }
+
+    private func summarizePanelRoot() -> SummarizePanelView {
+        SummarizePanelView(
+            title: summarizeTitle,
+            bodyText: summarizeBody,
+            footnote: summarizeFootnote,
+            isBusy: summarizeBusy,
+            onCancel: { self.cancelSummarize() }
+        )
+    }
+
+    private func refreshSummarizePopover() {
+        guard let popover = summarizePopover, popover.isShown, let button = summarizeButton else { return }
+        popover.contentViewController = NSHostingController(rootView: summarizePanelRoot())
+        _ = button
+    }
+
+    /// Vanish-cleanly for the toolbar button: hidden unless the model is
+    /// actually available. Called at window setup and on app foreground
+    /// (modelNotReady self-heals, so the check must not be cached).
+    func refreshSummarizePresence() {
+        summarizeButton?.isHidden = SummarizeSession.availability() != .available
+    }
+
     private func denialMessage(_ reason: MemoryWaveDenial) -> String {
         switch reason {
         case .notExplicit: return "Memory Wave only runs when you ask."
@@ -1171,12 +1304,13 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let omniboxItem = NSToolbarItem.Identifier("qwave.omnibox")
     private static let shieldsItem = NSToolbarItem.Identifier("qwave.shields")
     private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
+    private static let summarizeItem = NSToolbarItem.Identifier("qwave.summarize")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.memoryItem, Self.shieldsItem, Self.extensionsItem,
+            Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.extensionsItem,
         ]
     }
 
@@ -1215,6 +1349,11 @@ extension BrowserWindowController: NSToolbarDelegate {
                 symbol: "waveform", label: "Memory Wave", action: #selector(toggleMemoryWave(_:)))
             item.view = memoryButton
             item.label = "Memory Wave"
+        case Self.summarizeItem:
+            summarizeButton = makeToolbarButton(
+                symbol: "text.badge.star", label: "Summarize Page", action: #selector(summarizeThisPage(_:)))
+            item.view = summarizeButton
+            item.label = "Summarize Page"
         case Self.shieldsItem:
             shieldsButton = makeToolbarButton(
                 symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))

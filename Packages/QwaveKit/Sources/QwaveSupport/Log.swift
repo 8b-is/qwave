@@ -25,6 +25,7 @@ public enum QwaveLog {
     public static let persistence = QwaveLogger(category: "persistence")
     public static let tunnel = QwaveLogger(category: "tunnel")
     public static let memory = QwaveLogger(category: "memory")
+    public static let summarize = QwaveLogger(category: "summarize")
 }
 
 /// Signposters for Instruments — hibernate/wake cycles show up as intervals

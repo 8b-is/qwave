@@ -2,6 +2,20 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
+  on-device page summarisation via FoundationModels, behind the Summarize
+  menu (⌥⌘S) and a toolbar button. Respond-only (no streaming), retry ≤3 on
+  the model's nondeterministic refusals with a neutral failure string,
+  availability tri-state with clean vanish (including the self-healing
+  `modelNotReady` state re-checked on foreground), and an energy gate that
+  quietly defers inference while the Mac is under memory pressure or not at
+  the normal energy tier. The feature is absent on unsupported systems and
+  never makes a network request — the model, the page text, and the summary
+  never leave the Mac. See `docs/SUMMARIZE.md`.
+
 ## [1.0.0] - 2026-08-14
 
 **Production Release: Web3 & WebKit-Native Sovereign macOS Browser.**

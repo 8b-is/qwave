@@ -17,7 +17,7 @@ let package = Package(
             name: "QwaveKit",
             targets: [
                 "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
-                "URLIdentity", "MemoryWave",
+                "URLIdentity", "MemoryWave", "Summarize",
             ]
         ),
         // Slim product linked by the PacketTunnel system extension.
@@ -90,6 +90,20 @@ let package = Package(
         // MEM8 wave substrate: Cognitive/Nexus provenance, 79-byte WaveInt,
         // encrypted container-scoped store, AI-agnostic inference providers.
         .target(name: "MemoryWave", dependencies: ["QwaveSupport", "Persistence"], swiftSettings: swift6),
+        // On-device page summarisation via Apple's FoundationModels. Concrete
+        // and small on purpose: the SDK's real extension point is
+        // SystemLanguageModel.Adapter asset packaging, not a provider protocol
+        // (see research/02-on-device-ai/foundation-models-probe). The only
+        // FoundationModels touchpoint is SummarizeSession behind
+        // canImport/available; everything else is pure and testable anywhere.
+        .target(
+            name: "Summarize",
+            dependencies: ["BrowserCore", "QwaveSupport"],
+            resources: [
+                .process("Resources")
+            ],
+            swiftSettings: swift6
+        ),
 
         .testTarget(
             name: "QwaveSupportTests",
@@ -115,6 +129,7 @@ let package = Package(
             name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
             swiftSettings: swift6),
         .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: swift6),
+        .testTarget(name: "SummarizeTests", dependencies: ["Summarize", "BrowserCore"], swiftSettings: swift6),
         .testTarget(
             name: "VPNKitTests",
             dependencies: ["VPNKit"],

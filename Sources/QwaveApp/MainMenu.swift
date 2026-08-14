@@ -1,3 +1,4 @@
+import Summarize
 import AppKit
 import Sparkle
 
@@ -6,6 +7,9 @@ import Sparkle
 /// on `AppDelegate`.
 @MainActor
 enum MainMenu {
+    /// Held so the AppDelegate can hide the whole Summarize menu when the
+    /// model is unavailable (vanish-cleanly: no grey-out, no empty menu).
+    static var summarizeTopLevelItem: NSMenuItem?
     static func build(updater: SPUStandardUpdaterController) -> NSMenu {
         let main = NSMenu()
 
@@ -189,6 +193,22 @@ enum MainMenu {
             withTitle: "Hibernate Inactive Tabs Now",
             action: #selector(BrowserWindowController.hibernateInactiveTabs(_:)), keyEquivalent: "")
 
+        // Summarize (on-device FoundationModels — docs/SUMMARIZE.md)
+        let summarizeItem = NSMenuItem()
+        main.addItem(summarizeItem)
+        let summarizeMenu = NSMenu(title: "Summarize")
+        summarizeItem.submenu = summarizeMenu
+        // Vanish-cleanly needs the whole top-level menu hidden when the model
+        // is unavailable; the AppDelegate refreshes this on launch/foreground.
+        MainMenu.summarizeTopLevelItem = summarizeItem
+        // Menu open is explicit user intent: prewarm fires here, never on
+        // page load. Measured delta lives in docs/SUMMARIZE.md.
+        summarizeMenu.delegate = SummarizeMenuPrewarm.shared
+        let summarizeCmd = summarizeMenu.addItem(
+            withTitle: "Summarize Page…",
+            action: #selector(BrowserWindowController.summarizeThisPage(_:)), keyEquivalent: "s")
+        summarizeCmd.keyEquivalentModifierMask = [.command, .option]
+
         // Window
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
@@ -200,5 +220,18 @@ enum MainMenu {
         NSApp.windowsMenu = windowMenu
 
         return main
+    }
+}
+
+/// Fires `prewarm` when the Summarize menu opens — explicit user intent,
+/// never speculative on page load (docs/SUMMARIZE.md). `NSMenu.delegate` is
+/// weak, so this instance is held statically for the menu's lifetime.
+@MainActor
+final class SummarizeMenuPrewarm: NSObject, NSMenuDelegate {
+    static let shared = SummarizeMenuPrewarm()
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard SummarizeSession.availability() == .available else { return }
+        SummarizeSession.prewarm()
     }
 }
