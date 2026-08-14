@@ -2,6 +2,17 @@
 
 All notable changes to Qwave will be documented in this file.
 
+## [Unreleased]
+
+### Post-merge hygiene
+- Refreshed `Packages/QwaveKit/Package.resolved` from two stable clean resolves;
+  removed the stale Sparkle pin.
+- Verified the post-merge integrity sweep: 256 XCTest cases passed locally,
+  conflict-marker and duplicate-symbol scans were clean, and CI app, benchmark,
+  Periphery, formatting, Zig, and newer-toolchain gates passed.
+- Merged the Swift 6 modernization, concurrency, toolchain-lane, performance,
+  documentation, and benchmark-stability changes through PRs #9–#18, #20–#22.
+
 ## [0.5.0] - 2026-08-14
 
 Swift 6 language mode throughout — structural foundations completed.
