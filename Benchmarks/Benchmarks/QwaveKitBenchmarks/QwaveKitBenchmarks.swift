@@ -80,9 +80,9 @@ let benchmarks: @Sendable () -> Void = {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let database = try SQLiteDatabase(url: dir.appendingPathComponent("bench.db"))
-        let store = try HistoryStore(database: database)
+        let store = try await HistoryStore(database: database)
         for index in 0..<50_000 {
-            try store.recordVisit(
+            try await store.recordVisit(
                 url: URL(string: "https://host\(index % 1_000).example/p/\(index)")!,
                 title: "Title \(index) keyword\(index % 500)",
                 containerID: nil,
@@ -91,7 +91,7 @@ let benchmarks: @Sendable () -> Void = {
         }
         benchmark.startMeasurement()
         for _ in benchmark.scaledIterations {
-            blackHole(try store.entries(matching: "keyword42", limit: 50))
+            blackHole(try await store.entries(matching: "keyword42", limit: 50))
         }
     }
 
