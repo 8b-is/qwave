@@ -48,10 +48,13 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: OpenURLIntent(),
             phrases: [
-                // Every phrase MUST interpolate \(.applicationName) exactly
-                // once, or ExtractAppIntentsMetadata fails the build.
-                "Open \(\.$url) in \(.applicationName)",
-                "Open \(\.$url) with \(.applicationName)",
+                // Two build-time rules: every phrase interpolates
+                // \(.applicationName) exactly once, and only AppEntity/AppEnum
+                // parameters may be interpolated — so the URL parameter stays
+                // out of the phrase and Siri asks for it via
+                // requestValueDialog.
+                "Open a URL in \(.applicationName)",
+                "Open a web address in \(.applicationName)",
             ],
             shortTitle: "Open in Qwave",
             systemImageName: "globe"

@@ -180,13 +180,20 @@ struct DisconnectVPNIntent: AppIntent {
 
 /// Registers the intents in the Shortcuts app (macOS 14+). App Intents are
 /// discovered by the system automatically; no Info.plist keys are required.
+///
+/// Two utterance rules are enforced at build time by
+/// `ExtractAppIntentsMetadata`: every phrase must interpolate
+/// `\(.applicationName)` exactly once, and only `AppEntity`/`AppEnum`
+/// parameters may be interpolated. `URL`, `String`, and `Bool` parameters
+/// therefore stay out of the phrases and are collected by Siri through each
+/// parameter's `requestValueDialog` instead.
 struct QwaveAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: OpenURLIntent(),
             phrases: [
-                "Open \(\.$url) in \(.applicationName)",
-                "Open \(\.$url) with \(.applicationName)",
+                "Open a URL in \(.applicationName)",
+                "Open a web address in \(.applicationName)",
             ],
             shortTitle: "Open in Qwave",
             systemImageName: "globe"
@@ -203,8 +210,8 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: ToggleShieldsIntent(),
             phrases: [
-                "Turn shields off for \(\.$host) in \(.applicationName)",
-                "Turn shields on for \(\.$host) in \(.applicationName)",
+                "Change shields for a website in \(.applicationName)",
+                "Toggle \(.applicationName) shields for a website",
             ],
             shortTitle: "Toggle Shields",
             systemImageName: "shield"
