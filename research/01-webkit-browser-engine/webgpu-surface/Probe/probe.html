@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>webgpu-surface probe</title></head>
+<body style="background:#0b0c0e;color:#7fd4ff;font:12px monospace">
+<pre id="result">running…</pre>
+<script>
+(async () => {
+  const out = { probe: "webgpu-surface", ua: navigator.userAgent, ngpu: !!navigator.gpu };
+  try {
+    if (!navigator.gpu) {
+      out.ngpu = false;
+    } else {
+      out.ngpu = true;
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) { out.adapter = null; }
+      else {
+        out.adapter = {
+          info: (() => { try { return adapter.info ?? null; } catch (e) { return { error: String(e) }; } })(),
+          features: [...adapter.features].sort(),
+          limits: (() => { try { const l = adapter.limits || {}; const o = {}; for (const k of Object.keys(l)) o[k] = l[k]; return o; } catch (e) { return { error: String(e) }; } })(),
+        };
+        out.wgsl = navigator.gpu.wgslLanguageFeatures ? [...navigator.gpu.wgslLanguageFeatures].sort() : null;
+        out.deviceRequests = [];
+        for (const f of [...adapter.features].sort()) {
+          try {
+            const d = await adapter.requestDevice({ requiredFeatures: [f] });
+            out.deviceRequests.push({ feature: f, granted: true });
+            d.destroy();
+          } catch (e) {
+            out.deviceRequests.push({ feature: f, granted: false, error: String(e).slice(0, 120) });
+          }
+        }
+      }
+              // Minimal WGSL compute dispatch: does the surface actually RUN compute?
+    try {
+      const device = await adapter.requestDevice();
+      const shader = device.createShaderModule({ code: `
+        @group(0) @binding(0) var<storage, read_write> buf : array<u32>;
+        @compute @workgroup_size(256) fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+          buf[gid.x] = buf[gid.x] + 1u;
+        }` });
+      const SIZE = 1 << 20;
+      const buf = device.createBuffer({ size: SIZE * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+      const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: shader, entryPoint: "main" } });
+      const t0 = performance.now();
+      for (let i = 0; i < 10; i++) {
+        const enc = device.createCommandEncoder();
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: buf } }] }));
+        pass.dispatchWorkgroups(SIZE / 256);
+        pass.end();
+        device.queue.submit([enc.finish()]);
+      }
+      await device.queue.onSubmittedWorkDone();
+      out.computeCheck = { ok: true, dispatches: 10, invocations: 10 * SIZE, ms: Math.round(performance.now() - t0) };
+    } catch (e) { out.computeCheck = { ok: false, error: String(e).slice(0, 200) }; }
+    }
+  } catch (e) { out.error = String(e); }
+  const json = JSON.stringify(out, null, 1);
+  document.getElementById("result").textContent = json;
+  try { window.webkit.messageHandlers.probe.postMessage(json); } catch (e) { /* non-WK host */ }
+})();
+</script>
+</body></html>

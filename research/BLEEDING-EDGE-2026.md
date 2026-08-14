@@ -16,6 +16,14 @@
 > (CI caveat: Blacksmith runners are macOS 15 / Safari 18-era WebKit — no
 > WebGPU there; any test asserting it must stay local-only or
 > availability-guarded.)
+>
+> **RESOLVED (2026-08-14):** `research/01-webkit-browser-engine/webgpu-surface/`
+> re-probed this on macOS 26.4.1 / WebKit 21624: `navigator.gpu` is now
+> **default-on** in a plain WKWebView, 18-19 adapter features all granted
+> individually (incl. `shader-f16`, `timestamp-query`; no subgroups), WGSL
+> compute dispatches OK (13 ms / 10.5M invocations), and the `_features`
+> SPI returns an empty list — the `WebGPUEnabled` flag era is over on this
+> build. The flag-gated statement above is stale; the probe is the citation.
 
 ---
 
