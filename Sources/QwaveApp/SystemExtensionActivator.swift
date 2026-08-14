@@ -7,7 +7,7 @@ import QwaveSupport
 /// /Applications (see docs/SIGNING.md); in an unsigned dev build the request
 /// fails and the status callback says so — the browser is unaffected.
 @MainActor
-final class SystemExtensionActivator: NSObject, @MainActor OSSystemExtensionRequestDelegate {
+final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate {
     /// Shared instance so the delegate outlives SwiftUI view churn while a
     /// request is in flight.
     static let shared = SystemExtensionActivator()
@@ -28,7 +28,12 @@ final class SystemExtensionActivator: NSObject, @MainActor OSSystemExtensionRequ
 
     // MARK: - OSSystemExtensionRequestDelegate
 
-    func request(
+    // The protocol requirements are nonisolated, so the callbacks are declared
+    // `nonisolated` and hop onto the main actor explicitly. `activate` submits
+    // the request with `queue: .main`, so the callbacks always land on the main
+    // queue and `assumeIsolated` is sound.
+
+    nonisolated func request(
         _ request: OSSystemExtensionRequest,
         actionForReplacingExtension existing: OSSystemExtensionProperties,
         withExtension ext: OSSystemExtensionProperties
@@ -36,27 +41,33 @@ final class SystemExtensionActivator: NSObject, @MainActor OSSystemExtensionRequ
         .replace
     }
 
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        onStatus?("Approve the extension in System Settings → Privacy & Security.")
-        QwaveLog.vpn.info("System extension awaiting user approval")
-    }
-
-    func request(
-        _ request: OSSystemExtensionRequest,
-        didFinishWithResult result: OSSystemExtensionRequest.Result
-    ) {
-        switch result {
-        case .completed:
-            onStatus?("VPN extension installed. You can connect now.")
-        case .willCompleteAfterReboot:
-            onStatus?("VPN extension will finish installing after a reboot.")
-        @unknown default:
-            onStatus?("VPN extension: unknown result.")
+    nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
+        MainActor.assumeIsolated {
+            onStatus?("Approve the extension in System Settings → Privacy & Security.")
+            QwaveLog.vpn.info("System extension awaiting user approval")
         }
     }
 
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        onStatus?("Extension install failed: \(error.localizedDescription) — see docs/SIGNING.md.")
-        QwaveLog.vpn.error("System extension activation failed: \(error.localizedDescription, privacy: .public)")
+    nonisolated func request(
+        _ request: OSSystemExtensionRequest,
+        didFinishWithResult result: OSSystemExtensionRequest.Result
+    ) {
+        MainActor.assumeIsolated {
+            switch result {
+            case .completed:
+                onStatus?("VPN extension installed. You can connect now.")
+            case .willCompleteAfterReboot:
+                onStatus?("VPN extension will finish installing after a reboot.")
+            @unknown default:
+                onStatus?("VPN extension: unknown result.")
+            }
+        }
+    }
+
+    nonisolated func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
+        MainActor.assumeIsolated {
+            onStatus?("Extension install failed: \(error.localizedDescription) — see docs/SIGNING.md.")
+            QwaveLog.vpn.error("System extension activation failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }
