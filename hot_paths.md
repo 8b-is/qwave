@@ -143,4 +143,5 @@ Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint w
 | WireGuardKit | Vendored dependency. Pinned at `2fec12a6e1f6`. |
 | Module collapse | The 6-way split is deliberate: build times, testability, `QwaveTunnelKit` boundary. |
 | FTS5 for history search | Would fix the `LIKE %query%` full table scan, but adds a dependency and migration complexity. Deferred. |
+| FTS5 trigram history search (measured 2026-08-14) | Implemented and measured: trigram `MATCH` costs **2,143 mallocs/query** at 50k rows vs **486** for `LIKE %q%` (p90 2,716 vs the 1,298 committed gate, +25% tolerance). Wall-clock wins; the repo's malloc gate is the contract and FTS5 fails it 2.1×. Deferral stands, now with numbers. Bonus findings: reading an external-content FTS table while its index is empty clobbers the index being backfilled; the FTS existence probe must run before `migrate`. |
 | Wave background (WebGL) | Renders in WebKit's GPU process (Metal-backed on Apple Silicon); an app-side rebuild would double-composite. Demand control instead: 30 fps cap, `visibilitychange` pause, reduced-motion static frame (`WaveScene.canvasScript`). |
