@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             async let shieldsPrepared: Void = environment.shields.prepare()
             async let vpnRefreshed: Void = environment.vpn.tunnel.refresh()
             await restoreOrOpenFirstWindow()
+            replayPendingOpenURLs()
             startEnergyTimer()
             // Do not abandon the concurrent warmups (an unawaited async let is
             // cancelled at scope end); the gate already made them non-blocking.
@@ -131,6 +132,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let controller = frontmostBrowserWindow ?? openWindow()
         controller.openNewTab(url: url, activate: true)
         controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - URL scheme + Apple Events
+
+    /// URLs handed to the app before `environment` existed (a cold launch via
+    /// `open "qwave://..."` routes through application(_:open:) before the
+    /// launch Task has built the environment); replayed after the first window.
+    private var pendingOpenURLs: [URL] = []
+
+    /// macOS delivers URL opens (qwave://, and http(s) when Qwave is the
+    /// default browser) through this delegate method.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard environment != nil else {
+            pendingOpenURLs.append(contentsOf: urls)
+            return
+        }
+        handleOpenURLs(urls)
+    }
+
+    private func handleOpenURLs(_ urls: [URL]) {
+        for url in urls {
+            if let action = QwaveURL.parse(url) {
+                switch action {
+                case .open(let target):
+                    openInFrontmostWindow(url: target)
+                }
+            } else if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https" {
+                openInFrontmostWindow(url: url)
+            }
+        }
+    }
+
+    private func replayPendingOpenURLs() {
+        guard !pendingOpenURLs.isEmpty else { return }
+        let urls = pendingOpenURLs
+        pendingOpenURLs = []
+        handleOpenURLs(urls)
     }
 
     @objc func newWindow(_ sender: Any?) {
