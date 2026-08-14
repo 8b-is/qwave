@@ -35,22 +35,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             environment = await BrowserEnvironment.bootstrap()
             vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
-            await environment.shields.prepare()
-            await environment.vpn.tunnel.refresh()
+            // Start the rule-list compile and VPN refresh now, but do NOT block
+            // the first window on them: the window + local start page paint
+            // immediately (that is where the perceived-launch win lives), and the
+            // first NETWORK navigation gates on shields.whenReady() inside
+            // NavigationCoordinator — so shields are never bypassed. See issue #19.
+            async let shieldsPrepared: Void = environment.shields.prepare()
+            async let vpnRefreshed: Void = environment.vpn.tunnel.refresh()
             // Apply the launch energy policy BEFORE the first window is built, so
             // the first tab's WKWebViewConfiguration gets the warm process pool
-            // immediately instead of ~30s later when the first energy tick fires
-            // — the pool must exist before makeWebView(for:) runs for the first
-            // tab. Starting in the correct tier is also simply correct: the app
-            // should not spend its first 30s at default policy. (This applies the
-            // EXISTING warm-pool mechanism earlier; whether process pooling still
-            // helps on current WebKit is a separate, deferred question.)
+            // immediately instead of ~30s later when the first energy tick fires.
+            // Starting in the correct tier is also simply correct: the app should
+            // not spend its first 30s at default policy.
             let launchPolicy = EnergyGovernor.policy(
                 for: currentConditions(),
                 baseHibernationTimeout: environment.settings.hibernationTimeout)
             environment.factory.setWarmProcessCount(launchPolicy.warmProcessCount)
             await restoreOrOpenFirstWindow()
             startEnergyTimer()
+            // Do not abandon the concurrent warmups (an unawaited async let is
+            // cancelled at scope end); the gate already made them non-blocking.
+            await shieldsPrepared
+            await vpnRefreshed
         }
         // No launch-time network egress: the blocklist ships as a committed
         // build-time snapshot (scripts/update-blocklist.sh + commit), so
