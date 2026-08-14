@@ -1,59 +1,125 @@
-# Security Policy
+# Security policy
+
+Qwave is privacy-oriented browser software, not an anonymity system. Its
+security claims are limited to the boundaries described here and in
+[docs/NETWORK.md](docs/NETWORK.md). If you find a vulnerability, please report
+it privately before opening an issue.
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities privately via
-**[GitHub Security Advisories](https://github.com/8b-is/qwave/security/advisories/new)**
-("Report a vulnerability" on the repo's Security tab). If that channel is
-unavailable, email `peter.lodri@gmail.com` with `[qwave security]` in the
-subject. You should receive an acknowledgement within 72 hours. Please do
-not open public issues for security reports.
+Use a [GitHub Security Advisory](https://github.com/8b-is/qwave/security/advisories/new).
+If that channel is unavailable, email `peter.lodri@gmail.com` with
+`[qwave security]` in the subject. Include the affected version/commit,
+platform, reproduction steps, impact, and any proof of concept that can be
+shared safely.
 
-Supported: the latest tagged release on `main`. There are no backport
-branches.
+We aim to acknowledge reports within 72 hours. We will coordinate a fix and
+credit reporters unless they prefer to remain anonymous. Do not include live
+credentials, private keys, or other users' data in a report.
 
-## Threat model (what Qwave defends, and against whom)
+Supported releases: the latest tagged release on `main`. There are currently no
+backport branches or guaranteed support window for older tags.
 
-Qwave is a WebKit-native browser whose differentiating claims are
-per-container isolation, content shielding, and a quantum-resistant VPN
-tunnel. The model below is what the engineering gates actually enforce.
+## Threat model
 
-**Assets**: browsing history/bookmarks/sessions (local SQLite), container
-cookie/storage universes, the WireGuard device private key and daily
-ephemeral PSKs (Keychain + tunnel process memory), the Sparkle update
-channel, the user's traffic-to-relay confidentiality.
+### Assets
 
-**Adversaries considered**:
+- Container cookies, web storage, service workers, and cached site data.
+- Local history, bookmarks, sessions, and encrypted MemoryWave records.
+- The WireGuard device private key and negotiated tunnel PSKs.
+- Release signing keys, Sparkle appcast integrity, and update provenance.
+- The confidentiality and integrity of traffic between the device and VPN relay.
 
-- *Malicious web content* — confined by WebKit's process isolation and
-  per-container `WKWebsiteDataStore`s; host-keyed policy decisions derive
-  from the WHATWG-canonical host (the identity WebKit loads), closing the
-  Foundation-vs-WebKit parser-divergence bypass class (`URLIdentity`,
-  since v0.3.0).
-- *Network attackers (on-path)* — app-level HTTP rides `URLSession` and
-  follows the system routing table through the tunnel when up; no raw
-  socket clients are permitted in the codebase (standing rule). Tunnel PSK
-  negotiation is hybrid ML-KEM-768 + Classic McEliece; a negotiation
-  failure with quantum resistance enabled fails closed (no silent classic
-  fallback, since v0.3.0).
-- *Update-channel attackers* — releases are EdDSA-signed (Sparkle 2); the
-  private seed exists only in CI secrets and the maintainer's machine;
-  unsigned builds are never published into the appcast. A compromised
-  download host cannot forge an update without that key.
-- *Harvest-now-decrypt-later* — the point of Stage B: tunnel PSKs require
-  breaking both KEM legs plus Curve25519.
+### Adversaries considered
 
-**Explicitly out of scope**: a compromised local machine or root attacker;
-timing side channels against the McEliece decoder (documented as
-variable-time in `docs/CRYPTO_REVIEW.md` — the decoder never processes
-attacker-chosen ciphertexts); Mullvad relay compromise (relay selection
-trusts Mullvad's signed API); memory zeroization guarantees for Swift
-`Data` (documented limitation, mitigated by daily key rotation).
+- **Malicious web content.** WebKit process isolation, separate container data
+  stores, native content rules, canonical host identity, and per-site
+  JavaScript policy reduce cross-site and policy-bypass risk.
+- **On-path network attackers.** App-owned API traffic uses HTTPS and the
+  Mullvad client uses certificate pinning. The optional VPN protects traffic
+  through WireGuard; the Stage-B PSK path combines ML-KEM-768 and Classic
+  McEliece and fails closed when quantum resistance is enabled.
+- **Update-channel attackers.** Release artifacts are signed/notarized when
+  the distribution secrets and Apple approvals are available. Sparkle
+  appcasts use Ed25519 signatures; the private signing seed is not committed.
+- **Harvest-now/decrypt-later attackers.** The Stage-B goal is to require
+  compromise of both KEM legs in addition to the classical WireGuard material.
 
-## Crypto review
+### Explicitly out of scope
 
-The self-audit of the PostQuantum module (constant-time findings, key
-lifetime, review checklist for crypto changes) lives in
-[docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md). KAT vectors are generated
-from an independent Python oracle, never from the Swift implementation
-under test.
+- A compromised local account, malware with root access, or a malicious signed
+  process running on the Mac.
+- Mullvad relay compromise or a relay that can observe traffic metadata.
+- Full anonymity against websites, DNS operators, Apple/WebKit services, or
+  the VPN provider.
+- Timing side-channel resistance of the current Classic McEliece decoder; see
+  [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md).
+- Guaranteed zeroization of Swift `Data` values. Daily key rotation limits
+  exposure, but Swift storage lifetime is not a hard zeroization primitive.
+
+## Isolation boundaries
+
+### Web content and containers
+
+Each persistent container uses its own `WKWebsiteDataStore` identifier. Burner
+tabs use non-persistent stores and are omitted from history/session restore.
+Removing a container deletes its WebKit store and associated local rows. This
+is isolation from accidental cross-container state, not protection from a
+compromised macOS account or WebKit itself.
+
+### Application state
+
+QwaveKit is compiled in Swift 6 language mode with complete strict concurrency.
+Actors own SQLite connections, prepared statements, and MemoryWave mutations;
+sendable value types cross into UI tasks. The NetworkExtension provider has a
+narrow SDK compatibility annotation for its legacy mutable callback surface.
+That annotation is confined to the provider and does not make arbitrary
+application objects safe to share across actors.
+
+### Secrets
+
+The device private key lives in the shared Keychain access group. The tunnel
+configuration passed through `providerConfiguration` contains connection
+parameters but not key material; tests enforce this boundary. Remote MemoryWave
+providers are disabled until the user configures one and supplies credentials.
+
+## Network and telemetry
+
+Qwave distinguishes three traffic classes:
+
+1. **Qwave-owned requests** — update checks, Mullvad API calls, explicit remote
+   inference, favicon fetches, and requested document loads. Their hosts and
+   triggers are listed in [docs/NETWORK.md](docs/NETWORK.md).
+2. **Page traffic** — requests made because the user navigated to a page. WebKit
+   and the page control this class; shields can block many third-party loads.
+3. **WebKit service traffic** — engine-level anti-fraud and speculative
+   behavior. Qwave documents known behavior but cannot claim to control every
+   request Apple WebKit may make.
+
+Qwave has no product analytics or behavioral telemetry. Category-A hosts are
+checked by `EgressGuardTests`; adding a new app-owned host requires an allowlist
+change, documentation, and tests.
+
+## Cryptography and release integrity
+
+The PostQuantum module has independent known-answer fixtures and negative tests.
+The crypto self-audit, limitations, and review checklist live in
+[docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md). Do not describe the hybrid path
+as a formal certification or as a replacement for a complete cryptographic
+review.
+
+Release signing details, entitlements, Sparkle key handling, and the current
+Network Extension approval gap are documented in [docs/SIGNING.md](docs/SIGNING.md).
+Unsigned CI artifacts are development/test artifacts and must not be described
+as notarized releases.
+
+## Security changes
+
+Security-sensitive changes should include:
+
+- a focused regression test or known-answer vector;
+- an explicit threat-model or data-flow update when a boundary changes;
+- a review of actor/sendability annotations and any new unchecked boundary;
+- egress allowlist and [network documentation](docs/NETWORK.md) updates for
+  new Qwave-owned connections;
+- a release/signing note when distribution or update trust changes.

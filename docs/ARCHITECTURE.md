@@ -1,113 +1,141 @@
-# Qwave Architecture
+# Qwave architecture
 
-WebKit-native macOS browser. No Chromium, no Electron — the rendering engine
-is the system WebKit (the same processes Safari uses), which is what makes the
-battery story work: Apple's own energy-optimized engine, plus aggressive tab
-lifecycle management on top.
+Qwave is a thin AppKit application over the system WebKit engine. The browser
+does not embed Chromium or Electron: WebKit owns page rendering and web-content
+processes, while Qwave owns the browser chrome, policy decisions, storage
+boundaries, and optional network services.
 
-## Layout
+## Runtime shape
 
+```text
+Qwave.app
+├── AppKit shell + SwiftUI settings
+├── BrowserEnvironment (@MainActor service graph)
+├── QwaveKit (local Swift package)
+│   ├── BrowserCore       tabs, containers, navigation, hibernation
+│   ├── Shields           content rules, HTTPS-First, blocklist updates
+│   ├── Persistence       SQLite database and actor-isolated stores
+│   ├── MemoryWave        encrypted memory substrate and providers
+│   ├── VPNKit            Mullvad API, relays, tunnel lifecycle
+│   ├── PostQuantum        Keccak, ML-KEM-768, Classic McEliece, hybrid KEM
+│   ├── WebExtensions      Manifest V3 registry and browser.* bridge
+│   ├── URLIdentity        WHATWG-compatible host identity
+│   ├── FeatureFlags       guarded WebKit SPI access
+│   └── QwaveSupport       logging, keychain, egress allowlist
+└── PacketTunnel.systemextension
+    └── WireGuardKit + NetworkExtension provider
 ```
-qwave/
-├── project.yml                  XcodeGen spec — the single source of truth for
-│                                targets/entitlements/plists. *.xcodeproj is generated.
-├── Sources/QwaveApp/            App target: thin AppKit shell + SwiftUI panes
-├── Sources/PacketTunnel/        Network Extension (system extension) target
-├── Packages/QwaveKit/           All logic, as a local SPM package (unit-tested)
-│   └── Sources/
-│       ├── QwaveSupport/        Logging, SecretStore (keychain / in-memory)
-│       ├── Persistence/         SQLite wrapper, History/Bookmarks/Settings/Session
-│       ├── BrowserCore/         Tabs, containers, navigation, hibernation, energy
-│       ├── Shields/             Content blocking, HTTPS-first
-│       ├── FeatureFlags/        WebKit experimental-feature reflection
-│       └── VPNKit/              Mullvad API, keys, relays, tunnel management
-└── docs/                        This file, SIGNING.md, VPN_STAGE_B.md
+
+`Packages/QwaveKit/Package.swift` and `project.yml` are the source of truth.
+The Xcode project is generated and must not be edited by hand.
+
+## Dependency direction
+
+The dependency graph is intentionally one-way:
+
+```text
+QwaveApp
+   ├── BrowserCore ──┬── Shields ── Persistence ── QwaveSupport
+   │                 ├── FeatureFlags
+   │                 └── URLIdentity
+   ├── VPNKit ───────┬── PostQuantum
+   │                 └── QwaveSupport
+   ├── MemoryWave ───┬── Persistence
+   │                 └── QwaveSupport
+   └── WebExtensions ─── QwaveSupport
+
+PacketTunnel ─── QwaveTunnelKit (VPNKit + QwaveSupport) ─── WireGuardKit
 ```
 
-Dependency rule: `QwaveApp → {BrowserCore, Shields, FeatureFlags, VPNKit,
-Persistence, QwaveSupport}`; `PacketTunnel → {VPNKit, QwaveSupport,
-WireGuardKit}`. BrowserCore is the only module allowed to import the other
-feature modules (it hosts `WebViewFactory`, the convergence point).
+`BrowserCore` is the convergence point for browser behavior: it wires tabs,
+WebKit factories, navigation, shields, and hibernation. Feature modules do not
+reach into the AppKit shell. The app supplies adapters and owns presentation.
 
-## The four pillars
+## Isolation and data flow
 
-### 1. Tab/container isolation (Firefox containers, WebKit-style)
+### Browser data
 
-- WebKit already renders every site in sandboxed, per-site web-content
-  processes. On top of that, `ContainerRegistry` maps container profiles to
-  `WKWebsiteDataStore(forIdentifier:)` stores — fully separate cookie jars,
-  caches, service workers, and local storage per container.
-- Ephemeral (burner) tabs get `WKWebsiteDataStore.nonPersistent()` — a fresh
-  universe per tab, never written to disk, never recorded in history, never
-  restored with the session.
-- Deleting a container calls `WKWebsiteDataStore.remove(forIdentifier:)` — the
-  whole universe is wiped at the storage layer, plus its history rows.
+`ContainerRegistry` maps profiles to separate
+`WKWebsiteDataStore(forIdentifier:)` stores. Cookies, caches, service workers,
+and local storage do not cross container identifiers. Burner tabs use
+`WKWebsiteDataStore.nonPersistent()`, skip history, and are excluded from
+session restoration. Removing a profile removes the WebKit store and its
+container-scoped database rows.
 
-### 2. Shields (Brave-style) + HTTPS-first
+### Navigation and shields
 
-- `RuleListCompiler` compiles the shipped blocklist into a
-  `WKContentRuleList` — declarative rules enforced inside WebKit's network
-  machinery, not JS-injected after the fact. CI compiles the exact shipped
-  JSON so a bad rule fails the PR.
-- `ShieldsDirector` reconciles which lists are attached per navigation
-  (per-site toggles work like Safari's own per-site content-blocker switch).
-- HTTPS-first is two layers: a `make-https` rule list for subresources, and
-  `HTTPSFirstUpgrader` (pure state machine) for main-frame navigations with
-  one-shot per-host fallback when a site's HTTPS is genuinely broken.
-- Per-site JS off uses `WKWebpagePreferences.allowsContentJavaScript` at
-  policy-decision time.
+`NavigationCoordinator` applies URL identity, HTTPS-First, per-site JavaScript
+policy, and content-rule selection before a navigation proceeds. `URLIdentity`
+uses the WHATWG/WebKit-compatible parser so policy hosts match the host WebKit
+actually loads. `RuleListCompiler` compiles the committed EasyList/uBlock
+snapshot into native `WKContentRuleList` objects; rules are enforced by WebKit
+rather than injected JavaScript.
 
-### 3. Energy (the reason to be WebKit-native)
+### Persistence and MemoryWave
 
-- `EnergyGovernor` (pure): thermal state × Low Power Mode × window occlusion →
-  tier (normal / conserve / critical) → policy (hibernation timeout, background
-  media pause/suspend).
-- `HibernationController` (pure, fake-clock tested): which background tabs to
-  hibernate. Exempt: selected, pinned, audibly playing media.
-- `TabHibernator`: snapshot → capture `WKWebView.interactionState`
-  (back/forward stack, scroll, form state) → destroy the web view. A
-  hibernated tab holds zero WebKit processes. Restore rebuilds the web view
-  and reassigns `interactionState`.
-- One coalesced `DispatchSourceTimer` (30s + 10s leeway) drives everything;
-  there are no per-tab timers anywhere.
-- Restored sessions start hibernated-by-design: tabs are recreated lazily on
-  first selection, so relaunching a 40-tab session spawns one web process.
+`SQLiteDatabase` is an actor owning the SQLite connection and prepared-statement
+cache. `HistoryStore`, `BookmarkStore`, `SessionStore`, and `MemoryStore` keep
+database mutations on that actor boundary. Multi-step writes that depend on an
+inserted row ID execute in one actor turn. Sendable model values cross back to
+the UI; SQLite handles and rows do not.
 
-### 4. Bleeding-edge web standards
+`MemoryWave` adds container-scoped AES-GCM storage, provenance, salience, and
+optional provider calls. Local remember/recall stays on device. Remote
+inference is explicit and opt-in; its network behavior is documented in
+[docs/NETWORK.md](NETWORK.md).
 
-- `FeatureFlagService` enumerates WebKit's runtime feature flags (the set
-  Safari Technology Preview exposes) via the `_WKFeature` SPI, discovered
-  reflectively with `responds(to:)` guards everywhere — if the SPI vanishes,
-  the pane reports unavailable and nothing else is affected. A CI canary test
-  asserts exactly this either/or.
-- Overrides persist in defaults and are applied to every new
-  `WKPreferences` by `WebViewFactory`.
-- `webView.isInspectable = true` — Web Inspector everywhere.
+### Concurrency
 
-## VPN
+QwaveKit uses Swift 6 language mode with complete strict concurrency. The
+default ownership rules are:
 
-See `docs/VPN_STAGE_B.md` for the quantum-resistant roadmap and
-`docs/SIGNING.md` for activation. Summary:
+- `@MainActor` for AppKit, SwiftUI-facing services, WebKit objects, and UI
+  observation.
+- Actors for mutable persistence, memory, and service state that can outlive a
+  UI callback.
+- `Sendable` structs/enums for configuration, records, errors, and test values.
+- Native async WebKit APIs where available; no new continuation wrappers for
+  APIs that already provide async alternatives.
 
-- `MullvadAPIClient` (REST, URLProtocol-mockable) — token, device
-  registration (WireGuard pubkey → in-tunnel addresses), relay list.
-- `DeviceKeyManager` — Curve25519 key in the keychain only; the tunnel
-  extension reads it via shared keychain group. `TunnelSessionConfig` (what
-  crosses into providerConfiguration) is tested to contain no key material.
-- `TunnelManager` — `NETunnelProviderManager` lifecycle + status publishing.
-- `PacketTunnelProvider` — WireGuardKit's `WireGuardAdapter`; the
-  `EphemeralPeerNegotiating` seam runs before handshake (Stage A: noop).
+The NetworkExtension provider has a legacy SDK-shaped mutable surface. Its
+compatibility annotations are deliberately confined to
+`Sources/PacketTunnel/PacketTunnelProvider.swift`; they are not a license to
+weaken QwaveKit's actor contracts.
 
-## Testing strategy
+## VPN and post-quantum path
 
-`swift test --package-path qwave/Packages/QwaveKit` runs everything headless:
-pure state machines (omnibox, HTTPS-first, hibernation, energy, relays) plus
-two "real WebKit" checks — rule-list compilation of the shipped JSON and the
-feature-flag SPI canary. AppKit chrome stays thin and logic-free by rule.
+The app stores the Curve25519 device private key in the shared Keychain group.
+Only `TunnelSessionConfig` crosses into `providerConfiguration`; tests assert
+that it contains no key material. `TunnelManager` owns the
+`NETunnelProviderManager` lifecycle and status stream. The provider starts
+WireGuard through WireGuardKit and, when enabled, negotiates a hybrid PSK:
 
-## CI
+```text
+Qwave / PacketTunnel ── ML-KEM-768 ───────┐
+                                         ├── hybrid PSK ── WireGuard relay
+Qwave / PacketTunnel ── McEliece 348864 ─┘
+```
 
-`.github/workflows/qwave-ci.yml`: `unit-tests` (SPM, fast) → `build-app`
-(xcodegen + xcodebuild, unsigned, uploads the .app artifact). The Go bridge
-for WireGuardKit builds in a pre-build make step (Go is preinstalled on
-GitHub's macOS runners).
+If the quantum-resistant negotiation fails while enabled, the tunnel start
+fails closed instead of silently falling back to a classical-only session.
+See [docs/VPN_STAGE_B.md](VPN_STAGE_B.md) and [docs/CRYPTO_REVIEW.md](CRYPTO_REVIEW.md).
+
+## Network ownership
+
+Qwave distinguishes between its own requests, page traffic initiated by a
+navigation, and WebKit service traffic. Category-A requests are guarded by a
+committed host allowlist and `EgressGuardTests`. New Qwave-owned network code
+must document its host, trigger, opt-in state, and test coverage in
+[docs/NETWORK.md](NETWORK.md).
+
+## Testing boundaries
+
+```sh
+swift test --package-path Packages/QwaveKit -c release
+```
+
+The package suite covers pure state machines, URL identity, blocklist
+compilation, actor persistence behavior, cryptographic known-answer tests,
+VPN configuration, WebExtensions messaging, and egress policy. The app target
+is verified separately through XcodeGen and an unsigned macOS build. Signed VPN
+activation requires the entitlements described in [docs/SIGNING.md](SIGNING.md).

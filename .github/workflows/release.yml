@@ -85,6 +85,8 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          MACOS_APP_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_B64 }}
+          MACOS_TUNNEL_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_TUNNEL_PROVISIONING_PROFILE_B64 }}
         run: |
           if [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$MACOS_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
             echo "sign=true" >> "$GITHUB_OUTPUT"
@@ -104,6 +106,40 @@ jobs:
             echo "appcast=false" >> "$GITHUB_OUTPUT"
             echo "ℹ️ SPARKLE_ED_PRIVATE_KEY absent — skipping appcast generation."
           fi
+          if [ -n "$MACOS_APP_PROVISIONING_PROFILE_B64" ] && [ -n "$MACOS_TUNNEL_PROVISIONING_PROFILE_B64" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "vpn_entitlements=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "vpn_entitlements=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ Network Extension provisioning profiles absent — signed artifact will use Distribution-NoVPN.entitlements."
+          fi
+
+      - name: Install Network Extension provisioning profiles
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.vpn_entitlements == 'true'
+        env:
+          MACOS_APP_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_B64 }}
+          MACOS_TUNNEL_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_TUNNEL_PROVISIONING_PROFILE_B64 }}
+        run: |
+          set -euo pipefail
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          install_profile() {
+            local encoded="$1"
+            local output="$2"
+            echo "$encoded" | base64 --decode > "$output"
+            local uuid
+            uuid=$(security cms -D -i "$output" | plutil -extract UUID raw -o - -)
+            cp "$output" "$PROFILE_DIR/$uuid.provisionprofile"
+            echo "$uuid"
+          }
+          APP_PROFILE_PATH="$RUNNER_TEMP/qwave-app.provisionprofile"
+          TUNNEL_PROFILE_PATH="$RUNNER_TEMP/qwave-tunnel.provisionprofile"
+          APP_PROFILE_UUID=$(install_profile "$MACOS_APP_PROVISIONING_PROFILE_B64" "$APP_PROFILE_PATH")
+          TUNNEL_PROFILE_UUID=$(install_profile "$MACOS_TUNNEL_PROVISIONING_PROFILE_B64" "$TUNNEL_PROFILE_PATH")
+          APP_PROFILE_NAME=$(security cms -D -i "$APP_PROFILE_PATH" | plutil -extract Name raw -o - -)
+          TUNNEL_PROFILE_NAME=$(security cms -D -i "$TUNNEL_PROFILE_PATH" | plutil -extract Name raw -o - -)
+          echo "QWAVE_APP_PROVISIONING_PROFILE=$APP_PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "QWAVE_TUNNEL_PROVISIONING_PROFILE=$TUNNEL_PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "Installed app profile $APP_PROFILE_UUID and tunnel profile $TUNNEL_PROFILE_UUID"
 
       - name: Import Developer ID certificate
         if: steps.signing.outputs.sign == 'true'
@@ -133,20 +169,38 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -o pipefail
+          XCODE_ARGS=(
+            CODE_SIGN_STYLE=Manual
+            CODE_SIGN_IDENTITY="Developer ID Application"
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
+            ENABLE_HARDENED_RUNTIME=YES
+            OTHER_CODE_SIGN_FLAGS="--timestamp"
+          )
+          if [ "${{ steps.signing.outputs.vpn_entitlements }}" != "true" ]; then
+            XCODE_ARGS+=(
+              CODE_SIGN_ENTITLEMENTS="$PWD/Resources/CI/Distribution-NoVPN.entitlements"
+              CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+            )
+          fi
           xcodebuild \
             -project Qwave.xcodeproj \
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
             -derivedDataPath build/DerivedData \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Developer ID Application" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            ENABLE_HARDENED_RUNTIME=YES \
-            OTHER_CODE_SIGN_FLAGS="--timestamp" \
-            CODE_SIGN_ENTITLEMENTS="$PWD/Resources/CI/Distribution-NoVPN.entitlements" \
-            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            "${XCODE_ARGS[@]}" \
             build | xcbeautify
+
+      - name: Verify signed Network Extension entitlements
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.vpn_entitlements == 'true'
+        run: |
+          set -euo pipefail
+          APP_ENTITLEMENTS=$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null)
+          TUNNEL_PATH="$APP_PATH/Contents/Library/SystemExtensions/PacketTunnel.systemextension"
+          TUNNEL_ENTITLEMENTS=$(codesign -d --entitlements :- "$TUNNEL_PATH" 2>/dev/null)
+          echo "$APP_ENTITLEMENTS" | grep -q "packet-tunnel-provider-systemextension"
+          echo "$TUNNEL_ENTITLEMENTS" | grep -q "packet-tunnel-provider-systemextension"
+          echo "✅ app and PacketTunnel carry Network Extension entitlements"
 
       - name: Build (unsigned Release)
         if: steps.signing.outputs.sign != 'true'

@@ -43,6 +43,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave
         PRODUCT_NAME: Qwave
+        PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_APP_PROVISIONING_PROFILE)"
     info:
       path: Resources/Qwave/Info.plist
       properties:
@@ -96,6 +97,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.tunnel
         PRODUCT_NAME: PacketTunnel
+        PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_TUNNEL_PROVISIONING_PROFILE)"
         # libwg-go.a is produced into BUILT_PRODUCTS_DIR by the pre-build
         # make step; WireGuardKitGo links it via -lwg-go.
         # libqpacket.a is produced by the Zig pre-build script below.

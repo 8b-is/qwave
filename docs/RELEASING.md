@@ -62,9 +62,12 @@ Artifacts land in `build/release/`.
 
 ## Known limits
 
-- CI-signed builds carry no Network Extension entitlements until Apple's
-  Developer ID NE approval + provisioning profiles exist — the VPN
-  activates only in local Xcode-signed builds. Details: `docs/SIGNING.md`.
+- CI-signed builds use no-VPN entitlements until Apple's Developer ID NE
+  approval and both provisioning profiles exist. Once the
+  `MACOS_APP_PROVISIONING_PROFILE_B64` and
+  `MACOS_TUNNEL_PROVISIONING_PROFILE_B64` secrets are configured, the release
+  workflow signs and verifies the VPN entitlements automatically. Details:
+  `docs/SIGNING.md`.
 - The appcast must ship with every stable release (the feed URL is
   `releases/latest/download/appcast.xml`); the workflow re-downloads the
   previous appcast first so history carries forward.

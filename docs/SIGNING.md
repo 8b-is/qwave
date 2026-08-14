@@ -125,7 +125,7 @@ Ed25519 tool emitting a base64 32-byte seed), update `SUPublicEDKey`, update
 the secret, and ship one release signed with **both** keys' signatures per
 Sparkle's key-rotation guidance.
 
-### Known gap: Network Extension entitlements under Developer ID
+### Network Extension entitlements under Developer ID
 
 The app and PacketTunnel entitlements declare
 `com.apple.developer.networking.networkextension`
@@ -141,13 +141,24 @@ feature. Select a provisioning profile in the Signing & Capabilities editor.
 Fixing that requires Apple's **Developer ID Network Extension approval** and
 Developer ID provisioning profiles for `is.8b.qwave` / `is.8b.qwave.tunnel`
 — an Apple-side process, not a repo change. Until then, the CI signed path
-substitutes empty entitlements
-(`Resources/CI/Distribution-NoVPN.entitlements` via
-`CODE_SIGN_ENTITLEMENTS`): the signed app browses and auto-updates, but VPN
-activation is not available in CI-signed builds. Local Xcode signing with
-your team (see above) is the working path for VPN testing today. Once the NE
-profiles exist, drop the `CODE_SIGN_ENTITLEMENTS` override from
-`release.yml` and install the profiles in the signing step.
+uses empty entitlements from `Resources/CI/Distribution-NoVPN.entitlements`:
+the signed app browses and auto-updates, but VPN activation is not available in
+CI-signed builds. Local Xcode signing with your team (see above) remains the
+working path for VPN testing.
+
+When Apple approval is granted, add these repository secrets:
+
+| Secret | Contents |
+|---|---|
+| `MACOS_APP_PROVISIONING_PROFILE_B64` | Base64 Developer ID profile for `is.8b.qwave` |
+| `MACOS_TUNNEL_PROVISIONING_PROFILE_B64` | Base64 Developer ID profile for `is.8b.qwave.tunnel` |
+
+The release workflow installs both profiles, passes their names to the two
+XcodeGen targets, uses the real entitlements from `project.yml`, and verifies
+the Network Extension entitlement on both the app and embedded system
+extension before notarization. If either profile is missing, it deliberately
+falls back to the no-VPN signed artifact instead of producing a misleading
+partially entitled release.
 
 ## Renaming
 

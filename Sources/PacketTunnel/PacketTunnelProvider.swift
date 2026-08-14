@@ -56,48 +56,51 @@ enum PacketTunnelError: Error {
     case filterInitFailed
 }
 
-private struct SendableTunnelConfiguration: @unchecked Sendable {
-    let value: TunnelConfiguration
+private final class TunnelProviderReference: @unchecked Sendable {
+    weak var value: NEPacketTunnelProvider?
+
+    init(value: NEPacketTunnelProvider) {
+        self.value = value
+    }
 }
 
-/// WireGuard packet tunnel. The app hands over a `TunnelSessionConfig` via
-/// providerConfiguration; the device private key is resolved from the shared
-/// keychain (never crosses the app/extension boundary in the config), and the
-/// quantum-resistant PSK seam (`EphemeralPeerNegotiating`) runs before the
-/// tunnel handshake — Stage A's noop keeps this classic WireGuard.
-final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
-    private lazy var adapter = WireGuardAdapter(with: self) { level, message in
-        switch level {
-        case .error:
-            QwaveLog.tunnel.error("\(message, privacy: .public)")
-        case .verbose:
-            QwaveLog.tunnel.debug("\(message, privacy: .public)")
-        }
-    }
+private final class MessageCompletion: @unchecked Sendable {
+    let handler: ((Data?) -> Void)?
 
+    init(_ handler: ((Data?) -> Void)?) {
+        self.handler = handler
+    }
+}
+
+private actor PacketTunnelState {
     private let negotiator: EphemeralPeerNegotiating = MullvadQuantumPeerNegotiator()
     private let secrets = KeychainSecretStore()
+    private let adapter: WireGuardAdapter
 
-    // Zig packet filter handle (nil when filter is not active).
     private var filterHandle: UnsafeMutableRawPointer?
-
-    // Rekey state, confined to the main queue (timer + wake both hop there).
     private var sessionConfig: TunnelSessionConfig?
     private var baseConfiguration: TunnelConfiguration?
     private var lastRekey: Date?
     private var rekeyTimer: DispatchSourceTimer?
 
-    override func startTunnel(
-        options: [String: NSObject]?,
-        completionHandler: @escaping @Sendable (Error?) -> Void
-    ) {
-        guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
-            let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
-        else {
-            completionHandler(PacketTunnelError.missingConfiguration)
-            return
+    init(provider: TunnelProviderReference) {
+        guard let provider = provider.value else {
+            fatalError("Packet tunnel provider must outlive its state actor")
         }
+        adapter = WireGuardAdapter(with: provider) { level, message in
+            switch level {
+            case .error:
+                QwaveLog.tunnel.error("\(message, privacy: .public)")
+            case .verbose:
+                QwaveLog.tunnel.debug("\(message, privacy: .public)")
+            }
+        }
+    }
 
+    func start(
+        sessionConfig: TunnelSessionConfig,
+        completionHandler: @escaping @Sendable (Error?) -> Void
+    ) async {
         guard let keyData = try? secrets.secret(for: DeviceKeyManager.privateKeyStorageKey),
             let privateKey = PrivateKey(rawValue: keyData)
         else {
@@ -105,101 +108,91 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             return
         }
 
-        // Initialise the Zig packet filter.
-        guard let handle = qpacket_filter_init() else {
-            completionHandler(PacketTunnelError.filterInitFailed)
-            return
-        }
-        filterHandle = handle
-        QwaveLog.tunnel.info("Zig packet filter initialised")
-
-        Task {
-            do {
-                var tunnelConfiguration = try Self.makeTunnelConfiguration(
-                    sessionConfig: sessionConfig,
-                    privateKey: privateKey
-                )
-                let base = SendableTunnelConfiguration(value: tunnelConfiguration)
-
-                // Stage B: quantum-resistant PSK, fail-closed. A negotiation
-                // failure aborts tunnel start (QuantumSessionError reaches
-                // the app as the start error) — never a silent classic
-                // fallback while the user believes they are protected.
-                var negotiatedAt: Date?
-                if let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
-                    let peer = tunnelConfiguration.peers.first
-                {
-                    var pskPeer = peer
-                    pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
-                    tunnelConfiguration = TunnelConfiguration(
-                        name: tunnelConfiguration.name,
-                        interface: tunnelConfiguration.interface,
-                        peers: [pskPeer]
-                    )
-                    negotiatedAt = Date()
-                }
-
-                let configuration = SendableTunnelConfiguration(value: tunnelConfiguration)
-                let pskInstalledAt = negotiatedAt
-                self.adapter.start(tunnelConfiguration: configuration.value) { error in
-                    if let error {
-                        QwaveLog.tunnel.error("Adapter start failed: \(error.localizedDescription, privacy: .public)")
-                    } else {
-                        QwaveLog.tunnel.info("Tunnel up via \(sessionConfig.relayHostname, privacy: .public)")
-                        DispatchQueue.main.async {
-                            self.sessionConfig = sessionConfig
-                            self.baseConfiguration = base.value
-                            self.lastRekey = pskInstalledAt
-                            if pskInstalledAt != nil {
-                                self.scheduleRekeyTimer()
-                            }
-                        }
-                    }
-                    completionHandler(error)
-                }
-            } catch {
-                QwaveLog.tunnel.error("Tunnel start blocked: \(error.localizedDescription, privacy: .public)")
-                completionHandler(error)
+        if filterHandle == nil {
+            guard let handle = qpacket_filter_init() else {
+                completionHandler(PacketTunnelError.filterInitFailed)
+                return
             }
+            filterHandle = handle
+            QwaveLog.tunnel.info("Zig packet filter initialised")
+        }
+
+        do {
+            var tunnelConfiguration = try PacketTunnelProvider.makeTunnelConfiguration(
+                sessionConfig: sessionConfig,
+                privateKey: privateKey
+            )
+            let base = tunnelConfiguration
+            var negotiatedAt: Date?
+            if let material = try await negotiator.negotiateFailClosed(config: sessionConfig),
+                let peer = tunnelConfiguration.peers.first
+            {
+                var pskPeer = peer
+                pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
+                tunnelConfiguration = TunnelConfiguration(
+                    name: tunnelConfiguration.name,
+                    interface: tunnelConfiguration.interface,
+                    peers: [pskPeer]
+                )
+                negotiatedAt = Date()
+            }
+
+            let error = await startAdapter(tunnelConfiguration)
+            if let error {
+                QwaveLog.tunnel.error("Adapter start failed: \(error.localizedDescription, privacy: .public)")
+            } else {
+                self.sessionConfig = sessionConfig
+                self.baseConfiguration = base
+                self.lastRekey = negotiatedAt
+                if negotiatedAt != nil {
+                    scheduleRekeyTimer()
+                }
+                QwaveLog.tunnel.info("Tunnel up via \(sessionConfig.relayHostname, privacy: .public)")
+            }
+            completionHandler(error)
+        } catch {
+            QwaveLog.tunnel.error("Tunnel start blocked: \(error.localizedDescription, privacy: .public)")
+            completionHandler(error)
         }
     }
 
-    override func stopTunnel(
-        with reason: NEProviderStopReason,
-        completionHandler: @escaping @Sendable () -> Void
-    ) {
-        // Tear down the Zig packet filter.
+    func stop(completionHandler: @escaping @Sendable () -> Void) async {
+        rekeyTimer?.cancel()
+        rekeyTimer = nil
+        sessionConfig = nil
+        baseConfiguration = nil
+        lastRekey = nil
         if let handle = filterHandle {
             qpacket_filter_deinit(handle)
             filterHandle = nil
             QwaveLog.tunnel.info("Zig packet filter torn down")
         }
-        DispatchQueue.main.async {
-            self.rekeyTimer?.cancel()
-            self.rekeyTimer = nil
-            self.sessionConfig = nil
-            self.baseConfiguration = nil
-            self.lastRekey = nil
-        }
-        adapter.stop { error in
-            if let error {
-                QwaveLog.tunnel.error("Adapter stop failed: \(error.localizedDescription, privacy: .public)")
-            }
-            completionHandler()
-        }
-    }
-
-    // MARK: - Daily ephemeral-peer rekey
-
-    override func sleep(completionHandler: @escaping () -> Void) {
+        _ = await stopAdapter()
         completionHandler()
     }
 
-    override func wake() {
-        DispatchQueue.main.async {
-            guard RekeyPolicy.shouldRekey(lastRekey: self.lastRekey) else { return }
-            self.rekeyNow()
+    func wake() async {
+        guard RekeyPolicy.shouldRekey(lastRekey: lastRekey) else { return }
+        await rekeyNow()
+    }
+
+    func response(for messageData: Data) -> Data? {
+        guard String(data: messageData, encoding: .utf8) == "stats" else { return nil }
+        var stats = QpacketStats(
+            packets_seen: 0, packets_dropped: 0, packets_tcp: 0,
+            packets_udp: 0, packets_icmp: 0, packets_other: 0,
+            packets_ipv4: 0, packets_ipv6: 0, bytes_seen: 0
+        )
+        if let handle = filterHandle {
+            qpacket_filter_stats_extended(handle, &stats)
         }
+        let json = """
+            {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
+            "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
+            "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
+            "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
+            """
+        return Data(json.utf8)
     }
 
     private func scheduleRekeyTimer() {
@@ -212,7 +205,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             leeway: .seconds(15 * 60)
         )
         timer.setEventHandler { [weak self] in
-            self?.rekeyNow()
+            guard let self else { return }
+            Task { await self.rekeyNow() }
         }
         timer.resume()
         rekeyTimer = timer
@@ -222,62 +216,111 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// `WireGuardAdapter.update`. A failed rekey keeps the current PSK (the
     /// tunnel stays quantum-resistant on the previous key) and retries at the
     /// next timer tick or wake — unlike start, there is no downgrade to block.
-    private func rekeyNow() {
+    private func rekeyNow() async {
         guard let sessionConfig, let baseConfiguration, sessionConfig.quantumResistant else { return }
-        Task {
-            do {
-                guard let material = try await self.negotiator.negotiateFailClosed(config: sessionConfig),
-                    let peer = baseConfiguration.peers.first
-                else { return }
-                var pskPeer = peer
-                pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
-                let updated = TunnelConfiguration(
-                    name: baseConfiguration.name,
-                    interface: baseConfiguration.interface,
-                    peers: [pskPeer]
-                )
-                self.adapter.update(tunnelConfiguration: updated) { error in
-                    if let error {
-                        QwaveLog.tunnel.error(
-                            "Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
-                    } else {
-                        QwaveLog.tunnel.info("Ephemeral peer PSK rotated")
-                        DispatchQueue.main.async {
-                            self.lastRekey = Date()
-                        }
-                    }
-                }
-            } catch {
+        do {
+            guard let material = try await negotiator.negotiateFailClosed(config: sessionConfig),
+                let peer = baseConfiguration.peers.first
+            else { return }
+            var pskPeer = peer
+            pskPeer.preSharedKey = PreSharedKey(rawValue: material.presharedKey)
+            let updated = TunnelConfiguration(
+                name: baseConfiguration.name,
+                interface: baseConfiguration.interface,
+                peers: [pskPeer]
+            )
+            if let error = await updateAdapter(updated) {
                 QwaveLog.tunnel.error(
-                    "Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+                    "Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+            } else {
+                QwaveLog.tunnel.info("Ephemeral peer PSK rotated")
+                lastRekey = Date()
+            }
+        } catch {
+            QwaveLog.tunnel.error(
+                "Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func startAdapter(_ configuration: TunnelConfiguration) async -> WireGuardAdapterError? {
+        await withCheckedContinuation { continuation in
+            adapter.start(tunnelConfiguration: configuration) { error in
+                continuation.resume(returning: error)
             }
         }
     }
 
-    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
-        guard let message = String(data: messageData, encoding: .utf8) else {
-            completionHandler?(nil)
+    private func stopAdapter() async -> WireGuardAdapterError? {
+        await withCheckedContinuation { continuation in
+            adapter.stop { error in
+                continuation.resume(returning: error)
+            }
+        }
+    }
+
+    private func updateAdapter(_ configuration: TunnelConfiguration) async -> WireGuardAdapterError? {
+        await withCheckedContinuation { continuation in
+            adapter.update(tunnelConfiguration: configuration) { error in
+                continuation.resume(returning: error)
+            }
+        }
+    }
+
+}
+
+/// WireGuard packet tunnel. The app hands over a `TunnelSessionConfig` via
+/// providerConfiguration; the device private key is resolved from the shared
+/// keychain (never crosses the app/extension boundary in the config), and the
+/// quantum-resistant PSK seam (`EphemeralPeerNegotiating`) runs before the
+/// tunnel handshake — Stage A's noop keeps this classic WireGuard.
+final class PacketTunnelProvider: NEPacketTunnelProvider {
+    private lazy var tunnelState = PacketTunnelState(provider: TunnelProviderReference(value: self))
+
+    override func startTunnel(
+        options: [String: NSObject]?,
+        completionHandler: @escaping @Sendable (Error?) -> Void
+    ) {
+        guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
+            let sessionConfig = TunnelSessionConfig(providerConfiguration: proto.providerConfiguration)
+        else {
+            completionHandler(PacketTunnelError.missingConfiguration)
             return
         }
-        switch message {
-        case "stats":
-            var stats = QpacketStats(
-                packets_seen: 0, packets_dropped: 0, packets_tcp: 0,
-                packets_udp: 0, packets_icmp: 0, packets_other: 0,
-                packets_ipv4: 0, packets_ipv6: 0, bytes_seen: 0
-            )
-            if let handle = filterHandle {
-                qpacket_filter_stats_extended(handle, &stats)
-            }
-            let json = """
-                {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
-                "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
-                "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
-                "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
-                """
-            completionHandler?(Data(json.utf8))
-        default:
-            completionHandler?(nil)
+        let state = tunnelState
+        Task {
+            await state.start(sessionConfig: sessionConfig, completionHandler: completionHandler)
+        }
+    }
+
+    override func stopTunnel(
+        with reason: NEProviderStopReason,
+        completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let state = tunnelState
+        Task {
+            await state.stop(completionHandler: completionHandler)
+        }
+    }
+
+    override func sleep(completionHandler: @escaping () -> Void) {
+        completionHandler()
+    }
+
+    override func wake() {
+        let state = tunnelState
+        Task {
+            await state.wake()
+        }
+    }
+
+    override func handleAppMessage(
+        _ messageData: Data,
+        completionHandler: ((Data?) -> Void)? = nil
+    ) {
+        let state = tunnelState
+        let completion = MessageCompletion(completionHandler)
+        Task {
+            completion.handler?(await state.response(for: messageData))
         }
     }
 
