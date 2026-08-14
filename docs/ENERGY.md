@@ -113,5 +113,5 @@ immediately (throttled to one per 5 s so occlusion storms while stacking
 windows coalesce; the 30 s timer remains the steady cadence and is never
 throttled). Effect: toggling Low Power Mode, a thermal spike, or the last
 window being occluded applies the conserve/critical policy (3× shorter
-hibernation timeout, media suspend, zero warm processes) within
+hibernation timeout and media suspend) within
 milliseconds instead of up to 40 s.

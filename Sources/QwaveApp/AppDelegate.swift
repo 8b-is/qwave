@@ -43,15 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // NavigationCoordinator — so shields are never bypassed. See issue #19.
             async let shieldsPrepared: Void = environment.shields.prepare()
             async let vpnRefreshed: Void = environment.vpn.tunnel.refresh()
-            // Apply the launch energy policy BEFORE the first window is built, so
-            // the first tab's WKWebViewConfiguration gets the warm process pool
-            // immediately instead of ~30s later when the first energy tick fires.
-            // Starting in the correct tier is also simply correct: the app should
-            // not spend its first 30s at default policy.
-            let launchPolicy = EnergyGovernor.policy(
-                for: currentConditions(),
-                baseHibernationTimeout: environment.settings.hibernationTimeout)
-            environment.factory.setWarmProcessCount(launchPolicy.warmProcessCount)
             await restoreOrOpenFirstWindow()
             startEnergyTimer()
             // Do not abandon the concurrent warmups (an unawaited async let is
