@@ -15,6 +15,11 @@ public final class ShieldsDirector {
     private var adsList: WKContentRuleList?
     private var httpsUpgradeList: WKContentRuleList?
 
+    /// The exact list OBJECTS last attached to each controller, so a navigation
+    /// whose resolved attachment is unchanged skips the remove-all + re-add.
+    /// Weak key so a controller that goes away drops its entry automatically.
+    private let lastApplied = NSMapTable<WKUserContentController, NSArray>.weakToStrongObjects()
+
     public init(compiler: RuleListCompiler, policy: ShieldsPolicy) {
         self.compiler = compiler
         self.policy = policy
@@ -48,13 +53,33 @@ public final class ShieldsDirector {
         defer { QwaveSignposts.shields.endInterval("applyLists", interval) }
 
         let resolved = policy.resolvedPolicy(forHost: host)
-        controller.removeAllContentRuleLists()
+        var desired: [WKContentRuleList] = []
         if resolved.adsBlocked, let adsList {
-            controller.add(adsList)
+            desired.append(adsList)
         }
         if resolved.httpsFirst, let httpsUpgradeList {
-            controller.add(httpsUpgradeList)
+            desired.append(httpsUpgradeList)
         }
+
+        // Fast path: the identical set of list OBJECTS is already attached — the
+        // remove-all + re-add would be a no-op change, so skip it. This is keyed
+        // on WKContentRuleList object identity, never on the policy bools: the
+        // built-in lists start nil and swap to a freshly compiled object when
+        // prepare()'s background compile finishes, so a bool cache would freeze
+        // "ads on" while the list was still nil and never attach the real one.
+        if let cached = lastApplied.object(forKey: controller) as? [WKContentRuleList],
+            cached.count == desired.count,
+            zip(cached, desired).allSatisfy({ $0 === $1 })
+        {
+            return
+        }
+
+        QwaveSignposts.shields.emitEvent("ruleListRebuild", id: signpostID)
+        controller.removeAllContentRuleLists()
+        for list in desired {
+            controller.add(list)
+        }
+        lastApplied.setObject(desired as NSArray, forKey: controller)
     }
 
     /// Initial installation for a fresh configuration (before first navigation).
