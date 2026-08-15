@@ -45,20 +45,37 @@ jobs:
           # v0.3.0-rc.1 → 0.3.0 (prerelease suffix is not part of the bundle version)
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           TAG_VERSION="${TAG_VERSION%%-*}"
-          if ! grep -q "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml; then
-            echo "❌ Tag ${GITHUB_REF_NAME} does not match CFBundleShortVersionString in project.yml"
-            grep "CFBundleShortVersionString" project.yml
+          # Compare against the DECLARATION COUNT, never a hardcoded number and
+          # never `grep -q`. project.yml declares these once per target, and the
+          # target list grows: CredentialProvider was added after v1.0.0, which
+          # silently broke the old `-ne 2` check below (3 declarations today) and
+          # would have rejected a correct tag. An existence check has the mirror
+          # failure: a tag matching only PacketTunnel's value would have passed.
+          TOTAL_SHORT=$(grep -c 'CFBundleShortVersionString:' project.yml || true)
+          MATCH_SHORT=$(grep -c "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml || true)
+          if [ "$TOTAL_SHORT" -eq 0 ]; then
+            echo "❌ No CFBundleShortVersionString declarations found in project.yml"
+            exit 1
+          fi
+          if [ "$MATCH_SHORT" -ne "$TOTAL_SHORT" ]; then
+            echo "❌ Tag ${GITHUB_REF_NAME} matches CFBundleShortVersionString on only ${MATCH_SHORT}/${TOTAL_SHORT} targets"
+            grep -n "CFBundleShortVersionString" project.yml
             exit 1
           fi
           # CFBundleVersion is what Sparkle compares; enforce the committed
-          # scheme major*10000 + minor*100 + patch on BOTH targets so a
+          # scheme major*10000 + minor*100 + patch on EVERY target so a
           # forgotten bump can't ship an update existing installs ignore.
           IFS=. read -r MAJOR MINOR PATCH <<< "$TAG_VERSION"
           EXPECTED_BUILD=$((MAJOR * 10000 + MINOR * 100 + PATCH))
-          COUNT=$(grep -c "CFBundleVersion: \"${EXPECTED_BUILD}\"" project.yml || true)
-          if [ "$COUNT" -ne 2 ]; then
-            echo "❌ Expected CFBundleVersion \"${EXPECTED_BUILD}\" on both targets"
-            grep "CFBundleVersion" project.yml
+          TOTAL_BUILD=$(grep -c 'CFBundleVersion:' project.yml || true)
+          MATCH_BUILD=$(grep -c "CFBundleVersion: \"${EXPECTED_BUILD}\"" project.yml || true)
+          if [ "$TOTAL_BUILD" -eq 0 ]; then
+            echo "❌ No CFBundleVersion declarations found in project.yml"
+            exit 1
+          fi
+          if [ "$MATCH_BUILD" -ne "$TOTAL_BUILD" ]; then
+            echo "❌ Expected CFBundleVersion \"${EXPECTED_BUILD}\" on all ${TOTAL_BUILD} targets, got ${MATCH_BUILD}"
+            grep -n "CFBundleVersion" project.yml
             exit 1
           fi
 
