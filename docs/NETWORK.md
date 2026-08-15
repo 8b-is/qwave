@@ -29,9 +29,11 @@ There are three kinds of outbound connection, and the difference matters:
 > inventory was "verified by reading *every* network call site". That was not
 > true: the omnibox suggestion endpoint (`duckduckgo.com`) was a Category A
 > host absent from both this table and the allowlist ([#78](https://github.com/8b-is/qwave/issues/78)).
-> It is listed below now. Nothing mechanically enumerates call sites, so treat
-> this inventory as carefully maintained rather than machine-proven — see
-> "What the allowlist is, honestly" below the Category A table.
+> It is listed below now, it is on the allowlist, and an assertion in
+> `EgressGuardTests` now reads the host out of the request the provider
+> actually builds. Nothing mechanically enumerates call sites, so treat this
+> inventory as carefully maintained rather than machine-proven — see "What the
+> allowlist is, honestly" below the Category A table.
 
 ## Category A — Qwave's own egress
 
@@ -118,7 +120,16 @@ This closes the runtime half of [#77](https://github.com/8b-is/qwave/issues/77),
 but it is still not a mechanical guarantee over the whole codebase, and CI
 still runs the same hand-written assertions pinning three known endpoints
 (`MullvadAPIClient().baseURL`, `MemoryWavePreferences.defaultRemoteBaseURL`,
-and the literal `github.com`) plus a rejection test for unknown hosts. Nothing
+and the literal `github.com`) plus a rejection test for unknown hosts. One
+assertion is not a restated literal:
+`testSuggestionEndpointHostIsAllowlisted` reads the omnibox suggestion host out
+of the request `DuckDuckGoSuggestionProvider` actually builds (a capturing
+`URLProtocol` on an injected session), so it fails if that call site's URL
+changes to a host nobody reviewed. It exists at all only because the test
+target now depends on `BrowserCore`: it did not until
+[#78](https://github.com/8b-is/qwave/issues/78), so no assertion in this suite
+could reach the provider even in principle, which is the sharper reason
+`duckduckgo.com` went unseen for a whole release. Nothing
 enumerates network call sites, so **a new fixed-host `URLSession` client that
 does not call `EgressGuard.install(into:)` is not caught** — a reviewer still
 has to notice it and wire it up, same as before. And by design `EgressGuard`

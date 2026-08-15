@@ -25,7 +25,10 @@ import XCTest
 ///     `EgressAllowlist` by the hand-written assertions below. Nothing
 ///     enumerates network call sites, so adding a new default endpoint
 ///     WITHOUT allowlisting it and wiring `EgressGuard` into its session does
-///     not fail this test — a reviewer still has to notice.
+///     not fail this test — a reviewer still has to notice, as was missed for
+///     `duckduckgo.com` until issue #78. For that host no assertion here
+///     could have reached the call site even in principle: this target did
+///     not depend on `BrowserCore` at all until then.
 ///  2. `EgressGuard` runtime tests: a disallowed host is blocked when routed
 ///     through a session that installed the guard, an allowlisted host is
 ///     not, and the two production call sites (`URLSession.mullvadPinned()`,
