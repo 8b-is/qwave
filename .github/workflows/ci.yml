@@ -157,18 +157,36 @@ jobs:
           APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -type d -name 'Qwave.app' -path '*Release*' | head -n1)"
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
           echo "Built: $APP_PATH"
+          # Name the artifact after the version actually inside it. project.yml
+          # is the source of truth and xcodegen writes its
+          # CFBundleShortVersionString into the bundle, so reading it back from
+          # the built app cannot drift from the build — the previously
+          # hardcoded "v0.1.0" outlived three releases. Reading the bundle
+          # rather than grepping project.yml also avoids depending on file
+          # order: three targets declare CFBundleShortVersionString, and only
+          # the app target's value describes this artifact.
+          if [ -n "$APP_PATH" ]; then
+            VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
+            if [ -z "$VERSION" ]; then
+              echo "❌ Could not read CFBundleShortVersionString from $APP_PATH"
+              exit 1
+            fi
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "Version: $VERSION"
+          fi
 
       - name: Zip app artifact
         if: steps.locate.outputs.app_path != ''
         run: |
-          ditto -c -k --keepParent "${{ steps.locate.outputs.app_path }}" Qwave-v0.1.0-unsigned.zip
+          ditto -c -k --keepParent "${{ steps.locate.outputs.app_path }}" \
+            "Qwave-v${{ steps.locate.outputs.version }}-unsigned.zip"
 
       - name: Upload app artifact
         if: steps.locate.outputs.app_path != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Qwave-v0.1.0-unsigned
-          path: Qwave-v0.1.0-unsigned.zip
+          name: Qwave-v${{ steps.locate.outputs.version }}-unsigned
+          path: Qwave-v${{ steps.locate.outputs.version }}-unsigned.zip
           retention-days: 14
 
   # Report-only by design: a dead-code scanner that fails the build on day
