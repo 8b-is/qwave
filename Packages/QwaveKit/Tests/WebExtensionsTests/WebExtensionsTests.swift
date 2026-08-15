@@ -559,6 +559,68 @@ final class DeclarativeNetRequestTests: XCTestCase {
         XCTAssertTrue(compiledJSON.contains("\"script\""))
         XCTAssertTrue(compiledJSON.contains("\"image\""))
     }
+
+    /// Regression test for #73: `redirect` rules must not be silently
+    /// reinterpreted as `block`. WKContentRuleList has no redirect action,
+    /// so the rule should be dropped from the compiled output entirely
+    /// rather than emitted with `"type": "block"`.
+    func testRedirectRuleIsDroppedNotSilentlyBlocked() throws {
+        let ruleJSON = """
+            {
+              "id": 7,
+              "action": {
+                "type": "redirect",
+                "redirect": { "url": "https://example.com/stub.js" }
+              },
+              "condition": { "url_filter": "||tracker.example.com" }
+            }
+            """
+        let rule = try JSONDecoder().decode(DNRRule.self, from: Data(ruleJSON.utf8))
+        XCTAssertEqual(rule.action.type, .redirect)
+        XCTAssertEqual(rule.action.redirect?.url, "https://example.com/stub.js")
+
+        let compiledJSON = try DeclarativeNetRequestConverter.convertToWebKitRulesJSON([rule])
+        let decoded = try JSONSerialization.jsonObject(with: Data(compiledJSON.utf8)) as? [[String: Any]]
+        XCTAssertEqual(decoded?.count, 0, "redirect rule must be dropped, not compiled as a trigger/action pair")
+        XCTAssertFalse(compiledJSON.contains("\"block\""), "a dropped redirect rule must never surface as 'block'")
+    }
+
+    /// A `redirect` rule sitting alongside supported rules should only drop
+    /// itself — the other rules must still compile normally.
+    func testRedirectRuleDoesNotAffectOtherRulesInTheSameList() throws {
+        let blockJSON = """
+            {
+              "id": 1,
+              "action": { "type": "block" },
+              "condition": { "url_filter": "||ads.example.com" }
+            }
+            """
+        let redirectJSON = """
+            {
+              "id": 2,
+              "action": { "type": "redirect", "redirect": { "url": "https://example.com/stub" } },
+              "condition": { "url_filter": "||tracker.example.com" }
+            }
+            """
+        let allowJSON = """
+            {
+              "id": 3,
+              "action": { "type": "allow" },
+              "condition": { "url_filter": "||safe.example.com" }
+            }
+            """
+        let rules = try [blockJSON, redirectJSON, allowJSON].map {
+            try JSONDecoder().decode(DNRRule.self, from: Data($0.utf8))
+        }
+
+        let compiledJSON = try DeclarativeNetRequestConverter.convertToWebKitRulesJSON(rules)
+        let decoded = try JSONSerialization.jsonObject(with: Data(compiledJSON.utf8)) as? [[String: Any]]
+        XCTAssertEqual(decoded?.count, 2, "only the block and allow rules should survive compilation")
+        XCTAssertTrue(compiledJSON.contains("ads"))
+        XCTAssertTrue(compiledJSON.contains("safe"))
+        XCTAssertTrue(compiledJSON.contains("\"ignore-previous-rules\""))
+        XCTAssertFalse(compiledJSON.contains("tracker"))
+    }
 }
 
 
