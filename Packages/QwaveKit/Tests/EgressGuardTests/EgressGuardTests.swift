@@ -9,11 +9,12 @@ import XCTest
 /// The egress regression gate (docs/NETWORK.md, "prove what it sends").
 ///
 /// Two checks, both narrower than they first look:
-///  1. Three known Category-A endpoints are pinned to the committed
+///  1. Known Category-A endpoints are pinned to the committed
 ///     `EgressAllowlist` by the hand-written assertions below. Nothing
 ///     enumerates network call sites, so adding a new default endpoint
-///     WITHOUT allowlisting it does not fail this test (issue #77);
-///     `duckduckgo.com` is a live example of exactly that state.
+///     WITHOUT allowlisting it does not fail this test (issue #77) — a
+///     reviewer has to notice and add the assertion, as was missed for
+///     `duckduckgo.com` until issue #78.
 ///  2. The always-on launch path (shields preparation) makes no URLSession
 ///     request — the launch-time blocklist fetch was removed. Scope: the
 ///     recorder below is installed with `URLProtocol.registerClass`, which
@@ -52,6 +53,19 @@ final class EgressGuardTests: XCTestCase {
         // on github.com); assert the host it resolves to is permitted.
         XCTAssertTrue(EgressAllowlist.permits(host: "github.com"))
         XCTAssertTrue(EgressAllowlist.permits(host: "objects.githubusercontent.com") == false)
+    }
+
+    /// Omnibox network suggestions (off by default) hit `duckduckgo.com/ac/`
+    /// — see `DuckDuckGoSuggestionProvider` in
+    /// `BrowserCore/SearchSuggestionProvider.swift`. Issue #78: this host was
+    /// hardcoded in a call site but absent from the allowlist and
+    /// docs/NETWORK.md's Category A table.
+    func testDuckDuckGoSuggestionEndpointIsAllowlisted() {
+        let url = URL(string: "https://duckduckgo.com/ac/?q=swift&type=list")
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: url?.host),
+            "DuckDuckGo suggestion host \(url?.host ?? "nil") must be on the egress allowlist"
+        )
     }
 
     /// The post-quantum key exchange targets the relay's in-tunnel gateway

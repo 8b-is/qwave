@@ -201,9 +201,10 @@ whose reach is bounded (caveats below). See
       │                                (a test oracle, not a runtime check
       │                                 — see below and issue #77)
       ▼
- allowlisted hosts (3): github.com          Sparkle appcast
+ allowlisted hosts (4): github.com          Sparkle appcast
                         api.mullvad.net     VPN control API
                         api.x.ai            default remote AI endpoint
+                        duckduckgo.com      omnibox suggestions (opt-in)
       │
       ▼
  launch path ── EgressGuardTests URLProtocol recorder ──▶ zero requests
@@ -213,11 +214,12 @@ whose reach is bounded (caveats below). See
 Two honest caveats, both tracked. `EgressAllowlist.permits(host:)` is **never
 called in production** — every call site is in `EgressGuardTests`, so it is a
 reviewed oracle rather than a runtime gate, and adding a call to a new host does
-not fail CI by itself ([#77](https://github.com/8b-is/qwave/issues/77)). One
-Category-A host is in exactly that state today: the opt-in, off-by-default
-omnibox suggestion endpoint `duckduckgo.com`
-([#78](https://github.com/8b-is/qwave/issues/78)), now documented in
-[docs/NETWORK.md](docs/NETWORK.md). The launch-path assertion is the one thing
+not fail CI by itself ([#77](https://github.com/8b-is/qwave/issues/77)). The
+opt-in, off-by-default omnibox suggestion endpoint `duckduckgo.com` was in
+exactly that gap — hardcoded in a call site but on neither the allowlist nor
+docs/NETWORK.md — until [#78](https://github.com/8b-is/qwave/issues/78) added
+it to both; that fix was a reviewer noticing, not something CI would have
+caught on its own. The launch-path assertion is the one thing
 here checked dynamically rather than by review: it registers a `URLProtocol`
 recorder over the shields launch path and asserts nothing was requested. Its
 reach is bounded, though — `URLProtocol.registerClass` only sees sessions built

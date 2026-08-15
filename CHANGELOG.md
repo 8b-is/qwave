@@ -4,6 +4,21 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+- **`duckduckgo.com` omnibox suggestion egress added to `EgressAllowlist` and
+  `docs/NETWORK.md`.** `DuckDuckGoSuggestionProvider` has hardcoded
+  `https://duckduckgo.com/ac/` as its suggestion endpoint since the omnibox
+  network-suggestions feature shipped, but the host was on neither the
+  committed `EgressAllowlist` nor the Category A table in `docs/NETWORK.md` —
+  the allowlist's own docstring requires new egress to be added deliberately
+  and documented. Both are now fixed: `EgressAllowlist.hosts` lists
+  `duckduckgo.com`, `EgressGuardTests` pins it, and `docs/NETWORK.md`'s
+  Category A table documents it as off-by-default
+  (`networkSuggestionsEnabled`), cookieless, and ephemeral. Behaviour is
+  unchanged — the feature was already opt-in and honestly disclosed in the
+  Settings UI; this closes the allowlist/documentation gap.
+  ([#78](https://github.com/8b-is/qwave/issues/78))
+
 ### Security
 - **WebAuthn/passkey origin binding.** The passkey bridge accepted the `rpId`
   a page supplied without ever looking at which frame sent it, and its shim was
