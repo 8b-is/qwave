@@ -51,3 +51,29 @@ public enum RekeyPolicy {
         return now.timeIntervalSince(lastRekey) >= interval
     }
 }
+
+/// Corroborates a freshly-negotiated rekey PSK (issue #91).
+///
+/// ML-KEM decapsulation has implicit rejection: a tampered, corrupted or
+/// hostile ciphertext of the right length never throws, it just derives a
+/// different, well-formed 32-byte secret (FIPS 203; see
+/// `PostQuantum/HybridKEM.swift`). Since #90 dropped the last throwing
+/// decapsulation path (the Classic McEliece leg), the daily rekey has no
+/// local way to tell a good PSK from a garbage one — there is nothing to
+/// check without the peer. The only available corroboration is a completed
+/// WireGuard handshake under the newly-installed PSK.
+public enum RekeyConfirmation {
+    /// Whether a handshake sample taken *after* installing a candidate PSK
+    /// corroborates it. `baseline` is the peer's `last_handshake_time`
+    /// observed before the PSK was installed; `observed` is a sample taken
+    /// afterwards. Confirmed only when `observed` is strictly newer than
+    /// `baseline` (or a handshake exists where none did before) — an
+    /// unchanged or absent timestamp means no peer has completed a
+    /// handshake under the new PSK, which is exactly what a tampered or
+    /// hostile rekey ciphertext produces.
+    public static func isConfirmed(baseline: Date?, observed: Date?) -> Bool {
+        guard let observed else { return false }
+        guard let baseline else { return true }
+        return observed > baseline
+    }
+}
