@@ -62,9 +62,11 @@ jobs:
             exit 1
           fi
 
-      # Release, not debug — same rationale as ci.yml: the Classic McEliece
-      # keygen KATs are ~10× faster optimized, so this gate no longer adds
-      # ~40 min in front of signing.
+      # Release, not debug — same rationale as ci.yml. Note the original
+      # reason (Classic McEliece keygen KATs dominating the suite) no longer
+      # applies: that leg is deleted and the KEM tests are now ~1.5s of
+      # difference, not ~40 min. Kept so the pre-signing gate runs the crypto
+      # in the same optimized configuration that ships.
       - name: Run unit tests
         run: swift test -c release --package-path Packages/QwaveKit
 

@@ -38,9 +38,15 @@ struct HybridKEMNegativeSuite {
         }
     }
 
-    /// An all-zero encapsulation key is the right *size* but not a valid key;
-    /// FIPS 203 §7.2's modulus check is what stops it, not the size check.
+    /// A right-*size* key whose coefficients are not reduced mod q: FIPS 203
+    /// §7.2's modulus check is what stops it, not the size check.
+    ///
+    /// Note what this does NOT cover: §7.2 is only a type check plus a modulus
+    /// check, so an all-zero `ek` — every coefficient 0, which is reduced —
+    /// *passes* validation. Rejecting semantically useless-but-well-formed keys
+    /// is not part of the standard's input check.
     @Test func encapsulateRejectsUnreducedEK() {
+        // Start from a valid key and force one coefficient out of range.
         var ek = Self.keys.ek
         // 0xFFF is >= q in every 12-bit slot, so this fails the modulus check.
         ek[0] = 0xFF
