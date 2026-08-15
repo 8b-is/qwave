@@ -77,7 +77,25 @@ final class BrowserEnvironment {
         hibernation = HibernationController(timeout: settings.hibernationTimeout)
         vpn = MullvadVPNService(secrets: secrets)
         extensions = WebExtensionHost(storageDirectory: directory)
-        let memoryStore = try? MemoryStore(directory: directory, secrets: secrets)
+        // Memory Wave is optional, but a nil store must not silently read as
+        // "no memories". A malformed master key means the records are still on
+        // disk and still sealed, and the key is left untouched rather than
+        // regenerated, so that case is logged distinctly from every other one.
+        let memoryStore: MemoryStore?
+        do {
+            memoryStore = try MemoryStore(directory: directory, secrets: secrets)
+        } catch MemoryCipherError.malformedKey {
+            memoryStore = nil
+            QwaveLog.memory.error(
+                "Memory Wave locked: stored master key is malformed; memories are sealed, not lost")
+        } catch SecretStoreError.duplicateItem {
+            memoryStore = nil
+            QwaveLog.memory.error(
+                "Memory Wave locked: a master key exists but could not be read back; not re-keyed")
+        } catch {
+            memoryStore = nil
+            QwaveLog.memory.error("Memory Wave unavailable: \(error)")
+        }
         let nibbleVault = try? NibbleVault(directory: directory.appendingPathComponent("nibbles", isDirectory: true))
         memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences, vault: nibbleVault)
         // The blocklist ships as a committed build-time snapshot (regenerated

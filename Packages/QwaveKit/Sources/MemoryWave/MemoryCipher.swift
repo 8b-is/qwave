@@ -6,6 +6,10 @@ public enum MemoryCipherError: Error, Equatable {
     case missingKey
     case malformedBox
     case authenticationFailed
+    /// A master key is stored but is not 256 bits. Memory is *locked*, not
+    /// empty: the stored bytes are left untouched so a repaired keychain
+    /// restores every record.
+    case malformedKey
 }
 
 /// AES-GCM for payload bytes. The 79-byte wave frame stays in the clear
@@ -13,12 +17,31 @@ public enum MemoryCipherError: Error, Equatable {
 public enum MemoryCipher {
     public static let keyAccount = "memorywave.master-key"
 
+    /// Loads the master key, generating one *only* when no secret exists at all
+    /// (a genuine first run).
+    ///
+    /// Fails closed on a stored-but-malformed key instead of replacing it:
+    /// re-keying would make every existing record permanently undecryptable and
+    /// `MemoryStore.decode` drops rows it cannot open, so the memories would
+    /// silently vanish. An existing secret is never overwritten here.
+    ///
+    /// The create branch uses the add-only `addSecret`, so the guarantee does
+    /// not rest on the read above having seen the truth. When two first runs
+    /// race and both read "nothing stored", the second write collides and
+    /// throws `SecretStoreError.duplicateItem` instead of overwriting the key
+    /// the first one just stored. A read that misses because the item lives
+    /// elsewhere — a keychain access-group change once the app ships signed, an
+    /// item in a different keychain — does not collide: the add lands beside
+    /// the old item, which stays intact but out of reach. Either way this path
+    /// never overwrites an existing master key; an overwrite here would be
+    /// silent and permanent, so it is never attempted.
     public static func loadOrCreateKey(in secrets: SecretStore) throws -> SymmetricKey {
-        if let existing = try secrets.secret(for: keyAccount), existing.count == 32 {
+        if let existing = try secrets.secret(for: keyAccount) {
+            guard existing.count == 32 else { throw MemoryCipherError.malformedKey }
             return SymmetricKey(data: existing)
         }
         let key = SymmetricKey(size: .bits256)
-        try secrets.setSecret(Data(key), for: keyAccount)
+        try secrets.addSecret(Data(key), for: keyAccount)
         return key
     }
 

@@ -273,6 +273,130 @@ final class MemoryCipherTests: XCTestCase {
         let after = try await store.records(containerID: nil)
         XCTAssertTrue(after.isEmpty, "record with an unauthenticated signature_box must fail closed")
     }
+
+    /// Regression: a stored key of the wrong length used to fall through to the
+    /// generate-and-store path, silently re-keying the store and making every
+    /// existing memory undecryptable. The stored bytes must survive untouched —
+    /// that is the real guarantee: locked, never destroyed.
+    func testMalformedStoredKeyThrowsAndLeavesTheSecretUntouched() throws {
+        let secrets = InMemorySecretStore()
+        let stored = Data(repeating: 0xAB, count: 16)
+        try secrets.setSecret(stored, for: MemoryCipher.keyAccount)
+
+        XCTAssertThrowsError(try MemoryCipher.loadOrCreateKey(in: secrets)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .malformedKey)
+        }
+        XCTAssertEqual(
+            try secrets.secret(for: MemoryCipher.keyAccount), stored,
+            "a malformed master key must never be overwritten")
+    }
+
+    /// The store must refuse to open rather than come up empty, so callers can
+    /// tell "locked" from "nothing remembered yet".
+    func testMemoryStoreRefusesToOpenWithMalformedKey() throws {
+        let secrets = InMemorySecretStore()
+        try secrets.setSecret(Data(repeating: 0x01, count: 31), for: MemoryCipher.keyAccount)
+        XCTAssertThrowsError(try MemoryStore(database: SQLiteDatabase(), secrets: secrets)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .malformedKey)
+        }
+    }
+
+    /// Genuine first run: no secret at all still creates and persists one.
+    func testFirstRunCreatesAndReusesKey() throws {
+        let secrets = InMemorySecretStore()
+        XCTAssertNil(try secrets.secret(for: MemoryCipher.keyAccount))
+
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let stored = try XCTUnwrap(try secrets.secret(for: MemoryCipher.keyAccount))
+        XCTAssertEqual(stored.count, 32)
+        XCTAssertEqual(key.withUnsafeBytes { Data($0) }, stored)
+
+        let reloaded = try MemoryCipher.loadOrCreateKey(in: secrets)
+        XCTAssertEqual(reloaded.withUnsafeBytes { Data($0) }, stored, "a second load must not re-key")
+    }
+
+    /// A valid 32-byte secret still loads, unchanged.
+    func testValidStoredKeyLoadsUnchanged() throws {
+        let secrets = InMemorySecretStore()
+        let stored = Data(repeating: 0x5A, count: 32)
+        try secrets.setSecret(stored, for: MemoryCipher.keyAccount)
+
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        XCTAssertEqual(key.withUnsafeBytes { Data($0) }, stored)
+        XCTAssertEqual(try secrets.secret(for: MemoryCipher.keyAccount), stored)
+    }
+
+    /// The guard above only helps when the *read* sees the truth. This is the
+    /// case where it does not: `secret(for:)` reports nothing stored while a
+    /// perfectly good key is in fact there. The create branch must fail closed
+    /// on the write, not overwrite. Asserted on the bytes, because "threw" and
+    /// "did not destroy" are different claims.
+    func testCreatePathFailsClosedWhenAReadMissesAnExistingKey() throws {
+        let realKey = Data(repeating: 0x7E, count: 32)
+        let secrets = BlindReadSecretStore(hidden: [MemoryCipher.keyAccount: realKey])
+        XCTAssertNil(
+            try secrets.secret(for: MemoryCipher.keyAccount),
+            "precondition: the read must miss the item that exists")
+
+        XCTAssertThrowsError(try MemoryCipher.loadOrCreateKey(in: secrets)) { error in
+            XCTAssertEqual(error as? SecretStoreError, .duplicateItem)
+        }
+        XCTAssertEqual(
+            secrets.storedBytes(for: MemoryCipher.keyAccount), realKey,
+            "an unreadable master key must survive byte-for-byte, never be re-keyed")
+    }
+
+    /// Same asymmetry, one level up: the store refuses to come up rather than
+    /// coming up on a fresh key over a full database of sealed records.
+    func testMemoryStoreFailsClosedWhenAReadMissesAnExistingKey() throws {
+        let realKey = Data(repeating: 0x7E, count: 32)
+        let secrets = BlindReadSecretStore(hidden: [MemoryCipher.keyAccount: realKey])
+        XCTAssertThrowsError(try MemoryStore(database: SQLiteDatabase(), secrets: secrets)) { error in
+            XCTAssertEqual(error as? SecretStoreError, .duplicateItem)
+        }
+        XCTAssertEqual(secrets.storedBytes(for: MemoryCipher.keyAccount), realKey)
+    }
+}
+
+/// A store whose reads miss an item that actually exists — the shape of a
+/// keychain access-group change once the app ships signed, an item living in a
+/// different keychain in the search list, or two first-run constructions
+/// racing. Reads report nil; the add-only write sees the truth and refuses.
+private final class BlindReadSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data]
+
+    init(hidden: [String: Data]) {
+        storage = hidden
+    }
+
+    func secret(for key: String) throws -> Data? { nil }
+
+    func setSecret(_ data: Data, for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage[key] = data
+    }
+
+    func addSecret(_ data: Data, for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard storage[key] == nil else { throw SecretStoreError.duplicateItem }
+        storage[key] = data
+    }
+
+    func removeSecret(for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.removeValue(forKey: key)
+    }
+
+    /// What is really stored, bypassing the blind read.
+    func storedBytes(for key: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[key]
+    }
 }
 
 final class MemoryStoreTests: XCTestCase {
@@ -562,10 +686,319 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertFalse(sent.contains("Secret memory"))
         XCTAssertTrue(sent.contains("visible page"))
     }
+
+    /// `resolveProvider()` is the only place the shipping app builds a remote
+    /// provider, so it is the only place the bounded session can be lost.
+    /// Passing `session: .shared` there would restore the seven-day ceiling
+    /// with every other test still green — this test is what fails.
+    func testResolveProviderBuildsBoundedRemoteProvider() throws {
+        let secrets = InMemorySecretStore()
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        prefs.providerKind = .openaiCompatible
+        prefs.remoteModel = "grok-4.6"
+        try prefs.setAPIKey("test-key")
+        let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+        let provider = try XCTUnwrap(director.resolveProvider() as? OpenAICompatibleProvider)
+        XCTAssertEqual(provider.baseURL, prefs.remoteBaseURL)
+        XCTAssertEqual(provider.model, "grok-4.6")
+        XCTAssertEqual(provider.apiKey, "test-key")
+        XCTAssertTrue(provider.isAvailable)
+
+        XCTAssertFalse(
+            provider.session === URLSession.shared,
+            "the production path must not fall back to URLSession.shared (7-day resource ceiling)")
+        let configuration = provider.session.configuration
+        XCTAssertEqual(provider.timeout, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(
+            configuration.timeoutIntervalForResource, OpenAICompatibleProvider.defaultResourceTimeout)
+        XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
+    }
+
+    /// The privacy default: nothing configured means no provider and no egress.
+    func testResolveProviderStaysOfflineByDefault() throws {
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: InMemorySecretStore())
+        XCTAssertEqual(prefs.providerKind, .none)
+        let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+        let provider = try director.resolveProvider()
+        XCTAssertTrue(provider is NullMemoryProvider)
+        XCTAssertEqual(provider.kind, .none)
+        XCTAssertFalse(provider.isAvailable)
+    }
+}
+
+/// The remote provider is the one deliberate step outside `EgressAllowlist`
+/// (the base URL is user-configurable). It must therefore carry an explicit
+/// deadline: a hung endpoint must not hold the summarize flow open.
+final class RemoteProviderTimeoutTests: XCTestCase {
+    func testDefaultSessionCarriesBothDeadlines() {
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key"
+        )
+        let configuration = provider.session.configuration
+        XCTAssertEqual(provider.timeout, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(configuration.timeoutIntervalForResource, OpenAICompatibleProvider.defaultResourceTimeout)
+        // URLSession.shared's resource ceiling is seven days; ours is a minute.
+        XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
+    }
+
+    func testOutgoingRequestCarriesTimeout() async throws {
+        let captured = RequestCapture()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CaptureProtocol.self]
+        CaptureProtocol.capture = captured
+        CaptureProtocol.responseJSON = """
+            {"choices":[{"message":{"role":"assistant","content":"ok"}}]}
+            """
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 7,
+            session: URLSession(configuration: config)
+        )
+        let text = try await provider.complete(system: "system", user: "user")
+        XCTAssertEqual(text, "ok")
+        XCTAssertEqual(captured.timeout, 7)
+    }
+
+    func testHungEndpointFailsInsteadOfHanging() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HangingProtocol.self]
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 1,
+            session: URLSession(configuration: config)
+        )
+        do {
+            _ = try await provider.complete(system: "system", user: "user")
+            XCTFail("Expected the hung endpoint to time out")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .timedOut)
+        }
+    }
+
+    /// The idle timer above cannot catch an endpoint that keeps trickling
+    /// bytes — every byte rearms it. Only `timeoutIntervalForResource` ends
+    /// that exchange, so drive it directly: a stub that answers 200 and then
+    /// dribbles a byte every 200ms forever, against a request timeout far
+    /// larger than the resource ceiling. Nothing but the ceiling can fail this:
+    /// with the ceiling removed this test runs 50s and fails, with it, 2s.
+    /// The ceiling is compressed to 2s here so CI stays fast; that the shipping
+    /// value is 60s and reaches the production provider is pinned separately by
+    /// `testDefaultSessionCarriesBothDeadlines` and by
+    /// `testResolveProviderBuildsBoundedRemoteProvider`.
+    func testDribblingEndpointIsCutOffByTheResourceCeiling() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [DribblingProtocol.self]
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 2
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 30,
+            session: URLSession(configuration: config)
+        )
+        let started = Date()
+        do {
+            _ = try await provider.complete(system: "system", user: "user")
+            XCTFail("Expected the dribbling endpoint to hit the resource ceiling")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .timedOut)
+        }
+        // Bounded by the resource ceiling, not by the 30s idle timer.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 15)
+    }
+}
+
+/// Settings promises the page text goes "to this endpoint". A 307 replays the
+/// POST — method and body intact — wherever the response points, so that
+/// promise only holds if redirects are bounded.
+final class RemoteProviderRedirectTests: XCTestCase {
+    override func tearDown() {
+        RedirectProtocol.secondHop = nil
+        super.tearDown()
+    }
+
+    func testCrossHostRedirectNeverReceivesThePageText() async throws {
+        let secondHop = RequestCapture()
+        RedirectProtocol.secondHop = secondHop
+        RedirectProtocol.target = URL(string: "https://collector.example/v1/chat/completions")!
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RedirectProtocol.self]
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 2,
+            session: URLSession(configuration: config)
+        )
+        do {
+            let text = try await provider.complete(system: "system", user: "PAGE-CONTENT-HERE")
+            XCTFail("Expected the off-endpoint redirect to be refused, got \(text)")
+        } catch {
+            // Deliberately not pinned to a specific error. Against a live server
+            // a refused redirect ends the task with the 3xx itself, so `complete`
+            // throws .transport("HTTP 307"). A `URLProtocol` stub has no way to
+            // model that: once the delegate declines, the stub's load is simply
+            // never finished, so the task ends at the request timeout instead.
+            // The claim under test is where the bytes went, not which error came
+            // back — so assert that, and keep the timeout short so a regression
+            // (redirect followed, second hop answers) fails fast either way.
+        }
+        XCTAssertNil(secondHop.url, "the second host must never be contacted")
+        XCTAssertNil(secondHop.body, "the page text must never reach the second host")
+    }
+
+    /// A redirect that stays on the configured origin keeps the promise, so it
+    /// is still followed — self-hosted proxies move paths around.
+    func testSameOriginRedirectIsFollowed() async throws {
+        let secondHop = RequestCapture()
+        RedirectProtocol.secondHop = secondHop
+        RedirectProtocol.target = MemoryWavePreferences.defaultRemoteBaseURL
+            .appendingPathComponent("v2/chat/completions")
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RedirectProtocol.self]
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            session: URLSession(configuration: config)
+        )
+        let text = try await provider.complete(system: "system", user: "PAGE-CONTENT-HERE")
+        XCTAssertEqual(text, "second-hop")
+        XCTAssertEqual(secondHop.url?.host, MemoryWavePreferences.defaultRemoteBaseURL.host)
+    }
+
+    func testPolicyBoundsTheOriginPrecisely() {
+        let endpoint = URL(string: "https://api.x.ai/v1/chat/completions")!
+        let allows = { (candidate: String) in
+            EndpointRedirectPolicy.staysOnEndpoint(URL(string: candidate)!, endpoint: endpoint)
+        }
+        XCTAssertTrue(allows("https://api.x.ai/v2/chat/completions"))
+        XCTAssertTrue(allows("https://API.X.AI/v1/chat/completions"))
+        XCTAssertTrue(allows("https://api.x.ai:443/v1/chat/completions"))
+        // Off-origin, downgraded, or re-pointed at another port: refused.
+        XCTAssertFalse(allows("https://collector.example/v1/chat/completions"))
+        XCTAssertFalse(allows("https://api.x.ai.evil.net/v1/chat/completions"))
+        XCTAssertFalse(allows("https://evil.api.x.ai/v1/chat/completions"))
+        XCTAssertFalse(allows("http://api.x.ai/v1/chat/completions"))
+        XCTAssertFalse(allows("https://api.x.ai:8443/v1/chat/completions"))
+    }
 }
 
 private final class RequestCapture: @unchecked Sendable {
     var body: Data?
+    var timeout: TimeInterval?
+    var url: URL?
+}
+
+/// Answers the first hop with a 307 to `target`, replaying method and body the
+/// way a live 307 does. If the redirect is followed, the second hop records
+/// exactly what arrived there.
+private final class RedirectProtocol: URLProtocol {
+    nonisolated(unsafe) static var target = URL(string: "https://collector.example/v1/chat/completions")!
+    nonisolated(unsafe) static var secondHop: RequestCapture?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        if url == Self.target {
+            Self.secondHop?.url = url
+            Self.secondHop?.body = request.httpBody ?? bodyFromStream(request)
+            let data = Data(#"{"choices":[{"message":{"role":"assistant","content":"second-hop"}}]}"#.utf8)
+            let response = HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        var replay = request
+        replay.url = Self.target
+        let redirect = HTTPURLResponse(
+            url: url, statusCode: 307, httpVersion: "HTTP/1.1",
+            headerFields: ["Location": Self.target.absoluteString])!
+        client?.urlProtocol(self, wasRedirectedTo: replay, redirectResponse: redirect)
+    }
+
+    override func stopLoading() {}
+
+    private func bodyFromStream(_ request: URLRequest) -> Data? {
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+        defer { buf.deallocate() }
+        while stream.hasBytesAvailable {
+            let n = stream.read(buf, maxLength: 1024)
+            if n <= 0 { break }
+            data.append(buf, count: n)
+        }
+        return data
+    }
+}
+
+/// Answers, then never finishes: one byte at a time, forever. Every byte
+/// rearms the idle timer, so only the resource ceiling can end this.
+private final class DribblingProtocol: URLProtocol {
+    private let lock = NSLock()
+    private var isStopped = false
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        nonisolated(unsafe) let unsafeSelf = self
+        DispatchQueue(label: "qwave.test.dribble").async {
+            // Capped so a bug in the ceiling ends as a test failure, not a hang.
+            for _ in 0..<100 {
+                guard !unsafeSelf.stopped() else { return }
+                unsafeSelf.client?.urlProtocol(unsafeSelf, didLoad: Data(" ".utf8))
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+    }
+
+    override func stopLoading() {
+        lock.withLock { isStopped = true }
+    }
+
+    private func stopped() -> Bool {
+        lock.withLock { isStopped }
+    }
+}
+
+/// Accepts the connection and then never answers, standing in for an endpoint
+/// that hangs.
+private final class HangingProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {}
+    override func stopLoading() {}
 }
 
 private final class CaptureProtocol: URLProtocol {
@@ -577,6 +1010,7 @@ private final class CaptureProtocol: URLProtocol {
 
     override func startLoading() {
         Self.capture?.body = request.httpBody ?? httpBodyFromStream(request)
+        Self.capture?.timeout = request.timeoutInterval
         let data = Data(Self.responseJSON.utf8)
         let response = HTTPURLResponse(
             url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
