@@ -74,25 +74,29 @@ The Stage B seam is now implemented end-to-end:
   - FIPS 202 Keccak/SHAKE (own permutation implementation, verified against
     Python hashlib vectors).
   - **ML-KEM-768** per FIPS 203: NTT with ζ=17 twiddle table, basemul
-    NTT-domain multiplication, CBD, implicit rejection. Verified against an
-    independent Python oracle (schoolbook + NTT formulations) via committed
-    known-answer vectors.
-  - **Classic McEliece 348864** (m=12, n=3488, t=64, f=0x1053): binary
-    Goppa codes, batch inversion for syndrome columns, systematic generator
-    via GF(2) RREF, and key-equation decoding (σ′ ≡ S·σ mod g solved as a
-    linear system — the reference's FFT decoder solves the same equation).
-    Decapsulation re-checks the codeword (zero syndrome) before returning a
-    key, so decoding failures throw instead of producing a wrong PSK.
-  - **`HybridKEM`**: ML-KEM-768 ‖ Classic McEliece 348864 with a domain-
-    separated PSK = SHAKE256("qwave/pq-psk/v1" ‖ ss₁ ‖ ss₂, 32).
-- **`MullvadQuantumPeerNegotiator`** (VPNKit): generates a fresh hybrid key
-  pair per session, posts the encapsulation keys to the relay's in-tunnel
+    NTT-domain multiplication, CBD, Algorithm 7 rejection sampling, §7.2
+    encapsulation-key validation, implicit rejection. Verified against the
+    **official NIST ACVP ML-KEM-768 vectors** (keyGen, encapsulation,
+    decapsulation and encapsulationKeyCheck), committed with provenance under
+    `PostQuantumTests/Fixtures/`.
+  - **`HybridKEM`**: ML-KEM-768 with a domain-separated PSK =
+    SHAKE256("qwave/pq-psk/v1" ‖ ss, 32).
+- **`MullvadQuantumPeerNegotiator`** (VPNKit): generates a fresh KEM key
+  pair per session, posts the encapsulation key to the relay's in-tunnel
   ephemeral-peer service (JSON over the tunnel gateway, port 1337),
-  decapsulates the relay's ciphertext bundle, and returns the PSK.
+  decapsulates the relay's ciphertext, and returns the PSK.
   `PacketTunnelProvider` installs it on the WireGuard peer; any failure
   falls back to classic WireGuard.
+- **Second KEM leg — removed.** Stage B originally shipped a
+  second, code-based leg named `ClassicMcEliece348864`. It was not Classic
+  McEliece (McEliece-form 436-byte ciphertext where the standard is
+  Niederreiter-form at 96 bytes, non-standard secret-key size and shared-secret
+  derivation, no implicit rejection, none of SeededKeyGen's expansion) and it
+  had no conformance vectors. It was removed rather than corrected; the
+  quantum resistance now rests on ML-KEM-768 plus the classical Curve25519
+  handshake.
 - **Interop note**: byte-level conformance with mullvadvpn-app's exact
-  gRPC wire format is a follow-up (Stage B.5); the KEM primitives are
-  standard-conformant (ML-KEM-768 is FIPS 203; McEliece 348864 follows the
-  NIST round-3 parameter set), and the transport carries the same material
-  (WG pubkey, KEM keys, ciphertext bundle) in a versioned JSON envelope.
+  gRPC wire format is still a follow-up (Stage B.5). The KEM primitive is now
+  conformance-tested against the official NIST ACVP vectors, but the
+  *transport* is a bespoke versioned JSON envelope that no Mullvad relay
+  serves; it carries the same material (WG pubkey, KEM key, ciphertext).

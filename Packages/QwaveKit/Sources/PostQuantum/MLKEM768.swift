@@ -3,15 +3,20 @@ import Foundation
 /// FIPS 203 ML-KEM-768 (NIST post-quantum lattice KEM), parameter set
 /// k=3, eta1=eta2=2, du=10, dv=4, q=3329, n=256.
 ///
-/// Conventions follow the CRYSTALS reference implementation (which the
-/// `ml-kem` Rust crate used by Mullvad is verified against):
-///   - the matrix is sampled as A[i][j] = Parse(XOF(rho, nonce=(i<<8)|j))
-///     with keygen, and as the transpose with encrypt (nonce=(j<<8)|i);
+/// Conventions follow FIPS 203 final (and therefore the CRYSTALS reference
+/// implementation, which the `ml-kem` Rust crate used by Mullvad is verified
+/// against):
+///   - the matrix is sampled with rejection sampling (Algorithm 7) as
+///     Â[i][j] = SampleNTT(rho ‖ j ‖ i) in KeyGen, and as the transpose
+///     Â[i][j] = SampleNTT(rho ‖ i ‖ j) in Encrypt;
 ///   - PRF noise nonces follow FIPS 203's single counter (s: 0..k-1,
 ///     e: k..2k-1, y: 0..k-1, e1: k..2k-1, e2: 2k);
-///   - Compress/Decompress are round-half-up (matching the reference).
+///   - Compress/Decompress are round-half-up (matching the reference);
+///   - Encaps returns K directly — the Kyber-round-3 KDF over (K ‖ c) was
+///     removed during standardisation.
 ///
-/// Verified against independently generated vectors in `PostQuantumTests`.
+/// Conformance evidence: the official NIST ACVP ML-KEM-768 vectors, in
+/// `PostQuantumTests/MLKEM768ACVPSuite`.
 public enum MLKEM768 {
     public static let q = 3329
     static let n = 256
@@ -23,7 +28,7 @@ public enum MLKEM768 {
 
     /// ek = ByteEncode_12(t) || rho (1184 bytes)
     public static let ekSize = 384 * k + 32
-    /// dk = ByteEncode_12(s) || ek || z || H(ek) (2400 bytes, FIPS 203 layout)
+    /// dk = ByteEncode_12(s) || ek || H(ek) || z (2400 bytes, FIPS 203 Alg 16)
     public static let dkSize = 384 * k + ekSize + 32 + 32
     /// ct = ByteEncode_10(u) || ByteEncode_4(v) (1088 bytes)
     public static let ctSize = 320 * k + 128
@@ -140,12 +145,15 @@ public enum MLKEM768 {
         return out
     }
 
+    /// FIPS 203 Algorithm 6 (ByteDecode_12). For d = 12 the modulus is q, not
+    /// 2^12, so the decoded values are reduced mod q — a 12-bit field can hold
+    /// 767 values that are not valid coefficients.
     static func byteDecode12(_ data: Data) -> [Int] {
         var out = [Int](repeating: 0, count: 256)
         for i in 0..<128 {
             let t = Int(data[3 * i]) | (Int(data[3 * i + 1]) << 8) | (Int(data[3 * i + 2]) << 16)
-            out[2 * i] = t & 0xFFF
-            out[2 * i + 1] = t >> 12
+            out[2 * i] = (t & 0xFFF) % q
+            out[2 * i + 1] = (t >> 12) % q
         }
         return out
     }
@@ -253,12 +261,40 @@ public enum MLKEM768 {
         return f
     }
 
-    /// XOF(rho, nonce) -> 384-byte Parse into 256 coefficients.
-    static func sampleMatrixEntry(_ rho: Data, nonce: Int) -> [Int] {
+    /// FIPS 203 Algorithm 7 (SampleNTT): rejection sampling from
+    /// SHAKE128(rho ‖ b0 ‖ b1).
+    ///
+    /// The XOF stream is read three bytes at a time into two 12-bit values
+    /// d1, d2; each is ACCEPTED only if it is < q, otherwise it is discarded
+    /// and more stream is read. A fixed-size squeeze that keeps every 12-bit
+    /// value would admit the 767 values in [q, 2^12) and produce a different
+    /// matrix from every conformant implementation.
+    ///
+    /// The number of bytes consumed is unbounded in principle (>575 bytes
+    /// happens with probability ~2^-38), which is why this streams from
+    /// `Keccak.SHAKE128Reader` instead of over-squeezing a fixed block.
+    static func sampleNTT(_ rho: Data, _ b0: Int, _ b1: Int) -> [Int] {
         var seed = Data(rho)
-        seed.append(UInt8((nonce >> 8) & 0xFF))
-        seed.append(UInt8(nonce & 0xFF))
-        return byteDecode12(Keccak.shake128(seed, count: 384))
+        seed.append(UInt8(b0))
+        seed.append(UInt8(b1))
+        var reader = Keccak.SHAKE128Reader(seed)
+
+        var a = [Int](repeating: 0, count: n)
+        var j = 0
+        while j < n {
+            let c = reader.read(3)
+            let d1 = Int(c[0]) | ((Int(c[1]) & 0xF) << 8)
+            let d2 = (Int(c[1]) >> 4) | (Int(c[2]) << 4)
+            if d1 < q {
+                a[j] = d1
+                j += 1
+            }
+            if d2 < q && j < n {
+                a[j] = d2
+                j += 1
+            }
+        }
+        return a
     }
 
     static func sampleNoise(_ seed: Data, nonce: Int, eta: Int) -> [Int] {
@@ -276,10 +312,14 @@ public enum MLKEM768 {
         let rho = rhoSigma.prefix(32)
         let sigma = Data(rhoSigma.dropFirst(32))
 
+        // FIPS 203 Algorithm 13 step 10: Â[i,j] ← SampleNTT(ρ ‖ j ‖ i).
+        // The two index bytes are (j, i) here and (i, j) in Encrypt; getting
+        // them the same way round in both places yields a self-consistent but
+        // non-interoperable KEM.
         var a = [[Int]](repeating: [Int](repeating: 0, count: 256), count: k * k)
         for i in 0..<k {
             for j in 0..<k {
-                a[i * k + j] = sampleMatrixEntry(rho, nonce: (i << 8) | j)
+                a[i * k + j] = sampleNTT(rho, j, i)
             }
         }
 
@@ -323,11 +363,12 @@ public enum MLKEM768 {
         }
         let rho = ek.subdata(in: (384 * k)..<ek.count)
 
-        // Transposed matrix for u = A^T * y.
+        // Transposed matrix for u = A^T ∘ y: (Â^⊤)[i,j] = Â[j,i] =
+        // SampleNTT(ρ ‖ i ‖ j) — index bytes (i, j), the mirror of KeyGen.
         var at = [[Int]](repeating: [Int](repeating: 0, count: 256), count: k * k)
         for i in 0..<k {
             for j in 0..<k {
-                at[i * k + j] = sampleMatrixEntry(rho, nonce: (j << 8) | i)
+                at[i * k + j] = sampleNTT(rho, i, j)
             }
         }
 
@@ -387,46 +428,76 @@ public enum MLKEM768 {
 
     // MARK: - ML-KEM
 
-    /// FIPS 203 Algorithm 16. d: 32-byte seed. Returns (ek, dk).
-    public static func keygen(seed d: Data) -> (ek: Data, dk: Data) {
-        precondition(d.count == 32)
-        let z = Keccak.shake256(Data("qwave-z".utf8) + d, count: 32)
+    public enum MLKEMError: Error, Equatable {
+        /// FIPS 203 §7.2 encapsulation-key input check failed: wrong length, or
+        /// a coefficient outside [0, q) (the "modulus check").
+        case invalidEncapsulationKey
+    }
+
+    /// FIPS 203 §7.2 encapsulation-key input check: the type check (length)
+    /// and the modulus check (every encoded coefficient is already reduced,
+    /// i.e. re-encoding the decoded key reproduces it byte for byte).
+    public static func validateEncapsulationKey(_ ekIn: Data) -> Bool {
+        let ek = Data(ekIn)
+        guard ek.count == ekSize else { return false }
+        for i in 0..<k {
+            let chunk = ek.subdata(in: (384 * i)..<(384 * (i + 1)))
+            if byteEncode12(byteDecode12(chunk)) != chunk { return false }
+        }
+        return true
+    }
+
+    /// FIPS 203 Algorithm 16 (ML-KEM.KeyGen_internal). d and z are two
+    /// *independent* 32-byte seeds — z is the implicit-rejection secret and the
+    /// standard never derives it from d.
+    public static func keygen(d: Data, z: Data) -> (ek: Data, dk: Data) {
+        precondition(d.count == 32 && z.count == 32)
         let (ek, dkKPKE) = kpkeKeygen(d)
+        // dk ← dk_PKE ‖ ek ‖ H(ek) ‖ z  (Algorithm 16 step 3).
         var dk = dkKPKE
         dk.append(ek)
-        dk.append(z)
         dk.append(Keccak.sha3_256(ek))
+        dk.append(z)
         return (ek, dk)
     }
 
-    /// FIPS 203 Algorithm 17. m: 32-byte randomness. Returns (ct, ss).
-    public static func encaps(ek: Data, m: Data) -> (ct: Data, ss: Data) {
-        precondition(ek.count == ekSize && m.count == 32)
-        let h = Keccak.shake256(ek, count: 32)
+    /// FIPS 203 Algorithm 17 (ML-KEM.Encaps_internal), preceded by the §7.2
+    /// input check. m: 32-byte randomness. Returns (ct, ss).
+    public static func encaps(ek: Data, m: Data) throws -> (ct: Data, ss: Data) {
+        precondition(m.count == 32)
+        guard validateEncapsulationKey(ek) else { throw MLKEMError.invalidEncapsulationKey }
+        // H is SHA3-256 (FIPS 203 §4.1), not SHAKE256. H(ek) feeds G(m ‖ H(ek)),
+        // which yields both K and the encryption coins r.
+        let h = Keccak.sha3_256(ek)
         let kR = Keccak.sha3_512(m + h)
-        let k = kR.prefix(32)
+        let ss = kR.prefix(32)
         let r = Data(kR.dropFirst(32))
         let ct = kpkeEncrypt(ek, m, r)
-        let ss = Keccak.shake256(k + ct, count: 32)
-        return (ct, ss)
+        // K is returned directly. The Kyber-round-3 ss = KDF(K ‖ c) step was
+        // REMOVED during standardisation; keeping it breaks every peer.
+        return (ct, Data(ss))
     }
 
-    /// FIPS 203 Algorithm 18 (with implicit rejection). Returns ss.
+    /// FIPS 203 Algorithm 18 (ML-KEM.Decaps_internal, with implicit
+    /// rejection). Returns ss.
     public static func decaps(dk: Data, ct: Data) -> Data {
         precondition(dk.count == dkSize && ct.count == ctSize)
         let dkKPKE = dk.prefix(384 * k)
         let ek = dk.subdata(in: (384 * k)..<(384 * k + ekSize))
-        let z = dk.subdata(in: (384 * k + ekSize)..<(384 * k + ekSize + 32))
+        // dk layout is dk_PKE ‖ ek ‖ H(ek) ‖ z; h is *read*, not recomputed.
+        let h = dk.subdata(in: (384 * k + ekSize)..<(384 * k + ekSize + 32))
+        let z = dk.subdata(in: (384 * k + ekSize + 32)..<(384 * k + ekSize + 64))
 
         let m2 = kpkeDecrypt(dkKPKE, ct)
-        let h = Keccak.shake256(ek, count: 32)
         let k2R = Keccak.sha3_512(m2 + h)
         let k2 = k2R.prefix(32)
         let r2 = Data(k2R.dropFirst(32))
         let ct2 = kpkeEncrypt(ek, m2, r2)
+        // Rejection secret K̄ = J(z ‖ c) = SHAKE256(z ‖ c, 32).
+        let kBar = Keccak.shake256(z + ct, count: 32)
 
         // FIPS 203 implicit rejection, constant time: the re-encryption
-        // comparison must not early-exit and the k2-vs-z selection must not
+        // comparison must not early-exit and the K'-vs-K̄ selection must not
         // branch — both operate on secret-derived data.
         var acc: UInt8 = 0
         for (a, b) in zip(ct2, ct) {
@@ -434,11 +505,11 @@ public enum MLKEM768 {
         }
         let accWide = UInt16(acc)
         let isTampered = UInt8((accWide | (0 &- accWide)) >> 8) & 1
-        let mask = 0 &- isTampered  // 0x00 accept (k2), 0xFF reject (z)
+        let mask = 0 &- isTampered  // 0x00 accept (K'), 0xFF reject (K̄)
         var selected = Data(count: 32)
-        for (i, pair) in zip(k2, z).enumerated() {
+        for (i, pair) in zip(k2, kBar).enumerated() {
             selected[i] = pair.0 ^ (mask & (pair.0 ^ pair.1))
         }
-        return Keccak.shake256(selected + ct, count: 32)
+        return selected
     }
 }

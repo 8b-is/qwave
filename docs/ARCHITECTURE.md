@@ -18,7 +18,7 @@ Qwave.app
 │   ├── MemoryWave        encrypted memory substrate and providers
 │   ├── Summarize         on-device page summarisation (FoundationModels, availability-gated)
 │   ├── VPNKit            Mullvad API, relays, tunnel lifecycle
-│   ├── PostQuantum        Keccak, ML-KEM-768, Classic McEliece, hybrid KEM
+│   ├── PostQuantum        Keccak, ML-KEM-768, hybrid (PQ+classical) KEM
 │   ├── WebExtensions      Manifest V3 registry and browser.* bridge
 │   ├── URLIdentity        WHATWG-compatible host identity
 │   ├── FeatureFlags       guarded WebKit SPI access
@@ -124,9 +124,9 @@ that it contains no key material. `TunnelManager` owns the
 WireGuard through WireGuardKit and, when enabled, negotiates a hybrid PSK:
 
 ```text
-Qwave / PacketTunnel ── ML-KEM-768 ───────┐
-                                         ├── hybrid PSK ── WireGuard relay
-Qwave / PacketTunnel ── McEliece 348864 ─┘
+Qwave / PacketTunnel ── ML-KEM-768 ──── PSK ──┐
+                                              ├── hybrid session ── relay
+Qwave / PacketTunnel ── Curve25519 handshake ─┘
 ```
 
 If the quantum-resistant negotiation fails while enabled, the tunnel start

@@ -1,15 +1,21 @@
 import Foundation
 
-/// Dual-KEM hybrid: ML-KEM-768 (lattice, FIPS 203) + Classic McEliece 348864
-/// (code-based). The shared secret mixes both legs — an attacker must break
-/// both (and Curve25519, via the WireGuard handshake) to recover the tunnel
-/// PSK. Domain separation via hardcoded SHAKE256 labels; the PSK derivation
-/// mirrors the "hash both shared secrets" design of Mullvad's quantum tunnels
-/// (docs/VPN_STAGE_B.md).
+/// Post-quantum leg of the tunnel PSK: ML-KEM-768 (lattice, FIPS 203).
+///
+/// "Hybrid" refers to the combination with the classical Curve25519 WireGuard
+/// handshake — an attacker must break both ML-KEM-768 and Curve25519 to
+/// recover the tunnel PSK. Domain separation via a hardcoded SHAKE256 label;
+/// the PSK derivation mirrors the "hash the shared secret into the PSK" design
+/// of Mullvad's quantum tunnels (docs/VPN_STAGE_B.md).
+///
+/// A second, code-based KEM leg (a construction named "ClassicMcEliece348864")
+/// was removed: it did not implement Classic McEliece and had no conformance
+/// vectors, so it added review surface and key size without adding any
+/// assurance. See CHANGELOG.md.
 public enum HybridKEM {
-    public static let ekSize = MLKEM768.ekSize + ClassicMcEliece348864.ekSize
-    public static let dkSize = MLKEM768.dkSize + ClassicMcEliece348864.dkSize
-    public static let ctSize = MLKEM768.ctSize + ClassicMcEliece348864.ctSize
+    public static let ekSize = MLKEM768.ekSize
+    public static let dkSize = MLKEM768.dkSize
+    public static let ctSize = MLKEM768.ctSize
     public static let ssSize = 32
 
     /// Wrong-size inputs at this boundary throw instead of trapping: the
@@ -28,46 +34,32 @@ public enum HybridKEM {
     private static let pskLabel = Data("qwave/pq-psk/v1".utf8)
     private static let mlkemKgLabel = Data("qwave/mlkem-kg".utf8)
     private static let mlkemEncLabel = Data("qwave/mlkem-enc".utf8)
-    private static let mceKgLabel = Data("qwave/mceliece-kg".utf8)
-    private static let mceEncLabel = Data("qwave/mceliece-enc".utf8)
 
     /// seed: 32 bytes. Returns (ek, dk).
     public static func keygen(seed: Data) throws -> (ek: Data, dk: Data) {
         try requireSize(seed, 32, "seed")
-        let (mlkemEk, mlkemDk) = MLKEM768.keygen(seed: Keccak.shake256(mlkemKgLabel + seed, count: 32))
-        let (mceEk, mceDk) = try ClassicMcEliece348864.keygen(seed: Keccak.shake256(mceKgLabel + seed, count: 32))
-        return (mlkemEk + mceEk, mlkemDk + mceDk)
+        // ML-KEM needs two independent 32-byte seeds (d and z); expand the
+        // caller's single seed into both.
+        let seeds = Keccak.shake256(mlkemKgLabel + seed, count: 64)
+        return MLKEM768.keygen(d: seeds.prefix(32), z: Data(seeds.dropFirst(32)))
     }
 
     /// seed: 32 bytes. Returns (ct, ss).
     public static func encapsulate(ek: Data, seed: Data) throws -> (ct: Data, ss: Data) {
         try requireSize(ek, ekSize, "ek")
         try requireSize(seed, 32, "seed")
-        let mlkemEk = ek.prefix(MLKEM768.ekSize)
-        let mceEk = ek.subdata(in: MLKEM768.ekSize..<ek.count)
-
-        let mlkemSeed = Keccak.shake256(mlkemEncLabel + seed, count: 32)
-        let (ctMlkem, ssMlkem) = MLKEM768.encaps(ek: mlkemEk, m: mlkemSeed)
-
-        let mceSeed = Keccak.shake256(mceEncLabel + seed, count: 32)
-        let (ctMce, ssMce) = try ClassicMcEliece348864.encapsulate(ek: mceEk, seed: mceSeed)
-
-        let ct = ctMlkem + ctMce
-        let ss = Keccak.shake256(pskLabel + ssMlkem + ssMce, count: 32)
-        return (ct, ss)
+        let m = Keccak.shake256(mlkemEncLabel + seed, count: 32)
+        let (ct, ssMlkem) = try MLKEM768.encaps(ek: Data(ek), m: m)
+        return (ct, Keccak.shake256(pskLabel + ssMlkem, count: 32))
     }
 
-    /// Returns the 32-byte shared secret, or throws when either leg fails.
+    /// Returns the 32-byte shared secret, or throws when the input sizes are
+    /// wrong. A tampered ciphertext is not an error: ML-KEM's implicit
+    /// rejection returns a different secret, and the handshake fails there.
     public static func decapsulate(dk: Data, ct: Data) throws -> Data {
         try requireSize(dk, dkSize, "dk")
         try requireSize(ct, ctSize, "ct")
-        let mlkemDk = dk.prefix(MLKEM768.dkSize)
-        let mceDk = dk.subdata(in: MLKEM768.dkSize..<dk.count)
-        let ctMlkem = ct.prefix(MLKEM768.ctSize)
-        let ctMce = ct.subdata(in: MLKEM768.ctSize..<ct.count)
-
-        let ssMlkem = MLKEM768.decaps(dk: mlkemDk, ct: ctMlkem)
-        let ssMce = try ClassicMcEliece348864.decapsulate(dk: mceDk, ct: ctMce)
-        return Keccak.shake256(pskLabel + ssMlkem + ssMce, count: 32)
+        let ssMlkem = MLKEM768.decaps(dk: Data(dk), ct: Data(ct))
+        return Keccak.shake256(pskLabel + ssMlkem, count: 32)
     }
 }

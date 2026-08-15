@@ -92,8 +92,8 @@ let package = Package(
             ],
             swiftSettings: swift6
         ),
-        // Post-quantum cryptography: Keccak, ML-KEM-768, Classic McEliece 348864,
-        // and the hybrid construction used by the Stage B VPN negotiator.
+        // Post-quantum cryptography: Keccak, ML-KEM-768, and the hybrid
+        // construction used by the Stage B VPN negotiator.
         .target(name: "PostQuantum", swiftSettings: swift6),
         .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"], swiftSettings: swift6),
         // WebExtensions Manifest V3 engine: browser.* bridge, storage, popups.

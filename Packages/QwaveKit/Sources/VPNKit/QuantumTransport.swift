@@ -15,43 +15,36 @@ public protocol QuantumTransporting: Sendable {
     func requestEphemeralPeer(_ request: EphemeralPeerRequest) async throws -> EphemeralPeerResponse
 }
 
-/// Client -> relay: the WG public key plus both KEM encapsulation keys.
+/// Client -> relay: the WG public key plus the KEM encapsulation key.
 public struct EphemeralPeerRequest: Codable, Equatable, Sendable {
     /// WireGuard public key of the session (base64).
     public var wgPublicKey: String
     /// ML-KEM-768 encapsulation key (base64).
     public var mlkemPublicKey: String
-    /// Classic McEliece 348864 encapsulation key (base64).
-    public var mceliecePublicKey: String
     /// Relay hostname, for the service's routing.
     public var relayHostname: String
 
     public init(
         wgPublicKey: String,
         mlkemPublicKey: String,
-        mceliecePublicKey: String,
         relayHostname: String
     ) {
         self.wgPublicKey = wgPublicKey
         self.mlkemPublicKey = mlkemPublicKey
-        self.mceliecePublicKey = mceliecePublicKey
         self.relayHostname = relayHostname
     }
 
     enum CodingKeys: String, CodingKey {
         case wgPublicKey = "wg_public_key"
         case mlkemPublicKey = "mlkem_public_key"
-        case mceliecePublicKey = "mceliece_public_key"
         case relayHostname = "relay_hostname"
     }
 }
 
-/// Relay -> client: the hybrid ciphertext; the PSK is derived from the
-/// decapsulation of both legs.
+/// Relay -> client: the ciphertext the PSK is decapsulated from.
 public struct EphemeralPeerResponse: Codable, Equatable, Sendable {
-    /// ML-KEM ciphertext (base64, 1088 bytes) || McEliece ciphertext
-    /// (base64, 436 bytes) — a single bundle keeps the wire format stable
-    /// when either leg's parameters change.
+    /// ML-KEM-768 ciphertext (base64, 1088 bytes). Kept as a "bundle" field
+    /// so the wire format survives a parameter change.
     public var ciphertextBundle: String
 
     public init(ciphertextBundle: String) {

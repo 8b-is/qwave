@@ -68,7 +68,9 @@ public enum Keccak {
         case xof
     }
 
-    private static func sponge(_ input: Data, rate: Int, domain: Domain, outputLength: Int) -> Data {
+    /// Absorb phase: returns the state with the whole (padded) input absorbed,
+    /// ready to squeeze from.
+    private static func absorbed(_ input: Data, rate: Int, domain: Domain) -> [UInt64] {
         var state = [UInt64](repeating: 0, count: 25)
         var buffer = [UInt8](repeating: 0, count: rate)
 
@@ -97,20 +99,73 @@ public enum Keccak {
         buffer[remaining] = domain == .hash ? 0x06 : 0x1F
         buffer[rate - 1] ^= 0x80
         absorb()
+        return state
+    }
 
-        // Squeeze.
+    /// Extract one rate-sized block from the current state.
+    private static func squeezeBlock(_ state: [UInt64], rate: Int) -> [UInt8] {
+        var block = [UInt8](repeating: 0, count: rate)
+        for i in 0..<rate {
+            block[i] = UInt8((state[i / 8] >> (8 * (i % 8))) & 0xFF)
+        }
+        return block
+    }
+
+    private static func sponge(_ input: Data, rate: Int, domain: Domain, outputLength: Int) -> Data {
+        var state = absorbed(input, rate: rate, domain: domain)
+
         var output = Data()
         while output.count < outputLength {
-            for i in 0..<rate {
-                buffer[i] = UInt8((state[i / 8] >> (8 * (i % 8))) & 0xFF)
-            }
+            let block = squeezeBlock(state, rate: rate)
             let needed = min(rate, outputLength - output.count)
-            output.append(contentsOf: buffer.prefix(needed))
+            output.append(contentsOf: block.prefix(needed))
             if output.count < outputLength {
                 permute(&state)
             }
         }
         return output
+    }
+
+    // MARK: - Incremental XOF
+
+    /// Incremental SHAKE128 squeeze.
+    ///
+    /// FIPS 203's SampleNTT (Algorithm 7) performs rejection sampling and so
+    /// consumes an *unbounded* number of XOF bytes — the one-shot
+    /// `shake128(_:count:)` cannot express that without picking an arbitrary
+    /// cut-off, and picking one silently biases the sampled matrix.
+    ///
+    /// Not thread-safe by construction: it is a value type holding sponge
+    /// state, so each sampling loop owns its own reader.
+    public struct SHAKE128Reader {
+        private static let rate = 168
+
+        private var state: [UInt64]
+        private var block: [UInt8]
+        private var offset: Int
+
+        public init(_ input: Data) {
+            state = Keccak.absorbed(input, rate: Self.rate, domain: .xof)
+            block = Keccak.squeezeBlock(state, rate: Self.rate)
+            offset = 0
+        }
+
+        /// Next `count` bytes of the XOF stream, permuting as often as needed.
+        public mutating func read(_ count: Int) -> [UInt8] {
+            var out = [UInt8]()
+            out.reserveCapacity(count)
+            while out.count < count {
+                if offset == Self.rate {
+                    Keccak.permute(&state)
+                    block = Keccak.squeezeBlock(state, rate: Self.rate)
+                    offset = 0
+                }
+                let take = min(Self.rate - offset, count - out.count)
+                out.append(contentsOf: block[offset..<(offset + take)])
+                offset += take
+            }
+            return out
+        }
     }
 
     // MARK: - Public API

@@ -80,10 +80,15 @@ jobs:
             exit 1
           }
 
-      # Release, not debug: the Classic McEliece keygen KATs dominate the
-      # suite and are ~10× faster optimized (a single keygen vector drops
-      # from ~40s to ~3.7s), keeping the full suite well inside the timeout.
-      # KATs are deterministic, so release vs debug does not change outcomes.
+      # Release, not debug. The original reason for this flag is GONE: it was
+      # the Classic McEliece keygen KATs (~40s per vector in debug), and that
+      # leg was deleted along with its fixtures. ML-KEM-768 is cheap either
+      # way — measured locally, PostQuantumTests runs ~1.65s in debug vs
+      # ~0.12s in release, so runtime no longer forces the choice.
+      # What keeps it here is that this gate then exercises the crypto as it
+      # actually ships (optimized), which is worth more than the seconds it
+      # saves. KATs are deterministic, so release vs debug does not change
+      # outcomes either way; revisit freely.
       - name: Run unit tests
         run: swift test -c release --package-path Packages/QwaveKit
 

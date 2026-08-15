@@ -47,7 +47,82 @@ All notable changes to Qwave will be documented in this file.
     last-opened popup, so a reply can no longer land on the wrong surface.
   - With no extensions installed, no bridge is injected into tabs at all.
 
+### Changed (BREAKING — crypto core)
+- **ML-KEM-768 now conforms to FIPS 203, verified against the official NIST
+  ACVP vectors.** 29 ML-KEM-768 cases (keyGen, encapsulation, decapsulation,
+  encapsulationKeyCheck) — out of 80 ML-KEM-768 cases upstream, or 70
+  excluding the deliberately-skipped `decapsulationKeyCheck` group — are
+  committed verbatim from `usnistgov/ACVP-Server`
+  with provenance in
+  `Packages/QwaveKit/Tests/PostQuantumTests/Fixtures/mlkem768_acvp_vectors-ATTRIBUTION.txt`.
+  When they were first wired up, **0 of the 21 then-runnable cases passed**;
+  all 29 pass now. Eight deviations were fixed, each of which independently
+  destroyed interoperability with any conformant peer:
+  - `SampleNTT` (Alg 7) did no rejection sampling — it took one fixed 384-byte
+    SHAKE128 squeeze and accepted 12-bit values ≥ q. It now streams and
+    rejects, via a new incremental `Keccak.SHAKE128Reader`.
+  - The matrix index bytes were transposed in *both* KeyGen and Encrypt
+    (self-consistent, interoperable with nothing).
+  - Encaps/decaps applied a Kyber-round-3 KDF `SHAKE256(K ‖ ct)` that was
+    removed during standardisation; K is now returned directly.
+  - `H(ek)` used SHAKE256 where FIPS 203 specifies SHA3-256, changing both
+    the ciphertext and the shared secret.
+  - `z` was derived from `d`; it is an independent seed, so keygen is now
+    `keygen(d:z:)`.
+  - The decapsulation key was laid out `dkPKE‖ek‖z‖H(ek)`; Alg 16 specifies
+    `dkPKE‖ek‖H(ek)‖z`. Decaps now reads the stored `H(ek)` instead of
+    recomputing it.
+  - Encaps had no input validation; FIPS 203 §7.2 type and modulus checks are
+    implemented as `MLKEM768.validateEncapsulationKey`, and `ByteDecode₁₂`
+    reduces mod q.
+
+  No migration and no compatibility shim: nothing PQ-derived is persisted (the
+  PSK is call-scoped and goes straight onto the WireGuard peer) and no
+  conformant peer is deployed.
+- **The Classic McEliece leg was removed.** `ClassicMcEliece348864` did not
+  implement Classic McEliece — McEliece-form 436-byte ciphertext where the
+  standard is Niederreiter-form at 96 bytes, secret key 5330 vs 6492, a
+  bespoke shared-secret derivation, no implicit rejection, and none of
+  SeededKeyGen's σ₁/σ₂ expansion, FieldOrdering, Irreducible or Benes control
+  bits. It was a different scheme wearing a standard's name and had no
+  conformance vectors, so it was dropped rather than corrected. `HybridKEM`
+  now carries ML-KEM-768 alone: ek 262304 → 1184, dk 7730 → 2400,
+  ct 1524 → 1088 bytes, and `EphemeralPeerRequest` loses `mceliece_public_key`.
+  "Hybrid" continues to mean post-quantum + classical Curve25519.
+
+  **Behaviour change, with a tunnel consequence — read this before upgrading.**
+  Dropping the code-based leg removed the *only throwing decapsulation path*.
+  `HybridKEM.decapsulate` now throws on wrong input sizes and on nothing else:
+  a tampered, corrupted or hostile ciphertext of the right length returns a
+  well-formed but **wrong** shared secret, because that is what ML-KEM's
+  implicit rejection is specified to do (FIPS 203). The KEM is correct; the
+  caller is what changes. In `Sources/PacketTunnel/PacketTunnelProvider.swift`
+  the daily rekey installs that wrong PSK over a working tunnel, logs
+  "Ephemeral peer PSK rotated", and does not retry for 24 hours — so a single
+  bad rekey response can take a working tunnel down for a day while reporting
+  success. Tunnel *start* is unaffected (a wrong PSK there simply fails
+  closed, which is the intent).
+  Scope, precisely: the protection that disappeared was always partial. With
+  the 1524-byte ciphertext, corruption confined to the 1088-byte ML-KEM half
+  already produced a wrong PSK with no throw (the old suite's
+  `mlkemBitFlipChangesSharedSecret` asserted exactly that); only corruption
+  touching the 436-byte McEliece half threw. Against a deliberately hostile
+  relay it was worth nothing, since the relay could always send a well-formed
+  McEliece half. No fix is included here — a correct one has to corroborate
+  the new PSK against a real handshake before discarding the old one, which
+  is a provider design change, not a patch. Tracked in issue #91.
+
 ### Added
+- **A regression pin for `HybridKEM`'s own derivation constants**
+  (`Fixtures/hybrid_psk_regression_pin.json`, `HybridKEMPinSuite`). Deleting
+  `hybrid_vectors.json` had left `pskLabel` ("qwave/pq-psk/v1"),
+  `mlkemKgLabel`, `mlkemEncLabel` and the 64-byte seed split into `d`/`z`
+  with nothing pinning them — all four are wire-visible values both peers
+  must agree on, and every one could have been edited with the whole suite
+  staying green. This fixture is **self-generated and is not conformance
+  evidence**; it is labelled as such in the file, in the suite doc comment
+  and in `docs/CRYPTO_REVIEW.md`'s checklist. It is also the only fixture in
+  the repo that may ever be regenerated — the ACVP vectors never are.
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
   on-device page summarisation via FoundationModels, behind the Summarize
   menu (⌥⌘S) and a toolbar button. Respond-only (no streaming), retry ≤3 on
@@ -58,6 +133,13 @@ All notable changes to Qwave will be documented in this file.
   the normal energy tier. The feature is absent on unsupported systems and
   never makes a network request — the model, the page text, and the summary
   never leave the Mac. See `docs/SUMMARIZE.md`.
+
+### Removed
+- The self-generated `mlkem_vectors.json`, `mceliece348864_vectors.json` and
+  `hybrid_vectors.json` fixtures (3.2 MB). They were round-trip fixtures
+  produced from the implementation itself, so they proved self-consistency and
+  never conformance, and they went stale the moment the code was corrected.
+  The official ACVP vectors replace them as the oracle.
 
 ### Fixed
 - Memory Wave's remote OpenAI-compatible provider now applies an explicit

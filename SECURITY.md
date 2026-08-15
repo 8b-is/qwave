@@ -37,13 +37,13 @@ backport branches or guaranteed support window for older tags.
   JavaScript policy reduce cross-site and policy-bypass risk.
 - **On-path network attackers.** App-owned API traffic uses HTTPS and the
   Mullvad client uses certificate pinning. The optional VPN protects traffic
-  through WireGuard; the Stage-B PSK path combines ML-KEM-768 and Classic
-  McEliece and fails closed when quantum resistance is enabled.
+  through WireGuard; the Stage-B PSK path uses ML-KEM-768 (FIPS 203) and
+  fails closed when quantum resistance is enabled.
 - **Update-channel attackers.** Release artifacts are signed/notarized when
   the distribution secrets and Apple approvals are available. Sparkle
   appcasts use Ed25519 signatures; the private signing seed is not committed.
 - **Harvest-now/decrypt-later attackers.** The Stage-B goal is to require
-  compromise of both KEM legs in addition to the classical WireGuard material.
+  compromise of ML-KEM-768 in addition to the classical WireGuard material.
 
 ### Explicitly out of scope
 
@@ -52,8 +52,9 @@ backport branches or guaranteed support window for older tags.
 - Mullvad relay compromise or a relay that can observe traffic metadata.
 - Full anonymity against websites, DNS operators, Apple/WebKit services, or
   the VPN provider.
-- Timing side-channel resistance of the current Classic McEliece decoder; see
-  [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md).
+- Byte-level wire-format conformance with mullvadvpn-app's ephemeral-peer
+  service; the KEM primitive is conformance-tested, the transport is not. See
+  [docs/VPN_STAGE_B.md](docs/VPN_STAGE_B.md).
 - Guaranteed zeroization of Swift `Data` values. Daily key rotation limits
   exposure, but Swift storage lifetime is not a hard zeroization primitive.
 

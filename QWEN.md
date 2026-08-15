@@ -78,7 +78,7 @@ PacketTunnel → {VPNKit, QwaveSupport, WireGuardKit}
 | `FeatureFlags` | Safari `_WKFeature` SPI reflection (`responds(to:)`-guarded) |
 | `BrowserCore` | Tabs, containers, navigation, hibernation, energy governor, internal pages, downloads |
 | `VPNKit` | Mullvad API client, relay selection, tunnel manager, post-quantum peer negotiation |
-| `PostQuantum` | Pure-Swift Keccak/SHAKE, ML-KEM-768 (FIPS 203), Classic McEliece 348864, `HybridKEM` |
+| `PostQuantum` | Pure-Swift Keccak/SHAKE, ML-KEM-768 (FIPS 203, official NIST ACVP vectors), `HybridKEM` |
 | `WebExtensions` | MV3 manifest registry, `browser.*` JS bridge, extension storage, popups |
 | `MemoryWave` | MEM8 cognitive substrate: 79-byte `WaveInt`, sparse grid, Marine salience, AES-GCM store, AI-agnostic providers |
 
@@ -88,7 +88,7 @@ PacketTunnel → {VPNKit, QwaveSupport, WireGuardKit}
 - **Hibernation**: `WKWebView.interactionState` captures full back/forward stack + scroll + form state; restoring a session starts all tabs hibernated, spawning one web process on first selection.
 - **Containers**: `WKWebsiteDataStore(forIdentifier:)` — separate cookie jars, caches, service workers per container. Ephemeral tabs use `.nonPersistent()`.
 - **Shields**: declarative `WKContentRuleList` enforced in WebKit's network layer, not JS-injected. HTTPS-first: rule list for subresources + state machine for main-frame navigations.
-- **Post-quantum**: Hybrid ML-KEM-768 + Classic McEliece 348864 PSK negotiation. Fail-closed: no silent classic fallback.
+- **Post-quantum**: ML-KEM-768 PSK negotiation, hybridised with the classical WireGuard handshake. Fail-closed: no silent classic fallback.
 - **Memory Wave**: Memories never leave the Mac. Remote providers receive titles + times only, never page bodies. Ephemeral/private tabs cannot write.
 
 ---
@@ -153,9 +153,9 @@ qwave/
 ### Security
 
 - **Secrets**: WireGuard device private keys live in Keychain (shared keychain group). Tunnel config carries no key material (verified by `TunnelSessionConfig` tests).
-- **Crypto**: Post-quantum module has a self-audit in `docs/CRYPTO_REVIEW.md`. KATs are deterministic. McEliece decoder is documented as variable-time (not attacker-chosen ciphertexts).
+- **Crypto**: Post-quantum module has a self-audit in `docs/CRYPTO_REVIEW.md`. ML-KEM-768 is conformance-tested against the official NIST ACVP vectors; the ephemeral-peer wire format is not.
 - **Reporting**: Via GitHub Security Advisories. No public issues for security reports.
-- **Threat model**: Malicious web content, network attackers (on-path), update-channel attackers, harvest-now-decrypt-later. Out of scope: compromised local machine, timing side channels on McEliece decoder, Mullvad relay compromise.
+- **Threat model**: Malicious web content, network attackers (on-path), update-channel attackers, harvest-now-decrypt-later. Out of scope: compromised local machine, ephemeral-peer wire-format conformance, Mullvad relay compromise.
 
 ### WireGuard pin
 

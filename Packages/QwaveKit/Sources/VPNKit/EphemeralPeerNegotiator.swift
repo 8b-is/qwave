@@ -16,7 +16,7 @@ public struct PresharedKeyMaterial: Equatable, Sendable {
 /// **The Stage B seam.**
 ///
 /// Mullvad's quantum-resistant tunnels derive a WireGuard preshared key via
-/// an in-tunnel exchange with the relay (ML-KEM + Classic McEliece — see
+/// an in-tunnel exchange with the relay (Qwave uses ML-KEM-768 — see
 /// docs/VPN_STAGE_B.md). That negotiation necessarily runs *inside* the
 /// packet tunnel provider, after a classic handshake, against the relay's
 /// in-tunnel service; the tunnel is then rekeyed with the derived PSK.
