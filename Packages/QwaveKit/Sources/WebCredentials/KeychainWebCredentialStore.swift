@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 
 /// Keychain-backed website-login store.
@@ -14,6 +15,12 @@ import Security
 /// `kSecClassGenericPassword` item). The two never share an item and are never
 /// interchanged, even when they ride the same access group.
 public struct KeychainWebCredentialStore: WebCredentialStore {
+    /// This module is deliberately dependency-free within QwaveKit (Foundation +
+    /// Security only, see Package.swift), so this logs directly through the
+    /// system `os.Logger` rather than pulling in `QwaveSupport`'s `QwaveLog`.
+    /// Subsystem matches the one `CredentialProviderViewController` uses.
+    private static let log = Logger(subsystem: "is.8b.qwave.autofill", category: "keychain-web-credential-store")
+
     /// Shared keychain access group. When the app is signed with a team id this
     /// is `$(TeamIdentifierPrefix)is.8b.qwave.shared`, letting the AutoFill
     /// extension read what the browser saved. Pass `nil` in unsigned dev builds.
@@ -54,13 +61,21 @@ public struct KeychainWebCredentialStore: WebCredentialStore {
                 throw WebCredentialError.malformedItem
             }
             let normalizedDomain = WebCredentialMatching.normalize(domain)
-            return try items.map { item in
+            // `compactMap`, not `map`: one keychain item that fails to decode
+            // (missing account/value, or a password blob that isn't valid
+            // UTF-8 — plausible for items another tool wrote into this shared
+            // access group) must not discard every *other* healthy credential
+            // for the domain. Skip and log the bad item; keep the rest.
+            return items.compactMap { item in
                 guard
                     let account = item[kSecAttrAccount as String] as? String,
                     let data = item[kSecValueData as String] as? Data,
                     let password = String(data: data, encoding: .utf8)
                 else {
-                    throw WebCredentialError.malformedItem
+                    Self.log.error(
+                        "skipping malformed keychain item for domain \(normalizedDomain, privacy: .private)"
+                    )
+                    return nil
                 }
                 return WebCredential(domain: normalizedDomain, username: account, password: password)
             }
