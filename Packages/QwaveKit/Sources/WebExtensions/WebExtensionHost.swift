@@ -24,13 +24,29 @@ public final class WebExtensionHost {
 
     /// Installs the bridge into a web view's configuration (called before
     /// the web view is created, or once per fresh configuration).
+    ///
+    /// With no extensions installed there is nothing for a page to talk to, so
+    /// no bridge is installed at all — no `qwaveExtension` message handler, no
+    /// injected script. Takes effect for web views created after an install.
+    ///
+    /// The bridge lives in `ExtensionContentWorld.isolated`, out of reach of
+    /// page script.
     public func installBridge(into controller: WKUserContentController) {
-        controller.removeScriptMessageHandler(forName: BrowserBridgeScript.messageHandlerName)
-        controller.add(router, name: BrowserBridgeScript.messageHandlerName)
+        guard !registry.extensions.isEmpty else { return }
+        controller.removeScriptMessageHandler(
+            forName: BrowserBridgeScript.messageHandlerName,
+            contentWorld: ExtensionContentWorld.isolated
+        )
+        controller.add(
+            router,
+            contentWorld: ExtensionContentWorld.isolated,
+            name: BrowserBridgeScript.messageHandlerName
+        )
         let script = WKUserScript(
             source: BrowserBridgeScript.source,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: true,
+            in: ExtensionContentWorld.isolated
         )
         controller.addUserScript(script)
     }
@@ -49,28 +65,35 @@ public final class WebExtensionHost {
         contentScriptEngine.resolveScripts(for: url, extensions: registry.extensions)
     }
 
-    /// Dispatches a message to all `browser.runtime.onMessage` listeners in a targeted web view.
+    /// Dispatches a message to all `browser.runtime.onMessage` listeners in a
+    /// targeted web view. `world` defaults to the web-page surface's world;
+    /// extension chrome must pass `ExtensionContentWorld.extensionPage`.
     public func dispatchMessage(
         to webView: WKWebView,
+        in world: WKContentWorld = ExtensionContentWorld.isolated,
         message: Any,
         sender: [String: Any]? = nil,
         messageId: Int? = nil
     ) {
-        router.dispatchMessage(to: webView, message: message, sender: sender, messageId: messageId)
+        router.dispatchMessage(to: webView, in: world, message: message, sender: sender, messageId: messageId)
     }
 
-    /// Broadcasts a message to all listeners across multiple web views.
+    /// Broadcasts a message to all listeners across multiple web views, each
+    /// paired with the world its bridge lives in.
     public func broadcastMessage(
         message: Any,
         sender: [String: Any]? = nil,
-        across webViews: [WKWebView]
+        across targets: [(webView: WKWebView, world: WKContentWorld)]
     ) {
-        router.broadcastMessage(message: message, sender: sender, across: webViews)
+        router.broadcastMessage(message: message, sender: sender, across: targets)
     }
 
     /// Removes the bridge and user scripts (web view teardown).
     public func uninstallBridge(from controller: WKUserContentController) {
-        controller.removeScriptMessageHandler(forName: BrowserBridgeScript.messageHandlerName)
+        controller.removeScriptMessageHandler(
+            forName: BrowserBridgeScript.messageHandlerName,
+            contentWorld: ExtensionContentWorld.isolated
+        )
         controller.removeAllUserScripts()
     }
 

@@ -379,6 +379,158 @@ final class ExtensionMessageRouterTests: XCTestCase {
         router.handle(ExtensionBridgeCall(id: 9, method: "nope.nope", args: []), extensionID: "e1")
         XCTAssertEqual(responder.responses.first?.success, false)
     }
+
+    /// A reply must land on the surface the call came from, never on whichever
+    /// responder happened to register last.
+    func testReplyGoesToTheCallingSurfaceNotTheSharedSlot() {
+        let (router, sharedSlot) = makeRouter()
+        let callingSurface = RecordingResponder()
+        router.handle(
+            ExtensionBridgeCall(id: 11, method: "storage.local.set", args: [["pref": "on"]]),
+            extensionID: "e1",
+            replyTo: callingSurface
+        )
+        XCTAssertEqual(callingSurface.responses.count, 1)
+        XCTAssertEqual(callingSurface.responses.first?.id, 11)
+        XCTAssertTrue(sharedSlot.responses.isEmpty)
+    }
+
+    /// The async `runtime.sendMessage` reply must also stay on the calling surface.
+    func testAsyncReplyGoesToTheCallingSurface() async {
+        let (router, sharedSlot) = makeRouter()
+        let callingSurface = RecordingResponder()
+        router.runtimeMessageHandler = { _, reply in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 10_000_000)
+                reply("pong")
+            }
+        }
+        router.handle(
+            ExtensionBridgeCall(id: 12, method: "runtime.sendMessage", args: ["ping"]),
+            extensionID: "e1",
+            replyTo: callingSurface
+        )
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(callingSurface.responses.first?.value as? String, "pong")
+        XCTAssertTrue(sharedSlot.responses.isEmpty)
+    }
+}
+
+/// Regression tests for the bridge's JS-literal encoder.
+///
+/// The old encoder called `JSONSerialization.data(withJSONObject:)` on the raw
+/// value and hand-escaped only `"` when that failed. A bare string is not a
+/// valid top-level JSON object, so every string payload hit that path — and on
+/// Apple Foundation the serializer *raises* `NSInvalidArgumentException` rather
+/// than returning an error, which `try?` cannot catch. Either way the value
+/// reached `evaluateJavaScript` unsafely.
+final class ExtensionJSLiteralTests: XCTestCase {
+    /// Parses a JS literal back as a JSON fragment, proving nothing escaped the
+    /// string and nothing was lost.
+    private func roundTrip(_ literal: String) throws -> Any {
+        try JSONSerialization.jsonObject(with: Data(literal.utf8), options: [.fragmentsAllowed])
+    }
+
+    func testBareStringPayloadsRoundTripAndCannotBreakOut() throws {
+        let payloads = [
+            #"back\slash"#,
+            "new\nline",
+            "carriage\rreturn",
+            #"quote" and \" escaped quote"#,
+            "line\u{2028}separator",
+            "paragraph\u{2029}separator",
+            #"\");alert(1);//"#,
+            "</script><img src=x onerror=alert(1)>",
+            "tab\tand\u{0000}nul",
+        ]
+        for payload in payloads {
+            let literal = ExtensionJSLiteral.encode(payload)
+            XCTAssertEqual(
+                try roundTrip(literal) as? String, payload,
+                "payload did not round-trip: \(payload.debugDescription)")
+            // Nothing that terminates a JS string literal or statement may
+            // survive raw in the spliced source.
+            for raw in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+                XCTAssertFalse(
+                    literal.contains(raw),
+                    "raw line terminator survived encoding of \(payload.debugDescription)")
+            }
+            // The literal is exactly one quoted JS string: quotes only at the ends.
+            XCTAssertTrue(literal.hasPrefix("\"") && literal.hasSuffix("\""))
+        }
+    }
+
+    func testBackslashIsEscapedNotJustTheQuote() {
+        // The old hand-escaper turned `a\"` into `a\\"`, which closes the JS
+        // string early and leaves the rest of the payload as executable source.
+        let literal = ExtensionJSLiteral.encode(#"a\"; alert(1); x"#)
+        XCTAssertEqual(literal, #""a\\\"; alert(1); x""#)
+    }
+
+    func testStructuredValuesStillEncodeAsJSON() throws {
+        let dict = ExtensionJSLiteral.encode(["theme": "dark", "zoom": 2])
+        let decoded = try XCTUnwrap(try roundTrip(dict) as? [String: Any])
+        XCTAssertEqual(decoded["theme"] as? String, "dark")
+        XCTAssertEqual(decoded["zoom"] as? Int, 2)
+
+        let array = ExtensionJSLiteral.encode([1, 2, 3])
+        XCTAssertEqual(try roundTrip(array) as? [Int], [1, 2, 3])
+
+        XCTAssertEqual(ExtensionJSLiteral.encode([:] as [String: Any]), "{}")
+        XCTAssertEqual(ExtensionJSLiteral.encode(42), "42")
+        XCTAssertEqual(ExtensionJSLiteral.encode(true), "true")
+    }
+
+    /// Values JSON cannot represent must degrade to `null`, not raise.
+    func testNonSerializableValuesEncodeAsNull() {
+        XCTAssertEqual(ExtensionJSLiteral.encode(nil), "null")
+        XCTAssertEqual(ExtensionJSLiteral.encode(NSNull()), "null")
+        XCTAssertEqual(ExtensionJSLiteral.encode(Date()), "null")
+        XCTAssertEqual(ExtensionJSLiteral.encode(Double.nan), "null")
+        XCTAssertEqual(ExtensionJSLiteral.encode(Double.infinity), "null")
+    }
+}
+
+@MainActor
+final class ExtensionBridgeInstallationTests: XCTestCase {
+    private func makeHost() -> WebExtensionHost {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-ext-host-\(UUID().uuidString)", isDirectory: true)
+        let defaults = UserDefaults(suiteName: "qwave-test-host-\(UUID().uuidString)")!
+        return WebExtensionHost(storageDirectory: dir, defaults: defaults)
+    }
+
+    private func makeExtensionBundle() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-ext-bundle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #"{ "name": "Bridge Ext", "version": "1.0", "manifest_version": 3 }"#
+            .write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        return dir
+    }
+
+    /// With nothing installed, a page must not see the bridge at all.
+    func testBridgeIsNotInstalledWhenNoExtensionsArePresent() {
+        let host = makeHost()
+        let controller = WKUserContentController()
+        host.installBridge(into: controller)
+        XCTAssertTrue(controller.userScripts.isEmpty)
+    }
+
+    func testBridgeIsInstalledOnceAnExtensionExists() throws {
+        let host = makeHost()
+        _ = try host.install(bundleDirectory: try makeExtensionBundle())
+        let controller = WKUserContentController()
+        host.installBridge(into: controller)
+        XCTAssertEqual(controller.userScripts.count, 1)
+        XCTAssertTrue(controller.userScripts[0].source.contains("__qwaveNative"))
+    }
+
+    /// The bridge and content scripts must not share the page's JS world.
+    func testExtensionContentWorldIsIsolatedFromThePage() {
+        XCTAssertEqual(ExtensionContentWorld.isolated.name, "QwaveExtensions")
+        XCTAssertNotEqual(ExtensionContentWorld.isolated, WKContentWorld.page)
+    }
 }
 
 final class DeclarativeNetRequestTests: XCTestCase {

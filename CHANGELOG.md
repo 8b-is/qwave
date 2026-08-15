@@ -21,6 +21,31 @@ All notable changes to Qwave will be documented in this file.
   (`example.com.`) that the policy drops — so the value validated is the value
   the ceremony runs with. Legitimate same-origin and subdomain → parent-domain
   ceremonies are unaffected.
+- **WebExtensions bridge hardening.** Four fixes to the `browser.*` bridge:
+  - Bridge replies and dispatched messages are now encoded with a single
+    JSON-based JS-literal encoder instead of a hand-rolled escaper that only
+    escaped `"`. `JSONSerialization` refuses a bare top-level string and raises
+    an uncatchable Objective-C exception, so *every* string payload took the
+    unsafe path — including the `"Unknown method: <method>"` error reply built
+    from a page-supplied method name. Any page could reach it with one
+    `postMessage`. Values are now array-wrapped before serialisation (the same
+    approach already used by `WebAuthnBridge.jsonLiteral`), backslashes,
+    newlines, quotes and U+2028/U+2029 are escaped, and values JSON cannot
+    represent degrade to `null` rather than raising.
+  - On untrusted web pages, the bridge, its `qwaveExtension` message handler,
+    and every injected content script now run in a dedicated `WKContentWorld`
+    instead of the page's own JavaScript world, so a hostile page can no longer
+    observe, wrap, or replace them. The extension's own popup chrome is
+    deliberately excluded: it keeps running in the page world of its own
+    dedicated web view, which loads nothing but the extension's `popup.html`,
+    because that document *is* the extension and isolating it from itself would
+    only break `browser.*`. The content world is now a property carried by each
+    surface rather than a global constant, so a reply is always evaluated into
+    the world the call came from.
+  - Bridge replies are routed back to the web view the call arrived from
+    instead of through a single shared responder slot pointed at the
+    last-opened popup, so a reply can no longer land on the wrong surface.
+  - With no extensions installed, no bridge is injected into tabs at all.
 
 ### Added
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
