@@ -531,6 +531,75 @@ final class ExtensionBridgeInstallationTests: XCTestCase {
         XCTAssertEqual(ExtensionContentWorld.isolated.name, "QwaveExtensions")
         XCTAssertNotEqual(ExtensionContentWorld.isolated, WKContentWorld.page)
     }
+
+    /// Regression test for #76: `uninstallBridge` must not blow away user
+    /// scripts other installers (e.g. the WebAuthn passkey shim) added to a
+    /// `WKUserContentController` the bridge merely shares.
+    func testUninstallBridgeLeavesSharedUserScriptsIntact() throws {
+        let host = makeHost()
+        _ = try host.install(bundleDirectory: try makeExtensionBundle())
+        let controller = WKUserContentController()
+
+        // Simulate BrowserWindowController.ensureWebView: install the bridge,
+        // then a third party (the WebAuthn shim) adds its own user script to
+        // the same, shared controller.
+        host.installBridge(into: controller)
+        XCTAssertEqual(controller.userScripts.count, 1, "sanity: only the bridge script so far")
+
+        let webAuthnScript = WKUserScript(
+            source: "window.__qwavePasskeyGet = () => {};",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        controller.addUserScript(webAuthnScript)
+        XCTAssertEqual(controller.userScripts.count, 2)
+
+        host.uninstallBridge(from: controller)
+
+        // The bridge's own script is gone, but the WebAuthn shim's survives.
+        XCTAssertEqual(controller.userScripts.count, 1)
+        XCTAssertEqual(controller.userScripts.first?.source, webAuthnScript.source)
+        XCTAssertFalse(controller.userScripts.contains { $0.source.contains("__qwaveNative") })
+    }
+
+    /// Content scripts installed via the host must also be scoped out on
+    /// uninstall, leaving unrelated scripts on a shared controller alone.
+    func testUninstallBridgeRemovesContentScriptsTooButNotOtherScripts() throws {
+        let bundleDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-uninstall-cs-bundle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+        try "window.__csInjected = true;".write(
+            to: bundleDir.appendingPathComponent("inject.js"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let manifestJSON = """
+            { "name": "CS Uninstall", "version": "1.0", "manifest_version": 3,
+              "content_scripts": [ { "matches": ["https://*.example.com/*"], "js": ["inject.js"] } ] }
+            """
+        try manifestJSON.write(
+            to: bundleDir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+        let host = makeHost()
+        _ = try host.install(bundleDirectory: bundleDir)
+
+        let controller = WKUserContentController()
+        let unrelatedScript = WKUserScript(
+            source: "window.__unrelated = true;",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        controller.addUserScript(unrelatedScript)
+
+        host.installBridge(into: controller)
+        host.installContentScripts(into: controller, for: URL(string: "https://sub.example.com/page")!)
+        XCTAssertEqual(controller.userScripts.count, 3, "unrelated + bridge + content script")
+
+        host.uninstallBridge(from: controller)
+
+        XCTAssertEqual(controller.userScripts.count, 1)
+        XCTAssertEqual(controller.userScripts.first?.source, unrelatedScript.source)
+    }
 }
 
 final class DeclarativeNetRequestTests: XCTestCase {
