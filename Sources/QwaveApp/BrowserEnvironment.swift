@@ -18,6 +18,7 @@ final class BrowserEnvironment {
     let featureFlags: FeatureFlagService
     let history: HistoryStore?
     let bookmarks: BookmarkStore?
+    let favicons: FaviconStore?
     let sessionStore: SessionStore?
     let downloads: DownloadManager
     let httpsUpgrader: HTTPSFirstUpgrader
@@ -51,9 +52,11 @@ final class BrowserEnvironment {
         if let database = try? SQLiteDatabase(url: directory.appendingPathComponent("browser.db")) {
             history = try? await HistoryStore(database: database)
             bookmarks = try? await BookmarkStore(database: database)
+            favicons = try? await FaviconStore(database: database)
         } else {
             history = nil
             bookmarks = nil
+            favicons = nil
         }
         sessionStore = try? await SessionStore(directory: directory)
 

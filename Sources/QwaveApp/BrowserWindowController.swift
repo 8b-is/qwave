@@ -28,7 +28,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private let findController = FindInPageController()
     private let omnibox = OmniboxField()
     private let suggestions = OmniboxSuggestionsController()
-    private let faviconLoader = FaviconLoader()
+    private let faviconLoader: FaviconLoader
 
     private var backButton: NSButton!
     private var forwardButton: NSButton!
@@ -65,6 +65,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         self.environment = environment
         self.tabManager = tabManager ?? TabManager()
         self.isPrivate = isPrivate
+        self.faviconLoader = FaviconLoader(store: environment.favicons)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1240, height: 840),
@@ -1249,13 +1250,20 @@ extension BrowserWindowController: NSTextFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         guard (notification.object as? NSTextField) === omnibox else { return }
         let query = omnibox.stringValue
-        guard query.count >= 2, let history = environment.history else {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else {
             suggestions.hide()
             return
         }
         Task { @MainActor [weak self] in
-            guard let self, let entries = try? await history.entries(matching: query, limit: 50) else { return }
-            let ranked = OmniboxSuggester.suggestions(for: query, history: entries)
+            guard let self else { return }
+            let entries = (try? await self.environment.history?.entries(matching: query, limit: 50)) ?? []
+            let remote = (try? await DuckDuckGoSuggestionProvider().fetchSuggestions(for: query)) ?? []
+            let ranked = OmniboxSuggester.hybridSuggestions(
+                for: query,
+                history: entries,
+                remoteSuggestions: remote
+            )
+            guard self.omnibox.stringValue == query else { return }
             if ranked.isEmpty {
                 self.suggestions.hide()
             } else {

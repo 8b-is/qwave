@@ -140,26 +140,61 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let suggestion = suggestions[row]
         let cell = NSTableCellView()
+
+        let iconView = NSImageView()
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = .secondaryLabelColor
+
+        switch suggestion.kind {
+        case .search:
+            iconView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
+        case .history:
+            iconView.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
+        }
+
         let text = NSTextField(labelWithString: "")
         let title = suggestion.title.isEmpty ? (suggestion.url.host ?? "") : suggestion.title
         let composed = NSMutableAttributedString(
             string: title,
             attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]
         )
-        composed.append(
-            NSAttributedString(
-                string: "  \(suggestion.url.absoluteString)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                ]
-            ))
+
+        switch suggestion.kind {
+        case .search(let provider):
+            composed.append(
+                NSAttributedString(
+                    string: "  — \(provider)",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.tertiaryLabelColor,
+                    ]
+                ))
+        case .history:
+            composed.append(
+                NSAttributedString(
+                    string: "  \(suggestion.url.absoluteString)",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                ))
+        }
+
         text.attributedStringValue = composed
         text.lineBreakMode = .byTruncatingTail
         text.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.addSubview(iconView)
         cell.addSubview(text)
+
         NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            iconView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            iconView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+
+            text.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -10),
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Persistence
 
 /// Fetches and caches site favicons. The fetch deliberately carries NO
 /// cookies and stores nothing (ephemeral session, cookies disabled): a
@@ -12,8 +13,10 @@ final class FaviconLoader {
     private var cache: [String: NSImage] = [:]
     private var inFlight: Set<String> = []
     private let session: URLSession
+    private let store: FaviconStore?
 
-    init() {
+    init(store: FaviconStore? = nil) {
+        self.store = store
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -27,7 +30,25 @@ final class FaviconLoader {
 
     func cachedIcon(forHost host: String?, containerID: UUID?) -> NSImage? {
         guard let host else { return nil }
-        return cache[key(host: host, containerID: containerID)]
+        let cacheKey = key(host: host, containerID: containerID)
+        if let memoryCached = cache[cacheKey] {
+            return memoryCached
+        }
+
+        // Asynchronously load from persistent SQLite FaviconStore if available
+        if let store, !inFlight.contains(cacheKey) {
+            inFlight.insert(cacheKey)
+            Task { @MainActor [weak self] in
+                defer { self?.inFlight.remove(cacheKey) }
+                if let data = try? await store.load(host: host, containerID: containerID),
+                    let image = NSImage(data: data) {
+                    image.size = NSSize(width: 16, height: 16)
+                    self?.cache[cacheKey] = image
+                }
+            }
+        }
+
+        return nil
     }
 
     /// Fetches `iconURL`, caching under the PAGE host (the host the tab
@@ -62,6 +83,18 @@ final class FaviconLoader {
             }
             image.size = NSSize(width: 16, height: 16)
             self?.cache[cacheKey] = image
+
+            // Persist to SQLite store
+            if let store = self?.store {
+                Task {
+                    try? await store.store(
+                        host: pageHost,
+                        containerID: containerID,
+                        data: data
+                    )
+                }
+            }
+
             completion(image)
         }
     }
