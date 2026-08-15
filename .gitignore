@@ -14,11 +14,15 @@ DerivedData/
 *.xcresult
 
 # macOS noise
-.DS_Store
-
 # Benchmarks build products
 Benchmarks/.build/
 
 # Zig build artifacts
 zig-core/.zig-cache/
 zig-core/zig-out/
+
+# SwiftPM local metadata
+.swiftpm/
+*.zip
+
+

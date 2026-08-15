@@ -37,6 +37,8 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
     /// Called for `runtime.sendMessage`; may reply asynchronously via the
     /// provided closure (single reply per message, per the API).
     public var runtimeMessageHandler: (@MainActor (Any, @escaping @MainActor (Any?) -> Void) -> Void)?
+    /// Called when an extension listener replies to a dispatched message via `sendResponse`.
+    public var onMessageReplyHandler: (@MainActor (Int, Any?) -> Void)?
     public var responder: ExtensionMessageResponding?
 
     public init(registry: WebExtensionRegistry, storage: ExtensionStorageService) {
@@ -105,6 +107,9 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
             runtimeMessageHandler(payload ?? NSNull()) { [weak self] reply in
                 self?.respond(call.id, success: true, value: reply ?? NSNull())
             }
+        case "runtime.onMessageReply":
+            let replyPayload = firstArg
+            onMessageReplyHandler?(call.id, replyPayload)
         default:
             respond(call.id, success: false, value: "Unknown method: \(call.method)")
         }
@@ -112,6 +117,46 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
 
     private func respond(_ id: Int, success: Bool, value: Any?) {
         responder?.respond(id: id, success: success, value: value)
+    }
+
+    // MARK: - Message Dispatch & Fan-out into WebViews
+
+    /// Dispatches a message to all `runtime.onMessage` listeners in a targeted web view.
+    public func dispatchMessage(
+        to webView: WKWebView,
+        message: Any,
+        sender: [String: Any]? = nil,
+        messageId: Int? = nil
+    ) {
+        let msgJson = Self.serializeJSON(message)
+        let senderJson = Self.serializeJSON(sender ?? [:])
+        let idArg = messageId != nil ? "\(messageId!)" : "null"
+        let script = "window.__qwaveNative && window.__qwaveNative.dispatchMessage(\(msgJson), \(senderJson), \(idArg));"
+        webView.evaluateJavaScript(script) { _, _ in }
+    }
+
+    /// Broadcasts a message to all registered listeners across multiple web views.
+    public func broadcastMessage(
+        message: Any,
+        sender: [String: Any]? = nil,
+        across webViews: [WKWebView]
+    ) {
+        for webView in webViews {
+            dispatchMessage(to: webView, message: message, sender: sender)
+        }
+    }
+
+    private static func serializeJSON(_ value: Any) -> String {
+        if let data = try? JSONSerialization.data(withJSONObject: value),
+            let str = String(data: data, encoding: .utf8)
+        {
+            return str
+        }
+        if let strVal = value as? String {
+            let escaped = strVal.replacingOccurrences(of: "\"", with: "\\\"")
+            return "\"\(escaped)\""
+        }
+        return "null"
     }
 }
 

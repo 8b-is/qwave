@@ -2,13 +2,14 @@ import Foundation
 import WebKit
 
 /// The app-side facade for the WebExtensions MV3 engine: owns the registry
-/// and services, installs the `browser.*` bridge into web views, and opens
-/// extension popups.
+/// and services, installs the `browser.*` bridge into web views, injects
+/// matching content scripts, and opens extension popups.
 @MainActor
 public final class WebExtensionHost {
     public let registry: WebExtensionRegistry
     public let storage: ExtensionStorageService
     public let router: ExtensionMessageRouter
+    public let contentScriptEngine: ContentScriptEngine
 
     private let storageDirectory: URL
 
@@ -18,6 +19,7 @@ public final class WebExtensionHost {
         self.storage = ExtensionStorageService(
             directory: storageDirectory.appendingPathComponent("storage", isDirectory: true))
         self.router = ExtensionMessageRouter(registry: registry, storage: storage)
+        self.contentScriptEngine = ContentScriptEngine()
     }
 
     /// Installs the bridge into a web view's configuration (called before
@@ -33,7 +35,40 @@ public final class WebExtensionHost {
         controller.addUserScript(script)
     }
 
-    /// Removes the bridge (web view teardown).
+    /// Injects matching content scripts for the given target URL.
+    public func installContentScripts(into controller: WKUserContentController, for url: URL) {
+        contentScriptEngine.installContentScripts(
+            into: controller,
+            for: url,
+            extensions: registry.extensions
+        )
+    }
+
+    /// Resolves matching content scripts for inspection or testing.
+    public func contentScripts(for url: URL) -> [InjectedContentScript] {
+        contentScriptEngine.resolveScripts(for: url, extensions: registry.extensions)
+    }
+
+    /// Dispatches a message to all `browser.runtime.onMessage` listeners in a targeted web view.
+    public func dispatchMessage(
+        to webView: WKWebView,
+        message: Any,
+        sender: [String: Any]? = nil,
+        messageId: Int? = nil
+    ) {
+        router.dispatchMessage(to: webView, message: message, sender: sender, messageId: messageId)
+    }
+
+    /// Broadcasts a message to all listeners across multiple web views.
+    public func broadcastMessage(
+        message: Any,
+        sender: [String: Any]? = nil,
+        across webViews: [WKWebView]
+    ) {
+        router.broadcastMessage(message: message, sender: sender, across: webViews)
+    }
+
+    /// Removes the bridge and user scripts (web view teardown).
     public func uninstallBridge(from controller: WKUserContentController) {
         controller.removeScriptMessageHandler(forName: BrowserBridgeScript.messageHandlerName)
         controller.removeAllUserScripts()
@@ -45,5 +80,9 @@ public final class WebExtensionHost {
 
     public func install(bundleDirectory: URL) throws -> WebExtension {
         try registry.install(bundleDirectory: bundleDirectory)
+    }
+
+    public func uninstall(extensionID: String) -> WebExtension? {
+        registry.uninstall(extensionID: extensionID)
     }
 }

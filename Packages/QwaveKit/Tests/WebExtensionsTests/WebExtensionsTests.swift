@@ -1,10 +1,10 @@
 import XCTest
 import Foundation
+import WebKit
 @testable import WebExtensions
 
 /// Tests for the MV3 manifest model, the extension registry, the storage
-/// service, and the message router. (The injected JS itself is exercised in
-/// the running browser; its surface is asserted here.)
+/// service, content script engine, and the message router.
 final class MV3ManifestTests: XCTestCase {
     func testDecodesMV3Manifest() throws {
         let json = """
@@ -26,6 +26,7 @@ final class MV3ManifestTests: XCTestCase {
         XCTAssertEqual(manifest.permissions, ["storage", "tabs"])
         XCTAssertEqual(manifest.contentScripts.first?.matches, ["https://*.example.com/*"])
         XCTAssertEqual(manifest.contentScripts.first?.js, ["content.js"])
+        XCTAssertEqual(manifest.contentScripts.first?.runAt, "document_idle")
     }
 
     func testLegacyBrowserAction() throws {
@@ -35,6 +36,139 @@ final class MV3ManifestTests: XCTestCase {
         let manifest = try JSONDecoder().decode(MV3Manifest.self, from: Data(json.utf8))
         XCTAssertEqual(manifest.popupPath, "a.html")
         XCTAssertEqual(manifest.manifestVersion, 2)
+    }
+}
+
+final class URLMatchPatternTests: XCTestCase {
+    func testAllURLsPattern() throws {
+        let pattern = try XCTUnwrap(URLMatchPattern("<all_urls>"))
+        XCTAssertTrue(pattern.isAllURLs)
+        XCTAssertTrue(pattern.matches("https://google.com/search"))
+        XCTAssertTrue(pattern.matches("http://localhost:8080/test"))
+        XCTAssertTrue(pattern.matches("file:///Users/peter/doc.html"))
+        XCTAssertTrue(pattern.matches("ws://example.com/socket"))
+        XCTAssertFalse(pattern.matches("chrome://settings"))
+        XCTAssertFalse(pattern.matches("about:blank"))
+    }
+
+    func testWildcardSchemeAndHost() throws {
+        let pattern = try XCTUnwrap(URLMatchPattern("*://*.example.com/*"))
+        XCTAssertFalse(pattern.isAllURLs)
+        XCTAssertEqual(pattern.schemePattern, "*")
+        XCTAssertEqual(pattern.hostPattern, "*.example.com")
+        XCTAssertTrue(pattern.matches("https://example.com/"))
+        XCTAssertTrue(pattern.matches("https://sub.example.com/path/to/page"))
+        XCTAssertTrue(pattern.matches("http://a.b.example.com/test?q=1"))
+        XCTAssertFalse(pattern.matches("ftp://example.com/"))
+        XCTAssertFalse(pattern.matches("https://notexample.com/"))
+    }
+
+    func testExactHostAndPathPrefix() throws {
+        let pattern = try XCTUnwrap(URLMatchPattern("https://example.org/api/*"))
+        XCTAssertTrue(pattern.matches("https://example.org/api/v1/users"))
+        XCTAssertFalse(pattern.matches("https://example.org/other"))
+        XCTAssertFalse(pattern.matches("http://example.org/api/v1/users"))
+    }
+
+    func testInvalidPatterns() {
+        XCTAssertNil(URLMatchPattern(""))
+        XCTAssertNil(URLMatchPattern("invalid-pattern"))
+        XCTAssertNil(URLMatchPattern("http://"))
+        XCTAssertNil(URLMatchPattern("custom://foo/*"))
+    }
+}
+
+final class ContentScriptEngineTests: XCTestCase {
+    func testContentScriptResolutionAndMapping() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-test-cs-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let manifest = MV3Manifest(
+            name: "CS Extension",
+            version: "1.0.0",
+            manifestVersion: 3,
+            contentScripts: [
+                MV3Manifest.ContentScript(
+                    matches: ["https://*.github.com/*"],
+                    js: ["start.js"],
+                    runAt: "document_start"
+                ),
+                MV3Manifest.ContentScript(
+                    matches: ["https://*.github.com/*", "https://*.gitlab.com/*"],
+                    js: ["end.js"],
+                    runAt: "document_end"
+                )
+            ]
+        )
+
+        let ext = WebExtension(id: "ext-cs-test", manifest: manifest, bundleURL: dir)
+        let engine = ContentScriptEngine()
+
+        let fileLoader: (URL) throws -> String = { url in
+            if url.lastPathComponent == "start.js" {
+                return "console.log('start');"
+            } else if url.lastPathComponent == "end.js" {
+                return "console.log('end');"
+            }
+            throw NSError(domain: "test", code: 404)
+        }
+
+        // Matching GitHub URL
+        let ghURL = URL(string: "https://sub.github.com/peterlodri-sec/qwave")!
+        let ghScripts = engine.resolveScripts(for: ghURL, extensions: [ext], fileLoader: fileLoader)
+        XCTAssertEqual(ghScripts.count, 2)
+        XCTAssertEqual(ghScripts[0].relativePath, "start.js")
+        XCTAssertEqual(ghScripts[0].injectionTime, .atDocumentStart)
+        XCTAssertTrue(ghScripts[0].source.contains("console.log('start');"))
+        XCTAssertEqual(ghScripts[1].relativePath, "end.js")
+        XCTAssertEqual(ghScripts[1].injectionTime, .atDocumentEnd)
+
+        // Matching GitLab URL (only 1 script matches)
+        let glURL = URL(string: "https://gitlab.com/repo/project")!
+        let glScripts = engine.resolveScripts(for: glURL, extensions: [ext], fileLoader: fileLoader)
+        XCTAssertEqual(glScripts.count, 1)
+        XCTAssertEqual(glScripts[0].relativePath, "end.js")
+
+        // Non-matching URL
+        let otherURL = URL(string: "https://apple.com/")!
+        let otherScripts = engine.resolveScripts(for: otherURL, extensions: [ext], fileLoader: fileLoader)
+        XCTAssertTrue(otherScripts.isEmpty)
+    }
+
+    @MainActor
+    func testContentScriptInstallationIntoUserContentController() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-test-cs-install-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "window.__csInjected = true;".write(
+            to: dir.appendingPathComponent("inject.js"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let manifest = MV3Manifest(
+            name: "CS Install",
+            version: "1.0",
+            manifestVersion: 3,
+            contentScripts: [
+                MV3Manifest.ContentScript(
+                    matches: ["https://*.example.com/*"],
+                    js: ["inject.js"],
+                    runAt: "document_idle"
+                )
+            ]
+        )
+
+        let ext = WebExtension(id: "ext-install-test", manifest: manifest, bundleURL: dir)
+        let engine = ContentScriptEngine()
+        let controller = WKUserContentController()
+
+        let targetURL = URL(string: "https://sub.example.com/page")!
+        engine.installContentScripts(into: controller, for: targetURL, extensions: [ext])
+
+        XCTAssertEqual(controller.userScripts.count, 1)
+        XCTAssertEqual(controller.userScripts.first?.injectionTime, .atDocumentEnd)
     }
 }
 
@@ -200,6 +334,24 @@ final class ExtensionMessageRouterTests: XCTestCase {
         XCTAssertEqual(responder.responses.first?.value as? String, "pong")
     }
 
+    func testOnMessageReplyRouting() {
+        let (router, _) = makeRouter()
+        var replyReceivedId: Int?
+        var replyReceivedPayload: Any?
+        router.onMessageReplyHandler = { id, payload in
+            replyReceivedId = id
+            replyReceivedPayload = payload
+        }
+
+        router.handle(
+            ExtensionBridgeCall(id: 42, method: "runtime.onMessageReply", args: [["status": "acknowledged"]]),
+            extensionID: "e1"
+        )
+
+        XCTAssertEqual(replyReceivedId, 42)
+        XCTAssertEqual((replyReceivedPayload as? [String: Any])?["status"] as? String, "acknowledged")
+    }
+
     func testNestedBridgeArgumentsRouteWithoutLeavingMainActor() throws {
         let (router, responder) = makeRouter()
         router.handle(
@@ -229,10 +381,44 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 }
 
+final class DeclarativeNetRequestTests: XCTestCase {
+    func testDecodeDNRRuleAndCompileToWebKitJSON() throws {
+        let ruleJSON = """
+            {
+              "id": 1,
+              "priority": 1,
+              "action": { "type": "block" },
+              "condition": {
+                "url_filter": "||adserver.example.com",
+                "resource_types": ["script", "image"]
+              }
+            }
+            """
+        let rule = try JSONDecoder().decode(DNRRule.self, from: Data(ruleJSON.utf8))
+        XCTAssertEqual(rule.id, 1)
+        XCTAssertEqual(rule.action.type, .block)
+        XCTAssertEqual(rule.condition.urlFilter, "||adserver.example.com")
+        XCTAssertEqual(rule.condition.resourceTypes, ["script", "image"])
+
+        let compiledJSON = try DeclarativeNetRequestConverter.convertToWebKitRulesJSON([rule])
+        XCTAssertTrue(compiledJSON.contains("adserver"))
+        XCTAssertTrue(compiledJSON.contains("example"))
+        XCTAssertTrue(compiledJSON.contains("\"type\" : \"block\""))
+        XCTAssertTrue(compiledJSON.contains("\"script\""))
+        XCTAssertTrue(compiledJSON.contains("\"image\""))
+    }
+}
+
+
 final class BrowserBridgeScriptTests: XCTestCase {
     func testBridgeSurface() {
         let source = BrowserBridgeScript.source
         XCTAssertTrue(source.contains("runtime.sendMessage"))
+        XCTAssertTrue(source.contains("onMessage"))
+        XCTAssertTrue(source.contains("addListener"))
+        XCTAssertTrue(source.contains("removeListener"))
+        XCTAssertTrue(source.contains("hasListener"))
+        XCTAssertTrue(source.contains("dispatchMessage(message, sender, messageId)"))
         XCTAssertTrue(source.contains("tabs.query"))
         XCTAssertTrue(source.contains("tabs.create"))
         XCTAssertTrue(source.contains("storage.local.get"))
@@ -245,3 +431,5 @@ final class BrowserBridgeScriptTests: XCTestCase {
         XCTAssertEqual(BrowserBridgeScript.messageHandlerName, "qwaveExtension")
     }
 }
+
+
