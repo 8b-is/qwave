@@ -32,6 +32,23 @@ final class SessionRestorerTests: XCTestCase {
         XCTAssertEqual(restored[0].selectedIndex, 1)
     }
 
+    func testInteractionStateRoundTrips() {
+        let manager = TabManager()
+        let tab = Tab(pendingURL: URL(string: "https://example.com/"))
+        tab.title = "Example"
+        // Stands in for a live web view's interactionState (no WKWebView in
+        // unit tests) — the snapshot must carry it, and restore must hand it
+        // back so the rebuilt tab can restore history + scroll.
+        tab.pendingInteractionState = Data([9, 8, 7, 6])
+        manager.append(tab)
+
+        let snapshot = SessionRestorer.snapshot(of: [manager])
+        XCTAssertEqual(snapshot.windows[0].tabs[0].interactionState, Data([9, 8, 7, 6]))
+
+        let restored = SessionRestorer.managers(from: snapshot)
+        XCTAssertEqual(restored[0].tabs[0].pendingInteractionState, Data([9, 8, 7, 6]))
+    }
+
     func testEphemeralTabsExcluded() {
         let manager = TabManager()
         manager.append(Tab(pendingURL: URL(string: "https://example.com/")))

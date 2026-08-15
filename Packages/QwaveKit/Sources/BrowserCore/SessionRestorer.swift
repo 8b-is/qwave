@@ -17,7 +17,13 @@ public enum SessionRestorer {
                     url: tab.url ?? tab.hibernationRecord?.url ?? tab.pendingURL,
                     title: tab.displayTitle,
                     containerID: tab.containerID,
-                    isPinned: tab.isPinned
+                    isPinned: tab.isPinned,
+                    // Live tab: current interaction state (incl. scroll). Hibernated:
+                    // the captured record. Fresh/restored-not-yet-woken: the pending
+                    // state carried since the last load.
+                    interactionState: tab.webView?.interactionState as? Data
+                        ?? tab.hibernationRecord?.interactionState
+                        ?? tab.pendingInteractionState
                 )
             }
             return WindowSnapshot(tabs: tabs, selectedIndex: selectedIndex)
@@ -37,6 +43,7 @@ public enum SessionRestorer {
                 tab.title = tabSnapshot.title
                 tab.url = tabSnapshot.url
                 tab.isPinned = tabSnapshot.isPinned
+                tab.pendingInteractionState = tabSnapshot.interactionState
                 manager.append(tab, select: false)
             }
             if manager.tabs.indices.contains(window.selectedIndex) {

@@ -17,6 +17,24 @@ public final class TabManager {
     /// Fired just before a tab is removed so owners can tear down web views.
     public var onTabClosed: ((Tab) -> Void)?
 
+    /// Everything needed to bring a closed tab back exactly where it was.
+    private struct ClosedTab {
+        let containerID: UUID?
+        let url: URL?
+        let title: String
+        let isPinned: Bool
+        let interactionState: Data?
+        let index: Int
+    }
+
+    /// Ring buffer of recently closed (non-ephemeral) tabs, oldest first.
+    /// Powers Reopen Closed Tab (⇧⌘T).
+    private var closedTabs: [ClosedTab] = []
+    private let closedTabCapacity = 10
+
+    /// Whether there is a closed tab to reopen.
+    public var canReopenClosedTab: Bool { !closedTabs.isEmpty }
+
     public init() {}
 
     public var tabs: [Tab] {
@@ -87,6 +105,7 @@ public final class TabManager {
     public func close(tabID: UUID) {
         guard let index = storage.index(forKey: tabID) else { return }
         let closing = storage.elements[index].value
+        recordClosedTab(closing, at: index)
         storage.removeValue(forKey: tabID)
 
         if selectedTabID == tabID {
@@ -100,6 +119,47 @@ public final class TabManager {
         }
         onTabClosed?(closing)
         onChange?()
+    }
+
+    /// Snapshots a tab about to be closed into the reopen ring. Ephemeral
+    /// (burner/private) tabs are never recorded — reopening one would defeat
+    /// the point of a burner tab.
+    private func recordClosedTab(_ tab: Tab, at index: Int) {
+        guard !tab.isEphemeral else { return }
+        closedTabs.append(
+            ClosedTab(
+                containerID: tab.containerID,
+                url: tab.url ?? tab.hibernationRecord?.url ?? tab.pendingURL,
+                title: tab.displayTitle,
+                isPinned: tab.isPinned,
+                interactionState: tab.webView?.interactionState as? Data
+                    ?? tab.hibernationRecord?.interactionState
+                    ?? tab.pendingInteractionState,
+                index: index
+            )
+        )
+        if closedTabs.count > closedTabCapacity {
+            closedTabs.removeFirst(closedTabs.count - closedTabCapacity)
+        }
+    }
+
+    /// Reopens the most recently closed tab at (approximately) its old
+    /// position, carrying its full interaction state so back/forward + scroll
+    /// come back. The web view is built lazily on selection by the owner.
+    @discardableResult
+    public func reopenLastClosedTab() -> Tab? {
+        guard let record = closedTabs.popLast() else { return nil }
+        let tab = Tab(containerID: record.containerID, pendingURL: record.url)
+        tab.title = record.title
+        tab.url = record.url
+        tab.isPinned = record.isPinned
+        tab.pendingInteractionState = record.interactionState
+        let target = min(max(record.index, 0), storage.count)
+        storage.updateValue(tab, forKey: tab.id, insertingAt: target)
+        selectedTabID = tab.id
+        tab.noteActivated()
+        onChange?()
+        return tab
     }
 
     public func move(fromIndex: Int, toIndex: Int) {

@@ -53,6 +53,12 @@ public final class Tab: Identifiable {
     /// after the first load).
     public var pendingURL: URL?
 
+    /// Opaque WebKit `interactionState` (back/forward list, scroll, form data)
+    /// to restore once a web view exists — set when a tab is rebuilt from a
+    /// persisted session or reopened from the closed-tab ring, and cleared by
+    /// the app layer after it is applied.
+    public var pendingInteractionState: Data?
+
     public init(id: UUID = UUID(), containerID: UUID? = nil, isEphemeral: Bool = false, pendingURL: URL? = nil) {
         self.id = id
         self.containerID = containerID
