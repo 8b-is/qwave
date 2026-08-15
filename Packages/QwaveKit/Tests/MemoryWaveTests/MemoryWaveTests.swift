@@ -274,6 +274,54 @@ final class MemoryCipherTests: XCTestCase {
         XCTAssertTrue(after.isEmpty, "record with an unauthenticated signature_box must fail closed")
     }
 
+    /// `MemoryRecord.signature` is derived from `title`/`body` on demand
+    /// (see `MemoryRecord.swift`), not recomputed and stored eagerly by
+    /// `MemoryStore.decode`. Confirm the on-demand value still matches what
+    /// direct construction from the same content produces, so the laziness
+    /// is free of behavior change for callers that do read `.signature`.
+    func testDecodedRecordSignatureMatchesContentDerivedSignature() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        _ = try await store.insert(
+            title: "Wave", body: "resonance", url: nil, kind: .pin, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.count, 1)
+        let expected = WaveSignature.fromContent(
+            Data("Wave\nresonance".utf8),
+            identityFrequency: MemoryWaveConstants.consciousness.doubleValue
+                * MemoryWaveConstants.goldenRatio.doubleValue
+        )
+        XCTAssertEqual(records[0].signature.interferenceHash, expected.interferenceHash)
+        XCTAssertTrue(records[0].signature.verify())
+    }
+
+    /// Issue #86: `decode` used to recompute a `WaveSignature` (a ~1000-step,
+    /// 8-harmonic trig reconstruction — ~16,000 trig calls) for every row even
+    /// though nothing read the result. `MemoryRecord.signature` is now computed
+    /// on demand instead of eagerly in `decode`, so reading back a full
+    /// container should stay fast even at the 256-row ceiling `gridWithRecords`
+    /// requests. This bound is generous (a regression here would be a 10-100x
+    /// slowdown, not a marginal one) so it should not be flaky in CI, while
+    /// still catching the eager-signature computation coming back.
+    func testDecodingManyRecordsStaysFastWithoutEagerSignatureComputation() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        for index in 0..<256 {
+            _ = try await store.insert(
+                title: "Title \(index)", body: "Body content for record \(index)",
+                url: nil, kind: .note, containerID: nil)
+        }
+        let started = Date()
+        for _ in 0..<5 {
+            let records = try await store.records(containerID: nil, limit: 256)
+            XCTAssertEqual(records.count, 256)
+        }
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 5,
+            "decoding 256 rows x5 should be dominated by AES-GCM/SQLite work, "
+                + "not a re-triggered ~16,000-trig-op signature per row")
+    }
+
     /// Regression: a stored key of the wrong length used to fall through to the
     /// generate-and-store path, silently re-keying the store and making every
     /// existing memory undecryptable. The stored bytes must survive untouched —

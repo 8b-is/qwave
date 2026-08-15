@@ -177,14 +177,10 @@ public actor MemoryStore {
             url = nil
         }
         let containerKey = row.text(1) ?? ""
-        let identity =
-            MemoryWaveConstants.consciousness.doubleValue
-            * MemoryWaveConstants.goldenRatio.doubleValue
-        // Content is the source of truth: the signature is recomputed from the
-        // decrypted title+body. The stored signature_box is authenticated in the
-        // guard above (validity gate) but its bytes are otherwise unused.
-        let signature = WaveSignature.fromContent(
-            Data((title + "\n" + body).utf8), identityFrequency: identity)
+        // MemoryRecord.signature is a computed property derived from title+body
+        // (see MemoryRecord.swift), so it is not recomputed here. Doing so used
+        // to cost a ~1000-step, 8-harmonic trig reconstruction per row for a
+        // value no caller reads (issue #86).
         return MemoryRecord(
             id: row.int(0),
             containerID: containerKey.isEmpty ? nil : UUID(uuidString: containerKey),
@@ -194,8 +190,7 @@ public actor MemoryStore {
             url: url,
             title: title,
             body: body,
-            wave: wave,
-            signature: signature
+            wave: wave
         )
     }
 
@@ -258,8 +253,7 @@ public actor MemoryStore {
             url: url,
             title: title,
             body: body,
-            wave: wave,
-            signature: signature
+            wave: wave
         )
         return PendingMemoryInsert(
             record: record,

@@ -48,11 +48,6 @@ public struct MemoryNibble: Equatable, Sendable, Identifiable {
             title: title,
             body: body,
             wave: wave,
-            signature: WaveSignature.fromContent(
-                Data((title + "\n" + body).utf8),
-                identityFrequency: MemoryWaveConstants.consciousness.doubleValue
-                    * MemoryWaveConstants.goldenRatio.doubleValue
-            ),
             tags: tags
         )
     }
