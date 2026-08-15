@@ -181,7 +181,19 @@ final class KeychainWebCredentialStoreTests: XCTestCase {
     }
 
     func testMalformedItemIsSkippedNotFatalToTheRestOfTheDomain() throws {
-        try store.save(WebCredential(domain: domain, username: "alice", password: "s3cret"))
+        // Integration half: needs the REAL keychain, so it needs a
+        // keychain-access entitlement. An unsigned test binary does not have
+        // one, and neither does CI (ci.yml sets up no keychain), so this
+        // reports as skipped rather than failing there. The guarantee itself
+        // is proven unconditionally in KeychainItemDecodingTests below.
+        do {
+            try store.save(WebCredential(domain: domain, username: "alice", password: "s3cret"))
+        } catch WebCredentialError.unexpectedStatus(errSecMissingEntitlement) {
+            throw XCTSkip(
+                "keychain unavailable: SecItemAdd returned errSecMissingEntitlement (-34018). "
+                    + "Needs a signed host with a keychain-access entitlement."
+            )
+        }
         try store.save(WebCredential(domain: domain, username: "bob", password: "hunter2"))
         addRawMalformedItem(account: "malformed-non-utf8")
 
@@ -193,6 +205,62 @@ final class KeychainWebCredentialStoreTests: XCTestCase {
             Set(credentials.map(\.username)), ["alice", "bob"],
             "the malformed item should be skipped, not hide the valid credentials"
         )
+    }
+}
+
+/// The #74 guarantee, proven without the keychain.
+///
+/// `testMalformedItemIsSkippedNotFatalToTheRestOfTheDomain` above exercises
+/// the same behaviour end to end, but can only run where the process holds a
+/// keychain-access entitlement — not in an unsigned test binary and not in CI.
+/// These drive `KeychainWebCredentialStore.decode` directly, so the guarantee
+/// is under test everywhere the suite runs.
+final class KeychainItemDecodingTests: XCTestCase {
+    private func item(account: String, password: Data) -> [String: Any] {
+        [kSecAttrAccount as String: account, kSecValueData as String: password]
+    }
+
+    func testOneUndecodableItemDoesNotHideTheHealthyOnes() {
+        let decoded = KeychainWebCredentialStore.decode(
+            items: [
+                item(account: "alice", password: Data("s3cret".utf8)),
+                // Not valid UTF-8 — the shape another tool could leave behind
+                // in a shared access group.
+                item(account: "malformed-non-utf8", password: Data([0xFF, 0xFE, 0x80, 0x81])),
+                item(account: "bob", password: Data("hunter2".utf8)),
+            ],
+            domain: "example.com"
+        )
+
+        XCTAssertEqual(
+            Set(decoded.map(\.username)), ["alice", "bob"],
+            "a single undecodable item must be skipped, not abort the whole domain"
+        )
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertEqual(decoded.first { $0.username == "alice" }?.password, "s3cret")
+        XCTAssertTrue(decoded.allSatisfy { $0.domain == "example.com" })
+    }
+
+    func testItemsMissingAccountOrDataAreSkipped() {
+        let decoded = KeychainWebCredentialStore.decode(
+            items: [
+                [kSecValueData as String: Data("orphan".utf8)],  // no account
+                [kSecAttrAccount as String: "no-password"],  // no data
+                item(account: "carol", password: Data("pw".utf8)),
+            ],
+            domain: "example.com"
+        )
+
+        XCTAssertEqual(decoded.map(\.username), ["carol"])
+    }
+
+    func testEveryItemUndecodableYieldsEmptyRatherThanThrowing() {
+        let decoded = KeychainWebCredentialStore.decode(
+            items: [item(account: "bad", password: Data([0xFF, 0xFE]))],
+            domain: "example.com"
+        )
+
+        XCTAssertTrue(decoded.isEmpty)
     }
 }
 
