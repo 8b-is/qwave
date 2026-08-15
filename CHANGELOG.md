@@ -43,6 +43,21 @@ All notable changes to Qwave will be documented in this file.
   whole page text — at whatever host the response names; that contradicted
   Settings' promise that pages go "to this endpoint". Redirects are now
   followed only when they stay on the same HTTPS origin (host and port).
+- **Memory Wave no longer destroys its own master key.** If the stored key was
+  present but not 256 bits, `MemoryCipher.loadOrCreateKey` fell through to the
+  first-run path and overwrote it with a fresh key, making every existing
+  memory permanently undecryptable. It now fails closed on both halves: a
+  stored-but-malformed key throws `MemoryCipherError.malformedKey` and is left
+  byte-for-byte intact, and the create branch writes through the new add-only
+  `SecretStore.addSecret`, which throws `SecretStoreError.duplicateItem` rather
+  than overwriting — so a key that exists but reads back as absent (a keychain
+  access-group change, an item in another keychain in the search list, two
+  first runs racing) survives instead of being replaced. Memories are locked
+  rather than lost, and the app logs the locked state distinctly. Genuine first
+  run (no secret stored) is unchanged, and `setSecret` keeps its
+  overwrite semantics for the callers that need update-in-place.
+  Note: rows that fail to decrypt are still dropped silently by
+  `MemoryStore.decode`; that half is tracked separately in issue #84.
 
 ## [1.0.0] - 2026-08-14
 

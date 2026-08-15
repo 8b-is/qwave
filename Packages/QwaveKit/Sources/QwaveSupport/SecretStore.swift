@@ -6,11 +6,29 @@ import Security
 public protocol SecretStore: Sendable {
     func secret(for key: String) throws -> Data?
     func setSecret(_ data: Data, for key: String) throws
+    /// Add-only write for irreplaceable material: throws
+    /// `SecretStoreError.duplicateItem` instead of overwriting an existing item.
+    ///
+    /// `setSecret` is an unconditional overwrite, which is correct for values
+    /// that can be re-fetched (an API key, an account token) and catastrophic
+    /// for values that cannot (a master key). The two are not the same
+    /// operation, so they are not the same method. Implementations must decide
+    /// add-vs-overwrite inside the store's own atomic write, never by reading
+    /// first: two concurrent first runs both read "absent", and only the write
+    /// itself can see that the other one got there first. (A read that misses
+    /// because the item lives elsewhere — a different access group, a different
+    /// keychain — does not collide on write either. The add lands beside the
+    /// old item rather than over it, so nothing is clobbered there; the old key
+    /// is simply out of reach.)
+    func addSecret(_ data: Data, for key: String) throws
     func removeSecret(for key: String) throws
 }
 
 public enum SecretStoreError: Error, Equatable {
     case unexpectedStatus(OSStatus)
+    /// `addSecret` found an item already stored under this key. The stored
+    /// bytes are untouched.
+    case duplicateItem
 }
 
 /// Keychain-backed store. `accessGroup` is only honored once the app is signed
@@ -69,6 +87,24 @@ public struct KeychainSecretStore: SecretStore {
         }
     }
 
+    /// `SecItemAdd` alone. `errSecDuplicateItem` is a hard error, not a cue to
+    /// update: the keychain has just told us material already exists here, and
+    /// the caller reached this path believing it did not.
+    public func addSecret(_ data: Data, for key: String) throws {
+        var attributes = baseQuery(for: key)
+        attributes[kSecValueData as String] = data
+
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        switch status {
+        case errSecSuccess:
+            return
+        case errSecDuplicateItem:
+            throw SecretStoreError.duplicateItem
+        default:
+            throw SecretStoreError.unexpectedStatus(status)
+        }
+    }
+
     public func removeSecret(for key: String) throws {
         let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -94,6 +130,13 @@ public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     public func setSecret(_ data: Data, for key: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        storage[key] = data
+    }
+
+    public func addSecret(_ data: Data, for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard storage[key] == nil else { throw SecretStoreError.duplicateItem }
         storage[key] = data
     }
 
