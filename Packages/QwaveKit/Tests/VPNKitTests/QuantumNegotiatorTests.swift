@@ -3,7 +3,7 @@ import PostQuantum
 @testable import VPNKit
 
 /// A relay simulator: receives the client's encapsulation key and answers
-/// with a real hybrid ciphertext bundle (as the in-tunnel service would).
+/// with a real ciphertext bundle (as the in-tunnel service would).
 final class MockQuantumTransport: QuantumTransporting, @unchecked Sendable {
     private let relaySeed: Data
     private(set) var receivedRequest: EphemeralPeerRequest?
@@ -20,12 +20,9 @@ final class MockQuantumTransport: QuantumTransporting, @unchecked Sendable {
         if shouldFail {
             throw QuantumTransportError.transportFailed(underlying: URLError(.cannotConnectToHost))
         }
-        guard let mlkem = Data(base64Encoded: request.mlkemPublicKey),
-            let mceliece = Data(base64Encoded: request.mceliecePublicKey)
-        else {
+        guard let clientEK = Data(base64Encoded: request.mlkemPublicKey) else {
             throw QuantumTransportError.invalidResponse
         }
-        let clientEK = mlkem + mceliece
         let (ct, _) = try HybridKEM.encapsulate(ek: clientEK, seed: relaySeed)
         return EphemeralPeerResponse(ciphertextBundle: ct.base64EncodedString())
     }
@@ -57,9 +54,7 @@ final class QuantumNegotiatorTests: XCTestCase {
 
         // The relay side encapsulates against the client's public half and
         // derives the same key from its own encapsulation.
-        let clientEK =
-            Data(base64Encoded: transport.receivedRequest!.mlkemPublicKey)!
-            + Data(base64Encoded: transport.receivedRequest!.mceliecePublicKey)!
+        let clientEK = Data(base64Encoded: transport.receivedRequest!.mlkemPublicKey)!
         let (_, relaySS) = try HybridKEM.encapsulate(ek: clientEK, seed: relaySeed)
         XCTAssertEqual(psk, relaySS)
     }
@@ -92,10 +87,6 @@ final class QuantumNegotiatorTests: XCTestCase {
         let request = try XCTUnwrap(transport.receivedRequest)
         XCTAssertEqual(request.relayHostname, "se-sto-wg-001")
         XCTAssertEqual(request.wgPublicKey, "aFCTFqCJnTqUnkYuxmpPnkzUS67HZbSZffZknJYYYFY=")
-        XCTAssertFalse(request.mlkemPublicKey.isEmpty)
-        XCTAssertFalse(request.mceliecePublicKey.isEmpty)
+        XCTAssertEqual(Data(base64Encoded: request.mlkemPublicKey)?.count, MLKEM768.ekSize)
     }
 }
-
-// NOTE: real-KEM negotiator tests are slow (McEliece keygen ~40s each in
-// debug); they run in the full suite.

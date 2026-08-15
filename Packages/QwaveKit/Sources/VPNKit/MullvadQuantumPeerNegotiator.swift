@@ -4,13 +4,13 @@ import QwaveSupport
 
 /// **Stage B: the post-quantum ephemeral peer negotiator.**
 ///
-/// Implements `EphemeralPeerNegotiating` with the real hybrid KEM
-/// (ML-KEM-768 + Classic McEliece 348864, `PostQuantum.HybridKEM`):
+/// Implements `EphemeralPeerNegotiating` with the real post-quantum KEM
+/// (ML-KEM-768, `PostQuantum.HybridKEM`):
 ///
-/// 1. Generate a hybrid key pair for this session (fresh per connection).
+/// 1. Generate a KEM key pair for this session (fresh per connection).
 /// 2. Ask the relay's in-tunnel ephemeral-peer service (via the transport)
 ///    to encapsulate against our public half.
-/// 3. Decapsulate both legs and mix the shared secrets into the tunnel PSK.
+/// 3. Decapsulate and mix the shared secret into the tunnel PSK.
 ///
 /// The derived PSK is installed on the WireGuard peer by
 /// `PacketTunnelProvider`, which already calls this seam; on any failure the
@@ -37,8 +37,7 @@ public struct MullvadQuantumPeerNegotiator: EphemeralPeerNegotiating {
         let (ek, dk) = try HybridKEM.keygen(seed: sessionSeed)
         let request = EphemeralPeerRequest(
             wgPublicKey: config.peerPublicKeyBase64,
-            mlkemPublicKey: ek.prefix(MLKEM768.ekSize).base64EncodedString(),
-            mceliecePublicKey: ek.dropFirst(MLKEM768.ekSize).base64EncodedString(),
+            mlkemPublicKey: ek.base64EncodedString(),
             relayHostname: config.relayHostname
         )
         let response = try await transport.requestEphemeralPeer(request)

@@ -1,79 +1,26 @@
 import XCTest
 @testable import PostQuantum
 
-/// Known-answer + property tests for FIPS 203 ML-KEM-768.
+/// Behavioural + NTT-algebra tests for FIPS 203 ML-KEM-768.
 ///
-/// The KAT vectors were produced by an independent Python implementation
-/// (schoolbook arithmetic, no NTT) that round-trips internally; the Swift
-/// NTT-based implementation must reproduce them exactly.
+/// Conformance is proved elsewhere: `MLKEM768ACVPSuite` runs the official NIST
+/// ACVP vectors. The self-generated round-trip fixtures that used to be loaded
+/// here were removed — they only proved the implementation agreed with itself.
 final class MLKEM768Tests: XCTestCase {
-    private struct Vector: Decodable {
-        let name: String
-        let d: String
-        let ek: String
-        let dk: String
-        let m: String
-        let ct: String
-        let ss: String
-    }
-
-    private var vectors: [Vector] = []
-
-    override func setUpWithError() throws {
-        let url = try XCTUnwrap(Bundle.module.url(forResource: "mlkem_vectors", withExtension: "json"))
-        let data = try Data(contentsOf: url)
-        vectors = try JSONDecoder().decode([Vector].self, from: data)
-    }
-
-    private func unhex(_ s: String) -> Data {
-        var data = Data()
-        var index = s.startIndex
-        while index < s.endIndex {
-            let next = s.index(index, offsetBy: 2)
-            data.append(UInt8(s[index..<next], radix: 16)!)
-            index = next
-        }
-        return data
-    }
-
-    // MARK: - Known-answer tests
-
-    func testKeygenMatchesVectors() throws {
-        for v in vectors {
-            let (ek, dk) = MLKEM768.keygen(seed: unhex(v.d))
-            XCTAssertEqual(ek, unhex(v.ek), "\(v.name) ek mismatch")
-            XCTAssertEqual(dk, unhex(v.dk), "\(v.name) dk mismatch")
-        }
-    }
-
-    func testEncapsMatchesVectors() throws {
-        for v in vectors {
-            let (ct, ss) = MLKEM768.encaps(ek: unhex(v.ek), m: unhex(v.m))
-            XCTAssertEqual(ct, unhex(v.ct), "\(v.name) ct mismatch")
-            XCTAssertEqual(ss, unhex(v.ss), "\(v.name) ss mismatch")
-        }
-    }
-
-    func testDecapsMatchesVectors() throws {
-        for v in vectors {
-            let ss = MLKEM768.decaps(dk: unhex(v.dk), ct: unhex(v.ct))
-            XCTAssertEqual(ss, unhex(v.ss), "\(v.name) decaps mismatch")
-        }
-    }
 
     // MARK: - Behavioural tests
 
     func testFullFlowRoundTrip() throws {
         let d = Data((0..<32).map { UInt8(($0 * 7) % 251) })
         let m = Data((0..<32).map { UInt8(($0 * 13) % 251) })
-        let (ek, dk) = MLKEM768.keygen(seed: d)
-        let (ct, ss) = MLKEM768.encaps(ek: ek, m: m)
+        let (ek, dk) = MLKEM768.keygen(d: d, z: Data(repeating: 0x11, count: 32))
+        let (ct, ss) = try MLKEM768.encaps(ek: ek, m: m)
         XCTAssertEqual(MLKEM768.decaps(dk: dk, ct: ct), ss)
     }
 
     func testImplicitRejectionOnTamperedCiphertext() throws {
-        let (ek, dk) = MLKEM768.keygen(seed: Data(repeating: 0x5A, count: 32))
-        let (ct, ss) = MLKEM768.encaps(ek: ek, m: Data(repeating: 0x0F, count: 32))
+        let (ek, dk) = MLKEM768.keygen(d: Data(repeating: 0x5A, count: 32), z: Data(repeating: 0xA5, count: 32))
+        let (ct, ss) = try MLKEM768.encaps(ek: ek, m: Data(repeating: 0x0F, count: 32))
         var tampered = ct
         tampered[tampered.count - 1] ^= 0x01
         XCTAssertNotEqual(tampered, ct)

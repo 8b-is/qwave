@@ -50,4 +50,23 @@ final class KeccakTests: XCTestCase {
             hex(Keccak.shake256(Data(repeating: 0x44, count: 137), count: 32)),
             try XCTUnwrap(vectors["shake256_137_32"]))
     }
+
+    /// The incremental reader must produce the same stream as the one-shot
+    /// XOF, whatever chunk sizes the caller asks for — SampleNTT reads 3 bytes
+    /// at a time across the 168-byte block boundary, so an off-by-one in the
+    /// refill would silently corrupt the sampled matrix.
+    func testSHAKE128ReaderMatchesOneShot() throws {
+        for input in [Data(), Data("abc".utf8), Data(repeating: 0x42, count: 168)] {
+            for chunk in [1, 3, 5, 167, 168, 169, 400] {
+                let total = 1_000
+                var reader = Keccak.SHAKE128Reader(input)
+                var streamed = [UInt8]()
+                while streamed.count < total {
+                    streamed.append(contentsOf: reader.read(chunk))
+                }
+                let expected = Keccak.shake128(input, count: streamed.count)
+                XCTAssertEqual(Data(streamed), expected, "chunk \(chunk), input \(input.count) bytes")
+            }
+        }
+    }
 }
