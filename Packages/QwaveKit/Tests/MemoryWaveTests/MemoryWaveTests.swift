@@ -707,6 +707,41 @@ final class NibbleTests: XCTestCase {
         let thirdRead = try await vault.all()
         XCTAssertFalse(thirdRead.contains(where: { $0.title == "Edited externally" }))
     }
+
+    /// Regression for #82: "Forget all memories" wiped the SQLite store but
+    /// left every plaintext nibble markdown file on disk. `forgetAll()` must
+    /// prune the vault mirror too, not just the store.
+    func testForgetAllPrunesTheVaultMirrorToo() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let vault = try NibbleVault(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        _ = try await director.remember(
+            title: "Nibble test",
+            body: "A paragraph about tagged wave retrieval that is definitely long enough. #qwave",
+            url: URL(string: "https://qwave.example/nibble"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+        let filesBefore = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        XCTAssertGreaterThan(filesBefore.count, 0)
+        let recordsBefore = try await store.records(containerID: nil, limit: 32)
+        XCTAssertFalse(recordsBefore.isEmpty)
+
+        try await director.forgetAll()
+
+        let recordsAfter = try await store.records(containerID: nil, limit: 32)
+        XCTAssertTrue(recordsAfter.isEmpty)
+        let filesAfter = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        XCTAssertTrue(filesAfter.isEmpty, "Expected the vault mirror to be pruned, found: \(filesAfter)")
+        // README.md is left in place — the directory itself is not removed.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
+    }
 }
 
 @MainActor
