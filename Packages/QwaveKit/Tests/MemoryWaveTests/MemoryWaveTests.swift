@@ -251,6 +251,28 @@ final class MemoryCipherTests: XCTestCase {
         box[box.count - 1] ^= 0xFF
         XCTAssertThrowsError(try MemoryCipher.open(box, key: key))
     }
+
+    /// decode() authenticates `signature_box` as a fail-closed validity gate
+    /// (its plaintext is otherwise unused since the signature is recomputed from
+    /// content). A record whose signature_box no longer authenticates must drop.
+    func testDecodeDropsRecordWithTamperedSignatureBox() async throws {
+        let secrets = InMemorySecretStore()
+        let database = try SQLiteDatabase()
+        let store = try MemoryStore(database: database, secrets: secrets)
+        _ = try await store.insert(
+            title: "Work", body: "note", url: nil, kind: .pin, containerID: nil)
+        let before = try await store.records(containerID: nil)
+        XCTAssertEqual(before.map(\.title), ["Work"])
+
+        // Replace signature_box with a box that no longer authenticates.
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        var tampered = try MemoryCipher.seal(Data("x".utf8), key: key)
+        tampered[tampered.count - 1] ^= 0xFF
+        try await database.run("UPDATE memories SET signature_box = ?1", [.blob(tampered)])
+
+        let after = try await store.records(containerID: nil)
+        XCTAssertTrue(after.isEmpty, "record with an unauthenticated signature_box must fail closed")
+    }
 }
 
 final class MemoryStoreTests: XCTestCase {

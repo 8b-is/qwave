@@ -162,7 +162,9 @@ public actor MemoryStore {
             let sigBox = row.blob(9),
             let titleData = try? MemoryCipher.open(titleBox, key: key),
             let bodyData = try? MemoryCipher.open(bodyBox, key: key),
-            let sigData = try? MemoryCipher.open(sigBox, key: key),
+            // Authenticate the signature box as a fail-closed validity gate; its
+            // plaintext is unused (the signature is recomputed from content below).
+            (try? MemoryCipher.open(sigBox, key: key)) != nil,
             let title = String(data: titleData, encoding: .utf8),
             let body = String(data: bodyData, encoding: .utf8)
         else {
@@ -178,15 +180,11 @@ public actor MemoryStore {
         let identity =
             MemoryWaveConstants.consciousness.doubleValue
             * MemoryWaveConstants.goldenRatio.doubleValue
+        // Content is the source of truth: the signature is recomputed from the
+        // decrypted title+body. The stored signature_box is authenticated in the
+        // guard above (validity gate) but its bytes are otherwise unused.
         let signature = WaveSignature.fromContent(
             Data((title + "\n" + body).utf8), identityFrequency: identity)
-        // Prefer the stored interference hash if it still verifies; otherwise
-        // keep the recomputed signature (content is source of truth).
-        var verified = signature
-        if signature.interferenceHash != Array(sigData) {
-            verified = signature
-        }
-        _ = verified.verify()
         return MemoryRecord(
             id: row.int(0),
             containerID: containerKey.isEmpty ? nil : UUID(uuidString: containerKey),
