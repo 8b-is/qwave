@@ -126,6 +126,16 @@ All notable changes to Qwave will be documented in this file.
   McEliece half. No fix is included here — a correct one has to corroborate
   the new PSK against a real handshake before discarding the old one, which
   is a provider design change, not a patch. Tracked in issue #91.
+- **Issue #91 fixed: the daily rekey no longer installs an uncorroborated
+  PSK.** `PacketTunnelProvider.rekeyNow` now snapshots the currently-active
+  configuration and the peer's handshake timestamp before installing a
+  candidate PSK, then polls for a completed WireGuard handshake under it
+  within a bounded window (`RekeyConfirmation.isConfirmed` in `VPNKit`). A
+  confirmed rekey commits and advances `lastRekey` as before; an unconfirmed
+  one — a tampered, corrupted or hostile ciphertext — rolls the adapter back
+  to the previous PSK and leaves `lastRekey` untouched, so it retries at the
+  next timer tick or wake instead of silently reporting success and going
+  dark for 24h.
 
 ### Added
 - **A regression pin for `HybridKEM`'s own derivation constants**
