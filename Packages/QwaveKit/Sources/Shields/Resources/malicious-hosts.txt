@@ -1,0 +1,23 @@
+# Qwave Safe Browsing — built-in malicious-host set (SAMPLE)
+#
+# Zero-egress on-device Safe Browsing. Every host below is compiled into a
+# WKContentRuleList (see HostsRuleListCompiler) and blocked entirely, on any
+# scheme and for all subdomains. NO host or URL is ever sent to a network
+# service — matching is 100% local, unlike Google/Apple Safe Browsing.
+#
+# This is a SAMPLE list using RFC 2606 / RFC 6761 reserved domains
+# (.example, .test, .invalid) so it can never accidentally block a real site.
+# For the full list source and the opt-in, default-OFF update path, see
+# docs/SAFE-BROWSING.md.
+#
+# Format: one host per line, either `<sink-ip> <host>` (classic hosts file)
+# or a bare `<host>`. `#` starts a comment.
+
+0.0.0.0 malware.example
+0.0.0.0 phishing.example
+0.0.0.0 drive-by-download.test
+0.0.0.0 credential-harvest.example
+0.0.0.0 fake-software-update.test
+0.0.0.0 cryptominer.example
+127.0.0.1 scam-login.test
+badware.invalid

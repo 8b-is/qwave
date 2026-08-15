@@ -14,6 +14,10 @@ public final class ShieldsDirector {
 
     private var adsList: WKContentRuleList?
     private var httpsUpgradeList: WKContentRuleList?
+    /// Zero-egress Safe Browsing list. Always attached (never gated by the
+    /// per-site ad/HTTPS toggles): a malicious-host block must not be
+    /// defeatable from the shields popover.
+    private var safeBrowsingList: WKContentRuleList?
 
     /// The exact list OBJECTS last attached to each controller, so a navigation
     /// whose resolved attachment is unchanged skips the remove-all + re-add.
@@ -31,7 +35,7 @@ public final class ShieldsDirector {
         self.policy = policy
     }
 
-    /// Makes both built-in lists available fast (idempotent). On a list
+    /// Makes the built-in lists available fast (idempotent). On a list
     /// update this returns the previous compiled version immediately and
     /// swaps in the fresh one when its background compile finishes — new
     /// navigations reconcile via `applyLists`, so the swap needs no push.
@@ -42,6 +46,9 @@ public final class ShieldsDirector {
             }
             httpsUpgradeList = try await compiler.availableList(for: .httpsUpgrade) { [weak self] fresh in
                 self?.httpsUpgradeList = fresh
+            }
+            safeBrowsingList = try await compiler.availableList(for: .safeBrowsing) { [weak self] fresh in
+                self?.safeBrowsingList = fresh
             }
         } catch {
             QwaveLog.shields.error("Rule list compilation failed: \(error.localizedDescription, privacy: .public)")
@@ -104,6 +111,12 @@ public final class ShieldsDirector {
 
         let resolved = policy.resolvedPolicy(forHost: host)
         var desired: [WKContentRuleList] = []
+        // Safe Browsing is always-on and attached first: it is not gated by
+        // the per-site policy, so malicious-host blocks survive a site's
+        // "shields down" override.
+        if let safeBrowsingList {
+            desired.append(safeBrowsingList)
+        }
         if resolved.adsBlocked, let adsList {
             desired.append(adsList)
         }

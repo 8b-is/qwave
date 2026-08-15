@@ -1,0 +1,16 @@
+This file accompanies malicious-hosts-compiled.json.
+
+malicious-hosts-compiled.json is the WKContentRuleList (WebKit content-blocker)
+compilation of malicious-hosts.txt, produced on-device by
+HostsRuleListCompiler. It powers Qwave's zero-egress Safe Browsing: known-
+malicious hosts are blocked entirely, with matching performed 100% locally.
+NO host or URL is ever sent to any network service.
+
+The shipped malicious-hosts.txt is a SAMPLE that uses only RFC 2606 / RFC 6761
+reserved domains (.example, .test, .invalid), so it cannot block a real site.
+It is Qwave's own content and carries no third-party licence.
+
+To source a real malicious-host set (e.g. URLhaus, Phishing.Database, or a
+hosts-format threat feed of your choice), see docs/SAFE-BROWSING.md. Any such
+list is data (mere aggregation) and must retain its upstream licence and
+attribution here when shipped.
