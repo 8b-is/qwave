@@ -170,6 +170,56 @@ All notable changes to Qwave will be documented in this file.
 
 **Production Release: Web3 & WebKit-Native Sovereign macOS Browser.**
 
+> **Errata — 2026-08-15.** The Highlights below are left as they were published.
+> Four of them do not survive a check against the code, and the corrections are
+> recorded here rather than by rewriting the entry:
+>
+> 1. **"Swift 5.10 / Swift 6 … across 10 modules"** — there is no Swift 5.10 in
+>    the package and the module count is wrong. `Packages/QwaveKit/Package.swift`
+>    is `swift-tools-version:6.0` and applies
+>    `.swiftLanguageMode(.v6)` + `-strict-concurrency=complete` to **every**
+>    target (`Package.swift:1`, `:4-7`). On the module count, applying the same
+>    as-of-publication standard used in item 3 below: at the tag the package had
+>    **11** library targets, not 12 — `git show v1.0.0:Packages/QwaveKit/Package.swift`
+>    has no `WebCredentials`, which arrived with AutoFill after 1.0.0. So the
+>    published figure was wrong when it was written, and the count is **12**
+>    today (QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags,
+>    WebCredentials, BrowserCore, PostQuantum, VPNKit, WebExtensions,
+>    MemoryWave, Summarize — `Package.swift:52-117`) alongside 13 test targets.
+>    Neither number is 10.
+> 2. **"Sub-45.7MB/tab reclamation floor"** — 45.7 MB/tab is a single
+>    measurement of a synthetic ballast fixture, not a floor, and "sub-" points
+>    the wrong way for a reclamation figure. The origin is `docs/ENERGY.md:87-93`
+>    and the 0.3.1 entry below. The **enforced** gate in
+>    `BrowserCoreTests/HibernationReclaimTests` is different and lower: more than
+>    half the pre-hibernation footprint reclaimed, **and >10 MB per tab**
+>    (`HibernationReclaimTests.swift:163-170`).
+> 3. **"WebGPU Acceleration: Native WebKit WebGPU pipeline with zero-latency
+>    visual waveform rendering"** — no such pipeline exists. `rg WebGPU` over
+>    `Sources/` and `Packages/QwaveKit/Sources/` returns nothing; the only
+>    WebGPU work in the tree is the research probe and benchmark under
+>    `research/01-webkit-browser-engine/webgpu-surface/` and
+>    `research/03-gpu-metal-compute/`. WebGPU in a `WKWebView` is WebKit's own:
+>    the probe measured `navigator.gpu` as **default-on**, with the `_WKFeature`
+>    `WebGPUEnabled` flag **inert** (`research/.../webgpu-surface/README.md:14-16`,
+>    `:36-40`). Qwave renders no waveform on the GPU — the "waveform" in the UI
+>    is the SF Symbol named `waveform` (`MemoryWavePanel.swift:17`). Note that
+>    the 0.4.3 entry further down describes WebGPU as gated behind
+>    `WebGPUEnabled` plus a secure context; that was the honest reading at the
+>    time and the probe has since resolved it as stale. The README's research
+>    index carries the current finding.
+> 4. **"Xcode Cloud & Multi-Host CI: Automated cross-architecture test
+>    verification"** — no Xcode Cloud build gates this repo, and CI is not
+>    multi-host. What exists is *preparation*: the two hook scripts
+>    `ci_scripts/ci_post_clone.sh` and `ci_scripts/ci_post_xcodebuild.sh` plus
+>    the setup guide `docs/XCODE_CLOUD.md`, which states that creating the
+>    workflow requires manual steps in Xcode / App Store Connect and "cannot be
+>    scripted from the repo" (`docs/XCODE_CLOUD.md:44-47`). The CI that actually
+>    runs is GitHub Actions — `ci.yml`, `claude-code-review.yml`, `claude.yml`,
+>    `release.yml` — and every job in `ci.yml` targets the single runner label
+>    `blacksmith-6vcpu-macos-15`, so there is no architecture matrix. The signed
+>    release build is real (`release.yml`).
+
 ### Highlights
 - **Engine**: Swift 5.10 / Swift 6 strict concurrency architecture across 10 modules in `QwaveKit`.
 - **MemoryWave & Energy Governor**: Sub-45.7MB/tab reclamation floor with zero foreground interruption.

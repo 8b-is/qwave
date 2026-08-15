@@ -46,9 +46,14 @@ raw path's cached prepared statements and positional column reads. A GRDB
 expert could shave this with lower-level APIs — but doing so surrenders the
 ergonomics that were the reason to adopt GRDB in the first place.
 
-The `HistoryStore` malloc count is a committed CI gate. GRDB does not meet it,
-and per the migration's own rule the gate is not to be loosened to make an
-adoption pass.
+This query has a committed CI gate. To be exact about which number that is:
+the enforced threshold is **1298** `mallocCountTotal` at p90, in
+`Benchmarks/Thresholds/QwaveKitBenchmarks.HistoryStore.entries(matching:)_@_50k_rows.p90.json`
+(checked by the `Benchmark thresholds (mallocCountTotal)` job in
+`.github/workflows/ci.yml`). **391 is the measurement above, not the gate** —
+the gate sits well above it, with headroom. Per the migration's own rule the
+gate is not to be loosened to make an adoption pass; the reason to decline GRDB
+is the 1.79× regression against the measured baseline, not a threshold breach.
 
 ## Finding 3 — the architecture makes per-store GRDB a fragile hybrid
 
@@ -69,7 +74,9 @@ risk without the reward.
 - **Revisit only as a whole-layer decision.** If live-updating the Library
   window from `ValueObservation` becomes a priority, evaluate migrating *all*
   of Persistence to GRDB at once (so the architecture is clean and the payoff
-  is real), and re-measure against the 391-malloc gate at that time.
+  is real), and re-measure against the committed threshold at that time
+  (currently 1298 `mallocCountTotal` p90 — not 391, which is the raw path's
+  measured count).
 
 ## Reproduction
 

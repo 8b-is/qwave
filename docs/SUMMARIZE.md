@@ -1,6 +1,12 @@
 # Summarize — design
 
-**Status:** implementing · **Stamps:** 2026-08-14 · macOS 26.4.1 (25E253) · M1 Pro ·
+**Status:** shipped in **v1.0.0** — the tag contains
+`Packages/QwaveKit/Sources/Summarize/` and `Sources/QwaveApp/SummarizePanel.swift`
+(`git show v1.0.0:Packages/QwaveKit/Sources/Summarize/SummarizeSession.swift`),
+and the release was published minutes after the feature commit. The CHANGELOG
+still lists the feature under `[Unreleased]`; that placement was already stale
+when the tag was cut, and is a CHANGELOG bug rather than a statement about what
+shipped. · **Stamps:** 2026-08-14 · macOS 26.4.1 (25E253) · M1 Pro ·
 FoundationModels from macOS 26.4 SDK · measured numbers from
 `research/02-on-device-ai/foundation-models-probe/`
 
