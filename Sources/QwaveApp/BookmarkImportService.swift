@@ -72,12 +72,14 @@ enum BookmarkImportService {
         let alert = NSAlert()
         if let imported {
             alert.messageText = "Import Complete"
-            alert.informativeText = imported == 0
+            alert.informativeText =
+                imported == 0
                 ? "No new bookmarks were found to import."
                 : "Imported \(imported) bookmark\(imported == 1 ? "" : "s")."
         } else {
             alert.messageText = "Import Failed"
-            alert.informativeText = "That location doesn\u{2019}t contain a supported Chromium \u{201C}Bookmarks\u{201D} file."
+            alert.informativeText =
+                "That location doesn\u{2019}t contain a supported Chromium \u{201C}Bookmarks\u{201D} file."
         }
         alert.runModal()
     }

@@ -78,7 +78,8 @@ final class DiagnosticRecordTests: XCTestCase {
     }
 
     func testCodableRoundTrip() throws {
-        let record = DiagnosticRecord(kind: .cpuException, date: Date(timeIntervalSince1970: 100), summary: "1 CPU exception", detail: "raw")
+        let record = DiagnosticRecord(
+            kind: .cpuException, date: Date(timeIntervalSince1970: 100), summary: "1 CPU exception", detail: "raw")
         let data = try JSONEncoder().encode([record])
         let decoded = try JSONDecoder().decode([DiagnosticRecord].self, from: data)
         XCTAssertEqual(decoded, [record])

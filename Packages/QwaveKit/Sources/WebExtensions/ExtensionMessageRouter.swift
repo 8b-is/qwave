@@ -236,7 +236,8 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
         let msgJson = ExtensionJSLiteral.encode(message)
         let senderJson = ExtensionJSLiteral.encode(sender ?? [:])
         let idArg = messageId != nil ? "\(messageId!)" : "null"
-        let script = "window.__qwaveNative && window.__qwaveNative.dispatchMessage(\(msgJson), \(senderJson), \(idArg));"
+        let script =
+            "window.__qwaveNative && window.__qwaveNative.dispatchMessage(\(msgJson), \(senderJson), \(idArg));"
         webView.evaluateJavaScript(script, in: nil, in: world) { _ in }
     }
 

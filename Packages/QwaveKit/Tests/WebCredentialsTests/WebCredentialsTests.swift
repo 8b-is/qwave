@@ -12,7 +12,8 @@ final class WebCredentialMatchingTests: XCTestCase {
     }
 
     func testDomainMatchesIsExactHostAfterNormalization() {
-        XCTAssertTrue(WebCredentialMatching.domainMatches(stored: "example.com", requested: "https://www.example.com/x"))
+        XCTAssertTrue(
+            WebCredentialMatching.domainMatches(stored: "example.com", requested: "https://www.example.com/x"))
         XCTAssertFalse(WebCredentialMatching.domainMatches(stored: "example.com", requested: "evil-example.com"))
         // Exact-host: a subdomain is NOT treated as a match (see follow-up note).
         XCTAssertFalse(WebCredentialMatching.domainMatches(stored: "example.com", requested: "sub.example.com"))

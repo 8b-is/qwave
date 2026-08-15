@@ -78,7 +78,8 @@ public struct MV3Manifest: Codable, Equatable, Sendable {
         manifestVersion = try container.decodeIfPresent(Int.self, forKey: .manifestVersion) ?? 2
         permissions = try container.decodeIfPresent([String].self, forKey: .permissions) ?? []
         contentScripts = try container.decodeIfPresent([ContentScript].self, forKey: .contentScripts) ?? []
-        declarativeNetRequest = try container.decodeIfPresent(DeclarativeNetRequest.self, forKey: .declarativeNetRequest)
+        declarativeNetRequest = try container.decodeIfPresent(
+            DeclarativeNetRequest.self, forKey: .declarativeNetRequest)
         if let action = try container.decodeIfPresent(Action.self, forKey: .action) {
             popupPath = action.defaultPopup
         } else if let legacy = try container.decodeIfPresent(Action.self, forKey: .browserAction) {

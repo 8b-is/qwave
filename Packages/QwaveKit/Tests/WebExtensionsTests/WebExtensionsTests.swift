@@ -98,7 +98,7 @@ final class ContentScriptEngineTests: XCTestCase {
                     matches: ["https://*.github.com/*", "https://*.gitlab.com/*"],
                     js: ["end.js"],
                     runAt: "document_end"
-                )
+                ),
             ]
         )
 
@@ -816,7 +816,6 @@ final class DeclarativeNetRequestTests: XCTestCase {
     }
 }
 
-
 final class BrowserBridgeScriptTests: XCTestCase {
     func testBridgeSurface() {
         let source = BrowserBridgeScript.source
@@ -838,5 +837,3 @@ final class BrowserBridgeScriptTests: XCTestCase {
         XCTAssertEqual(BrowserBridgeScript.messageHandlerName, "qwaveExtension")
     }
 }
-
-

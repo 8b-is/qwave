@@ -84,7 +84,8 @@ final class OmniboxSuggesterTests: XCTestCase {
     // MARK: - On-device fusion (bookmarks / open tabs / actions)
 
     private func bookmark(_ url: String, title: String) -> Bookmark {
-        Bookmark(id: Int64(abs(url.hashValue % 100_000)), title: title, url: URL(string: url)!, folder: nil, created: now)
+        Bookmark(
+            id: Int64(abs(url.hashValue % 100_000)), title: title, url: URL(string: url)!, folder: nil, created: now)
     }
 
     func testOnDeviceIncludesBookmarks() {

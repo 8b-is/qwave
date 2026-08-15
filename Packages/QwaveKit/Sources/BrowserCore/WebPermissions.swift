@@ -1,8 +1,8 @@
 import AVFoundation
 #if canImport(AppKit)
-import AppKit
+    import AppKit
 #elseif canImport(UIKit)
-import UIKit
+    import UIKit
 #endif
 import WebKit
 
@@ -153,18 +153,19 @@ public enum WebPermissionArbiter {
 
     /// A modal per-origin allow/deny sheet. Returns `true` on Allow.
     private static func promptUser(host: String, permissions: [WebPermission]) -> Bool {
-#if os(macOS)
-        let alert = NSAlert()
-        alert.messageText = "“\(host)” wants to use your \(joined(permissions))"
-        alert.informativeText = "Qwave only shares this while you are on this site, and forgets the choice when you quit."
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Don’t Allow")
-        return alert.runModal() == .alertFirstButtonReturn
-#else
-        // The iOS UI layer (Phase 1) presents this sheet from a view
-        // controller; until then, fail closed (deny).
-        return false
-#endif
+        #if os(macOS)
+            let alert = NSAlert()
+            alert.messageText = "“\(host)” wants to use your \(joined(permissions))"
+            alert.informativeText =
+                "Qwave only shares this while you are on this site, and forgets the choice when you quit."
+            alert.addButton(withTitle: "Allow")
+            alert.addButton(withTitle: "Don’t Allow")
+            return alert.runModal() == .alertFirstButtonReturn
+        #else
+            // The iOS UI layer (Phase 1) presents this sheet from a view
+            // controller; until then, fail closed (deny).
+            return false
+        #endif
     }
 
     /// "camera", "camera and microphone", "camera, microphone, and location".

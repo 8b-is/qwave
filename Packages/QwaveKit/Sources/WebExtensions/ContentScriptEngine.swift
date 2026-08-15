@@ -83,15 +83,15 @@ public final class ContentScriptEngine: @unchecked Sendable {
 
                     // Wrap script in an isolated IIFE with extension context annotations
                     let wrappedSource = """
-                    // [Qwave Content Script: \(ext.id) - \(jsFile)]
-                    (() => {
-                      try {
-                        \(code)
-                      } catch (err) {
-                        console.error('[QwaveExtension][\(ext.id)] Error in \(jsFile):', err);
-                      }
-                    })();
-                    """
+                        // [Qwave Content Script: \(ext.id) - \(jsFile)]
+                        (() => {
+                          try {
+                            \(code)
+                          } catch (err) {
+                            console.error('[QwaveExtension][\(ext.id)] Error in \(jsFile):', err);
+                          }
+                        })();
+                        """
 
                     results.append(
                         InjectedContentScript(

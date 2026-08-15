@@ -51,9 +51,9 @@ public final class WebViewFactory {
         let preferences = configuration.preferences
         preferences.isElementFullscreenEnabled = true
         preferences.isFraudulentWebsiteWarningEnabled = true
-#if os(macOS)
-        preferences.tabFocusesLinks = false
-#endif
+        #if os(macOS)
+            preferences.tabFocusesLinks = false
+        #endif
 
         // User's experimental WebKit feature overrides (Stage: bleeding edge).
         featureFlags.apply(to: preferences)
@@ -62,9 +62,9 @@ public final class WebViewFactory {
         shields.installDefaultLists(on: configuration.userContentController)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-#if os(macOS)
-        webView.allowsMagnification = true
-#endif
+        #if os(macOS)
+            webView.allowsMagnification = true
+        #endif
         webView.allowsBackForwardNavigationGestures = true
         webView.isInspectable = true
         webView.translatesAutoresizingMaskIntoConstraints = false

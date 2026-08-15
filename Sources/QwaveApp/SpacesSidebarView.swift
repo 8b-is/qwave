@@ -136,8 +136,9 @@ final class SpacesSidebarView: NSView {
         selectedID: UUID?,
         listSpaceID: UUID?
     ) {
-        guard spaces != self.spaces || tabs != self.tabs
-            || selectedID != self.selectedID || listSpaceID != self.listSpaceID
+        guard
+            spaces != self.spaces || tabs != self.tabs
+                || selectedID != self.selectedID || listSpaceID != self.listSpaceID
         else { return }
         self.spaces = spaces
         self.tabs = tabs

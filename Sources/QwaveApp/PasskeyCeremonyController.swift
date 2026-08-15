@@ -133,19 +133,23 @@ extension PasskeyCeremonyController: ASAuthorizationControllerDelegate {
         MainActor.assumeIsolated {
             switch authorization.credential {
             case let assertion as ASAuthorizationPlatformPublicKeyCredentialAssertion:
-                finishAssertion(.success(AssertionResult(
-                    credentialID: Base64URL.encode(assertion.credentialID),
-                    authenticatorData: Base64URL.encode(assertion.rawAuthenticatorData),
-                    signature: Base64URL.encode(assertion.signature),
-                    userHandle: assertion.userID.map(Base64URL.encode),
-                    clientDataJSON: Base64URL.encode(assertion.rawClientDataJSON)
-                )))
+                finishAssertion(
+                    .success(
+                        AssertionResult(
+                            credentialID: Base64URL.encode(assertion.credentialID),
+                            authenticatorData: Base64URL.encode(assertion.rawAuthenticatorData),
+                            signature: Base64URL.encode(assertion.signature),
+                            userHandle: assertion.userID.map(Base64URL.encode),
+                            clientDataJSON: Base64URL.encode(assertion.rawClientDataJSON)
+                        )))
             case let registration as ASAuthorizationPlatformPublicKeyCredentialRegistration:
-                finishRegistration(.success(RegistrationResult(
-                    credentialID: Base64URL.encode(registration.credentialID),
-                    attestationObject: registration.rawAttestationObject.map(Base64URL.encode) ?? "",
-                    clientDataJSON: Base64URL.encode(registration.rawClientDataJSON)
-                )))
+                finishRegistration(
+                    .success(
+                        RegistrationResult(
+                            credentialID: Base64URL.encode(registration.credentialID),
+                            attestationObject: registration.rawAttestationObject.map(Base64URL.encode) ?? "",
+                            clientDataJSON: Base64URL.encode(registration.rawClientDataJSON)
+                        )))
             default:
                 failAll(CeremonyError.unexpectedCredentialType)
             }

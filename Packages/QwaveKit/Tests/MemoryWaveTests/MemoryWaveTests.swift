@@ -845,7 +845,9 @@ final class NibbleTests: XCTestCase {
             containerID: nil,
             isEphemeral: false
         )
-        let filesBefore = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        let filesBefore = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter {
+            $0.hasSuffix(".md") && $0 != "README.md"
+        }
         XCTAssertGreaterThan(filesBefore.count, 0)
         let recordsBefore = try await store.records(containerID: nil, limit: 32)
         XCTAssertFalse(recordsBefore.isEmpty)
@@ -854,7 +856,9 @@ final class NibbleTests: XCTestCase {
 
         let recordsAfter = try await store.records(containerID: nil, limit: 32)
         XCTAssertTrue(recordsAfter.isEmpty)
-        let filesAfter = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        let filesAfter = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter {
+            $0.hasSuffix(".md") && $0 != "README.md"
+        }
         XCTAssertTrue(filesAfter.isEmpty, "Expected the vault mirror to be pruned, found: \(filesAfter)")
         // README.md is left in place — the directory itself is not removed.
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
