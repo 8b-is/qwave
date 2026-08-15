@@ -30,6 +30,22 @@ public actor MemoryStore {
         self.key = try MemoryCipher.loadOrCreateKey(in: secrets)
     }
 
+    /// Precomputed-key variant so a caller can derive the master key once
+    /// (`MemoryCipher.loadOrCreateKey`) and hand the *same* key to both this
+    /// store and a `NibbleVault`, keeping the two at-rest paths locked and
+    /// unlocked together instead of drifting into independent threat models
+    /// (issue #81).
+    public init(database: SQLiteDatabase, key: SymmetricKey) {
+        self.database = database
+        self.key = key
+    }
+
+    public init(directory: URL, key: SymmetricKey) throws {
+        let url = directory.appendingPathComponent("memory-wave.db")
+        self.database = try SQLiteDatabase(url: url)
+        self.key = key
+    }
+
     @discardableResult
     public func insert(
         title: String,

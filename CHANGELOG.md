@@ -20,6 +20,23 @@ All notable changes to Qwave will be documented in this file.
   ([#78](https://github.com/8b-is/qwave/issues/78))
 
 ### Security
+- **NibbleVault no longer mirrors Memory Wave bodies as plaintext markdown
+  (#81).** `MemoryStore` AES-GCM seals title/body/url before they touch
+  SQLite, but the same content was, on every `remember()`, also written by
+  `NibbleVault` to `~/…/nibbles/**/*.md` as plain UTF-8 — with Remember
+  Everything on, that is extracted article text from every http(s) page
+  visited. This was a "decision needed" design question, not a mechanical
+  bug (see #79 and #81): the vault's whole point was human-readable files a
+  user could open in Finder. The chosen default is to seal the vault too,
+  with the *same* master key `MemoryStore` uses, so the two at-rest paths
+  share one threat model instead of two — title, body and url are now
+  AES-GCM ciphertext in the `.md` file; only short, low-sensitivity metadata
+  (tags, kind, lane, timestamps) stays in the clear for tag search and file
+  naming. Opening a nibble file outside Qwave now shows ciphertext, not page
+  text; the app decrypts nibbles automatically, same as it always has for the
+  database. Nibbles written before this change keep decoding (a legacy
+  plaintext fallback path), so nothing already on disk is silently dropped
+  from recall — they just were never sealed to begin with.
 - **WebAuthn/passkey origin binding.** The passkey bridge accepted the `rpId`
   a page supplied without ever looking at which frame sent it, and its shim was
   injected into every frame (`forMainFrameOnly: false`), so a cross-origin
