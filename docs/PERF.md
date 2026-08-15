@@ -87,7 +87,7 @@ the code after each fix so a single capture settles the whole ledger.
 | # | Suspect | State | PR / issue | Signpost |
 |---|---|---|---|---|
 | 1 | Chrome re-render on every KVO tick (`estimatedProgress` drives no visible chrome) — coalesce to one refresh per runloop turn | fixed — awaiting measurement | [#17](https://github.com/8b-is/qwave/pull/17) | `chrome-refresh` |
-| 1b | Per-item `TabBarView` diff (avoid full teardown on title/isLoading) | **deferred** — drag-reorder index-capture hazard | — | `chrome-refresh` |
+| 1b | Per-item `TabBarView` diff (avoid full teardown on title/isLoading) | **fixed** — awaiting measurement. Rows are reused by tab id and updated in place (`TabBarView.swift:143-179`); the same pass applies to the Spaces sidebar. The drag-reorder index-capture hazard that held this row is resolved: the drag closures are re-bound on every diff pass so a reused view always carries its current index, and the model is mutated only on mouse-up, so no rebuild happens mid-gesture (`TabBarView.swift:161-166`, `:182-194`) | [#69](https://github.com/8b-is/qwave/pull/69) (merged) | `chrome-refresh` |
 | 2 | 30 s energy tick: main-queue media IPC per tab + snapshot mid-load — yield to foreground, `isLoading` gate, skip selected-tab probe | fixed — awaiting measurement | [#15](https://github.com/8b-is/qwave/pull/15) (merged) | `energy-tick` |
 | 3 | `ShieldsDirector.applyLists` redundant `removeAll` + re-add every nav — identity-keyed cache | fixed — awaiting measurement | [#16](https://github.com/8b-is/qwave/pull/16) (merged) | `applyLists` |
 | 4 | Synchronous SQLite history write on the main actor | **acquitted** — already `async` over actors; no main-thread write | — | (uninstrumented) |

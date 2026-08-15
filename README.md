@@ -35,8 +35,12 @@ own network activity auditable.
 - **Optional VPN** — Mullvad relay discovery and WireGuard live in a dedicated
   Network Extension; quantum-resistant PSK negotiation fails closed when enabled.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
-  AI-agnostic inference providers. Stored memories do not leave the Mac unless
-  you explicitly configure a remote provider.
+  AI-agnostic inference providers. Stored memories **never** leave the Mac —
+  not even with a remote provider configured: `MemoryWavePolicy.decide` denies
+  any remote request that would carry them (`.deny(.cognitiveEgress)`), so it
+  fails closed rather than relying on the caller. Pages you explicitly
+  summarise or ask about *are* sent to the provider you configured; see
+  [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
 - **AutoFill** — passwords and passkeys through an `ASCredentialProvider` extension
@@ -179,8 +183,8 @@ local by default, remote only when configured. See
 
 ### Egress audit
 
-Every Qwave network client is checked against a committed allowlist; CI fails
-the build on anything new. See
+Qwave's own egress is held to a committed allowlist that a reviewer checks each
+diff against, and the launch path is proved request-free by test. See
 [`EgressAllowlist`](Packages/QwaveKit/Sources/QwaveSupport/EgressAllowlist.swift),
 [docs/NETWORK.md](docs/NETWORK.md).
 
@@ -188,12 +192,29 @@ the build on anything new. See
  any Qwave network client
       │
       ▼
- EgressAllowlist.swift (committed) ── not allowlisted ──▶ CI egress-guard fails
+ EgressAllowlist.swift (committed) ── reviewed against each diff
+      │                                (a test oracle, not a runtime check
+      │                                 — see below and issue #77)
+      ▼
+ allowlisted hosts (3): github.com          Sparkle appcast
+                        api.mullvad.net     VPN control API
+                        api.x.ai            default remote AI endpoint
       │
       ▼
- allowlisted: Sparkle update host only — and even that is a single,
- deterministic host (no launch-time blocklist fetch since 0.6.0)
+ launch path ── EgressGuardTests URLProtocol recorder ──▶ zero requests
+                (no launch-time blocklist fetch since 0.4.4)
 ```
+
+Two honest caveats, both tracked. `EgressAllowlist.permits(host:)` is **never
+called in production** — every call site is in `EgressGuardTests`, so it is a
+reviewed oracle rather than a runtime gate, and adding a call to a new host does
+not fail CI by itself ([#77](https://github.com/8b-is/qwave/issues/77)). One
+Category-A host is in exactly that state today: the opt-in, off-by-default
+omnibox suggestion endpoint `duckduckgo.com`
+([#78](https://github.com/8b-is/qwave/issues/78)), now documented in
+[docs/NETWORK.md](docs/NETWORK.md). The launch-path assertion is the part with
+real teeth: it registers a `URLProtocol` recorder over the actual shields
+launch path and asserts nothing was requested.
 
 ## Architecture at a glance
 
@@ -350,15 +371,17 @@ Research (measured, version-stamped, Qwave-specific):
 ## Status
 
 Shipped in v1.0.0: the browser core, shields, WebExtensions MV3 bridge,
-MemoryWave, Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
-post-quantum KEM implementation, signed release workflow, and Swift 6
-concurrency migration — all covered by package tests.
+MemoryWave, post-quantum KEM implementation, signed release workflow, and
+Swift 6 concurrency migration — all covered by package tests.
 
-Since 1.0.0: downloads UI, crash-safe session restore, a `qwave://diagnostics`
+Since 1.0.0: Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
+downloads UI, crash-safe session restore, a `qwave://diagnostics`
 telemetry page, VoiceOver accessibility on the chrome, on-device semantic memory
 recall, a command palette, first-run bookmark import with Spotlight entities,
 container-bound Focus filters with a Spaces sidebar, keychain-only AutoFill
-(passwords + passkeys), and a zero-egress Safe Browsing host-set.
+(passwords + passkeys), and a zero-egress Safe Browsing host-set (shipped as a
+sample list — see [docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a
+real feed).
 
 The VPN system extension still depends on Apple Network Extension entitlements
 for signed distribution (Apple DTS case open); see

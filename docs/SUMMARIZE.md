@@ -1,6 +1,7 @@
 # Summarize — design
 
-**Status:** implementing · **Stamps:** 2026-08-14 · macOS 26.4.1 (25E253) · M1 Pro ·
+**Status:** shipped on `main` (CHANGELOG `[Unreleased]`; not yet in a tagged
+release) · **Stamps:** 2026-08-14 · macOS 26.4.1 (25E253) · M1 Pro ·
 FoundationModels from macOS 26.4 SDK · measured numbers from
 `research/02-on-device-ai/foundation-models-probe/`
 

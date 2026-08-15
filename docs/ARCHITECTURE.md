@@ -17,14 +17,17 @@ Qwave.app
 │   ├── Persistence       SQLite database and actor-isolated stores
 │   ├── MemoryWave        encrypted memory substrate and providers
 │   ├── Summarize         on-device page summarisation (FoundationModels, availability-gated)
+│   ├── WebCredentials    login/passkey value types, keychain store, WebAuthn RP-ID policy
 │   ├── VPNKit            Mullvad API, relays, tunnel lifecycle
 │   ├── PostQuantum        Keccak, ML-KEM-768, Classic McEliece, hybrid KEM
 │   ├── WebExtensions      Manifest V3 registry and browser.* bridge
 │   ├── URLIdentity        WHATWG-compatible host identity
 │   ├── FeatureFlags       guarded WebKit SPI access
 │   └── QwaveSupport       logging, keychain, egress allowlist
-└── PacketTunnel.systemextension
-    └── WireGuardKit + NetworkExtension provider
+├── PacketTunnel.systemextension
+│   └── WireGuardKit + NetworkExtension provider
+└── CredentialProvider.appex
+    └── ASCredentialProviderViewController (AutoFill UI) + WebCredentials
 ```
 
 `Packages/QwaveKit/Package.swift` and `project.yml` are the source of truth.
@@ -45,9 +48,12 @@ QwaveApp
    │                 └── QwaveSupport
    ├── Summarize ────┬── BrowserCore
    │                 └── QwaveSupport
+   ├── WebCredentials    (no QwaveKit dependencies — Foundation + Security only)
    └── WebExtensions ─── QwaveSupport
 
 PacketTunnel ─── QwaveTunnelKit (VPNKit + QwaveSupport) ─── WireGuardKit
+
+CredentialProvider ─── WebCredentials
 ```
 
 `BrowserCore` is the convergence point for browser behavior: it wires tabs,
@@ -96,6 +102,41 @@ tier is not `.normal` (memory pressure included). An explicit command runs the
 readability extractor, then a **respond-only** generation — the stream path
 refuses this workload on macOS 26.4 (see [docs/SUMMARIZE.md](SUMMARIZE.md)) —
 and renders inert selectable text. Nothing is persisted; nothing egresses.
+
+### AutoFill credentials
+
+`WebCredentials` is a deliberately isolated target: it declares **no QwaveKit
+dependencies at all** (`Package.swift:83`) and is exported as its own slim,
+crypto-free (Foundation + Security only) product so the AutoFill extension
+links it *without* pulling in VPNKit or the VPN's crypto stack
+(`Package.swift:29-35`, `project.yml` → `CredentialProvider.dependencies`).
+It holds the login/passkey value types,
+`KeychainWebCredentialStore`, domain matching, and `WebAuthnOriginPolicy` —
+the WebAuthn §5.1.3 origin binding, which authorises an `rpId` only when it
+equals the frame's origin host or is a registrable-domain suffix of it, so a
+cross-origin frame cannot drive a ceremony for an arbitrary relying party. It
+is pure (no WebKit, no URL parser, no keychain) and returns the *normalized*
+rpID rather than a bool, so a caller cannot run the ceremony with a string
+other than the one authorised. The absent public-suffix list is a documented
+limitation in the source, not a silent gap.
+
+`CredentialProvider` is a macOS `app-extension` target
+(`Sources/CredentialProvider`, extension point
+`com.apple.authentication-services-credential-provider-ui`, declaring
+`ProvidesPasswords` and `ProvidesPasskeys`). Its principal class,
+`CredentialProviderViewController`, subclasses
+`ASCredentialProviderViewController` and reaches the keychain only through
+`WebCredentialStore`. It shares the app's keychain access group and app group
+via entitlements, so the two processes see the same items without a custom IPC
+channel. Credential secrets never cross into `DeviceKeyManager` or the VPN's
+key material — that separation is the point of the slim product.
+
+**Today this path is fill-only.** Nothing in `Sources/` calls
+`WebCredentialStore.save(_:)`, and `ASCredentialIdentityStore` is not referenced
+in Swift source anywhere, so no capture prompt, import flow, or QuickType
+registration exists yet ([#72](https://github.com/8b-is/qwave/issues/72), and
+`docs/AUTOFILL.md` § Deferred). Read the extension as a reader over keychain
+items placed there by other means, not as a password manager with a save flow.
 
 ### Concurrency
 
@@ -149,7 +190,7 @@ swift test --package-path Packages/QwaveKit -c release
 
 The package suite covers pure state machines, URL identity, blocklist
 compilation, actor persistence behavior, cryptographic known-answer tests,
-VPN configuration, WebExtensions messaging, egress policy, and summarization
-gating. The app target
+VPN configuration, WebExtensions messaging, egress policy, summarization
+gating, and credential matching / WebAuthn RP-ID policy. The app target
 is verified separately through XcodeGen and an unsigned macOS build. Signed VPN
 activation requires the entitlements described in [docs/SIGNING.md](SIGNING.md).
