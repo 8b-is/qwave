@@ -235,6 +235,28 @@ final class SemanticRecallTests: XCTestCase {
         let hits = try await director.recall(containerID: nil, query: "recall", limit: 8)
         XCTAssertFalse(hits.isEmpty)
     }
+
+    /// Issue #110: `recall` built its rank map with
+    /// `Dictionary(uniqueKeysWithValues:)` keyed on the nanosecond
+    /// `createdAt`, which traps the process when two records share one
+    /// caller-supplied timestamp. Identical content + identical `at:` is the
+    /// extreme case — the two waves are byte-equal, so even an identity-keyed
+    /// map collapses them — and both records must still come back.
+    func testRecallSurvivesDuplicateCreatedAt() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, embedder: nil)
+        let stamp = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try await store.insert(
+            title: "alpha", body: "shared body text", url: URL(string: "https://example.com/1"),
+            kind: .note, containerID: nil, at: stamp)
+        _ = try await store.insert(
+            title: "alpha", body: "shared body text", url: URL(string: "https://example.com/2"),
+            kind: .note, containerID: nil, at: stamp)
+        let hits = try await director.recall(containerID: nil, query: "alpha shared body text")
+        XCTAssertEqual(hits.count, 2)
+    }
 }
 
 final class MemoryCipherTests: XCTestCase {
