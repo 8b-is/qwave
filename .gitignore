@@ -6,6 +6,8 @@ Resources/Qwave/Info.plist
 Resources/Qwave/Qwave.entitlements
 Resources/PacketTunnel/Info.plist
 Resources/PacketTunnel/PacketTunnel.entitlements
+Resources/CredentialProvider/Info.plist
+Resources/CredentialProvider/CredentialProvider.entitlements
 
 # Build products
 .build/

@@ -36,8 +36,12 @@ targets:
     dependencies:
       - package: QwaveKit
         product: QwaveKit
+      - package: QwaveKit
+        product: WebCredentials
       - package: Sparkle
       - target: PacketTunnel
+        embed: true
+      - target: CredentialProvider
         embed: true
     settings:
       base:
@@ -216,6 +220,47 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider-systemextension
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)group.is.8b.qwave
+        keychain-access-groups:
+          - $(TeamIdentifierPrefix)is.8b.qwave.shared
+
+  CredentialProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/CredentialProvider
+    dependencies:
+      # Crypto-free slim product ONLY. The extension must never link VPNKit /
+      # the ML-KEM stack (docs/AUTOFILL.md § Separation from DeviceKeyManager).
+      - package: QwaveKit
+        product: WebCredentials
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.autofill
+        PRODUCT_NAME: CredentialProvider
+        PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_AUTOFILL_PROVISIONING_PROFILE)"
+    info:
+      path: Resources/CredentialProvider/Info.plist
+      properties:
+        CFBundleName: CredentialProvider
+        CFBundleDisplayName: Qwave Passwords
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "10000"
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+          NSExtensionAttributes:
+            ASCredentialProviderExtensionCapabilities:
+              ProvidesPasswords: true
+              ProvidesPasskeys: true
+    entitlements:
+      path: Resources/CredentialProvider/CredentialProvider.entitlements
+      properties:
+        # Enforced only when signed with a real team id (same posture as the VPN
+        # entitlements; CI builds CODE_SIGNING_ALLOWED=NO). See docs/SIGNING.md.
+        com.apple.developer.authentication-services.autofill-credential-provider: true
         com.apple.security.application-groups:
           - $(TeamIdentifierPrefix)group.is.8b.qwave
         keychain-access-groups:

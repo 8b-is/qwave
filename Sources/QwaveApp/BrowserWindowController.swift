@@ -65,6 +65,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     /// otherwise and on window close.
     private var browsingActivity: NSUserActivity?
 
+    /// WebAuthn client: drives platform passkey ceremonies for pages in this
+    /// window via ASAuthorizationController. Crypto-free and network-free — see
+    /// PasskeyCeremonyController / WebAuthnBridge and docs/AUTOFILL.md.
+    private lazy var passkeyCeremony = PasskeyCeremonyController(presentationWindow: window)
+    private lazy var webAuthnBridge = WebAuthnBridge(ceremony: passkeyCeremony)
+
     // MARK: - Init
 
     init(environment: BrowserEnvironment, tabManager: TabManager? = nil, isPrivate: Bool = false) {
@@ -270,6 +276,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         let webView = environment.factory.makeWebView(for: tab)
         // WebExtensions MV3 bridge: browser.* API for content scripts.
         environment.extensions.installBridge(into: webView.configuration.userContentController)
+        // WebAuthn passkey bridge: exposes window.__qwavePasskeyGet/Create so a
+        // page can drive a platform passkey ceremony through the app.
+        let userContent = webView.configuration.userContentController
+        userContent.add(webAuthnBridge, name: WebAuthnBridge.messageName)
+        userContent.addUserScript(WebAuthnBridge.userScript)
 
         let coordinator = coordinators[tab.id] ?? environment.makeCoordinator(for: tab)
         coordinators[tab.id] = coordinator
