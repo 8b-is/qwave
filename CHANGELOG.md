@@ -165,6 +165,14 @@ All notable changes to Qwave will be documented in this file.
   overwrite semantics for the callers that need update-in-place.
   Note: rows that fail to decrypt are still dropped silently by
   `MemoryStore.decode`; that half is tracked separately in issue #84.
+- **`WebExtensionHost.uninstallBridge` no longer wipes out the WebAuthn
+  shim.** It called `WKUserContentController.removeAllUserScripts()` on a
+  controller shared with the passkey bridge's injected script (and any
+  content scripts other extensions added), so tearing down the WebExtensions
+  bridge would silently drop `window.__qwavePasskeyGet/Create` too. The host
+  now tracks the exact `WKUserScript` instances it added and removes only
+  those, reconstructing the controller's remaining scripts around them.
+  (#76)
 
 ## [1.0.0] - 2026-08-14
 

@@ -13,6 +13,14 @@ public final class WebExtensionHost {
 
     private let storageDirectory: URL
 
+    /// User scripts this host has added to a given `WKUserContentController`,
+    /// keyed by the controller's identity. `WKUserContentController` is often
+    /// shared with other installers (e.g. the WebAuthn passkey shim in
+    /// `BrowserWindowController`), so `uninstallBridge(from:)` must remove
+    /// only the entries recorded here rather than resetting the controller
+    /// wholesale — see issue #76.
+    private var installedUserScripts: [ObjectIdentifier: [WKUserScript]] = [:]
+
     public init(storageDirectory: URL, defaults: Foundation.UserDefaults = .standard) {
         self.storageDirectory = storageDirectory
         self.registry = WebExtensionRegistry(defaults: defaults)
@@ -49,15 +57,17 @@ public final class WebExtensionHost {
             in: ExtensionContentWorld.isolated
         )
         controller.addUserScript(script)
+        installedUserScripts[ObjectIdentifier(controller), default: []].append(script)
     }
 
     /// Injects matching content scripts for the given target URL.
     public func installContentScripts(into controller: WKUserContentController, for url: URL) {
-        contentScriptEngine.installContentScripts(
+        let scripts = contentScriptEngine.installContentScripts(
             into: controller,
             for: url,
             extensions: registry.extensions
         )
+        installedUserScripts[ObjectIdentifier(controller), default: []].append(contentsOf: scripts)
     }
 
     /// Resolves matching content scripts for inspection or testing.
@@ -88,13 +98,36 @@ public final class WebExtensionHost {
         router.broadcastMessage(message: message, sender: sender, across: targets)
     }
 
-    /// Removes the bridge and user scripts (web view teardown).
+    /// Removes the bridge and this host's user scripts (web view teardown).
+    ///
+    /// `controller` is frequently shared with other installers — e.g. the
+    /// WebAuthn passkey shim adds its own user script to the same
+    /// `WKUserContentController` in `BrowserWindowController.ensureWebView`.
+    /// A blanket `removeAllUserScripts()` would wipe those out too, so this
+    /// removes only the specific `WKUserScript` instances this host added
+    /// via `installBridge(into:)` / `installContentScripts(into:for:)`,
+    /// leaving everything else on the controller untouched. See issue #76.
+    ///
+    /// `WKUserContentController` has no API to remove a single user script
+    /// by reference, only `removeAllUserScripts()`. So this snapshots the
+    /// scripts that aren't ours (by identity), clears the controller, and
+    /// re-adds just those — a scoped removal built out of the coarse
+    /// primitive WebKit actually offers.
     public func uninstallBridge(from controller: WKUserContentController) {
         controller.removeScriptMessageHandler(
             forName: BrowserBridgeScript.messageHandlerName,
             contentWorld: ExtensionContentWorld.isolated
         )
+        guard let ownScripts = installedUserScripts.removeValue(forKey: ObjectIdentifier(controller)) else {
+            return
+        }
+        let scriptsToKeep = controller.userScripts.filter { existing in
+            !ownScripts.contains { $0 === existing }
+        }
         controller.removeAllUserScripts()
+        for script in scriptsToKeep {
+            controller.addUserScript(script)
+        }
     }
 
     public var extensions: [WebExtension] {
