@@ -886,13 +886,15 @@ final class NibbleTests: XCTestCase {
             isEphemeral: false
         )
 
+        // `allObjects` rather than iterating the enumerator: this test body is
+        // async, and NSEnumerator.makeIterator() is unavailable from async
+        // contexts, so the `for case let ... in enumerator` form fails to
+        // compile. (NibbleVault.markdownFiles() keeps that form legitimately —
+        // it is a synchronous function.)
         let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)!
-        var mdFiles: [URL] = []
-        for case let url as URL in enumerator {
-            if url.pathExtension.lowercased() == "md", url.lastPathComponent != "README.md" {
-                mdFiles.append(url)
-            }
-        }
+        let mdFiles = enumerator.allObjects
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "md" && $0.lastPathComponent != "README.md" }
         XCTAssertFalse(mdFiles.isEmpty)
         for file in mdFiles {
             let raw = try String(contentsOf: file, encoding: .utf8)
