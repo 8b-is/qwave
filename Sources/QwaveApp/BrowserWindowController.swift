@@ -37,9 +37,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var extensionsButton: NSButton!
     private var memoryButton: NSButton!
     private var summarizeButton: NSButton!
+    /// Downloads toolbar button; popover logic lives in DownloadsPopover.swift.
+    var downloadsButton: NSButton!
 
     private var coordinators: [UUID: NavigationCoordinator] = [:]
     private var shieldsPopover: NSPopover?
+    var downloadsPopover: NSPopover?
     private var extensionsPopup: ExtensionPopupController?
     private var memoryPopover: NSPopover?
     private var memoryPanelTitle = ""
@@ -1323,12 +1326,13 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let shieldsItem = NSToolbarItem.Identifier("qwave.shields")
     private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
     private static let summarizeItem = NSToolbarItem.Identifier("qwave.summarize")
+    private static let downloadsItem = NSToolbarItem.Identifier("qwave.downloads")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.extensionsItem,
+            Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
         ]
     }
 
@@ -1377,6 +1381,11 @@ extension BrowserWindowController: NSToolbarDelegate {
                 symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))
             item.view = shieldsButton
             item.label = "Shields"
+        case Self.downloadsItem:
+            downloadsButton = makeToolbarButton(
+                symbol: "arrow.down.circle", label: "Downloads", action: #selector(toggleDownloads(_:)))
+            item.view = downloadsButton
+            item.label = "Downloads"
         case Self.extensionsItem:
             extensionsButton = makeToolbarButton(
                 symbol: "puzzlepiece.extension", label: "Extensions", action: #selector(toggleExtensions(_:)))
