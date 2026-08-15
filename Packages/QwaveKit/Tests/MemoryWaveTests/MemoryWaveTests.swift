@@ -737,7 +737,12 @@ final class NibbleTests: XCTestCase {
         XCTAssertEqual(decoded?.body, nibble.body)
         XCTAssertEqual(decoded?.tags, nibble.tags)
         XCTAssertEqual(decoded?.url, nibble.url)
-        XCTAssertTrue(text.contains("tags: [webkit, memory-wave]"))
+        // The tags round-trip (asserted above) but are no longer legible on
+        // disk: they are derived from the host and the title, so the plaintext
+        // `tags: [...]` line leaked exactly what the sealing is for.
+        XCTAssertTrue(text.contains("tags_sealed: "))
+        XCTAssertFalse(text.contains("webkit"))
+        XCTAssertFalse(text.contains("memory-wave"))
         XCTAssertTrue(text.contains("sealed: aes-gcm-256"))
         // Issue #81: the on-disk file must not contain the plaintext title,
         // body or url that MemoryStore would seal for the same content.
@@ -797,6 +802,67 @@ final class NibbleTests: XCTestCase {
         let readBack = try await vault.all()
         XCTAssertEqual(readBack.count, 1, "the untitled nibble must be readable back off disk")
         XCTAssertEqual(readBack.first?.body, nibbles.first?.body)
+    }
+
+    /// The front matter used to carry the derived tags in the clear, so a
+    /// nibble for a medical page left the host and the title words readable on
+    /// disk in the very file #107 says holds only ciphertext.
+    func testVaultFileDoesNotLeakHostOrTitleWordsThroughTags() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let vault = try NibbleVault(directory: dir, key: key)
+        let store = MemoryStore(database: try SQLiteDatabase(), key: key)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        _ = try await director.remember(
+            title: "Sekrit Diagnosis Results",
+            body: "A paragraph about the appointment that is definitely long enough to keep. #oncology",
+            url: URL(string: "https://very-specific-patient-portal.example/records"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+        let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)!
+        let mdFiles = enumerator.allObjects
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "md" && $0.lastPathComponent != "README.md" }
+        XCTAssertFalse(mdFiles.isEmpty)
+        for file in mdFiles {
+            let raw = try String(contentsOf: file, encoding: .utf8)
+            for leak in ["patient-portal", "diagnosis", "sekrit", "oncology"] {
+                XCTAssertFalse(
+                    raw.lowercased().contains(leak),
+                    "vault file leaked '\(leak)' through front-matter tags: \(file.lastPathComponent)")
+            }
+        }
+        // Sealing the tags must not cost tag recall: it already decodes every
+        // file, so the tags come back decrypted in memory.
+        let hits = try await vault.matching(tags: ["oncology"], limit: 8)
+        XCTAssertEqual(hits.count, 1)
+    }
+
+    /// Nibbles written between #107 and the tag sealing carry `sealed:` plus
+    /// plaintext `tags:`. They must keep decoding, tags included.
+    func testDecodeReadsPlaintextTagsFromPreTagSealingFiles() throws {
+        let key = SymmetricKey(size: .bits256)
+        let nibble = MemoryNibble(
+            title: "Older nibble", body: "body", tags: ["webkit"], url: nil, kind: .note, containerID: nil)
+        let current = try NibbleMarkdown.encode(nibble, key: key)
+        // Rebuild the pre-tag-sealing layout: same sealed payloads, tags in the
+        // clear, no `tags_sealed:` field.
+        var legacy: [String] = []
+        for line in current.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("tags_sealed:") {
+                legacy.append("tags: [webkit]")
+            } else {
+                legacy.append(String(line))
+            }
+        }
+        let decoded = NibbleMarkdown.decode(legacy.joined(separator: "\n"), key: key)
+        XCTAssertEqual(decoded?.tags, ["webkit"])
+        XCTAssertEqual(decoded?.title, "Older nibble")
     }
 
     func testMarkdownRoundTripThrowsIsAvoidedByHappyPath() throws {

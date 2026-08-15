@@ -3,11 +3,13 @@ import Foundation
 import QwaveSupport
 
 /// Tag-indexed, local-only vault of nibbles, stored as `.md` files whose
-/// title/body/url are AES-GCM sealed with the same Memory Wave master key
-/// that seals `MemoryStore` (issue #81). Only short, low-sensitivity
-/// metadata -- tags, kind, lane, timestamps -- stays in the clear, since the
-/// vault needs it for tag search and file naming without decrypting every
-/// file. The vault used to mirror the sealed database body as plaintext
+/// tags/title/body/url are AES-GCM sealed with the same Memory Wave master key
+/// that seals `MemoryStore` (issue #81). Only content-free bookkeeping -- kind,
+/// lane, timestamps, ids -- stays in the clear, for file naming and ordering.
+/// The tags are sealed with the rest because they are derived from the content
+/// (host + title words), and tag search never needed them in the clear anyway:
+/// `matching(tags:)` goes through `all(limit:)`, which decodes every file.
+/// The vault used to mirror the sealed database body as plaintext
 /// markdown; a file opened outside Qwave now shows ciphertext, matching the
 /// at-rest guarantee the primary store already made. Human-readable export
 /// of a nibble remains a decrypt-on-demand operation inside the app.
@@ -47,9 +49,9 @@ public actor NibbleVault {
             # Memory Wave nibbles
 
             Each file is a tagged Cognitive nibble. Wave recall matches `#tags`
-            in the front matter. These files stay on this Mac.
+            once the file is decrypted. These files stay on this Mac.
 
-            Title, body and URL are AES-GCM sealed with the same master key
+            Tags, title, body and URL are AES-GCM sealed with the same master key
             that protects the Memory Wave database -- opening a `.md` file
             here directly shows ciphertext, not the page text. Qwave decrypts
             nibbles automatically; there is currently no plaintext export.
