@@ -1,4 +1,5 @@
 import AppKit
+import URLIdentity
 import WebCredentials
 import WebKit
 import os
@@ -29,6 +30,15 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
     /// User script that defines the promise-based entry points. It never hooks
     /// `navigator.credentials` automatically; a page (or a future content
     /// script) opts in by calling the `__qwavePasskey*` functions.
+    ///
+    /// Main frame only: a cross-origin subframe has no business starting a
+    /// passkey ceremony (the spec gates that behind a `publickey-credentials-*`
+    /// Permissions-Policy delegation Qwave does not parse). Note this is only
+    /// half the story — registering the message handler on the
+    /// `WKUserContentController` exposes
+    /// `window.webkit.messageHandlers.qwavePasskey` in *every* frame regardless
+    /// of where the shim is injected, so the real gate is the frame/origin check
+    /// in ``userContentController(_:didReceive:)``.
     static var userScript: WKUserScript {
         let source = """
         (function () {
@@ -57,7 +67,7 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
           window.__qwavePasskeyCreate = function (options) { return call('create', options); };
         })();
         """
-        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
     func userContentController(
@@ -74,6 +84,19 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
             return
         }
         let webView = message.webView
+        let frame = message.frameInfo
+
+        // Origin binding, part 1: only the top-level document may start a
+        // ceremony. This is checked here rather than relying on the user
+        // script's frame scope because `WKUserContentController.add(_:name:)`
+        // exposes the message handler to every frame in the page, injected shim
+        // or not.
+        guard frame.isMainFrame else {
+            log.error("refusing passkey request from a subframe")
+            reject(id: id, message: "passkey requests are only allowed in the top-level frame", in: webView)
+            return
+        }
+        let originHost = frame.securityOrigin.host
 
         switch kind {
         case "get":
@@ -81,7 +104,16 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
                 reject(id: id, message: "invalid assertion options", in: webView)
                 return
             }
-            ceremony.performAssertion(request) { [weak self] result in
+            guard let rpID = authorizedRPID(request.relyingPartyIdentifier, originHost: originHost) else {
+                reject(id: id, message: "rpId is not permitted for this origin", in: webView)
+                return
+            }
+            let bound = PasskeyAssertionRequest(
+                relyingPartyIdentifier: rpID,
+                challenge: request.challenge,
+                allowedCredentialIDs: request.allowedCredentialIDs
+            )
+            ceremony.performAssertion(bound) { [weak self] result in
                 self?.deliverAssertion(result, id: id, in: webView)
             }
         case "create":
@@ -89,12 +121,47 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
                 reject(id: id, message: "invalid registration options", in: webView)
                 return
             }
-            ceremony.performRegistration(request) { [weak self] result in
+            guard let rpID = authorizedRPID(request.relyingPartyIdentifier, originHost: originHost) else {
+                reject(id: id, message: "rpId is not permitted for this origin", in: webView)
+                return
+            }
+            let bound = PasskeyRegistrationRequest(
+                relyingPartyIdentifier: rpID,
+                challenge: request.challenge,
+                userName: request.userName,
+                userID: request.userID
+            )
+            ceremony.performRegistration(bound) { [weak self] result in
                 self?.deliverRegistration(result, id: id, in: webView)
             }
         default:
             reject(id: id, message: "unknown passkey kind", in: webView)
         }
+    }
+
+    /// Origin binding, part 2: the canonical `rpId` to run the ceremony with, or
+    /// nil when the requesting frame may not claim it.
+    ///
+    /// The page-supplied `rpId` is an arbitrary string, so it goes through
+    /// ``CanonicalHost`` first — the same WHATWG parser WebKit itself used to
+    /// produce `securityOrigin.host`. Comparing raw strings would let an IDN or
+    /// percent-encoded spelling of a host miss the check.
+    ///
+    /// The authorized value comes back *from the policy*, not from this
+    /// function's own inputs: the policy normalizes further than WHATWG
+    /// canonicalisation does (a trailing root dot, which `CanonicalHost` keeps),
+    /// and it is that normalized string the ceremony runs with — so what is
+    /// validated is exactly what is used.
+    private func authorizedRPID(_ requested: String, originHost: String) -> String? {
+        guard let canonical = CanonicalHost.host(ofURLString: "https://\(requested)") else {
+            log.error("refusing passkey: rpId \(requested) is not a host")
+            return nil
+        }
+        guard let rpID = WebAuthnOriginPolicy.authorizedRPID(canonical, forOriginHost: originHost) else {
+            log.error("refusing passkey: rpId \(canonical) is not authorized for origin \(originHost)")
+            return nil
+        }
+        return rpID
     }
 
     private func deliverAssertion(

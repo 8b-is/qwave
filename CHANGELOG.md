@@ -4,7 +4,45 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **WebAuthn/passkey origin binding.** The passkey bridge accepted the `rpId`
+  a page supplied without ever looking at which frame sent it, and its shim was
+  injected into every frame (`forMainFrameOnly: false`), so a cross-origin
+  iframe — an ad frame, an embedded widget — could start a real platform
+  passkey ceremony for *any* relying party it named. Requests are now refused
+  unless they come from the top-level frame and the requested `rpId` equals, or
+  is a registrable-domain suffix of, the requesting frame's own origin host
+  (`WKFrameInfo.securityOrigin`). The match breaks on a label boundary, so
+  `evil-example.com` cannot claim `example.com`, and the `rpId` is canonicalised
+  through the same WHATWG parser WebKit uses, so an IDN or percent-encoded
+  spelling cannot slip past the check. The ceremony then runs with the value
+  the policy returned as authorised, not with the bridge's own input — the two
+  can still differ, because WHATWG canonicalisation keeps a trailing root dot
+  (`example.com.`) that the policy drops — so the value validated is the value
+  the ceremony runs with. Legitimate same-origin and subdomain → parent-domain
+  ceremonies are unaffected.
+
+### Added
+- **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
+  on-device page summarisation via FoundationModels, behind the Summarize
+  menu (⌥⌘S) and a toolbar button. Respond-only (no streaming), retry ≤3 on
+  the model's nondeterministic refusals with a neutral failure string,
+  availability tri-state with clean vanish (including the self-healing
+  `modelNotReady` state re-checked on foreground), and an energy gate that
+  quietly defers inference while the Mac is under memory pressure or not at
+  the normal energy tier. The feature is absent on unsupported systems and
+  never makes a network request — the model, the page text, and the summary
+  never leave the Mac. See `docs/SUMMARIZE.md`.
+
 ### Fixed
+- Memory Wave's remote OpenAI-compatible provider now applies an explicit
+  request timeout (30s idle, 60s overall), so an endpoint that hangs or
+  dribbles bytes can no longer stall inference indefinitely.
+- Memory Wave's remote provider no longer follows redirects off the endpoint
+  you configured. A 307/308 replays the POST — method and body, meaning the
+  whole page text — at whatever host the response names; that contradicted
+  Settings' promise that pages go "to this endpoint". Redirects are now
+  followed only when they stay on the same HTTPS origin (host and port).
 - **Memory Wave no longer destroys its own master key.** If the stored key was
   present but not 256 bits, `MemoryCipher.loadOrCreateKey` fell through to the
   first-run path and overwrote it with a fresh key, making every existing
@@ -20,18 +58,6 @@ All notable changes to Qwave will be documented in this file.
   overwrite semantics for the callers that need update-in-place.
   Note: rows that fail to decrypt are still dropped silently by
   `MemoryStore.decode`; that half is tracked separately in issue #84.
-
-### Added
-- **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
-  on-device page summarisation via FoundationModels, behind the Summarize
-  menu (⌥⌘S) and a toolbar button. Respond-only (no streaming), retry ≤3 on
-  the model's nondeterministic refusals with a neutral failure string,
-  availability tri-state with clean vanish (including the self-healing
-  `modelNotReady` state re-checked on foreground), and an energy gate that
-  quietly defers inference while the Mac is under memory pressure or not at
-  the normal energy tier. The feature is absent on unsupported systems and
-  never makes a network request — the model, the page text, and the summary
-  never leave the Mac. See `docs/SUMMARIZE.md`.
 
 ## [1.0.0] - 2026-08-14
 
