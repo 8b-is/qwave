@@ -343,9 +343,24 @@ extension NavigationCoordinator: WKNavigationDelegate {
         onStateChange?()
     }
 
-    private func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
+    /// Re-fetches the markdown document WebKit just started loading (we
+    /// cancelled that navigation in `decidePolicyFor navigationResponse`) and
+    /// renders it in the reader.
+    ///
+    /// The request is marked page-driven: `session` defaults to
+    /// `URLSession.shared`, which is the one session the process-wide
+    /// `URLProtocol.registerClass(EgressGuard.self)` in `main.swift` reaches,
+    /// so without the marker this fetch is checked against `EgressAllowlist` —
+    /// four hosts Qwave chose — and every `.md` URL outside them fails. The
+    /// host here is whichever one the user navigated to, and WebKit has
+    /// already fetched a response from it; the allowlist has nothing to say
+    /// about it. See `EgressGuard.markPageDriven(_:)`.
+    ///
+    /// Internal rather than private so `EgressGuardTests` can drive the real
+    /// fetch — including the real default `session` — instead of restating it.
+    func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
         do {
-            let (data, _) = try await session.data(from: url)
+            let (data, _) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
             let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
             presentMarkdown(source, at: url, in: webView)
         } catch {

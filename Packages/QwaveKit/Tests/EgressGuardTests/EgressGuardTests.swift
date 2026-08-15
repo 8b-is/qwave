@@ -37,14 +37,18 @@ import XCTest
 ///  3. The always-on launch path (shields preparation) makes no URLSession
 ///     request — the launch-time blocklist fetch was removed. Scope: the
 ///     recorder below is installed with `URLProtocol.registerClass`, which
-///     only intercepts sessions built from the default/shared configuration,
-///     and this test drives a `ShieldsDirector` it constructs itself rather
-///     than the app's launch sequence.
+///     reaches `URLSession.shared` and nothing else, and this test drives a
+///     `ShieldsDirector` it constructs itself rather than the app's launch
+///     sequence.
+///  4. The page-driven exemption: navigating to a `.md` document on a
+///     non-allowlisted host must still render, the exemption must not widen
+///     to the host or the session, and `registerClass`'s actual reach is
+///     pinned so the prose about it cannot drift again.
 ///
 /// Honest scope: `EgressGuard` catches Category A (Qwave's own egress) for
-/// any client that either uses a default-configuration session (covered by
-/// the process-wide `URLProtocol.registerClass` in `main.swift`) or installs
-/// it into a custom configuration explicitly (`EgressGuard.install(into:)`).
+/// any client that either uses `URLSession.shared` (covered by the
+/// process-wide `URLProtocol.registerClass` in `main.swift`) or installs it
+/// into its own configuration explicitly (`EgressGuard.install(into:)`).
 /// It does not cover a fixed-host client that skips that call, a
 /// deliberately open-ended client (Memory Wave's user-configurable endpoint,
 /// `FaviconLoader`, remote-markdown fetch — see `EgressGuard`'s doc comment),
@@ -237,6 +241,160 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(
             provider.session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
             "DuckDuckGoSuggestionProvider's default session must install EgressGuard"
+        )
+    }
+
+    // MARK: - Page-driven markdown fetch
+
+    /// Answers requests on `URLSession.shared` (the session the production
+    /// markdown fetch uses) so nothing leaves the machine, and records which
+    /// hosts got that far. Registered process-wide BEFORE `EgressGuard` so the
+    /// guard — registered last, consulted first — decides ahead of it, exactly
+    /// as `main.swift` arranges it around the rest of Foundation's transports.
+    final class SharedTransport: URLProtocol {
+        nonisolated(unsafe) static var receivedHosts: [String] = []
+        private static let lock = NSLock()
+
+        static func reset() {
+            lock.withLock { receivedHosts = [] }
+        }
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            if let host = request.url?.host {
+                Self.lock.withLock { Self.receivedHosts.append(host) }
+            }
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("# Qwave\n".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    /// Navigating to a `.md` document on a host that is not on
+    /// `EgressAllowlist` must still render it. The destination is the URL the
+    /// user asked for — WebKit has already fetched a response from it by the
+    /// time `decidePolicyFor navigationResponse` hands the URL to
+    /// `fetchAndPresentMarkdown` — so the allowlist, a list of hosts *Qwave*
+    /// picked, has nothing to say about it. This drives the production
+    /// coordinator on its production default session (`URLSession.shared`)
+    /// with `EgressGuard` registered process-wide exactly as `main.swift`
+    /// registers it, because that combination is what silently broke: the
+    /// fetch was documented as ungated in four places while running on the one
+    /// session global registration does reach.
+    @MainActor
+    func testRemoteMarkdownFetchOnNonAllowlistedHostIsNotBlocked() async throws {
+        EgressGuard.onBlock.reset()
+        SharedTransport.reset()
+        URLProtocol.registerClass(SharedTransport.self)
+        URLProtocol.registerClass(EgressGuard.self)
+        defer {
+            URLProtocol.unregisterClass(EgressGuard.self)
+            URLProtocol.unregisterClass(SharedTransport.self)
+        }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-markdown-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tab = Tab()
+        let coordinator = NavigationCoordinator(
+            tab: tab,
+            shields: ShieldsDirector(
+                compiler: RuleListCompiler(store: WKContentRuleListStore(url: dir)!),
+                policy: ShieldsPolicy(directory: nil)
+            ),
+            httpsUpgrader: HTTPSFirstUpgrader(),
+            history: nil,
+            downloads: DownloadManager(directory: dir)
+        )
+        let url = URL(string: "https://raw.githubusercontent.com/8b-is/qwave/main/README.md")!
+        XCTAssertFalse(
+            EgressAllowlist.permits(host: url.host),
+            "this test is only meaningful while raw.githubusercontent.com is off the allowlist"
+        )
+
+        await coordinator.fetchAndPresentMarkdown(url, in: WKWebView())
+
+        XCTAssertTrue(
+            EgressGuard.onBlock.hosts().isEmpty,
+            "a page-driven markdown fetch must not be refused by EgressGuard — saw \(EgressGuard.onBlock.hosts())"
+        )
+        XCTAssertEqual(
+            SharedTransport.receivedHosts, ["raw.githubusercontent.com"],
+            "the markdown fetch must reach the transport"
+        )
+        XCTAssertEqual(tab.title, "README.md", "the fetched markdown must be presented, not an error page")
+    }
+
+    /// The carve-out is per **request**, not per session or per host: the very
+    /// same URL, unmarked, on the very same session, is still refused. Without
+    /// this, "markdown works again" could be bought by exempting a host or a
+    /// whole session, which is a far larger hole than the one intended.
+    func testPageDrivenExemptionDoesNotExemptTheHostOrTheSession() async throws {
+        EgressGuard.onBlock.reset()
+        StubTransport.reset()
+        let session = makeGuardedSession()
+        let url = URL(string: "https://raw.githubusercontent.com/8b-is/qwave/main/README.md")!
+
+        let (_, response) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "a marked request must reach the transport")
+        XCTAssertTrue(EgressGuard.onBlock.hosts().isEmpty)
+
+        do {
+            _ = try await session.data(for: URLRequest(url: url))
+            XCTFail("an unmarked request to the same non-allowlisted host must still be blocked")
+        } catch {
+            XCTAssertEqual(
+                EgressGuard.BlockedError(recovering: error)?.host, "raw.githubusercontent.com",
+                "the unmarked request must be refused by EgressGuard, got \(error)"
+            )
+        }
+        XCTAssertEqual(
+            StubTransport.receivedHosts, ["raw.githubusercontent.com"],
+            "exactly the marked request may reach the transport"
+        )
+    }
+
+    /// Pins the reach of `URLProtocol.registerClass` itself, because
+    /// mis-stating it is the root of the markdown regression: four documents
+    /// said the guard intercepts "default- or shared-configuration sessions",
+    /// which reads as though a fetch is safe unless it is on `.shared` — while
+    /// the markdown fetch was on `.shared` all along. The truth is narrower in
+    /// one direction and wider in the other: a session you construct is never
+    /// reached, not even from `URLSessionConfiguration.default`, and
+    /// `URLSession.shared` always is.
+    ///
+    /// `.invalid` is reserved by RFC 6761 and never resolves, so the
+    /// constructed session's request fails at DNS rather than on the network —
+    /// the assertion is that the failure is *not* ours.
+    func testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass() async {
+        EgressGuard.onBlock.reset()
+        URLProtocol.registerClass(EgressGuard.self)
+        defer { URLProtocol.unregisterClass(EgressGuard.self) }
+
+        let url = URL(string: "https://qwave-egress-probe.invalid/x")!
+        XCTAssertFalse(EgressAllowlist.permits(host: url.host))
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 5
+        do {
+            _ = try await URLSession(configuration: configuration).data(from: url)
+            XCTFail("the probe host must not resolve")
+        } catch {
+            XCTAssertNil(
+                EgressGuard.BlockedError(recovering: error),
+                "a constructed default-configuration session must not consult the globally registered guard"
+            )
+        }
+        XCTAssertTrue(
+            EgressGuard.onBlock.hosts().isEmpty,
+            "global registration must not reach a constructed session — saw \(EgressGuard.onBlock.hosts())"
         )
     }
 
