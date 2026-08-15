@@ -25,7 +25,9 @@ All notable changes to Qwave will be documented in this file.
 ### Changed (BREAKING — crypto core)
 - **ML-KEM-768 now conforms to FIPS 203, verified against the official NIST
   ACVP vectors.** 29 ML-KEM-768 cases (keyGen, encapsulation, decapsulation,
-  encapsulationKeyCheck) are committed verbatim from `usnistgov/ACVP-Server`
+  encapsulationKeyCheck) — out of 80 ML-KEM-768 cases upstream, or 70
+  excluding the deliberately-skipped `decapsulationKeyCheck` group — are
+  committed verbatim from `usnistgov/ACVP-Server`
   with provenance in
   `Packages/QwaveKit/Tests/PostQuantumTests/Fixtures/mlkem768_acvp_vectors-ATTRIBUTION.txt`.
   When they were first wired up, **0 of the 21 then-runnable cases passed**;
@@ -63,7 +65,39 @@ All notable changes to Qwave will be documented in this file.
   ct 1524 → 1088 bytes, and `EphemeralPeerRequest` loses `mceliece_public_key`.
   "Hybrid" continues to mean post-quantum + classical Curve25519.
 
+  **Behaviour change, with a tunnel consequence — read this before upgrading.**
+  Dropping the code-based leg removed the *only throwing decapsulation path*.
+  `HybridKEM.decapsulate` now throws on wrong input sizes and on nothing else:
+  a tampered, corrupted or hostile ciphertext of the right length returns a
+  well-formed but **wrong** shared secret, because that is what ML-KEM's
+  implicit rejection is specified to do (FIPS 203). The KEM is correct; the
+  caller is what changes. In `Sources/PacketTunnel/PacketTunnelProvider.swift`
+  the daily rekey installs that wrong PSK over a working tunnel, logs
+  "Ephemeral peer PSK rotated", and does not retry for 24 hours — so a single
+  bad rekey response can take a working tunnel down for a day while reporting
+  success. Tunnel *start* is unaffected (a wrong PSK there simply fails
+  closed, which is the intent).
+  Scope, precisely: the protection that disappeared was always partial. With
+  the 1524-byte ciphertext, corruption confined to the 1088-byte ML-KEM half
+  already produced a wrong PSK with no throw (the old suite's
+  `mlkemBitFlipChangesSharedSecret` asserted exactly that); only corruption
+  touching the 436-byte McEliece half threw. Against a deliberately hostile
+  relay it was worth nothing, since the relay could always send a well-formed
+  McEliece half. No fix is included here — a correct one has to corroborate
+  the new PSK against a real handshake before discarding the old one, which
+  is a provider design change, not a patch. Tracked in issue #91.
+
 ### Added
+- **A regression pin for `HybridKEM`'s own derivation constants**
+  (`Fixtures/hybrid_psk_regression_pin.json`, `HybridKEMPinSuite`). Deleting
+  `hybrid_vectors.json` had left `pskLabel` ("qwave/pq-psk/v1"),
+  `mlkemKgLabel`, `mlkemEncLabel` and the 64-byte seed split into `d`/`z`
+  with nothing pinning them — all four are wire-visible values both peers
+  must agree on, and every one could have been edited with the whole suite
+  staying green. This fixture is **self-generated and is not conformance
+  evidence**; it is labelled as such in the file, in the suite doc comment
+  and in `docs/CRYPTO_REVIEW.md`'s checklist. It is also the only fixture in
+  the repo that may ever be regenerated — the ACVP vectors never are.
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
   on-device page summarisation via FoundationModels, behind the Summarize
   menu (⌥⌘S) and a toolbar button. Respond-only (no streaming), retry ≤3 on
