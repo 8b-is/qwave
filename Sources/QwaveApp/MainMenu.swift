@@ -77,6 +77,9 @@ enum MainMenu {
         )
         fileMenu.addItem(.separator())
         fileMenu.addItem(
+            withTitle: "Import Bookmarks…", action: #selector(AppDelegate.importBookmarks(_:)), keyEquivalent: "")
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
             withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTab(_:)), keyEquivalent: "w")
         let closeWindow = fileMenu.addItem(
             withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")

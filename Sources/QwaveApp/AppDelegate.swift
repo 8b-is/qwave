@@ -221,6 +221,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Imports bookmarks from another browser. The user grants access to a
+    /// profile folder / Bookmarks file via NSOpenPanel — no Full Disk Access.
+    @objc func importBookmarks(_ sender: Any?) {
+        guard let store = environment?.bookmarks else { return }
+        let history = environment?.history
+        BookmarkImportService.run(into: store) { bookmarks in
+            // reindexAll deletes every Spotlight domain first, so history must be
+            // re-added afterward (mirrors SpotlightLaunchSync) — otherwise
+            // importing bookmarks wipes the history index until the next launch.
+            await SpotlightIndexer.reindexAll(bookmarks)
+            if let history {
+                let entries = (try? await history.entries(limit: 2000)) ?? []
+                await SpotlightIndexer.reindexHistory(entries)
+            }
+        }
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         if libraryWindowController == nil {
             libraryWindowController = LibraryWindowController(environment: environment) { [weak self] url in

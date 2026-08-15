@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
 ///   path that created the bookmark, so failures are logged, not thrown.
 enum SpotlightIndexer {
     static let domainIdentifier = "is.8b.qwave.bookmarks"
+    static let historyDomainIdentifier = "is.8b.qwave.history"
 
     /// Indexes one newly created bookmark.
     @MainActor
@@ -41,6 +42,35 @@ enum SpotlightIndexer {
         } catch {
             QwaveLog.browser.info("Spotlight: launch reindex failed (\(String(describing: error)))")
         }
+    }
+
+    /// Replaces the history slice of the Spotlight index with the current set.
+    /// Scoped by domain so it never disturbs indexed bookmarks. Best-effort:
+    /// a CoreSpotlight failure is logged, never thrown.
+    @MainActor
+    static func reindexHistory(_ entries: [HistoryEntry]) async {
+        let index = CSSearchableIndex.default()
+        do {
+            try await index.deleteSearchableItems(withDomainIdentifiers: [historyDomainIdentifier])
+            try await index.indexSearchableItems(entries.map(item(for:)))
+        } catch {
+            QwaveLog.browser.info("Spotlight: history reindex failed (\(String(describing: error)))")
+        }
+    }
+
+    private static func item(for entry: HistoryEntry) -> CSSearchableItem {
+        let attributes = CSSearchableItemAttributeSet(contentType: .url)
+        let title = entry.title.isEmpty ? entry.url.absoluteString : entry.title
+        attributes.title = title
+        attributes.displayName = title
+        attributes.contentURL = entry.url
+        attributes.contentDescription = "History"
+        attributes.keywords = [entry.url.host].compactMap { $0 }
+        return CSSearchableItem(
+            uniqueIdentifier: "history-\(entry.id)",
+            domainIdentifier: historyDomainIdentifier,
+            attributeSet: attributes
+        )
     }
 
     private static func item(for bookmark: Bookmark) -> CSSearchableItem {
@@ -93,8 +123,14 @@ final class SpotlightLaunchSync {
             return
         }
         do {
+            // reindexAll deletes every domain first, so history must be
+            // re-added after it — not before.
             let all = try await bookmarks.all()
             await SpotlightIndexer.reindexAll(all)
+            if let history = delegate?.environment?.history {
+                let entries = try await history.entries(limit: 2000)
+                await SpotlightIndexer.reindexHistory(entries)
+            }
         } catch {
             QwaveLog.browser.info("Spotlight: launch reindex failed (\(String(describing: error)))")
         }
