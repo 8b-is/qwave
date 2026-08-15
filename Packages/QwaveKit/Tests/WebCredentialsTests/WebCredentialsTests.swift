@@ -1,3 +1,4 @@
+import Security
 import XCTest
 
 @testable import WebCredentials
@@ -128,6 +129,69 @@ final class InMemoryWebCredentialStoreTests: XCTestCase {
         let store = InMemoryWebCredentialStore()
         try store.save(WebCredential(domain: "example.com", username: "alice", password: "x"))
         XCTAssertTrue(try store.credentials(forDomain: "other.com").isEmpty)
+    }
+}
+
+/// Regression coverage for #74: one malformed `kSecClassInternetPassword`
+/// item under a domain must not hide every *other* healthy credential for
+/// that domain. These tests write directly to the real keychain (there is
+/// no seam to fake `SecItemCopyMatching`), so each uses a unique per-run
+/// domain and cleans up everything it wrote, valid or malformed.
+final class KeychainWebCredentialStoreTests: XCTestCase {
+    private let store = KeychainWebCredentialStore(accessGroup: nil)
+    private var domain = ""
+
+    override func setUp() {
+        super.setUp()
+        domain = "kc-store-test-\(UUID().uuidString.lowercased()).example"
+    }
+
+    override func tearDown() {
+        try? store.remove(domain: domain, username: "alice")
+        try? store.remove(domain: domain, username: "bob")
+        deleteRawItem(account: "malformed-non-utf8")
+        super.tearDown()
+    }
+
+    /// Inserts an item `KeychainWebCredentialStore.save` could never produce:
+    /// a `kSecValueData` blob that is not valid UTF-8. Plausible in practice
+    /// since the shared access group is a namespace Qwave does not
+    /// exclusively own (see WebCredentialStore doc comment).
+    private func addRawMalformedItem(account: String) {
+        let attributes: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrServer as String: domain,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kCFBooleanTrue as Any,
+            kSecValueData as String: Data([0xFF, 0xFE, 0x80, 0x81]),
+        ]
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        XCTAssertEqual(status, errSecSuccess, "test setup failed to seed a raw keychain item")
+    }
+
+    private func deleteRawItem(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrServer as String: domain,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    func testMalformedItemIsSkippedNotFatalToTheRestOfTheDomain() throws {
+        try store.save(WebCredential(domain: domain, username: "alice", password: "s3cret"))
+        try store.save(WebCredential(domain: domain, username: "bob", password: "hunter2"))
+        addRawMalformedItem(account: "malformed-non-utf8")
+
+        // Must not throw: the old `try items.map` aborted here and hid alice
+        // and bob behind the one bad item.
+        let credentials = try store.credentials(forDomain: domain)
+
+        XCTAssertEqual(
+            Set(credentials.map(\.username)), ["alice", "bob"],
+            "the malformed item should be skipped, not hide the valid credentials"
+        )
     }
 }
 
