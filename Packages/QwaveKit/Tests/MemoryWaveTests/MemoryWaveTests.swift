@@ -499,6 +499,48 @@ final class MemoryStoreTests: XCTestCase {
         let records = try await store.records(containerID: id)
         XCTAssertTrue(records.isEmpty)
     }
+
+    /// #84: an unopenable row must be logged and counted, not silently
+    /// vanish from the result with no trace it was ever there.
+    func testUnopenableRowIsCountedNotSilentlyDropped() async throws {
+        let database = try SQLiteDatabase()
+        let store = try MemoryStore(database: database, secrets: InMemorySecretStore())
+        let containerID = UUID()
+        _ = try await store.insert(
+            title: "Good One", body: "opens fine", url: nil, kind: .note, containerID: containerID)
+        let corrupted = try await store.insert(
+            title: "Will Be Corrupted", body: "won't survive", url: nil, kind: .note,
+            containerID: containerID)
+        _ = try await store.insert(
+            title: "Good Two", body: "also opens fine", url: nil, kind: .note, containerID: containerID)
+
+        // Simulate a row whose title box was sealed under a different key
+        // (Keychain reset, restore-to-new-Mac, etc.) by writing garbage
+        // ciphertext directly into the row's title_box.
+        try await database.run(
+            "UPDATE memories SET title_box = ?1 WHERE id = ?2",
+            [.blob(Data(repeating: 0xFF, count: 48)), .integer(corrupted.id)]
+        )
+
+        let before = await store.droppedRowCount
+        XCTAssertEqual(before, 0)
+
+        let records = try await store.records(containerID: containerID)
+
+        // The two healthy rows still come back...
+        XCTAssertEqual(Set(records.map(\.title)), ["Good One", "Good Two"])
+        // ...and the corrupted one is neither present...
+        XCTAssertFalse(records.contains { $0.id == corrupted.id })
+        // ...nor invisible: it was counted...
+        let after = await store.droppedRowCount
+        XCTAssertEqual(after, 1)
+
+        // A second read against an already-corrupted row keeps accumulating
+        // the total rather than resetting it.
+        _ = try await store.records(containerID: containerID)
+        let afterSecondRead = await store.droppedRowCount
+        XCTAssertEqual(afterSecondRead, 2)
+    }
 }
 
 final class MemoryWavePolicyTests: XCTestCase {
