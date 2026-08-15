@@ -35,10 +35,59 @@ public final class EgressGuard: URLProtocol {
     /// Failure surfaced to the caller when a request's host is not on
     /// `EgressAllowlist`. Callers see this exactly as any other
     /// `URLSession` transport error (thrown from `session.data(for:)`, etc).
-    public struct BlockedError: Error, CustomStringConvertible, Equatable {
+    ///
+    /// `URLSession` does not hand this back as the Swift type it was thrown
+    /// as: it re-wraps a `URLProtocol` failure into an `NSError` of its own
+    /// (carrying `_NSURLErrorRelatedURLSessionTaskErrorKey`), and the original
+    /// Swift error box does not survive that. `catch let e as BlockedError`
+    /// therefore does **not** match on the far side of a real session. Since
+    /// the entire purpose of this type is to cross that boundary, it declares
+    /// a stable `CustomNSError` domain/code and carries the host in
+    /// `errorUserInfo`, and ``init(recovering:)`` reconstructs it from
+    /// whatever `URLSession` delivered. Use that, not a type cast, to tell
+    /// "our own policy refused this" apart from "the network failed".
+    public struct BlockedError: Error, CustomStringConvertible, Equatable, CustomNSError {
         public let host: String
         public var description: String {
             "egress blocked: \(host) is not on EgressAllowlist"
+        }
+
+        public static let errorDomain = "is.8b.qwave.EgressGuard.Blocked"
+        /// Key under which ``host`` travels in `errorUserInfo`.
+        public static let hostKey = "is.8b.qwave.EgressGuard.host"
+        public var errorCode: Int { 1 }
+        public var errorUserInfo: [String: Any] {
+            [Self.hostKey: host, NSLocalizedDescriptionKey: description]
+        }
+
+        public init(host: String) {
+            self.host = host
+        }
+
+        /// Recovers a `BlockedError` from the error a `URLSession` actually
+        /// throws, or returns `nil` if the failure came from anywhere else.
+        /// Handles both the direct Swift error (no session in between) and the
+        /// `NSError` form, including when `URLSession` nests ours under
+        /// `NSUnderlyingErrorKey`.
+        public init?(recovering error: any Error) {
+            if let blocked = error as? BlockedError {
+                self = blocked
+                return
+            }
+            let ns = error as NSError
+            if ns.domain == BlockedError.errorDomain,
+                let host = ns.userInfo[BlockedError.hostKey] as? String
+            {
+                self.init(host: host)
+                return
+            }
+            if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
+                let recovered = BlockedError(recovering: underlying)
+            {
+                self = recovered
+                return
+            }
+            return nil
         }
     }
 
