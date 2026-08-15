@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A bite-sized Cognitive unit: tagged markdown that wave recall can hit.
@@ -99,46 +100,106 @@ public enum NibbleMarkdown {
             .compactMap(normalize)
     }
 
-    public static func encode(_ nibble: MemoryNibble) -> String {
+    /// Marker written into the `sealed:` front-matter field so `decode` can
+    /// tell an AES-GCM-sealed nibble apart from a pre-#81 plaintext one.
+    public static let sealedMarker = "aes-gcm-256"
+
+    /// Encodes a nibble as front-matter + AES-GCM-sealed title/body/url,
+    /// keyed by the same Memory Wave master key that seals `MemoryStore`
+    /// (issue #81: the vault used to mirror the sealed DB body as plaintext
+    /// markdown on disk). Only `tags`, `kind`, `lane`, `created`, `id` and
+    /// `container` stay in the clear -- short, low-sensitivity metadata the
+    /// vault needs for tag search and file naming without decrypting every
+    /// file. Opening the `.md` file outside Qwave shows ciphertext, not the
+    /// page text.
+    public static func encode(_ nibble: MemoryNibble, key: SymmetricKey) throws -> String {
         let tagList = nibble.tags.joined(separator: ", ")
         let created = ISO8601DateFormatter().string(from: nibble.created)
-        let url = nibble.url?.absoluteString ?? ""
         let container = nibble.containerID?.uuidString ?? ""
+        let titleSealed = try MemoryCipher.seal(Data(nibble.title.utf8), key: key).base64EncodedString()
+        let urlSealed = try nibble.url.map {
+            try MemoryCipher.seal(Data($0.absoluteString.utf8), key: key).base64EncodedString()
+        } ?? ""
+        let bodySealed = try MemoryCipher.seal(Data(nibble.body.utf8), key: key).base64EncodedString()
         return """
             ---
             id: \(nibble.id)
             kind: nibble
             source: \(nibble.kind.rawValue)
             tags: [\(tagList)]
-            url: \(url)
+            url_sealed: \(urlSealed)
             created: \(created)
             container: \(container)
             lane: \(nibble.lane.rawValue)
+            sealed: \(sealedMarker)
+            title_sealed: \(titleSealed)
             ---
 
-            # \(nibble.title)
-
-            \(nibble.body)
+            \(bodySealed)
 
             """
     }
 
-    public static func decode(_ text: String) -> MemoryNibble? {
+    /// Decodes a nibble written by `encode(_:key:)`. Falls back to the
+    /// pre-#81 plaintext format (`# Title` heading, plain `url:`) so nibbles
+    /// written before this fix keep decoding -- they are not silently
+    /// dropped from recall, they simply were never sealed to begin with.
+    public static func decode(_ text: String, key: SymmetricKey) -> MemoryNibble? {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
         guard normalized.hasPrefix("---\n") else { return nil }
         let rest = normalized.dropFirst(4)
         guard let end = rest.range(of: "\n---\n") else { return nil }
         let header = String(rest[..<end.lowerBound])
-        var body = String(rest[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let bodyText = String(rest[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         var fields: [String: String] = [:]
         for line in header.split(whereSeparator: \.isNewline) {
             let raw = String(line)
             guard let colon = raw.firstIndex(of: ":") else { continue }
-            let key = String(raw[..<colon]).trimmingCharacters(in: .whitespaces)
+            let fieldKey = String(raw[..<colon]).trimmingCharacters(in: .whitespaces)
             let value = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            fields[key] = value
+            fields[fieldKey] = value
         }
+        let tags = parseTagList(fields["tags"] ?? "")
+        let created = fields["created"].flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+        let kind = fields["source"].flatMap(MemoryKind.init(rawValue:)) ?? .nibble
+        let container = fields["container"].flatMap { $0.isEmpty ? nil : UUID(uuidString: $0) }
+        let lane = fields["lane"].flatMap(MemoryLane.init(rawValue:)) ?? .odd
+        let id = fields["id"].flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
+
+        guard fields["sealed"] == sealedMarker else {
+            return decodeLegacyPlaintext(
+                bodyText: bodyText, fields: fields, tags: tags, created: created,
+                kind: kind, container: container, lane: lane, id: id)
+        }
+
+        guard
+            let titleB64 = fields["title_sealed"], !titleB64.isEmpty,
+            let titleBox = Data(base64Encoded: titleB64),
+            let titleData = try? MemoryCipher.open(titleBox, key: key),
+            let title = String(data: titleData, encoding: .utf8),
+            let bodyBox = Data(base64Encoded: bodyText),
+            let bodyData = try? MemoryCipher.open(bodyBox, key: key),
+            let body = String(data: bodyData, encoding: .utf8)
+        else { return nil }
+        var url: URL?
+        if let urlB64 = fields["url_sealed"], !urlB64.isEmpty,
+            let urlBox = Data(base64Encoded: urlB64),
+            let urlData = try? MemoryCipher.open(urlBox, key: key)
+        {
+            url = String(data: urlData, encoding: .utf8).flatMap(URL.init(string:))
+        }
+        return MemoryNibble(
+            id: id, title: title, body: body, tags: tags, url: url, created: created,
+            kind: kind, containerID: container, lane: lane
+        )
+    }
+
+    private static func decodeLegacyPlaintext(
+        bodyText: String, fields: [String: String], tags: [String], created: Date,
+        kind: MemoryKind, container: UUID?, lane: MemoryLane, id: String
+    ) -> MemoryNibble? {
         var title = fields["title"] ?? ""
+        var body = bodyText
         if body.hasPrefix("# ") {
             if let nl = body.firstIndex(of: "\n") {
                 title = String(body[body.index(body.startIndex, offsetBy: 2)..<nl])
@@ -149,13 +210,7 @@ public enum NibbleMarkdown {
                 body = ""
             }
         }
-        let tags = parseTagList(fields["tags"] ?? "")
-        let created = fields["created"].flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
         let url = fields["url"].flatMap { $0.isEmpty ? nil : URL(string: $0) }
-        let kind = fields["source"].flatMap(MemoryKind.init(rawValue:)) ?? .nibble
-        let container = fields["container"].flatMap { $0.isEmpty ? nil : UUID(uuidString: $0) }
-        let lane = fields["lane"].flatMap(MemoryLane.init(rawValue:)) ?? .odd
-        let id = fields["id"].flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
         return MemoryNibble(
             id: id,
             title: title.isEmpty ? "nibble" : title,

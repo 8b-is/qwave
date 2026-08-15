@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import MemoryWave
 import Persistence
@@ -639,7 +640,7 @@ final class ArticleExtractorTests: XCTestCase {
 
 @MainActor
 final class NibbleTests: XCTestCase {
-    func testMarkdownRoundTripAndTags() {
+    func testMarkdownRoundTripAndTags() throws {
         let nibble = MemoryNibble(
             title: "Wave grid",
             body: "Sparse 256 grid. #MEM8 lives here.",
@@ -649,13 +650,33 @@ final class NibbleTests: XCTestCase {
             containerID: nil
         )
         XCTAssertEqual(nibble.tags, ["webkit", "memory-wave"])
-        let text = NibbleMarkdown.encode(nibble)
-        let decoded = NibbleMarkdown.decode(text)
+        let key = SymmetricKey(size: .bits256)
+        let text = try NibbleMarkdown.encode(nibble, key: key)
+        let decoded = NibbleMarkdown.decode(text, key: key)
         XCTAssertEqual(decoded?.title, "Wave grid")
+        XCTAssertEqual(decoded?.body, nibble.body)
         XCTAssertEqual(decoded?.tags, nibble.tags)
         XCTAssertEqual(decoded?.url, nibble.url)
         XCTAssertTrue(text.contains("tags: [webkit, memory-wave]"))
+        XCTAssertTrue(text.contains("sealed: aes-gcm-256"))
+        // Issue #81: the on-disk file must not contain the plaintext title,
+        // body or url that MemoryStore would seal for the same content.
+        XCTAssertFalse(text.contains("Wave grid"))
+        XCTAssertFalse(text.contains(nibble.body))
+        XCTAssertFalse(text.contains("example.com"))
+        // A different key must not be able to open it (fail closed, like
+        // MemoryStore's AES-GCM authentication).
+        XCTAssertNil(NibbleMarkdown.decode(text, key: SymmetricKey(size: .bits256)))
         XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
+    }
+
+    func testMarkdownRoundTripThrowsIsAvoidedByHappyPath() throws {
+        // encode(_:key:) is throwing (AES-GCM seal can fail); this exercises
+        // the non-error path explicitly so a regression that makes it always
+        // throw is caught even though `seal` practically never fails.
+        let nibble = MemoryNibble(
+            title: "t", body: "b", tags: [], url: nil, kind: .note, containerID: nil)
+        XCTAssertNoThrow(try NibbleMarkdown.encode(nibble, key: SymmetricKey(size: .bits256)))
     }
 
     /// A hand-edited vault file can carry a `created:` date before 1970 (e.g.
@@ -678,7 +699,9 @@ final class NibbleTests: XCTestCase {
 
             The Eagle has landed.
             """
-        let decoded = NibbleMarkdown.decode(text)
+        // This is the pre-#81 plaintext format (no `sealed:` field), so the
+        // key is unused but still required to call decode.
+        let decoded = NibbleMarkdown.decode(text, key: SymmetricKey(size: .bits256))
         XCTAssertEqual(decoded?.title, "Tranquility Base")
         XCTAssertEqual(
             decoded?.created,
@@ -714,16 +737,18 @@ final class NibbleTests: XCTestCase {
 
     func testVaultWriteAndTagRecall() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let vault = try NibbleVault(directory: dir)
         defer { try? FileManager.default.removeItem(at: dir) }
         let secrets = InMemorySecretStore()
-        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let vault = try NibbleVault(directory: dir, key: key)
+        let store = MemoryStore(database: try SQLiteDatabase(), key: key)
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
         let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        let secretBody = "A paragraph about tagged wave retrieval that is definitely long enough. #qwave"
         _ = try await director.remember(
             title: "Nibble test",
-            body: "A paragraph about tagged wave retrieval that is definitely long enough. #qwave",
+            body: secretBody,
             url: URL(string: "https://qwave.example/nibble"),
             kind: .pin,
             containerID: nil,
@@ -744,7 +769,8 @@ final class NibbleTests: XCTestCase {
     /// invalidate the cache.
     func testVaultAllPicksUpExternalEditWithoutBumpingRootMtime() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let vault = try NibbleVault(directory: dir)
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let vault = try NibbleVault(directory: dir, key: key)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let original = MemoryNibble(
@@ -777,7 +803,7 @@ final class NibbleTests: XCTestCase {
             kind: .pin,
             containerID: nil
         )
-        try NibbleMarkdown.encode(edited).write(to: fileURL, atomically: true, encoding: .utf8)
+        try NibbleMarkdown.encode(edited, key: key).write(to: fileURL, atomically: true, encoding: .utf8)
         let future = Date().addingTimeInterval(120)
         try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
 
@@ -799,13 +825,14 @@ final class NibbleTests: XCTestCase {
     }
 
     /// Regression for #82: "Forget all memories" wiped the SQLite store but
-    /// left every plaintext nibble markdown file on disk. `forgetAll()` must
-    /// prune the vault mirror too, not just the store.
+    /// left every nibble markdown file on disk. `forgetAll()` must prune the
+    /// vault mirror too, not just the store.
     func testForgetAllPrunesTheVaultMirrorToo() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let vault = try NibbleVault(directory: dir)
         defer { try? FileManager.default.removeItem(at: dir) }
         let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let vault = try NibbleVault(directory: dir, key: key)
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
@@ -831,6 +858,54 @@ final class NibbleTests: XCTestCase {
         XCTAssertTrue(filesAfter.isEmpty, "Expected the vault mirror to be pruned, found: \(filesAfter)")
         // README.md is left in place — the directory itself is not removed.
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
+    }
+
+    /// Issue #81: NibbleVault used to mirror the same body that MemoryStore
+    /// AES-seals as plaintext markdown on disk. This asserts none of the
+    /// captured page text, title or url reaches the vault files unencrypted
+    /// -- the default behavior must not write plaintext bodies.
+    func testVaultFilesOnDiskDoNotContainPlaintextBody() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let vault = try NibbleVault(directory: dir, key: key)
+        let store = MemoryStore(database: try SQLiteDatabase(), key: key)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+
+        let secretTitle = "Sekrit Diagnosis Results"
+        let secretBody = "UnmistakableCanaryPlaintext-\(UUID().uuidString) should never land on disk unsealed."
+        let secretHost = "very-specific-patient-portal.example"
+        _ = try await director.remember(
+            title: secretTitle,
+            body: secretBody,
+            url: URL(string: "https://\(secretHost)/records"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+
+        let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)!
+        var mdFiles: [URL] = []
+        for case let url as URL in enumerator {
+            if url.pathExtension.lowercased() == "md", url.lastPathComponent != "README.md" {
+                mdFiles.append(url)
+            }
+        }
+        XCTAssertFalse(mdFiles.isEmpty)
+        for file in mdFiles {
+            let raw = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertFalse(raw.contains(secretTitle), "vault file leaked plaintext title: \(file.lastPathComponent)")
+            XCTAssertFalse(raw.contains(secretBody), "vault file leaked plaintext body: \(file.lastPathComponent)")
+            XCTAssertFalse(raw.contains(secretHost), "vault file leaked plaintext url: \(file.lastPathComponent)")
+            XCTAssertTrue(raw.contains("sealed: aes-gcm-256"))
+        }
+
+        // But the sealed content is fully recoverable through the app path:
+        // decode-on-read still yields the exact plaintext body in memory.
+        let byBody = try await vault.matching(query: "UnmistakableCanaryPlaintext", limit: 8)
+        XCTAssertTrue(byBody.contains(where: { $0.body == secretBody }))
     }
 }
 

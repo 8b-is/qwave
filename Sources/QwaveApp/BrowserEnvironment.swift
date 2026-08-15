@@ -81,22 +81,33 @@ final class BrowserEnvironment {
         // "no memories". A malformed master key means the records are still on
         // disk and still sealed, and the key is left untouched rather than
         // regenerated, so that case is logged distinctly from every other one.
+        //
+        // The store and the nibble vault share one master key, derived once
+        // here, so a locked key locks both paths together instead of the
+        // vault falling back to its own key (or, pre-#81, to no encryption at
+        // all) while the database stays locked.
         let memoryStore: MemoryStore?
+        var nibbleVault: NibbleVault?
         do {
-            memoryStore = try MemoryStore(directory: directory, secrets: secrets)
+            let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+            memoryStore = try MemoryStore(directory: directory, key: key)
+            nibbleVault = try? NibbleVault(
+                directory: directory.appendingPathComponent("nibbles", isDirectory: true), key: key)
         } catch MemoryCipherError.malformedKey {
             memoryStore = nil
+            nibbleVault = nil
             QwaveLog.memory.error(
                 "Memory Wave locked: stored master key is malformed; memories are sealed, not lost")
         } catch SecretStoreError.duplicateItem {
             memoryStore = nil
+            nibbleVault = nil
             QwaveLog.memory.error(
                 "Memory Wave locked: a master key exists but could not be read back; not re-keyed")
         } catch {
             memoryStore = nil
+            nibbleVault = nil
             QwaveLog.memory.error("Memory Wave unavailable: \(error)")
         }
-        let nibbleVault = try? NibbleVault(directory: directory.appendingPathComponent("nibbles", isDirectory: true))
         memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences, vault: nibbleVault)
         // The blocklist ships as a committed build-time snapshot (regenerated
         // by scripts/update-blocklist.sh); there is no launch-time fetch, so

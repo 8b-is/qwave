@@ -1,13 +1,23 @@
+import CryptoKit
 import Foundation
 import QwaveSupport
 
-/// Markdown-on-disk vault of nibbles. Human-readable, tag-indexed, local only.
+/// Tag-indexed, local-only vault of nibbles, stored as `.md` files whose
+/// title/body/url are AES-GCM sealed with the same Memory Wave master key
+/// that seals `MemoryStore` (issue #81). Only short, low-sensitivity
+/// metadata -- tags, kind, lane, timestamps -- stays in the clear, since the
+/// vault needs it for tag search and file naming without decrypting every
+/// file. The vault used to mirror the sealed database body as plaintext
+/// markdown; a file opened outside Qwave now shows ciphertext, matching the
+/// at-rest guarantee the primary store already made. Human-readable export
+/// of a nibble remains a decrypt-on-demand operation inside the app.
 ///
 /// An actor so the enumeration + file reads in `all(limit:)` run off the main
 /// thread when awaited from `@MainActor` callers, and so the decode cache is
 /// mutated under serialized isolation.
 public actor NibbleVault {
     public nonisolated let directory: URL
+    private let key: SymmetricKey
 
     /// Decoded nibbles memoized per source file's modification time.
     /// Repeated recalls with an unchanged vault reuse this instead of
@@ -23,8 +33,13 @@ public actor NibbleVault {
     private var cache: (mtimes: [URL: Date], nibbles: [URL: MemoryNibble])?
     private static let cacheLimit = 400
 
-    public init(directory: URL) throws {
+    /// - Parameter key: the Memory Wave master key (`MemoryCipher.loadOrCreateKey`).
+    ///   Callers should derive this the same way `MemoryStore` does and pass
+    ///   the *same* key, so the vault and the sealed database lock and unlock
+    ///   together instead of drifting into independent threat models.
+    public init(directory: URL, key: SymmetricKey) throws {
         self.directory = directory
+        self.key = key
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let readme = directory.appendingPathComponent("README.md")
         if !FileManager.default.fileExists(atPath: readme.path) {
@@ -33,6 +48,11 @@ public actor NibbleVault {
 
             Each file is a tagged Cognitive nibble. Wave recall matches `#tags`
             in the front matter. These files stay on this Mac.
+
+            Title, body and URL are AES-GCM sealed with the same master key
+            that protects the Memory Wave database -- opening a `.md` file
+            here directly shows ciphertext, not the page text. Qwave decrypts
+            nibbles automatically; there is currently no plaintext export.
 
             """.write(to: readme, atomically: true, encoding: .utf8)
         }
@@ -54,7 +74,7 @@ public actor NibbleVault {
         let slug = (nibble.tags.first ?? "nibble")
         let name = "\(safeFile(stamp.string(from: nibble.created)))-\(safeFile(slug))-\(String(nibble.id.prefix(8))).md"
         let url = folder.appendingPathComponent(name)
-        try NibbleMarkdown.encode(nibble).write(to: url, atomically: true, encoding: .utf8)
+        try NibbleMarkdown.encode(nibble, key: key).write(to: url, atomically: true, encoding: .utf8)
         QwaveLog.memory.info("Wrote nibble markdown")
         return url
     }
@@ -99,7 +119,7 @@ public actor NibbleVault {
 
     private func read(_ url: URL) -> MemoryNibble? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        return NibbleMarkdown.decode(text)
+        return NibbleMarkdown.decode(text, key: key)
     }
 
     public func matching(tags: [String], limit: Int = 32) throws -> [MemoryNibble] {
