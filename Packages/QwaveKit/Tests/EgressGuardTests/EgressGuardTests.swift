@@ -99,6 +99,31 @@ final class EgressGuardTests: XCTestCase {
         )
     }
 
+    /// The omnibox suggestion endpoint is Category A: its host is fixed in
+    /// Qwave's source, not derived from a page you navigated to. It stayed
+    /// invisible to this suite for an entire release because the test target
+    /// did not depend on `BrowserCore` at all, so no assertion here could
+    /// reach the provider (issue #78).
+    ///
+    /// The host is read out of the request the provider actually builds — a
+    /// capturing `URLProtocol` on an injected session — rather than restated
+    /// as a literal, so this asserts against the real call site instead of
+    /// against itself.
+    func testSuggestionEndpointHostIsAllowlisted() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SuggestionCapture.self]
+        let provider = DuckDuckGoSuggestionProvider(session: URLSession(configuration: config))
+
+        _ = try await provider.fetchSuggestions(for: "qwave")
+
+        let host = SuggestionCapture.captured.url()?.host
+        XCTAssertNotNil(host, "the suggestion provider must have issued a request to capture")
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: host),
+            "omnibox suggestion host \(host ?? "nil") must be on the egress allowlist"
+        )
+    }
+
     func testAllowlistRejectsUnknownHosts() {
         XCTAssertFalse(EgressAllowlist.permits(host: "example.com"))
         XCTAssertFalse(EgressAllowlist.permits(host: "evil.tracker.net"))
@@ -204,6 +229,46 @@ final class EgressGuardTests: XCTestCase {
             provider.session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
             "DuckDuckGoSuggestionProvider's default session must install EgressGuard"
         )
+    }
+
+    // MARK: - Capturing the suggestion request
+
+    /// Records the URL of the one request the suggestion provider makes, and
+    /// answers it locally so nothing leaves the machine.
+    final class CapturedRequest: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: URL?
+
+        func record(_ value: URL) {
+            lock.withLock { recorded = value }
+        }
+
+        func url() -> URL? {
+            lock.withLock { recorded }
+        }
+    }
+
+    final class SuggestionCapture: URLProtocol {
+        static let captured = CapturedRequest()
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            guard let url = request.url,
+                let response = HTTPURLResponse(
+                    url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
+            else {
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
+            Self.captured.record(url)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("[]".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
     }
 
     // MARK: - No egress on the launch path
