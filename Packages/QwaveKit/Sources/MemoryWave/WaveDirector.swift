@@ -86,7 +86,7 @@ public final class WaveDirector {
                 emotion: emotion
             )
         }
-        writeNibbles(
+        await writeNibbles(
             title: title, body: clamped, url: url, kind: kind, containerID: containerID, lane: lane)
         return record
     }
@@ -99,7 +99,7 @@ public final class WaveDirector {
         kind: MemoryKind,
         containerID: UUID?,
         lane: MemoryLane
-    ) -> [MemoryNibble] {
+    ) async -> [MemoryNibble] {
         guard let vault else { return [] }
         let nibbles = NibbleCutter.cut(
             title: title, body: body, url: url, kind: kind, containerID: containerID)
@@ -107,7 +107,7 @@ public final class WaveDirector {
         for nibble in nibbles {
             var copy = nibble
             copy.lane = lane
-            if (try? vault.write(copy)) != nil {
+            if (try? await vault.write(copy)) != nil {
                 written.append(copy)
             }
         }
@@ -118,7 +118,7 @@ public final class WaveDirector {
         guard let store else { return [] }
         let window = range.interval()
         var records = try await store.records(since: window.0, until: window.1, limit: limit)
-        if let vault, let nibbles = try? vault.all(limit: 400) {
+        if let vault, let nibbles = try? await vault.all(limit: 400) {
             var byURL: [String: [String]] = [:]
             for nibble in nibbles {
                 guard let href = nibble.url?.absoluteString else { continue }
@@ -186,11 +186,17 @@ public final class WaveDirector {
         if let query, let vault {
             let tags = NibbleMarkdown.tags(inQuery: query)
             if !tags.isEmpty {
-                return try vault.matching(tags: tags, limit: limit).map { $0.asRecord() }
+                return try await vault.matching(tags: tags, limit: limit).map { $0.asRecord() }
             }
         }
 
-        var records = (try await store?.records(containerID: containerID, limit: 64)) ?? []
+        // When we will build the resonance grid below (query present + store
+        // present), the newest 64 records are exactly the newest 64 of the 256
+        // the grid decodes, so reuse that single decode instead of issuing a
+        // second records(limit: 64) query.
+        let willRank = (query.map { !$0.isEmpty } ?? false) && store != nil
+        var records =
+            willRank ? [] : ((try await store?.records(containerID: containerID, limit: 64)) ?? [])
         if let query, !query.isEmpty {
             let identity =
                 MemoryWaveConstants.consciousness.doubleValue
@@ -211,7 +217,8 @@ public final class WaveDirector {
                 provenance: .cognitive
             )
             if let store {
-                let grid = try await store.grid(containerID: containerID)
+                let (grid, gridRecords) = try await store.gridWithRecords(containerID: containerID)
+                records = Array(gridRecords.prefix(64))
                 let ranked = grid.resonate(query: probe)
                 let order = Dictionary(
                     uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
@@ -232,7 +239,7 @@ public final class WaveDirector {
                     records = SemanticReranker.rerank(query: queryVector, candidates: candidates)
                 }
             }
-            if let vault, let hits = try? vault.matching(query: query, limit: limit) {
+            if let vault, let hits = try? await vault.matching(query: query, limit: limit) {
                 let extra = hits.map { $0.asRecord() }
                 records =
                     extra
@@ -244,8 +251,8 @@ public final class WaveDirector {
         return Array(records.prefix(limit))
     }
 
-    public func nibbleTags(limit: Int = 16) -> [String] {
-        (try? vault?.tags(limit: limit)) ?? []
+    public func nibbleTags(limit: Int = 16) async -> [String] {
+        (try? await vault?.tags(limit: limit)) ?? []
     }
 
     public func summarize(

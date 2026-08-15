@@ -116,11 +116,21 @@ public actor MemoryStore {
     }
 
     public func grid(containerID: UUID?) async throws -> SparseWaveGrid {
+        try await gridWithRecords(containerID: containerID).grid
+    }
+
+    /// The resonance grid together with the decoded records it was built from,
+    /// so callers that also need the newest rows avoid a second decode of the
+    /// same container.
+    public func gridWithRecords(containerID: UUID?) async throws -> (
+        grid: SparseWaveGrid, records: [MemoryRecord]
+    ) {
+        let records = try await records(containerID: containerID, limit: 256)
         var grid = SparseWaveGrid()
-        for record in try await records(containerID: containerID, limit: 256) {
+        for record in records {
             grid.insert(record.wave)
         }
-        return grid
+        return (grid, records)
     }
 
     public func delete(id: Int64) async throws {

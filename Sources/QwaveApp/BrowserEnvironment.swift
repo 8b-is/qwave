@@ -121,7 +121,7 @@ final class BrowserEnvironment {
     }
 
     func refreshInternalPages() async {
-        let tagChips = memoryWave.nibbleTags(limit: 10).map {
+        let tagChips = await memoryWave.nibbleTags(limit: 10).map {
             StartMemoryChip(title: "#\($0)", preview: "nibble")
         }
         let records = (try? await memoryWave.recall(containerID: nil, limit: 8)) ?? []
