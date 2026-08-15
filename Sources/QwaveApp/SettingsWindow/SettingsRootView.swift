@@ -45,11 +45,13 @@ private struct GeneralPane: View {
             .onChange(of: searchEngine) { _, newValue in
                 environment.settings.searchEngine = newValue
             }
+            .accessibilityLabel("Default search engine")
 
             Toggle("Search-engine suggestions as you type", isOn: $networkSuggestions)
                 .onChange(of: networkSuggestions) { _, newValue in
                     environment.settings.networkSuggestionsEnabled = newValue
                 }
+                .accessibilityLabel("Search-engine suggestions as you type")
             Text(
                 "When off (the default), omnibox suggestions come only from your "
                     + "on-device history, bookmarks, and open tabs \u{2014} nothing is sent "
@@ -63,11 +65,13 @@ private struct GeneralPane: View {
                 .onChange(of: restoreSession) { _, newValue in
                     environment.settings.restoreSessionOnLaunch = newValue
                 }
+                .accessibilityLabel("Restore previous session at launch")
 
             VStack(alignment: .leading) {
                 Slider(value: $hibernationMinutes, in: 1...60, step: 1) {
                     Text("Hibernate background tabs after")
                 }
+                .accessibilityLabel("Hibernate background tabs duration slider")
                 Text("\(Int(hibernationMinutes)) minutes of inactivity")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -82,6 +86,7 @@ private struct GeneralPane: View {
                     .onChange(of: autoCheckUpdates) { _, newValue in
                         updater.automaticallyChecksForUpdates = newValue
                     }
+                    .accessibilityLabel("Check for updates automatically")
                 Text(
                     "When on, Qwave periodically asks GitHub whether a newer signed "
                         + "release exists. When off, no update check runs unless you choose "
@@ -98,8 +103,9 @@ private struct GeneralPane: View {
                 destination: URL(string: "https://github.com/8b-is/qwave/blob/main/docs/NETWORK.md")!
             )
             .font(.caption)
+            .accessibilityLabel("What does Qwave send documentation link")
         }
-        .padding(20)
+        .padding(16)
         .onAppear {
             searchEngine = environment.settings.searchEngine
             networkSuggestions = environment.settings.networkSuggestionsEnabled

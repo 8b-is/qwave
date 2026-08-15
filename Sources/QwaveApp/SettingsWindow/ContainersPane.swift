@@ -33,6 +33,7 @@ struct ContainersPane: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Delete container \(profile.name)")
                     }
                     .padding(.vertical, 2)
                 }
@@ -42,18 +43,22 @@ struct ContainersPane: View {
                 TextField("New container name", text: $newName)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
+                    .accessibilityLabel("New container name")
                 ColorPicker("", selection: $newColor, supportsOpacity: false)
                     .labelsHidden()
+                    .accessibilityLabel("Container color")
                 Button("Add Container") {
                     let trimmed = newName.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else { return }
                     containers.createProfile(name: trimmed, colorHex: newColor.hexString)
                     newName = ""
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityLabel("Add Container")
             }
         }
-        .padding(20)
+        .padding(16)
         .alert(
             "Delete container “\(deletingProfile?.name ?? "")”?",
             isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } })

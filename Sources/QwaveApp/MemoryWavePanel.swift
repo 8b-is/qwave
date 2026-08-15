@@ -12,12 +12,17 @@ struct MemoryWavePanelView: View {
     var onSummarize: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "waveform")
+                    .accessibilityHidden(true)
                 Text("Memory Wave").font(.headline)
                 Spacer()
-                if isBusy { ProgressView().controlSize(.small) }
+                if isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Processing memory wave")
+                }
             }
             Text(title)
                 .font(.subheadline)
@@ -35,20 +40,29 @@ struct MemoryWavePanelView: View {
             .frame(minHeight: 140, maxHeight: 260)
             HStack {
                 Button("Remember", action: onRemember)
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+                    .accessibilityLabel("Remember this page")
                 Button("Summarize", action: onSummarize)
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+                    .accessibilityLabel("Summarize this page")
             }
             HStack {
                 TextField("Ask about this page…", text: askDraft)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Question prompt")
                     .onSubmit(onAsk)
                 Button("Ask", action: onAsk)
+                    .buttonStyle(.borderedProminent)
                     .disabled(askDraft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isBusy)
+                    .accessibilityLabel("Ask Memory Wave")
             }
             Text(footnote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(14)
+        .padding(16)
         .frame(width: 420)
     }
 }
