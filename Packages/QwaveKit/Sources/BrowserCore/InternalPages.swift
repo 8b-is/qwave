@@ -38,12 +38,18 @@ public enum InternalPages {
 
     public static let timelineURL = URL(string: "qwave://timeline")!
 
+    public static let diagnosticsURL = URL(string: "qwave://diagnostics")!
+
     public static func isStartURL(_ url: URL?) -> Bool {
         url?.scheme == "qwave" && url?.host == "start"
     }
 
     public static func isTimelineURL(_ url: URL?) -> Bool {
         url?.scheme == "qwave" && url?.host == "timeline"
+    }
+
+    public static func isDiagnosticsURL(_ url: URL?) -> Bool {
+        url?.scheme == "qwave" && url?.host == "diagnostics"
     }
 
     public static func httpErrorHTML(status: Int, host: String) -> String {
@@ -180,6 +186,66 @@ public enum InternalPages {
                 """,
             extraHead: startExtraCSS + timelineCSS,
             extraScripts: startScript + timelineScript,
+            markdownSource: nil
+        )
+    }
+
+    /// Read-only reliability slate. Renders locally-captured MetricKit
+    /// diagnostics (crash / hang / CPU / disk). `submissionEnabled` reflects the
+    /// opt-in state only; Qwave has no telemetry endpoint and never sends these
+    /// off the Mac.
+    public static func diagnosticsHTML(
+        records: [DiagnosticRecord],
+        submissionEnabled: Bool = false
+    ) -> String {
+        let rows: String
+        if records.isEmpty {
+            rows = """
+                <p class="empty">No diagnostics captured yet. Crash, hang, CPU and disk reports \
+                from MetricKit appear here as the system delivers them.</p>
+                """
+        } else {
+            rows = records.map { record in
+                let time = record.date.formatted(date: .abbreviated, time: .shortened)
+                let detailBlock =
+                    record.detail.isEmpty
+                    ? ""
+                    : "<pre class=\"diag-raw\">\(MarkdownCompiler.escape(String(record.detail.prefix(8000))))</pre>"
+                return """
+                    <section class="day diag-item">
+                      <h2>\(MarkdownCompiler.escape(record.kind.label))</h2>
+                      <div class="row">
+                        <span class="row-title">\(MarkdownCompiler.escape(record.summary))</span>
+                        <span class="row-detail">\(MarkdownCompiler.escape(time))</span>
+                      </div>
+                      \(detailBlock)
+                    </section>
+                    """
+            }.joined()
+        }
+        let submissionNote =
+            submissionEnabled
+            ? "Submission opt-in is ON, but Qwave has no telemetry endpoint — nothing is uploaded."
+            : "Local only. Qwave never sends diagnostics off this Mac."
+        return waveDocument(
+            title: "Diagnostics",
+            overlay: """
+                <div class="overlay interactive timeline-overlay">
+                  <div class="glass slate">
+                    <header class="slate-head">
+                      <p class="kicker">Reliability</p>
+                      <h1>Diagnostics</h1>
+                      <p class="lead small">Crash, hang, CPU and disk reports captured on-device via MetricKit.</p>
+                    </header>
+                    <div class="summary">\(MarkdownCompiler.escape(submissionNote))</div>
+                    <div class="days">\(rows)</div>
+                    <p class="foot">Read-only · this Mac only</p>
+                    <a class="escape-btn" href="qwave://start">Back to start</a>
+                  </div>
+                </div>
+                """,
+            extraHead: startExtraCSS + timelineCSS + diagnosticsCSS,
+            extraScripts: "",
             markdownSource: nil
         )
     }
@@ -333,6 +399,16 @@ public enum InternalPages {
         .row:hover { background: rgba(255,255,255,0.14); }
         .row-title { font-weight: 600; }
         .row-detail { font-size: 0.82rem; opacity: 0.7; }
+        """
+
+    private static let diagnosticsCSS = """
+        .diag-item { text-transform: none; letter-spacing: 0; }
+        .diag-raw {
+            white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto;
+            font-family: ui-monospace, 'Courier New', monospace; font-size: 0.75rem; line-height: 1.4;
+            background: rgba(0,0,0,0.32); border: 1px solid rgba(255,255,255,0.12);
+            padding: 10px 12px; margin-top: 8px; border-radius: 10px;
+        }
         """
 
     private static let timelineScript = """
