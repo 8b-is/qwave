@@ -10,6 +10,15 @@ public actor MemoryStore {
     private let key: SymmetricKey
     private var isPrepared = false
 
+    /// Rows that failed to decode (bad `kind`/`lane`, unparsable wave frame,
+    /// missing box, AES-GCM open failure, or non-UTF-8 plaintext) since this
+    /// store was created. Never decremented. `records(...)` still returns
+    /// only the rows that opened, so a caller that only checks the array's
+    /// count cannot tell "no memories" from "every memory failed to open";
+    /// this counter, plus the log line emitted alongside each drop, is the
+    /// signal that distinguishes the two. See #84.
+    public private(set) var droppedRowCount = 0
+
     public init(database: SQLiteDatabase, secrets: SecretStore) throws {
         self.database = database
         self.key = try MemoryCipher.loadOrCreateKey(in: secrets)
@@ -97,12 +106,12 @@ public actor MemoryStore {
         }
         params.append(.integer(Int64(limit)))
         sql += " ORDER BY created DESC LIMIT ?\(params.count)"
-        return try await database.rows(sql, params).compactMap(decode)
+        return decodeAll(try await database.rows(sql, params))
     }
 
     public func records(containerID: UUID?, limit: Int = 32) async throws -> [MemoryRecord] {
         try await prepare()
-        return try await database.rows(
+        let rows = try await database.rows(
             """
             SELECT id, container_id, kind, lane, created, frame, title_box, body_box, url_box, signature_box
             FROM memories
@@ -112,7 +121,7 @@ public actor MemoryStore {
             """,
             [.text(Self.key(for: containerID)), .integer(Int64(limit))]
         )
-        .compactMap(decode)
+        return decodeAll(rows)
     }
 
     public func grid(containerID: UUID?) async throws -> SparseWaveGrid {
@@ -151,7 +160,36 @@ public actor MemoryStore {
         try await database.run("DELETE FROM memories")
     }
 
+    /// Decodes a batch of rows, counting and logging any that fail rather
+    /// than letting `compactMap` discard them invisibly. A single line at
+    /// `.warning` after the batch tells a reader of the log (or of
+    /// `droppedRowCount`) that a nonempty result set had losses, without
+    /// spamming a line per row for the common all-good case. See #84.
+    private func decodeAll(_ rows: [SQLiteRow]) -> [MemoryRecord] {
+        var records: [MemoryRecord] = []
+        records.reserveCapacity(rows.count)
+        var dropped = 0
+        for row in rows {
+            if let record = decode(row) {
+                records.append(record)
+            } else {
+                dropped += 1
+            }
+        }
+        if dropped > 0 {
+            droppedRowCount += dropped
+            QwaveLog.memory.warning(
+                """
+                MemoryStore.decode dropped \(dropped) of \(rows.count) row(s) in this batch \
+                (parse/decrypt/UTF-8 failure); total dropped since store init: \(droppedRowCount)
+                """
+            )
+        }
+        return records
+    }
+
     private func decode(_ row: SQLiteRow) -> MemoryRecord? {
+        let rowID = row.int(0)
         guard
             let kind = row.text(2).flatMap(MemoryKind.init(rawValue:)),
             let lane = row.text(3).flatMap(MemoryLane.init(rawValue:)),
@@ -168,6 +206,10 @@ public actor MemoryStore {
             let title = String(data: titleData, encoding: .utf8),
             let body = String(data: bodyData, encoding: .utf8)
         else {
+            // Row id is not sensitive (a SQLite rowid, not memory content);
+            // it lets someone correlate this line with `deleteAll`/vacuum
+            // decisions without decrypting anything.
+            QwaveLog.memory.debug("MemoryStore.decode could not open row id \(rowID)")
             return nil
         }
         let url: URL?
