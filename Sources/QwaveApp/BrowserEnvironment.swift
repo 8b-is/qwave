@@ -36,6 +36,10 @@ final class BrowserEnvironment {
     private let directory: URL
     private var startPageMemories: [StartMemoryChip] = []
     private var timelineDays: [TimelineDayView] = []
+    /// Cached full bookmark set, shared across omnibox keystrokes so the store
+    /// is queried once rather than on every character. Invalidated whenever a
+    /// bookmark is added or removed (see `invalidateBookmarkCache`).
+    private var bookmarkCache: [Bookmark]?
 
     private init(directory: URL) async {
         self.directory = directory
@@ -93,6 +97,21 @@ final class BrowserEnvironment {
                     summary: QwaveInternal.lastTimelineSummary.isEmpty ? nil : QwaveInternal.lastTimelineSummary,
                     rememberEverything: false, providerLabel: "Remember only")
         }
+    }
+
+    /// The full bookmark set, loaded once and reused. Content is identical to
+    /// `bookmarks?.all()`; only the query frequency changes.
+    func cachedBookmarks() async -> [Bookmark] {
+        if let bookmarkCache { return bookmarkCache }
+        let all = (try? await bookmarks?.all()) ?? []
+        bookmarkCache = all
+        return all
+    }
+
+    /// Drops the cached bookmark set so the next read reloads from the store.
+    /// Call after any bookmark add/remove.
+    func invalidateBookmarkCache() {
+        bookmarkCache = nil
     }
 
     var providerLabel: String {

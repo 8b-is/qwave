@@ -62,6 +62,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private var summarizeFootnote = "On-device · text never leaves this Mac."
     private var summarizeBusy = false
     private var summarizeTask: Task<Void, Never>?
+    /// In-flight omnibox suggestion query. Cancelled and replaced on each
+    /// keystroke so a burst of typing collapses to a single debounced query.
+    private var suggestionTask: Task<Void, Never>?
     private var lastAutoRemember: [UUID: (url: URL, at: Date)] = [:]
     /// Continuity/Handoff advertisement for the active tab. Only ever set for
     /// non-private, non-ephemeral http(s) pages (see HandoffPolicy); invalidated
@@ -697,6 +700,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         guard let selected = tabManager.selectedTab, let url = selected.url else { return }
         Task { @MainActor [weak self] in
             if let bookmark = try? await self?.environment.bookmarks?.add(title: selected.displayTitle, url: url) {
+                self?.environment.invalidateBookmarkCache()
                 // Surface the new bookmark to Spotlight (Command+Space search).
                 await SpotlightIndexer.index(bookmark)
             }
@@ -1380,18 +1384,25 @@ extension BrowserWindowController: NSTextFieldDelegate {
         guard (notification.object as? NSTextField) === omnibox else { return }
         let query = omnibox.stringValue
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else {
+            suggestionTask?.cancel()
+            suggestionTask = nil
             suggestions.hide()
             return
         }
-        Task { @MainActor [weak self] in
+        // Debounce: cancel the prior in-flight query and wait out a short pause
+        // so a burst of keystrokes runs the ranking work only once.
+        suggestionTask?.cancel()
+        suggestionTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
             // On-device sources first — these never leave the machine.
             let openTabs = self.tabManager.tabs.compactMap { tab -> OpenTabInfo? in
                 guard tab.id != self.tabManager.selectedTabID, let url = tab.url else { return nil }
                 return OpenTabInfo(id: tab.id, title: tab.displayTitle, url: url)
             }
             let entries = (try? await self.environment.history?.entries(matching: query, limit: 50)) ?? []
-            let bookmarks = (try? await self.environment.bookmarks?.all()) ?? []
+            let bookmarks = await self.environment.cachedBookmarks()
             // Network suggestions are strictly opt-in (default OFF). Only when
             // the user has enabled them do we send the query to a third party.
             let remote: [RemoteSearchSuggestion]

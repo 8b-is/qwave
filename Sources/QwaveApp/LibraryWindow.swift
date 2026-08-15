@@ -9,7 +9,8 @@ final class LibraryWindowController: NSWindowController {
             rootView: LibraryView(
                 history: environment.history,
                 bookmarks: environment.bookmarks,
-                openURL: openURL
+                openURL: openURL,
+                onBookmarksChanged: { [weak environment] in environment?.invalidateBookmarkCache() }
             )
         )
         let window = NSWindow(contentViewController: hosting)
@@ -36,6 +37,8 @@ private struct LibraryView: View {
     let history: HistoryStore?
     let bookmarks: BookmarkStore?
     let openURL: (URL) -> Void
+    /// Notifies the environment to drop its cached bookmark set after a delete.
+    let onBookmarksChanged: () -> Void
 
     @State private var section: Section = .history
     @State private var searchText = ""
@@ -83,6 +86,7 @@ private struct LibraryView: View {
                     row(title: bookmark.title, subtitle: bookmark.url.absoluteString, url: bookmark.url) {
                         Task { @MainActor in
                             try? await bookmarks?.delete(id: bookmark.id)
+                            onBookmarksChanged()
                             reload()
                         }
                     }
