@@ -1,4 +1,5 @@
 import Foundation
+import QwaveSupport
 
 public enum MemoryProviderError: Error, Equatable {
     case unavailable
@@ -89,7 +90,8 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(
+            for: request, delegate: EndpointRedirectPolicy(endpoint: endpoint))
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200..<300).contains(status) else {
             throw MemoryProviderError.transport("HTTP \(status)")
@@ -103,6 +105,49 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
             throw MemoryProviderError.transport("malformed completion")
         }
         return content
+    }
+}
+
+/// Keeps a request on the origin the user consented to.
+///
+/// Settings tells the user their page text goes "to this endpoint". Without a
+/// redirect policy `URLSession` follows any 3xx it is handed, and a 307/308
+/// replays the same method and the same body — the whole page — at whatever
+/// host the response names. This delegate makes the promise enforceable: a
+/// redirect is followed only when it stays on the same HTTPS origin (host and
+/// port) the user typed. Anything else is refused, and the 3xx surfaces to
+/// `complete` as a non-2xx status.
+final class EndpointRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let endpoint: URL
+
+    init(endpoint: URL) {
+        self.endpoint = endpoint
+    }
+
+    /// Same scheme (https), same host, same effective port.
+    static func staysOnEndpoint(_ candidate: URL, endpoint: URL) -> Bool {
+        guard candidate.scheme?.lowercased() == "https",
+            endpoint.scheme?.lowercased() == "https",
+            let target = candidate.host?.lowercased(),
+            let origin = endpoint.host?.lowercased(),
+            target == origin
+        else { return false }
+        return (candidate.port ?? 443) == (endpoint.port ?? 443)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url, Self.staysOnEndpoint(url, endpoint: endpoint) else {
+            QwaveLog.memory.error("Memory Wave refused a redirect off the configured endpoint")
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }
 
