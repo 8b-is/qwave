@@ -25,6 +25,13 @@ let package = Package(
             name: "QwaveTunnelKit",
             targets: ["VPNKit", "QwaveSupport"]
         ),
+        // Slim product linked by BOTH the app and the AutoFill Credential
+        // Provider extension. Deliberately crypto-free (Foundation + Security
+        // only) so the extension never links VPNKit / the ML-KEM stack.
+        .library(
+            name: "WebCredentials",
+            targets: ["WebCredentials"]
+        ),
     ],
     dependencies: [
         // WHATWG URL parser — canonical host identity for policy decisions
@@ -70,6 +77,9 @@ let package = Package(
             swiftSettings: swift6
         ),
         .target(name: "FeatureFlags", dependencies: ["QwaveSupport"], swiftSettings: swift6),
+        // Website-login + passkey value types and keychain store. No crypto, no
+        // VPN, no other QwaveKit module — see Sources/WebCredentials.
+        .target(name: "WebCredentials", swiftSettings: swift6),
         .target(
             name: "BrowserCore",
             dependencies: [
@@ -127,6 +137,7 @@ let package = Package(
             swiftSettings: swift6
         ),
         .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: swift6),
+        .testTarget(name: "WebCredentialsTests", dependencies: ["WebCredentials"], swiftSettings: swift6),
         .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"], swiftSettings: swift6),
         .testTarget(
             name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
