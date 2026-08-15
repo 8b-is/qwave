@@ -26,12 +26,15 @@ public enum MemoryCipher {
     /// silently vanish. An existing secret is never overwritten here.
     ///
     /// The create branch uses the add-only `addSecret`, so the guarantee does
-    /// not rest on the read above having seen the truth. If the read reports
-    /// "nothing stored" while an item actually exists — a keychain access-group
-    /// change once the app ships signed, an item in a different keychain in the
-    /// search list, two first runs racing — the write throws
-    /// `SecretStoreError.duplicateItem` and the real key survives. An overwrite
-    /// there would be silent and permanent, so it is never attempted.
+    /// not rest on the read above having seen the truth. When two first runs
+    /// race and both read "nothing stored", the second write collides and
+    /// throws `SecretStoreError.duplicateItem` instead of overwriting the key
+    /// the first one just stored. A read that misses because the item lives
+    /// elsewhere — a keychain access-group change once the app ships signed, an
+    /// item in a different keychain — does not collide: the add lands beside
+    /// the old item, which stays intact but out of reach. Either way this path
+    /// never overwrites an existing master key; an overwrite here would be
+    /// silent and permanent, so it is never attempted.
     public static func loadOrCreateKey(in secrets: SecretStore) throws -> SymmetricKey {
         if let existing = try secrets.secret(for: keyAccount) {
             guard existing.count == 32 else { throw MemoryCipherError.malformedKey }

@@ -14,9 +14,12 @@ public protocol SecretStore: Sendable {
     /// for values that cannot (a master key). The two are not the same
     /// operation, so they are not the same method. Implementations must decide
     /// add-vs-overwrite inside the store's own atomic write, never by reading
-    /// first — a read that misses an item that does exist (different access
-    /// group, different keychain in the search list, a concurrent first run) is
-    /// exactly the failure this exists to survive.
+    /// first: two concurrent first runs both read "absent", and only the write
+    /// itself can see that the other one got there first. (A read that misses
+    /// because the item lives elsewhere — a different access group, a different
+    /// keychain — does not collide on write either. The add lands beside the
+    /// old item rather than over it, so nothing is clobbered there; the old key
+    /// is simply out of reach.)
     func addSecret(_ data: Data, for key: String) throws
     func removeSecret(for key: String) throws
 }
