@@ -614,6 +614,67 @@ final class NibbleTests: XCTestCase {
         let files = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") }
         XCTAssertGreaterThan(files.count, 1)
     }
+
+    /// Regression test for #83: the decode cache used to be keyed on the
+    /// vault root's own mtime, which nested `/YYYY/MM/` writes never bump.
+    /// An external edit -- a file touched by something other than
+    /// `NibbleVault.write(_:)`, e.g. the user in a text editor -- must still
+    /// invalidate the cache.
+    func testVaultAllPicksUpExternalEditWithoutBumpingRootMtime() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let vault = try NibbleVault(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let original = MemoryNibble(
+            title: "Original title",
+            body: "Original body about tagged wave retrieval. #qwave",
+            tags: ["qwave"],
+            url: nil,
+            kind: .pin,
+            containerID: nil
+        )
+        let fileURL = try await vault.write(original)
+
+        let rootMtimeBefore = try FileManager.default.attributesOfItem(atPath: dir.path)[.modificationDate] as? Date
+
+        // Populate the decode cache.
+        let firstRead = try await vault.all()
+        XCTAssertTrue(firstRead.contains(where: { $0.title == "Original title" }))
+
+        // Simulate an external edit: rewrite the file's content directly
+        // (bypassing NibbleVault.write) and force its mtime forward, without
+        // touching the vault root's mtime at all -- exactly the case #83
+        // describes for nested-folder edits.
+        let edited = MemoryNibble(
+            id: original.id,
+            title: "Edited externally",
+            body: "Edited body about tagged wave retrieval. #qwave",
+            tags: ["qwave"],
+            url: nil,
+            created: original.created,
+            kind: .pin,
+            containerID: nil
+        )
+        try NibbleMarkdown.encode(edited).write(to: fileURL, atomically: true, encoding: .utf8)
+        let future = Date().addingTimeInterval(120)
+        try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+        let rootMtimeAfter = try FileManager.default.attributesOfItem(atPath: dir.path)[.modificationDate] as? Date
+        XCTAssertEqual(rootMtimeBefore, rootMtimeAfter, "test setup should not itself bump the root mtime")
+
+        let secondRead = try await vault.all()
+        XCTAssertTrue(
+            secondRead.contains(where: { $0.title == "Edited externally" }),
+            "cache should invalidate on an externally edited nibble even though the root mtime is unchanged"
+        )
+        XCTAssertFalse(secondRead.contains(where: { $0.title == "Original title" }))
+
+        // Simulate an external delete: the vault must stop serving it from
+        // cache once the file is gone, not just decline to re-decode it.
+        try FileManager.default.removeItem(at: fileURL)
+        let thirdRead = try await vault.all()
+        XCTAssertFalse(thirdRead.contains(where: { $0.title == "Edited externally" }))
+    }
 }
 
 @MainActor
