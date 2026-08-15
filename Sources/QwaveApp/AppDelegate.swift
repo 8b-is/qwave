@@ -221,6 +221,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Imports bookmarks from another browser. The user grants access to a
+    /// profile folder / Bookmarks file via NSOpenPanel — no Full Disk Access.
+    @objc func importBookmarks(_ sender: Any?) {
+        guard let store = environment?.bookmarks else { return }
+        BookmarkImportService.run(into: store) { bookmarks in
+            await SpotlightIndexer.reindexAll(bookmarks)
+        }
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         if libraryWindowController == nil {
             libraryWindowController = LibraryWindowController(environment: environment) { [weak self] url in
