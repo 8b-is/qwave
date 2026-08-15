@@ -396,10 +396,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         userContent.addUserScript(WebAuthnBridge.userScript)
         // Password-save capture: detects a submitted login form and, on
         // confirmation, writes it to the keychain + AutoFill identity index
-        // (see docs/AUTOFILL.md, issue #72). Skipped for private tabs — an
-        // ephemeral tab must never persist a login.
-        if !isPrivate {
-            userContent.add(passwordCaptureBridge, name: PasswordCaptureBridge.messageName)
+        // (see docs/AUTOFILL.md, issue #72). Skipped for every ephemeral tab,
+        // not only for private windows — a normal window can hold an ephemeral
+        // tab (Cmd-Opt-T), and an ephemeral tab must never persist a login.
+        // Installed into the bridge's own content world so page JS can neither
+        // forge a capture message nor suppress the shim.
+        if PasswordCapturePolicy.captureIsAllowed(isPrivateWindow: isPrivate, isEphemeralTab: tab.isEphemeral) {
+            userContent.add(
+                passwordCaptureBridge,
+                contentWorld: PasswordCaptureBridge.contentWorld,
+                name: PasswordCaptureBridge.messageName
+            )
             userContent.addUserScript(PasswordCaptureBridge.userScript)
         }
 

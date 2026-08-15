@@ -19,22 +19,38 @@ public struct CapturedFormCredential: Sendable, Equatable {
         self.password = password
     }
 
-    /// Build from the JSON-ish payload the in-page capture shim posts on form
-    /// submit: `{ url, username, password }`. `url` is normalised through
-    /// ``WebCredentialMatching/normalize(_:)`` — the same rule the store and
-    /// the AutoFill extension already key on — so a captured login and a
-    /// later fill request agree on the domain. Rejects a blank domain,
-    /// username, or password: there is nothing worth prompting to save.
-    public init?(json: [String: Any]) {
+    /// Build from the payload the in-page capture shim posts on form submit —
+    /// `{ username, passwords: [{ value, autocomplete }] }` — bound to the
+    /// origin WebKit reports for the frame the message came from.
+    ///
+    /// The domain comes from `frameOriginHost` and never from the payload.
+    /// `WKUserContentController.add(_:name:)` exposes a message handler to page
+    /// JS, so a body-supplied URL would let any page name any domain: posting
+    /// `{ url: "https://accounts.example-bank.com", … }` from evil.com would
+    /// prompt to save an attacker-chosen password under the bank's
+    /// `kSecAttrServer`, overwriting the real one. This is the same rule
+    /// `WebAuthnBridge` applies to a page-supplied `rpId` via
+    /// ``WebAuthnOriginPolicy`` — a page only ever gets to confirm the origin
+    /// it is actually running on.
+    ///
+    /// The host is normalised through ``WebCredentialMatching/normalize(_:)`` —
+    /// the same rule the store and the AutoFill extension key on — so a
+    /// captured login and a later fill request agree on the domain. Rejects a
+    /// blank origin (`about:`/`data:` documents have none), a blank username,
+    /// and a form whose password fields are too ambiguous to guess from (see
+    /// ``PasswordFieldSelection``).
+    public init?(json: [String: Any], frameOriginHost: String) {
+        let domain = WebCredentialMatching.normalize(frameOriginHost)
         guard
-            let url = json["url"] as? String,
+            !domain.isEmpty,
             let username = json["username"] as? String, !username.isEmpty,
-            let password = json["password"] as? String, !password.isEmpty
+            let password = PasswordFieldSelection.submittedPassword(
+                from: PasswordFieldSelection.fields(json: json)
+            ),
+            !password.isEmpty
         else {
             return nil
         }
-        let domain = WebCredentialMatching.normalize(url)
-        guard !domain.isEmpty else { return nil }
         self.domain = domain
         self.username = username
         self.password = password
