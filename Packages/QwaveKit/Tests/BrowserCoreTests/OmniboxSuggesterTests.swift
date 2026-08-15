@@ -80,4 +80,83 @@ final class OmniboxSuggesterTests: XCTestCase {
         let history = [entry("https://example.com/", title: "Example")]
         XCTAssertTrue(OmniboxSuggester.suggestions(for: "zzzz", history: history, now: now).isEmpty)
     }
+
+    // MARK: - On-device fusion (bookmarks / open tabs / actions)
+
+    private func bookmark(_ url: String, title: String) -> Bookmark {
+        Bookmark(id: Int64(abs(url.hashValue % 100_000)), title: title, url: URL(string: url)!, folder: nil, created: now)
+    }
+
+    func testOnDeviceIncludesBookmarks() {
+        let results = OmniboxSuggester.onDeviceSuggestions(
+            for: "rust",
+            history: [],
+            bookmarks: [bookmark("https://rust-lang.org/", title: "Rust")],
+            now: now
+        )
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.kind, .bookmark)
+        XCTAssertEqual(results.first?.url.absoluteString, "https://rust-lang.org/")
+    }
+
+    func testOnDeviceIncludesOpenTabs() {
+        let id = UUID()
+        let results = OmniboxSuggester.onDeviceSuggestions(
+            for: "swift",
+            history: [],
+            openTabs: [OpenTabInfo(id: id, title: "Swift.org", url: URL(string: "https://swift.org/")!)],
+            now: now
+        )
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.kind, .openTab(id: id))
+    }
+
+    func testOpenTabOutranksAndDedupesHistoryForSameURL() {
+        let id = UUID()
+        let url = "https://example.com/"
+        let results = OmniboxSuggester.onDeviceSuggestions(
+            for: "example",
+            history: [entry(url, title: "Example", visits: 50)],
+            openTabs: [OpenTabInfo(id: id, title: "Example", url: URL(string: url)!)],
+            now: now
+        )
+        // Same URL collapses to a single row, and the open tab wins.
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.kind, .openTab(id: id))
+    }
+
+    func testActionMatchesByKeyword() {
+        let results = OmniboxSuggester.onDeviceSuggestions(
+            for: "timeline",
+            history: [],
+            actions: OmniboxAction.defaults,
+            now: now
+        )
+        XCTAssertEqual(results.first?.kind, .action)
+        XCTAssertEqual(results.first?.url, InternalPages.timelineURL)
+    }
+
+    func testOnDeviceNeverEmitsNetworkSearchRows() {
+        let results = OmniboxSuggester.onDeviceSuggestions(
+            for: "e",
+            history: [entry("https://example.com/", title: "Example")],
+            bookmarks: [bookmark("https://elm-lang.org/", title: "Elm")],
+            actions: OmniboxAction.defaults,
+            now: now
+        )
+        for result in results {
+            if case .search = result.kind { XCTFail("on-device path must not produce network rows") }
+        }
+    }
+
+    func testHybridWithoutRemoteStaysOnDevice() {
+        let hybrid = OmniboxSuggester.hybridSuggestions(
+            for: "example",
+            history: [entry("https://example.com/", title: "Example")],
+            remoteSuggestions: [],
+            now: now
+        )
+        XCTAssertEqual(hybrid.count, 1)
+        XCTAssertEqual(hybrid.first?.kind, .history)
+    }
 }

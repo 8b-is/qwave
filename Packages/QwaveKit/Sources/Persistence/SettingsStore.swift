@@ -46,6 +46,7 @@ public final class SettingsStore {
         static let hibernationTimeout = "qwave.hibernationTimeout"
         static let homepage = "qwave.homepage"
         static let restoreSession = "qwave.restoreSession"
+        static let networkSuggestions = "qwave.networkSuggestions"
     }
 
     public init(defaults: UserDefaults = .standard) {
@@ -87,5 +88,14 @@ public final class SettingsStore {
     public var restoreSessionOnLaunch: Bool {
         get { defaults.object(forKey: Key.restoreSession) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.restoreSession) }
+    }
+
+    /// When ON, the omnibox may send the typed query to the configured search
+    /// engine to fetch autocomplete suggestions. Defaults to OFF: on-device
+    /// suggestions (history, bookmarks, open tabs, quick actions) never leave
+    /// the machine, and nothing is sent per-keystroke unless the user opts in.
+    public var networkSuggestionsEnabled: Bool {
+        get { defaults.object(forKey: Key.networkSuggestions) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.networkSuggestions) }
     }
 }
