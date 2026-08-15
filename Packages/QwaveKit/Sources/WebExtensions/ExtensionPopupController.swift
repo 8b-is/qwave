@@ -17,16 +17,23 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
 
+        // The popup is the extension's own chrome, loaded off its own bundle —
+        // trusted markup, not a page to defend against. Its scripts run in
+        // `WKContentWorld.page` like any document's do, so the bridge goes
+        // there too; installed into the isolated world it would be invisible to
+        // popup.html and every `browser.*` call in it would throw. Web pages
+        // keep the isolated world (see `WebExtensionHost.installBridge`), which
+        // is where isolation actually defends something.
         configuration.userContentController.add(
             router,
-            contentWorld: ExtensionContentWorld.isolated,
+            contentWorld: ExtensionContentWorld.extensionPage,
             name: BrowserBridgeScript.messageHandlerName
         )
         let script = WKUserScript(
             source: BrowserBridgeScript.source,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true,
-            in: ExtensionContentWorld.isolated
+            in: ExtensionContentWorld.extensionPage
         )
         configuration.userContentController.addUserScript(script)
 

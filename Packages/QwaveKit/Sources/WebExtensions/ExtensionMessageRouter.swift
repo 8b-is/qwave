@@ -24,15 +24,28 @@ public protocol ExtensionMessageResponding {
     func respond(id: Int, success: Bool, value: Any?)
 }
 
-/// The isolated JavaScript world that hosts the `browser.*` bridge, the
-/// `qwaveExtension` message handler, and every injected content script.
+/// The JavaScript worlds the `browser.*` bridge is installed into.
 ///
-/// Page script runs in `WKContentWorld.page` and cannot read, wrap, or
-/// replace anything defined here, so a hostile page can neither call the
-/// native bridge nor tamper with an extension's content script.
+/// There are two surfaces, with different threat models, so they get different
+/// worlds. The world is never assumed: it is carried by the responder and by
+/// each dispatch target, because a reply evaluated into the wrong world lands
+/// where the caller's pending-promise map does not exist.
 public enum ExtensionContentWorld {
+    /// **Untrusted web pages.** Content scripts and the bridge they talk to live
+    /// here. Page script runs in `WKContentWorld.page` and cannot read, wrap, or
+    /// replace anything defined here, so a hostile page can neither call the
+    /// native bridge nor tamper with an extension's content script.
     @MainActor
     public static let isolated = WKContentWorld.world(name: "QwaveExtensions")
+
+    /// **Trusted extension chrome** — the extension's own `popup.html`, loaded
+    /// off its bundle. A document's own `<script>` elements always run in
+    /// `WKContentWorld.page`, so a bridge installed anywhere else is invisible
+    /// to the popup and every `browser.*` call in it throws. Isolation buys
+    /// nothing here: there is no hostile page to isolate the extension *from*,
+    /// only the extension's own markup.
+    @MainActor
+    public static var extensionPage: WKContentWorld { .page }
 }
 
 /// Encodes a value as a JavaScript literal that is safe to splice into an
@@ -99,14 +112,21 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
             let id = body["id"] as? Int,
             let method = body["method"] as? String
         else { return }
-        // Reply into the web view this call came from. A single shared
-        // responder slot would route the reply to whichever surface registered
-        // last (e.g. the most recently opened popup).
+        // Reply into the web view *and the world* this call came from. A single
+        // shared responder slot would route the reply to whichever surface
+        // registered last; a hardcoded world would evaluate the reply where the
+        // caller's pending-promise map does not exist. `message.world` is the
+        // world the bridge that made this call is actually living in, so the
+        // popup (page world) and content scripts (isolated world) both resolve.
         guard let sourceWebView = message.webView else { return }
         let args = (body["args"] as? [Any]) ?? []
         let call = ExtensionBridgeCall(id: id, method: method, args: args)
         let extensionID = "page"
-        handle(call, extensionID: extensionID, replyTo: WebViewBridgeResponder(webView: sourceWebView))
+        handle(
+            call,
+            extensionID: extensionID,
+            replyTo: WebViewBridgeResponder(webView: sourceWebView, world: message.world)
+        )
     }
 
     // MARK: - Routing
@@ -172,8 +192,13 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
     // MARK: - Message Dispatch & Fan-out into WebViews
 
     /// Dispatches a message to all `runtime.onMessage` listeners in a targeted web view.
+    ///
+    /// `world` must be the world that web view's bridge was installed into
+    /// (`ExtensionContentWorld.isolated` for a web page, `.extensionPage` for
+    /// extension chrome) — `__qwaveNative` does not exist in any other.
     public func dispatchMessage(
         to webView: WKWebView,
+        in world: WKContentWorld,
         message: Any,
         sender: [String: Any]? = nil,
         messageId: Int? = nil
@@ -182,35 +207,43 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
         let senderJson = ExtensionJSLiteral.encode(sender ?? [:])
         let idArg = messageId != nil ? "\(messageId!)" : "null"
         let script = "window.__qwaveNative && window.__qwaveNative.dispatchMessage(\(msgJson), \(senderJson), \(idArg));"
-        webView.evaluateJavaScript(script, in: nil, in: ExtensionContentWorld.isolated) { _ in }
+        webView.evaluateJavaScript(script, in: nil, in: world) { _ in }
     }
 
-    /// Broadcasts a message to all registered listeners across multiple web views.
+    /// Broadcasts a message to all registered listeners across multiple web
+    /// views, each paired with the world its bridge lives in.
     public func broadcastMessage(
         message: Any,
         sender: [String: Any]? = nil,
-        across webViews: [WKWebView]
+        across targets: [(webView: WKWebView, world: WKContentWorld)]
     ) {
-        for webView in webViews {
-            dispatchMessage(to: webView, message: message, sender: sender)
+        for target in targets {
+            dispatchMessage(to: target.webView, in: target.world, message: message, sender: sender)
         }
     }
 
 }
 
-/// Evaluates bridge responses into a web view.
+/// Evaluates bridge responses back into the surface a call came from.
+///
+/// The world is a property of the responder, not a global constant: the reply
+/// has to be evaluated in the same world as the bridge that issued the call,
+/// because `__qwaveNative.pending` — the promise map the reply resolves — is a
+/// closure variable of that world's copy of the bridge script.
 @MainActor
 public struct WebViewBridgeResponder: ExtensionMessageResponding {
     public weak var webView: WKWebView?
+    public let world: WKContentWorld
 
-    public init(webView: WKWebView) {
+    public init(webView: WKWebView, world: WKContentWorld) {
         self.webView = webView
+        self.world = world
     }
 
     public func respond(id: Int, success: Bool, value: Any?) {
         guard let webView else { return }
         let payload = ExtensionJSLiteral.encode(value)
         let script = "window.__qwaveNative && window.__qwaveNative.respond(\(id), \(success), \(payload));"
-        webView.evaluateJavaScript(script, in: nil, in: ExtensionContentWorld.isolated) { _ in }
+        webView.evaluateJavaScript(script, in: nil, in: world) { _ in }
     }
 }

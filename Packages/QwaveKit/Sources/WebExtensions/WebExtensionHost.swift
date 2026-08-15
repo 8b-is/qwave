@@ -65,23 +65,27 @@ public final class WebExtensionHost {
         contentScriptEngine.resolveScripts(for: url, extensions: registry.extensions)
     }
 
-    /// Dispatches a message to all `browser.runtime.onMessage` listeners in a targeted web view.
+    /// Dispatches a message to all `browser.runtime.onMessage` listeners in a
+    /// targeted web view. `world` defaults to the web-page surface's world;
+    /// extension chrome must pass `ExtensionContentWorld.extensionPage`.
     public func dispatchMessage(
         to webView: WKWebView,
+        in world: WKContentWorld = ExtensionContentWorld.isolated,
         message: Any,
         sender: [String: Any]? = nil,
         messageId: Int? = nil
     ) {
-        router.dispatchMessage(to: webView, message: message, sender: sender, messageId: messageId)
+        router.dispatchMessage(to: webView, in: world, message: message, sender: sender, messageId: messageId)
     }
 
-    /// Broadcasts a message to all listeners across multiple web views.
+    /// Broadcasts a message to all listeners across multiple web views, each
+    /// paired with the world its bridge lives in.
     public func broadcastMessage(
         message: Any,
         sender: [String: Any]? = nil,
-        across webViews: [WKWebView]
+        across targets: [(webView: WKWebView, world: WKContentWorld)]
     ) {
-        router.broadcastMessage(message: message, sender: sender, across: webViews)
+        router.broadcastMessage(message: message, sender: sender, across: targets)
     }
 
     /// Removes the bridge and user scripts (web view teardown).
