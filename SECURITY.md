@@ -97,9 +97,12 @@ Qwave distinguishes three traffic classes:
    behavior. Qwave documents known behavior but cannot claim to control every
    request Apple WebKit may make.
 
-Qwave has no product analytics or behavioral telemetry. Category-A hosts are
-checked by `EgressGuardTests`; adding a new app-owned host requires an allowlist
-change, documentation, and tests.
+Qwave has no product analytics or behavioral telemetry. Fixed-host Category-A
+clients are checked both at runtime, by `EgressGuard` (a `URLProtocol` that
+consults the committed `EgressAllowlist` before a request reaches the
+network — see [docs/NETWORK.md](docs/NETWORK.md)), and by `EgressGuardTests`
+in CI; adding a new app-owned host requires an allowlist change, wiring
+`EgressGuard` into that client's session, documentation, and tests.
 
 ## Cryptography and release integrity
 

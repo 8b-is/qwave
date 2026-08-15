@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import QwaveSupport
 import Security
 
 /// Pins the `api.mullvad.net` TLS chain to the ISRG roots. See docs/PINNING.md
@@ -114,9 +115,18 @@ extension URLSession {
     /// A URLSession that pins `api.mullvad.net` to the ISRG roots. Used by the
     /// Mullvad control-API client. `URLSession.shared` cannot carry a
     /// delegate, so the app builds this and injects it.
+    ///
+    /// This is a custom-configuration session, so the process-wide
+    /// `EgressGuard.registerClass` at launch does not reach it (see
+    /// `EgressGuard`'s doc comment) — `EgressGuard.install` adds it to this
+    /// configuration's own `protocolClasses` explicitly, so every request
+    /// this session makes is checked against `EgressAllowlist` before it
+    /// reaches the network, on top of the certificate pin.
     public static func mullvadPinned() -> URLSession {
-        URLSession(
-            configuration: .ephemeral,
+        let configuration = URLSessionConfiguration.ephemeral
+        EgressGuard.install(into: configuration)
+        return URLSession(
+            configuration: configuration,
             delegate: MullvadPinningDelegate(),
             delegateQueue: nil
         )

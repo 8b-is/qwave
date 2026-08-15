@@ -102,26 +102,32 @@ not a process-wide egress monitor.
 
 **What the allowlist is, honestly.** The committed
 [allowlist of permitted hosts](../Packages/QwaveKit/Sources/QwaveSupport/EgressAllowlist.swift)
-is a **reviewed test oracle, not a runtime enforcement point**.
-`EgressAllowlist.permits(host:)` has no production call site — every caller is
-in `EgressGuardTests` — so a running Qwave never consults it, and no request is
-checked against it at runtime. What CI actually runs is a set of hand-written
-assertions pinning three known endpoints (`MullvadAPIClient().baseURL`,
-`MemoryWavePreferences.defaultRemoteBaseURL`, and the literal `github.com`)
-plus a rejection test for unknown hosts. Nothing enumerates network call sites,
-so **adding a `URLSession` call to a new host does not fail CI on its own** — a
-reviewer has to notice and add the assertion. This page previously claimed
-otherwise. `duckduckgo.com` above was the live proof: it was Category A,
-hardcoded in Qwave's source, and until [#78](https://github.com/8b-is/qwave/issues/78)
-was fixed it was on neither the allowlist nor this table, with CI green
-throughout. It is now on both — `EgressAllowlist.hosts` lists it and
-`EgressGuardTests.testDuckDuckGoSuggestionEndpointIsAllowlisted` pins it — but
-that fix was a reviewer noticing, not a mechanical check; the next hardcoded
-host to appear in a call site can still slip past CI the same way. Tracked as
-[#77](https://github.com/8b-is/qwave/issues/77) (the gate's real scope). The
-allowlist is still worth keeping — it is the committed statement of intent a
-reviewer checks a diff against — but it is a review aid, not a mechanical
-guarantee.
+is now backed by a real runtime enforcement point,
+[`EgressGuard`](../Packages/QwaveKit/Sources/QwaveSupport/EgressGuard.swift): a
+`URLProtocol` that consults `EgressAllowlist.permits(host:)` and fails any
+request whose host is not listed, wired into every fixed-host Qwave client —
+`MullvadAPIClient` (via `URLSession.mullvadPinned()`), the DuckDuckGo
+suggestion provider, and, through a process-wide
+`URLProtocol.registerClass` at launch, any client that uses a default- or
+shared-configuration session. `duckduckgo.com` is on the allowlist as of this
+change ([#78](https://github.com/8b-is/qwave/issues/78)) precisely because
+runtime enforcement would otherwise break the opt-in suggestion feature the
+moment someone turned it on.
+
+This closes the runtime half of [#77](https://github.com/8b-is/qwave/issues/77),
+but it is still not a mechanical guarantee over the whole codebase, and CI
+still runs the same hand-written assertions pinning three known endpoints
+(`MullvadAPIClient().baseURL`, `MemoryWavePreferences.defaultRemoteBaseURL`,
+and the literal `github.com`) plus a rejection test for unknown hosts. Nothing
+enumerates network call sites, so **a new fixed-host `URLSession` client that
+does not call `EgressGuard.install(into:)` is not caught** — a reviewer still
+has to notice it and wire it up, same as before. And by design `EgressGuard`
+does not gate every Category-A client: Memory Wave's remote provider is
+deliberately open to any user-typed HTTPS endpoint (guarded instead by
+`EndpointRedirectPolicy` and `MemoryWavePolicy`, [#88](https://github.com/8b-is/qwave/pull/88)),
+and `FaviconLoader` / the remote-markdown fetch are page-driven rather than a
+fixed set of hosts. See `EgressGuard`'s doc comment for the full, per-client
+rationale.
 
 ## Category B — pages you asked for
 

@@ -1,4 +1,5 @@
 import Foundation
+import QwaveSupport
 
 /// A suggestion returned from a remote search engine provider.
 public struct RemoteSearchSuggestion: Equatable, Sendable {
@@ -46,7 +47,10 @@ public enum SearchSuggestionParser {
 
 /// Privacy-first DuckDuckGo suggestion provider using ephemeral, cookieless transport.
 public final class DuckDuckGoSuggestionProvider: SearchSuggestionProviding, @unchecked Sendable {
-    private let session: URLSession
+    /// Internal (not `private`) so `@testable import BrowserCore` can assert
+    /// the default session is wired with `EgressGuard` (see
+    /// `EgressGuardTests`), without exposing it as public API.
+    let session: URLSession
 
     public init(session: URLSession? = nil) {
         if let session {
@@ -56,6 +60,12 @@ public final class DuckDuckGoSuggestionProvider: SearchSuggestionProviding, @unc
             config.httpCookieStorage = nil
             config.httpShouldSetCookies = false
             config.timeoutIntervalForRequest = 3.0
+            // Custom configuration, so the process-wide EgressGuard
+            // registration at launch does not reach this session (see
+            // EgressGuard's doc comment) — install it explicitly so a
+            // request here is checked against EgressAllowlist too, not
+            // just pinned to `duckduckgo.com` by convention. See #77.
+            EgressGuard.install(into: config)
             self.session = URLSession(configuration: config)
         }
     }
