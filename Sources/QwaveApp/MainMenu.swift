@@ -121,6 +121,11 @@ enum MainMenu {
         viewMenu.addItem(
             withTitle: "Zoom Out", action: #selector(BrowserWindowController.zoomOut(_:)), keyEquivalent: "-")
         viewMenu.addItem(.separator())
+        let spacesSidebar = viewMenu.addItem(
+            withTitle: "Show Spaces Sidebar",
+            action: #selector(BrowserWindowController.toggleSpacesSidebar(_:)), keyEquivalent: "s")
+        spacesSidebar.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(.separator())
         let fullScreen = viewMenu.addItem(
             withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]

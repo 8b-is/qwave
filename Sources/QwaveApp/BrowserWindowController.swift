@@ -26,6 +26,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     var onSessionChange: (() -> Void)?
 
     private let tabBar = TabBarView()
+    /// Arc-style vertical Spaces sidebar; lives alongside the horizontal strip
+    /// and starts hidden (toggle via View ▸ Show Spaces Sidebar, ⌃⌘S).
+    private let sidebar = SpacesSidebarView()
     private let containerView = WebViewContainerView()
     private let findBar = FindBarView()
     private let findController = FindInPageController()
@@ -96,6 +99,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         setupContent()
         wireTabManager()
         wireTabBar()
+        wireSidebar()
         wireFindBar()
         wireSuggestions()
         // Toolbar items materialise lazily; the summarize button may not exist
@@ -145,13 +149,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         stack.spacing = 0
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(stack)
+
+        // Sidebar starts collapsed; a hidden arranged view contributes no width.
+        sidebar.isHidden = true
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+
+        let columns = NSStackView(views: [sidebar, stack])
+        columns.orientation = .horizontal
+        columns.spacing = 0
+        columns.distribution = .fill
+        columns.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(columns)
 
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            columns.topAnchor.constraint(equalTo: contentView.topAnchor),
+            columns.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            columns.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            columns.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 220),
             findBar.heightAnchor.constraint(equalToConstant: 30),
             findBar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             containerView.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -191,6 +206,75 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         containerView.onDropFile = { [weak self] url in
             self?.openNewTab(url: url, activate: true)
         }
+    }
+
+    private func wireSidebar() {
+        sidebar.onSelectSpace = { [weak self] spaceID in
+            self?.selectSpace(spaceID)
+        }
+        sidebar.onSelectTab = { [weak self] id in
+            self?.tabManager.select(tabID: id)
+        }
+        sidebar.onCloseTab = { [weak self] id in
+            self?.tabManager.close(tabID: id)
+        }
+        sidebar.onNewTab = { [weak self] spaceID in
+            self?.openNewTab(url: nil, containerID: spaceID, ephemeral: false, activate: true)
+        }
+    }
+
+    /// Switches the window's active Space (container). Activates the first
+    /// existing tab in that Space, or opens a fresh one there when empty —
+    /// which switches the visible container store for the window.
+    private func selectSpace(_ spaceID: UUID?) {
+        let placements = tabManager.tabs.map {
+            TabPlacement(id: $0.id, containerID: $0.containerID, isEphemeral: $0.isEphemeral)
+        }
+        if let first = SpacesLayout.firstTabID(inSpace: spaceID, tabs: placements) {
+            tabManager.select(tabID: first)
+        } else {
+            openNewTab(url: nil, containerID: spaceID, ephemeral: false, activate: true)
+        }
+    }
+
+    /// Rebuilds the sidebar's Space chips and the active Space's vertical tab
+    /// list. The active Space is derived from the selected tab's container so
+    /// the sidebar and the shown page never disagree; an ephemeral/private tab
+    /// highlights no Space and the list falls back to the default Space.
+    private func updateSidebar() {
+        guard !sidebar.isHidden else { return }
+        let placements = tabManager.tabs.map {
+            TabPlacement(id: $0.id, containerID: $0.containerID, isEphemeral: $0.isEphemeral)
+        }
+        let selected = tabManager.selectedTab
+        let activeSpaceID = (selected?.isEphemeral == true) ? nil : selected?.containerID
+        let hasActiveSpace = selected != nil && selected?.isEphemeral == false
+
+        let chips = SpacesLayout.spaces(from: environment.containers.profiles).map { descriptor in
+            SpaceChipModel(
+                id: descriptor.id,
+                name: descriptor.name,
+                colorHex: descriptor.colorHex,
+                tabCount: SpacesLayout.tabIDs(inSpace: descriptor.id, tabs: placements).count,
+                isActive: hasActiveSpace && descriptor.id == activeSpaceID
+            )
+        }
+
+        let listSpaceID = activeSpaceID
+        let visibleTabIDs = Set(SpacesLayout.tabIDs(inSpace: listSpaceID, tabs: placements))
+        let tabModels = tabModels(for: tabManager.tabs.filter { visibleTabIDs.contains($0.id) })
+        sidebar.update(
+            spaces: chips,
+            tabs: tabModels,
+            selectedID: tabManager.selectedTabID,
+            listSpaceID: listSpaceID
+        )
+    }
+
+    /// Toolbar/menu action: show or hide the vertical Spaces sidebar.
+    @objc func toggleSpacesSidebar(_ sender: Any?) {
+        sidebar.isHidden.toggle()
+        updateSidebar()
     }
 
     private func wireSuggestions() {
@@ -333,13 +417,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Rendering
 
-    private func render() {
-        if tabManager.isEmpty {
-            appendFreshTab(activate: true)
-            return
-        }
-
-        let models = tabManager.tabs.map { tab in
+    /// Builds display models for a set of tabs, shared by the horizontal strip
+    /// and the vertical sidebar.
+    private func tabModels(for tabs: [BrowserCore.Tab]) -> [TabDisplayModel] {
+        tabs.map { tab in
             TabDisplayModel(
                 id: tab.id,
                 title: tab.displayTitle,
@@ -353,7 +434,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                         forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
             )
         }
+    }
+
+    private func render() {
+        if tabManager.isEmpty {
+            appendFreshTab(activate: true)
+            return
+        }
+
+        let models = tabModels(for: tabManager.tabs)
         tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
+        updateSidebar()
 
         if let selected = tabManager.selectedTab {
             let webView = ensureWebView(for: selected)
@@ -425,21 +516,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
 
         // Refresh the tab strip labels (title/loading changed).
-        let models = tabManager.tabs.map { tab in
-            TabDisplayModel(
-                id: tab.id,
-                title: tab.displayTitle,
-                isPinned: tab.isPinned,
-                isHibernated: tab.isHibernated,
-                isLoading: tab.isLoading,
-                isEphemeral: tab.isEphemeral,
-                containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
-                favicon: tab.favicon
-                    ?? faviconLoader.cachedIcon(
-                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
-            )
-        }
-        tabBar.update(tabs: models, selectedID: tabManager.selectedTabID)
+        tabBar.update(tabs: tabModels(for: tabManager.tabs), selectedID: tabManager.selectedTabID)
+        updateSidebar()
     }
 
     private func focusOmnibox() {
