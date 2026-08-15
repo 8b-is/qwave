@@ -257,66 +257,97 @@ private final class RecordingResponder: ExtensionMessageResponding {
 
 @MainActor
 final class ExtensionMessageRouterTests: XCTestCase {
-    private func makeRouter() -> (router: ExtensionMessageRouter, responder: RecordingResponder) {
+    /// Installs a real extension bundle declaring `permissions` into the
+    /// router's registry and returns its resolved `id`, so tests exercise the
+    /// same permission gate production traffic goes through rather than an
+    /// arbitrary unregistered string.
+    @discardableResult
+    private func installExtension(
+        into registry: WebExtensionRegistry, permissions: [String] = ["storage", "tabs"]
+    ) throws -> String {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-ext-router-bundle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let permissionsJSON = permissions.map { "\"\($0)\"" }.joined(separator: ", ")
+        let manifest = """
+            { "name": "Router Test Ext", "version": "1.0", "manifest_version": 3,
+              "permissions": [\(permissionsJSON)] }
+            """
+        try manifest.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        let ext = try registry.install(bundleDirectory: dir)
+        return ext.id
+    }
+
+    private func makeRouter(permissions: [String] = ["storage", "tabs"]) throws -> (
+        router: ExtensionMessageRouter, responder: RecordingResponder, extensionID: String
+    ) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-ext-router-\(UUID().uuidString)", isDirectory: true)
         let defaults = UserDefaults(suiteName: "qwave-test-router-\(UUID().uuidString)")!
+        let registry = WebExtensionRegistry(defaults: defaults)
+        let extensionID = try installExtension(into: registry, permissions: permissions)
         let router = ExtensionMessageRouter(
-            registry: WebExtensionRegistry(defaults: defaults),
+            registry: registry,
             storage: ExtensionStorageService(directory: dir)
         )
         let responder = RecordingResponder()
         router.responder = responder
-        return (router, responder)
+        return (router, responder, extensionID)
     }
 
-    func testStorageRouting() {
-        let (router, responder) = makeRouter()
+    func testStorageRouting() throws {
+        let (router, responder, extensionID) = try makeRouter()
         router.handle(
-            ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: "e1")
-        router.handle(ExtensionBridgeCall(id: 2, method: "storage.local.get", args: [NSNull()]), extensionID: "e1")
+            ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: extensionID)
+        router.handle(
+            ExtensionBridgeCall(id: 2, method: "storage.local.get", args: [NSNull()]), extensionID: extensionID)
         XCTAssertEqual(responder.responses.count, 2)
         XCTAssertEqual(responder.responses[1].id, 2)
         XCTAssertEqual((responder.responses[1].value as? [String: Any])?["pref"] as? String, "on")
 
-        router.handle(ExtensionBridgeCall(id: 3, method: "storage.local.remove", args: [["pref"]]), extensionID: "e1")
-        router.handle(ExtensionBridgeCall(id: 4, method: "storage.local.get", args: [NSNull()]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 3, method: "storage.local.remove", args: [["pref"]]), extensionID: extensionID)
+        router.handle(
+            ExtensionBridgeCall(id: 4, method: "storage.local.get", args: [NSNull()]), extensionID: extensionID)
         let afterRemove = responder.responses.last?.value as? [String: Any]
         XCTAssertEqual(afterRemove?.isEmpty, true)
     }
 
-    func testTabQueryRouting() {
-        let (router, responder) = makeRouter()
+    func testTabQueryRouting() throws {
+        let (router, responder, extensionID) = try makeRouter()
         router.tabQueryHandler = { query in
             XCTAssertEqual(query["active"] as? Bool, true)
             return [["id": 7, "url": "https://example.com"]]
         }
-        router.handle(ExtensionBridgeCall(id: 4, method: "tabs.query", args: [["active": true]]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 4, method: "tabs.query", args: [["active": true]]), extensionID: extensionID)
         let tabs = responder.responses.first?.value as? [[String: Any]]
         XCTAssertEqual(tabs?.first?["id"] as? Int, 7)
     }
 
-    func testTabCreateRouting() {
-        let (router, _) = makeRouter()
+    func testTabCreateRouting() throws {
+        let (router, _, extensionID) = try makeRouter()
         var created: [String: Any]?
         router.tabCreateHandler = { props in created = props }
         router.handle(
-            ExtensionBridgeCall(id: 5, method: "tabs.create", args: [["url": "https://qwave.app"]]), extensionID: "e1")
+            ExtensionBridgeCall(id: 5, method: "tabs.create", args: [["url": "https://qwave.app"]]),
+            extensionID: extensionID)
         XCTAssertEqual(created?["url"] as? String, "https://qwave.app")
     }
 
-    func testRuntimeSendMessageWithAsyncReply() {
-        let (router, responder) = makeRouter()
+    func testRuntimeSendMessageWithAsyncReply() throws {
+        let (router, responder, extensionID) = try makeRouter()
         router.runtimeMessageHandler = { payload, reply in
             XCTAssertEqual(payload as? String, "ping")
             reply("pong")
         }
-        router.handle(ExtensionBridgeCall(id: 6, method: "runtime.sendMessage", args: ["ping"]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 6, method: "runtime.sendMessage", args: ["ping"]), extensionID: extensionID)
         XCTAssertEqual(responder.responses.first?.value as? String, "pong")
     }
 
-    func testRuntimeSendMessageWithDelayedReply() async {
-        let (router, responder) = makeRouter()
+    func testRuntimeSendMessageWithDelayedReply() async throws {
+        let (router, responder, extensionID) = try makeRouter()
         router.runtimeMessageHandler = { payload, reply in
             XCTAssertEqual(payload as? String, "ping")
             Task { @MainActor in
@@ -325,7 +356,8 @@ final class ExtensionMessageRouterTests: XCTestCase {
             }
         }
 
-        router.handle(ExtensionBridgeCall(id: 10, method: "runtime.sendMessage", args: ["ping"]), extensionID: "e1")
+        router.handle(
+            ExtensionBridgeCall(id: 10, method: "runtime.sendMessage", args: ["ping"]), extensionID: extensionID)
         XCTAssertTrue(responder.responses.isEmpty)
 
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -334,8 +366,8 @@ final class ExtensionMessageRouterTests: XCTestCase {
         XCTAssertEqual(responder.responses.first?.value as? String, "pong")
     }
 
-    func testOnMessageReplyRouting() {
-        let (router, _) = makeRouter()
+    func testOnMessageReplyRouting() throws {
+        let (router, _, extensionID) = try makeRouter()
         var replyReceivedId: Int?
         var replyReceivedPayload: Any?
         router.onMessageReplyHandler = { id, payload in
@@ -345,7 +377,7 @@ final class ExtensionMessageRouterTests: XCTestCase {
 
         router.handle(
             ExtensionBridgeCall(id: 42, method: "runtime.onMessageReply", args: [["status": "acknowledged"]]),
-            extensionID: "e1"
+            extensionID: extensionID
         )
 
         XCTAssertEqual(replyReceivedId, 42)
@@ -353,18 +385,18 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     func testNestedBridgeArgumentsRouteWithoutLeavingMainActor() throws {
-        let (router, responder) = makeRouter()
+        let (router, responder, extensionID) = try makeRouter()
         router.handle(
             ExtensionBridgeCall(
                 id: 7,
                 method: "storage.local.set",
                 args: [["settings": ["theme": "dark", "zoom": 1.25]]]
             ),
-            extensionID: "e1"
+            extensionID: extensionID
         )
         router.handle(
             ExtensionBridgeCall(id: 8, method: "storage.local.get", args: [["settings"]]),
-            extensionID: "e1"
+            extensionID: extensionID
         )
 
         let settings = try XCTUnwrap(
@@ -374,20 +406,20 @@ final class ExtensionMessageRouterTests: XCTestCase {
         XCTAssertEqual(settings["zoom"] as? Double, 1.25)
     }
 
-    func testUnknownMethodFails() {
-        let (router, responder) = makeRouter()
-        router.handle(ExtensionBridgeCall(id: 9, method: "nope.nope", args: []), extensionID: "e1")
+    func testUnknownMethodFails() throws {
+        let (router, responder, extensionID) = try makeRouter()
+        router.handle(ExtensionBridgeCall(id: 9, method: "nope.nope", args: []), extensionID: extensionID)
         XCTAssertEqual(responder.responses.first?.success, false)
     }
 
     /// A reply must land on the surface the call came from, never on whichever
     /// responder happened to register last.
-    func testReplyGoesToTheCallingSurfaceNotTheSharedSlot() {
-        let (router, sharedSlot) = makeRouter()
+    func testReplyGoesToTheCallingSurfaceNotTheSharedSlot() throws {
+        let (router, sharedSlot, extensionID) = try makeRouter()
         let callingSurface = RecordingResponder()
         router.handle(
             ExtensionBridgeCall(id: 11, method: "storage.local.set", args: [["pref": "on"]]),
-            extensionID: "e1",
+            extensionID: extensionID,
             replyTo: callingSurface
         )
         XCTAssertEqual(callingSurface.responses.count, 1)
@@ -396,8 +428,8 @@ final class ExtensionMessageRouterTests: XCTestCase {
     }
 
     /// The async `runtime.sendMessage` reply must also stay on the calling surface.
-    func testAsyncReplyGoesToTheCallingSurface() async {
-        let (router, sharedSlot) = makeRouter()
+    func testAsyncReplyGoesToTheCallingSurface() async throws {
+        let (router, sharedSlot, extensionID) = try makeRouter()
         let callingSurface = RecordingResponder()
         router.runtimeMessageHandler = { _, reply in
             Task { @MainActor in
@@ -407,12 +439,104 @@ final class ExtensionMessageRouterTests: XCTestCase {
         }
         router.handle(
             ExtensionBridgeCall(id: 12, method: "runtime.sendMessage", args: ["ping"]),
-            extensionID: "e1",
+            extensionID: extensionID,
             replyTo: callingSurface
         )
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(callingSurface.responses.first?.value as? String, "pong")
         XCTAssertTrue(sharedSlot.responses.isEmpty)
+    }
+
+    // MARK: - Permission gate (#75)
+
+    /// An extension that never declared `storage` in its manifest must not be
+    /// able to reach `storage.local.*` — declaring permissions, or omitting
+    /// them, must not produce identical runtime behaviour.
+    func testStorageDeniedWithoutStoragePermission() throws {
+        let (router, responder, extensionID) = try makeRouter(permissions: ["tabs"])
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.first?.success, false)
+        XCTAssertEqual(responder.responses.first?.value as? String, "Missing permission: storage")
+
+        router.handle(
+            ExtensionBridgeCall(id: 2, method: "storage.local.get", args: [NSNull()]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.last?.success, false)
+
+        router.handle(
+            ExtensionBridgeCall(id: 3, method: "storage.local.remove", args: [["pref"]]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.last?.success, false)
+    }
+
+    /// The mirror case: declaring `storage` grants access.
+    func testStorageAllowedWithStoragePermission() throws {
+        let (router, responder, extensionID) = try makeRouter(permissions: ["storage"])
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "storage.local.set", args: [["pref": "on"]]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.first?.success, true)
+    }
+
+    /// An extension that never declared `tabs` must not be able to reach
+    /// `tabs.query`/`tabs.create` — the underlying handlers must not even run.
+    func testTabsDeniedWithoutTabsPermission() throws {
+        let (router, responder, extensionID) = try makeRouter(permissions: ["storage"])
+        var queryHandlerCalled = false
+        router.tabQueryHandler = { _ in
+            queryHandlerCalled = true
+            return []
+        }
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "tabs.query", args: [["active": true]]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.first?.success, false)
+        XCTAssertEqual(responder.responses.first?.value as? String, "Missing permission: tabs")
+        XCTAssertFalse(queryHandlerCalled, "tabs.query must not run its handler without the tabs permission")
+
+        var createHandlerCalled = false
+        router.tabCreateHandler = { _ in createHandlerCalled = true }
+        router.handle(
+            ExtensionBridgeCall(id: 2, method: "tabs.create", args: [["url": "https://qwave.app"]]),
+            extensionID: extensionID)
+        XCTAssertEqual(responder.responses.last?.success, false)
+        XCTAssertFalse(createHandlerCalled, "tabs.create must not run its handler without the tabs permission")
+    }
+
+    /// The mirror case: declaring `tabs` grants access.
+    func testTabsAllowedWithTabsPermission() throws {
+        let (router, responder, extensionID) = try makeRouter(permissions: ["tabs"])
+        router.tabQueryHandler = { _ in [["id": 1]] }
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "tabs.query", args: [["active": true]]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.first?.success, true)
+    }
+
+    /// A caller identity that isn't an installed extension at all (the
+    /// shared-bridge placeholder used when zero or multiple extensions are
+    /// installed) has no permissions and is denied, never silently granted.
+    func testUnknownExtensionIdentityIsDeniedGatedMethods() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-ext-router-\(UUID().uuidString)", isDirectory: true)
+        let defaults = UserDefaults(suiteName: "qwave-test-router-\(UUID().uuidString)")!
+        let router = ExtensionMessageRouter(
+            registry: WebExtensionRegistry(defaults: defaults),
+            storage: ExtensionStorageService(directory: dir)
+        )
+        let responder = RecordingResponder()
+        router.responder = responder
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "storage.local.get", args: [NSNull()]), extensionID: "page")
+        XCTAssertEqual(responder.responses.first?.success, false)
+    }
+
+    /// `runtime.sendMessage` is intentionally ungated — it must keep working
+    /// even for an extension that declares no permissions at all.
+    func testRuntimeMessagingIsUngated() throws {
+        let (router, responder, extensionID) = try makeRouter(permissions: [])
+        router.runtimeMessageHandler = { payload, reply in
+            reply(payload)
+        }
+        router.handle(
+            ExtensionBridgeCall(id: 1, method: "runtime.sendMessage", args: ["ping"]), extensionID: extensionID)
+        XCTAssertEqual(responder.responses.first?.value as? String, "ping")
     }
 }
 
