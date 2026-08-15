@@ -27,16 +27,41 @@ public struct NullMemoryProvider: MemoryProviding {
 /// but any HTTPS endpoint that speaks the same schema works — Ollama,
 /// LM Studio, vLLM, a self-hosted proxy.
 public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
+    /// Seconds of silence tolerated before a request is abandoned.
+    public static let defaultTimeout: TimeInterval = 30
+    /// Ceiling on the whole exchange, so an endpoint that dribbles bytes
+    /// cannot hold the summarize flow open. `URLSession.shared` would allow
+    /// seven days here.
+    public static let defaultResourceTimeout: TimeInterval = 60
+
+    /// Ephemeral so a session carrying a bearer token shares no cookie or
+    /// cache storage, and shared so repeated inferences reuse one connection
+    /// pool instead of leaking a session per call.
+    private static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = defaultTimeout
+        configuration.timeoutIntervalForResource = defaultResourceTimeout
+        return URLSession(configuration: configuration)
+    }()
+
     public var baseURL: URL
     public var model: String
     public var apiKey: String
+    public var timeout: TimeInterval
     public var session: URLSession
 
-    public init(baseURL: URL, model: String, apiKey: String, session: URLSession = .shared) {
+    public init(
+        baseURL: URL,
+        model: String,
+        apiKey: String,
+        timeout: TimeInterval = OpenAICompatibleProvider.defaultTimeout,
+        session: URLSession? = nil
+    ) {
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
-        self.session = session
+        self.timeout = timeout
+        self.session = session ?? Self.defaultSession
     }
 
     public var kind: MemoryProviderKind { .openaiCompatible }
@@ -50,7 +75,7 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
             throw MemoryProviderError.insecureEndpoint
         }
         let endpoint = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: endpoint, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")

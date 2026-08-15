@@ -16,6 +16,11 @@ All notable changes to Qwave will be documented in this file.
   never makes a network request — the model, the page text, and the summary
   never leave the Mac. See `docs/SUMMARIZE.md`.
 
+### Fixed
+- Memory Wave's remote OpenAI-compatible provider now applies an explicit
+  request timeout (30s idle, 60s overall), so an endpoint that hangs or
+  dribbles bytes can no longer stall inference indefinitely.
+
 ## [1.0.0] - 2026-08-14
 
 **Production Release: Web3 & WebKit-Native Sovereign macOS Browser.**

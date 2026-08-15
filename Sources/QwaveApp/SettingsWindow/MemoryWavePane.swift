@@ -48,6 +48,11 @@ struct MemoryWavePane: View {
 
             if provider == .openaiCompatible {
                 Section("Remote endpoint") {
+                    Text(
+                        "Pages you summarise or ask about with this provider are sent to this endpoint. Nothing else is: stored memories stay on this Mac, and timeline summaries send only titles and times."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     TextField("Base URL", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: baseURL) { _, newValue in

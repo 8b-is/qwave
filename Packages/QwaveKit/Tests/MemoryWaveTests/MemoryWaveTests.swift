@@ -564,8 +564,77 @@ final class WaveDirectorTests: XCTestCase {
     }
 }
 
+/// The remote provider is the one deliberate step outside `EgressAllowlist`
+/// (the base URL is user-configurable). It must therefore carry an explicit
+/// deadline: a hung endpoint must not hold the summarize flow open.
+final class RemoteProviderTimeoutTests: XCTestCase {
+    func testDefaultSessionCarriesBothDeadlines() {
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key"
+        )
+        let configuration = provider.session.configuration
+        XCTAssertEqual(provider.timeout, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, OpenAICompatibleProvider.defaultTimeout)
+        XCTAssertEqual(configuration.timeoutIntervalForResource, OpenAICompatibleProvider.defaultResourceTimeout)
+        // URLSession.shared's resource ceiling is seven days; ours is a minute.
+        XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
+    }
+
+    func testOutgoingRequestCarriesTimeout() async throws {
+        let captured = RequestCapture()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CaptureProtocol.self]
+        CaptureProtocol.capture = captured
+        CaptureProtocol.responseJSON = """
+            {"choices":[{"message":{"role":"assistant","content":"ok"}}]}
+            """
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 7,
+            session: URLSession(configuration: config)
+        )
+        let text = try await provider.complete(system: "system", user: "user")
+        XCTAssertEqual(text, "ok")
+        XCTAssertEqual(captured.timeout, 7)
+    }
+
+    func testHungEndpointFailsInsteadOfHanging() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HangingProtocol.self]
+
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 1,
+            session: URLSession(configuration: config)
+        )
+        do {
+            _ = try await provider.complete(system: "system", user: "user")
+            XCTFail("Expected the hung endpoint to time out")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .timedOut)
+        }
+    }
+}
+
 private final class RequestCapture: @unchecked Sendable {
     var body: Data?
+    var timeout: TimeInterval?
+}
+
+/// Accepts the connection and then never answers, standing in for an endpoint
+/// that hangs.
+private final class HangingProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {}
+    override func stopLoading() {}
 }
 
 private final class CaptureProtocol: URLProtocol {
@@ -577,6 +646,7 @@ private final class CaptureProtocol: URLProtocol {
 
     override func startLoading() {
         Self.capture?.body = request.httpBody ?? httpBodyFromStream(request)
+        Self.capture?.timeout = request.timeoutInterval
         let data = Data(Self.responseJSON.utf8)
         let response = HTTPURLResponse(
             url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
