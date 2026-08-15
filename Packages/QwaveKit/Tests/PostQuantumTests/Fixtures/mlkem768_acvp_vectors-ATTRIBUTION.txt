@@ -20,14 +20,60 @@ Sources, both gen-val/json-files/:
 
 Retrieved 2026-08-15.
 
-Selection: parameterSet "ML-KEM-768" only, from testGroups tgId 2 (keyGen
-AFT), 2 (encapsulation AFT), 5 (decapsulation VAL) and 10
-(encapsulationKeyCheck VAL). 29 of the 53 available ML-KEM-768 cases were
-kept, sampled evenly across each group and, for the VAL groups, balanced
-across the distinct "reason" values. The hex payloads are byte-identical to
-the upstream files, lowercased; no value was recomputed, reordered or
-adjusted. The full upstream files are ~2 MB, which is why a subset is
-committed rather than the whole thing.
+Denominator (counted directly from the two files at the commits above):
+parameterSet "ML-KEM-768" has 80 cases in total, spread over five test
+groups.
+
+  file          tgId  testType  function                cases
+  keyGen           2  AFT       (keyGen)                   25
+  encapDecap       2  AFT       encapsulation              25
+  encapDecap       5  VAL       decapsulation              10
+  encapDecap       9  VAL       decapsulationKeyCheck      10
+  encapDecap      10  VAL       encapsulationKeyCheck      10
+                                                        -----
+                                                           80
+
+tgId 9 (decapsulationKeyCheck) is deliberately skipped in full — there is no
+`validateDecapsulationKey` API to run it against, and 10 x 4.8 KB of `dk`
+exceeds the fixture size budget. Excluding it, 70 cases are runnable in
+principle.
+
+Selection: 29 cases are committed. Against the four groups actually drawn
+from that is 29 of 70; against every ML-KEM-768 case upstream, 29 of 80.
+
+  keyGen tgId 2           7 of 25  tc26,29,33,36,40,43,47   (spread over
+                                   the group's tc26-50 range, stride 3-4)
+  encapsulation tgId 2    8 of 25  tc26,29,32,35,38,41,44,47 (stride 3 from
+                                   the start of the group's tc26-50 range)
+  decapsulation tgId 5    6 of 10  tc86,87,88,90,91,93 — NOT evenly spaced;
+                                   picked to balance the "reason" values
+                                   3 "valid decapsulation" (tc86,87,90) and
+                                   3 "modified ciphertext" (tc88,91,93)
+  encapsulationKeyCheck  8 of 10   tc136-143 — the FIRST EIGHT CONTIGUOUS
+    tgId 10                        cases of the group's tc136-145 range, not
+                                   a spread sample. It happens to balance the
+                                   reasons 4/4 (valid encapsulation key:
+                                   tc136,139,140,143; noisy linear system
+                                   values too large: tc137,138,141,142), so
+                                   both outcomes are exercised, but tc144 and
+                                   tc145 are simply not included.
+
+Fidelity: every hex payload is byte-identical to the upstream file,
+lowercased. No value was recomputed, reordered or adjusted. Two structural
+(non-value) changes were made, and they are the only ones:
+
+  1. Upstream groups cases under "testGroups"/"tests" with a numeric "tcId".
+     Here each group is a top-level array (keyGen, encapsulation,
+     decapsulation, encapsulationKeyCheck) and "tcId" is rendered as a
+     "name" string ("acvp-keyGen-tc26" etc.) so a failing Swift Testing case
+     names its upstream case. The tc number is preserved verbatim.
+  2. In the encapsulationKeyCheck cases, upstream's boolean field
+     "testPassed" is RENAMED to "valid". The boolean value is copied
+     unchanged; only the key differs. (Upstream's "deferred" flag, and the
+     "dk"/"ek" fields not needed by a given group, are dropped.)
+
+The full upstream files are ~2 MB, which is why a subset is committed rather
+than the whole thing.
 
 These vectors are READ-ONLY TRUTH. A failing case means the implementation
 under test is wrong. Do not edit, regenerate, filter to the passing subset,
