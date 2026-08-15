@@ -111,13 +111,17 @@ assertions pinning three known endpoints (`MullvadAPIClient().baseURL`,
 plus a rejection test for unknown hosts. Nothing enumerates network call sites,
 so **adding a `URLSession` call to a new host does not fail CI on its own** — a
 reviewer has to notice and add the assertion. This page previously claimed
-otherwise. `duckduckgo.com` above is the live proof: it is Category A, it is
-hardcoded in Qwave's source, it is on neither the allowlist nor (until now)
-this table, and CI is green. Tracked as
-[#77](https://github.com/8b-is/qwave/issues/77) (the gate's real scope) and
-[#78](https://github.com/8b-is/qwave/issues/78) (this host). The allowlist is
-still worth keeping — it is the committed statement of intent a reviewer checks
-a diff against — but it is a review aid, not a mechanical guarantee.
+otherwise. `duckduckgo.com` above was the live proof: it was Category A,
+hardcoded in Qwave's source, and until [#78](https://github.com/8b-is/qwave/issues/78)
+was fixed it was on neither the allowlist nor this table, with CI green
+throughout. It is now on both — `EgressAllowlist.hosts` lists it and
+`EgressGuardTests.testDuckDuckGoSuggestionEndpointIsAllowlisted` pins it — but
+that fix was a reviewer noticing, not a mechanical check; the next hardcoded
+host to appear in a call site can still slip past CI the same way. Tracked as
+[#77](https://github.com/8b-is/qwave/issues/77) (the gate's real scope). The
+allowlist is still worth keeping — it is the committed statement of intent a
+reviewer checks a diff against — but it is a review aid, not a mechanical
+guarantee.
 
 ## Category B — pages you asked for
 

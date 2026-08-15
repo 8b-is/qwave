@@ -32,6 +32,11 @@ public enum EgressAllowlist {
         // hosts instead. Stored memory bodies are never attached.
         // See docs/NETWORK.md.
         "api.x.ai",
+        // Omnibox autocomplete suggestions (off by default,
+        // `networkSuggestionsEnabled`). Carries the text you are typing into
+        // the omnibox; transport is cookieless and ephemeral. See
+        // docs/NETWORK.md and issue #78.
+        "duckduckgo.com",
     ]
 
     /// True when `host` is a permitted Category-A destination — exact match
