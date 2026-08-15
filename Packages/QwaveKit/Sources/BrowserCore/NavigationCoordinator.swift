@@ -64,7 +64,7 @@ public final class NavigationCoordinator: NSObject {
                     if let url = webView.url, let title = webView.title, !title.isEmpty, !tab.isEphemeral {
                         let history = self.history
                         let containerID = tab.containerID
-                        Task { @MainActor in
+                        Task(priority: .utility) { @MainActor in
                             try? await history?.updateTitle(title, for: url, containerID: containerID)
                         }
                     }
@@ -242,7 +242,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
             let history = history
             let title = webView.title
             let containerID = tab.containerID
-            Task { @MainActor in
+            Task(priority: .utility) { @MainActor in
                 try? await history?.recordVisit(url: url, title: title, containerID: containerID)
             }
         }

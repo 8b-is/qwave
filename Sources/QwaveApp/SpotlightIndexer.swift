@@ -72,7 +72,7 @@ final class SpotlightLaunchSync {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task(priority: .utility) { @MainActor in
                 guard let self else { return }
                 await self.reindexWhenReady()
             }
