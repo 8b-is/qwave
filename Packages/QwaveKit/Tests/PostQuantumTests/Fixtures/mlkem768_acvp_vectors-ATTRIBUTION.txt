@@ -1,0 +1,48 @@
+This file accompanies mlkem768_acvp_vectors.json.
+
+mlkem768_acvp_vectors.json is a verbatim subset of the official NIST ACVP
+ML-KEM (FIPS 203) demo vectors published by the National Institute of
+Standards and Technology at https://github.com/usnistgov/ACVP-Server.
+As a work of the United States Government it is not subject to copyright
+protection in the United States (17 U.S.C. 105); NIST asserts no copyright
+over the ACVP test vector data.
+
+Sources, both gen-val/json-files/:
+
+  ML-KEM-keyGen-FIPS203/internalProjection.json
+    commit 15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0 (2026-04-16,
+    "RELEASE/v1.1.0.42")
+
+  ML-KEM-encapDecap-FIPS203/internalProjection.json
+    commit ad33b3d9504491767f1aa76382464f3b3fa2359e (2026-07-28,
+    "corrects ML-KEM encapDecap tests that included `ek` that were longer
+    than intended")
+
+Retrieved 2026-08-15.
+
+Selection: parameterSet "ML-KEM-768" only, from testGroups tgId 2 (keyGen
+AFT), 2 (encapsulation AFT), 5 (decapsulation VAL) and 10
+(encapsulationKeyCheck VAL). 29 of the 53 available ML-KEM-768 cases were
+kept, sampled evenly across each group and, for the VAL groups, balanced
+across the distinct "reason" values. The hex payloads are byte-identical to
+the upstream files, lowercased; no value was recomputed, reordered or
+adjusted. The full upstream files are ~2 MB, which is why a subset is
+committed rather than the whole thing.
+
+These vectors are READ-ONLY TRUTH. A failing case means the implementation
+under test is wrong. Do not edit, regenerate, filter to the passing subset,
+or delete a failing case.
+
+Not used as a conformance oracle:
+
+  github.com/C2SP/CCTV ML-KEM "unluckysample" vectors were evaluated as a
+  supplement for the SampleNTT rejection-sampling overrun path. They were
+  rejected as a known-answer oracle because they are FIPS 203 *ipd*-era:
+  in ML-KEM-768.txt the public seed rho equals SHA3-512(d)[0:32], whereas
+  final FIPS 203 (Algorithm 16) specifies (rho, sigma) = G(d || k), so the
+  file's ek/dk/c cannot be reproduced by a conformant implementation. Only
+  the unlucky rho itself — 5c3c6fe50d06fc1bbbffafc56ab7050f2773ee8ef8d28c
+  a4b97b43c8d7202e71, which needs 384 12-bit draws (576 XOF bytes) before
+  SampleNTT accepts 256 coefficients — is reused, and only in a property
+  test (MLKEM768VectorSuite.unluckyRhoNeedsMoreThanOneSqueeze), never as a
+  known-answer test.

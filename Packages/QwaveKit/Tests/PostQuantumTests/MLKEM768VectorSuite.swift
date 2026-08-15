@@ -2,6 +2,104 @@ import Testing
 import Foundation
 @testable import PostQuantum
 
+/// **Conformance oracle: official NIST ACVP ML-KEM-768 vectors (FIPS 203).**
+///
+/// These are READ-ONLY TRUTH, copied verbatim from usnistgov/ACVP-Server —
+/// see `Fixtures/mlkem768_acvp_vectors-ATTRIBUTION.txt` for source commits.
+/// A failure here means *this implementation* is wrong. Never edit,
+/// regenerate, filter to the passing subset, or delete a failing case.
+///
+/// This is the only conformance evidence in the suite. `MLKEM768VectorSuite`
+/// below runs self-generated round-trip fixtures, which prove self-consistency
+/// and nothing else.
+struct MLKEM768ACVPSuite {
+    struct KeyGenVector: Decodable, CustomTestStringConvertible {
+        let name: String
+        let d: String
+        let z: String
+        let ek: String
+        let dk: String
+        var testDescription: String { name }
+    }
+
+    struct EncapVector: Decodable, CustomTestStringConvertible {
+        let name: String
+        let ek: String
+        let m: String
+        let c: String
+        let k: String
+        var testDescription: String { name }
+    }
+
+    struct DecapVector: Decodable, CustomTestStringConvertible {
+        let name: String
+        let reason: String
+        let dk: String
+        let c: String
+        let k: String
+        var testDescription: String { name }
+    }
+
+    struct EKCheckVector: Decodable, CustomTestStringConvertible {
+        let name: String
+        let reason: String
+        let ek: String
+        let valid: Bool
+        var testDescription: String { name }
+    }
+
+    struct Fixture: Decodable {
+        let keyGen: [KeyGenVector]
+        let encapsulation: [EncapVector]
+        let decapsulation: [DecapVector]
+        let encapsulationKeyCheck: [EKCheckVector]
+    }
+
+    static let fixture: Fixture = {
+        guard let url = Bundle.module.url(forResource: "mlkem768_acvp_vectors", withExtension: "json"),
+            let data = try? Data(contentsOf: url),
+            let fixture = try? JSONDecoder().decode(Fixture.self, from: data)
+        else {
+            return Fixture(keyGen: [], encapsulation: [], decapsulation: [], encapsulationKeyCheck: [])
+        }
+        return fixture
+    }()
+
+    static let keyGenVectors = fixture.keyGen
+    static let encapVectors = fixture.encapsulation
+    static let decapVectors = fixture.decapsulation
+    static let ekCheckVectors = fixture.encapsulationKeyCheck
+
+    /// Guards against a silently-empty fixture turning the whole conformance
+    /// suite into a no-op.
+    @Test func officialVectorsAreLoaded() {
+        #expect(Self.keyGenVectors.count == 7)
+        #expect(Self.encapVectors.count == 8)
+        #expect(Self.decapVectors.count == 6)
+        #expect(Self.ekCheckVectors.count == 8)
+    }
+
+    @Test(arguments: keyGenVectors)
+    func keyGen(vector: KeyGenVector) {
+        let (ek, dk) = MLKEM768.keygen(seed: Data(hexVector: vector.d))
+        #expect(ek == Data(hexVector: vector.ek))
+        #expect(dk == Data(hexVector: vector.dk))
+    }
+
+    @Test(arguments: encapVectors)
+    func encapsulation(vector: EncapVector) {
+        let (ct, ss) = MLKEM768.encaps(ek: Data(hexVector: vector.ek), m: Data(hexVector: vector.m))
+        #expect(ct == Data(hexVector: vector.c))
+        #expect(ss == Data(hexVector: vector.k))
+    }
+
+    @Test(arguments: decapVectors)
+    func decapsulation(vector: DecapVector) {
+        let ss = MLKEM768.decaps(dk: Data(hexVector: vector.dk), ct: Data(hexVector: vector.c))
+        #expect(ss == Data(hexVector: vector.k))
+    }
+}
+
 /// Swift Testing port of the ML-KEM-768 KAT loops: one test case per vector,
 /// so a mismatch reports the failing vector by name and the remaining
 /// vectors still run.
