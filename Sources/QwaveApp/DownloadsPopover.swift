@@ -143,12 +143,18 @@ private struct DownloadRowView: View {
         }
     }
 
-    private var progressText: String {
+    /// Shared across renders — ByteCountFormatter is costly to allocate and both
+    /// text getters re-run on every progress publish.
+    private static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
-        let done = formatter.string(fromByteCount: item.completedBytes)
+        return formatter
+    }()
+
+    private var progressText: String {
+        let done = Self.byteFormatter.string(fromByteCount: item.completedBytes)
         if item.totalBytes > 0 {
-            let total = formatter.string(fromByteCount: item.totalBytes)
+            let total = Self.byteFormatter.string(fromByteCount: item.totalBytes)
             let percent = Int((min(max(item.fractionCompleted, 0), 1) * 100).rounded())
             return "\(done) of \(total) · \(percent)%"
         }
@@ -157,9 +163,7 @@ private struct DownloadRowView: View {
 
     private var sizeText: String {
         guard item.totalBytes > 0 else { return "" }
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: item.totalBytes)
+        return Self.byteFormatter.string(fromByteCount: item.totalBytes)
     }
 
     private func open() {
