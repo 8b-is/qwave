@@ -275,6 +275,64 @@ final class MemoryCipherTests: XCTestCase {
         XCTAssertThrowsError(try MemoryCipher.open(box, key: key))
     }
 
+    /// Sealing an empty plaintext yields exactly 12 (nonce) + 0 (ciphertext)
+    /// + 16 (tag) = 28 bytes. `open` used to require `count > 12 + 16`, so a
+    /// valid, fully authenticated empty box was rejected as malformed and
+    /// every record carrying an empty sealed field became unreadable forever.
+    func testSealOpenRoundTripOfEmptyPlaintext() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let box = try MemoryCipher.seal(Data(), key: key)
+        XCTAssertEqual(box.count, 12 + 16, "AES-GCM combined form of an empty plaintext is nonce + tag")
+        XCTAssertEqual(try MemoryCipher.open(box, key: key), Data())
+    }
+
+    /// Accepting the 28-byte empty box must not soften the length gate: a box
+    /// too short to carry a full nonce and tag is still malformed.
+    func testBoxShorterThanNonceAndTagIsRejected() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let box = try MemoryCipher.seal(Data(), key: key)
+        for length in [0, 12, 16, 27] {
+            XCTAssertThrowsError(try MemoryCipher.open(box.prefix(length), key: key)) { error in
+                XCTAssertEqual(error as? MemoryCipherError, .malformedBox, "length \(length) must be malformed")
+            }
+        }
+    }
+
+    /// Nor may it soften authentication: a 28-byte box whose tag was flipped
+    /// must fail closed rather than open as "empty".
+    func testTamperedEmptyBoxFailsAuthentication() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        var box = try MemoryCipher.seal(Data(), key: key)
+        box[box.count - 1] ^= 0xFF
+        XCTAssertThrowsError(try MemoryCipher.open(box, key: key)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .authenticationFailed)
+        }
+    }
+
+    /// A page with a title but no extractable text reaches `remember` with an
+    /// empty body (`ArticleExtractor` accepts a title-only extract), so
+    /// `body_box` is the 28-byte empty box. The row is written, then dropped
+    /// by `decode` on every read -- stored, unreadable, and never reported.
+    func testRecordWithEmptyBodySurvivesRoundTrip() async throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        _ = try await store.insert(
+            title: "Untitled capture", body: "", url: URL(string: "https://example.com/empty"),
+            kind: .browse, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.map(\.title), ["Untitled capture"])
+        XCTAssertEqual(records.first?.body, "")
+    }
+
+    func testRecordWithEmptyTitleSurvivesRoundTrip() async throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        _ = try await store.insert(
+            title: "", body: "a body with no heading above it", url: nil,
+            kind: .note, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.map(\.body), ["a body with no heading above it"])
+        XCTAssertEqual(records.first?.title, "")
+    }
+
     /// decode() authenticates `signature_box` as a fail-closed validity gate
     /// (its plaintext is otherwise unused since the signature is recomputed from
     /// content). A record whose signature_box no longer authenticates must drop.
@@ -690,6 +748,55 @@ final class NibbleTests: XCTestCase {
         // MemoryStore's AES-GCM authentication).
         XCTAssertNil(NibbleMarkdown.decode(text, key: SymmetricKey(size: .bits256)))
         XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
+    }
+
+    /// A nibble whose title is empty must round-trip. `NibbleCutter` produces
+    /// exactly that whenever the captured markdown opens a section with a bare
+    /// `#` heading: the section title is the empty string, and a single-chunk
+    /// page keeps it verbatim as the nibble title. Sealing "" is a valid
+    /// 28-byte box, so the file is written -- and used to be undecodable, which
+    /// silently lost the whole nibble, body included.
+    func testUntitledNibbleRoundTrips() throws {
+        let key = SymmetricKey(size: .bits256)
+        let nibble = MemoryNibble(
+            title: "",
+            body: "Body text that must survive even though the heading was blank.",
+            tags: ["qwave"],
+            url: URL(string: "https://example.com/untitled"),
+            kind: .browse,
+            containerID: nil
+        )
+        let text = try NibbleMarkdown.encode(nibble, key: key)
+        let decoded = NibbleMarkdown.decode(text, key: key)
+        XCTAssertNotNil(decoded, "an untitled nibble must not become permanently unreadable")
+        XCTAssertEqual(decoded?.title, "")
+        XCTAssertEqual(decoded?.body, nibble.body)
+        XCTAssertEqual(decoded?.url, nibble.url)
+    }
+
+    /// The same, end to end from the cutter through the vault: a bare `#`
+    /// heading in the page text is the real-world producer of the empty title.
+    func testUntitledPageNibbleRoundTripsThroughTheVault() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let vault = try NibbleVault(directory: dir, key: key)
+        let nibbles = NibbleCutter.cut(
+            title: "Fallback",
+            // "# " with nothing after it: a heading line whose text is empty.
+            body: "# \nOnly one section here, and the heading above it carries no text at all.",
+            url: URL(string: "https://example.com/untitled"),
+            kind: .browse,
+            containerID: nil
+        )
+        XCTAssertEqual(nibbles.count, 1)
+        XCTAssertEqual(nibbles.first?.title, "", "a bare heading yields an empty nibble title")
+        for nibble in nibbles {
+            _ = try await vault.write(nibble)
+        }
+        let readBack = try await vault.all()
+        XCTAssertEqual(readBack.count, 1, "the untitled nibble must be readable back off disk")
+        XCTAssertEqual(readBack.first?.body, nibbles.first?.body)
     }
 
     func testMarkdownRoundTripThrowsIsAvoidedByHappyPath() throws {
