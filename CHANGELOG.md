@@ -96,10 +96,15 @@ All notable changes to Qwave will be documented in this file.
 >    the package and the module count is wrong. `Packages/QwaveKit/Package.swift`
 >    is `swift-tools-version:6.0` and applies
 >    `.swiftLanguageMode(.v6)` + `-strict-concurrency=complete` to **every**
->    target (`Package.swift:1`, `:4-7`). The package has **12** library targets
->    (QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags,
+>    target (`Package.swift:1`, `:4-7`). On the module count, applying the same
+>    as-of-publication standard used in item 3 below: at the tag the package had
+>    **11** library targets, not 12 — `git show v1.0.0:Packages/QwaveKit/Package.swift`
+>    has no `WebCredentials`, which arrived with AutoFill after 1.0.0. So the
+>    published figure was wrong when it was written, and the count is **12**
+>    today (QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags,
 >    WebCredentials, BrowserCore, PostQuantum, VPNKit, WebExtensions,
->    MemoryWave, Summarize — `Package.swift:52-117`) and 13 test targets.
+>    MemoryWave, Summarize — `Package.swift:52-117`) alongside 13 test targets.
+>    Neither number is 10.
 > 2. **"Sub-45.7MB/tab reclamation floor"** — 45.7 MB/tab is a single
 >    measurement of a synthetic ballast fixture, not a floor, and "sub-" points
 >    the wrong way for a reclamation figure. The origin is `docs/ENERGY.md:87-93`

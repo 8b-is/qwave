@@ -35,12 +35,17 @@ own network activity auditable.
 - **Optional VPN** — Mullvad relay discovery and WireGuard live in a dedicated
   Network Extension; quantum-resistant PSK negotiation fails closed when enabled.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
-  AI-agnostic inference providers. Stored memories **never** leave the Mac —
-  not even with a remote provider configured: `MemoryWavePolicy.decide` denies
-  any remote request that would carry them (`.deny(.cognitiveEgress)`), so it
-  fails closed rather than relying on the caller. Pages you explicitly
-  summarise or ask about *are* sent to the provider you configured; see
-  [docs/NETWORK.md](docs/NETWORK.md).
+  AI-agnostic inference providers. Stored memory **bodies** never reach a
+  remote provider: `WaveDirector` attaches recalled memories only when the
+  provider is on-device (`WaveDirector.swift:338`), and `MemoryWavePolicy.decide`
+  denies a remote request that *declares* it carries them
+  (`.deny(.cognitiveEgress)`, `MemoryWavePolicy.swift:81-82`) — a
+  declared-intent gate plus a caller-side guard, not a filter on the outgoing
+  prompt. One carve-out: a **timeline summary** with a remote provider sends the
+  title, time, and host of every record in the window, and no snippets
+  (`WaveDirector.swift:153-154`, `MemoryTimeline.swift:63-79`). Pages you
+  explicitly summarise or ask about *are* sent to the provider you configured;
+  see [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
 - **AutoFill** — passwords and passkeys through an `ASCredentialProvider` extension
@@ -184,7 +189,8 @@ local by default, remote only when configured. See
 ### Egress audit
 
 Qwave's own egress is held to a committed allowlist that a reviewer checks each
-diff against, and the launch path is proved request-free by test. See
+diff against, and the shields launch path is asserted request-free by a test
+whose reach is bounded (caveats below). See
 [`EgressAllowlist`](Packages/QwaveKit/Sources/QwaveSupport/EgressAllowlist.swift),
 [docs/NETWORK.md](docs/NETWORK.md).
 
@@ -212,9 +218,14 @@ not fail CI by itself ([#77](https://github.com/8b-is/qwave/issues/77)). One
 Category-A host is in exactly that state today: the opt-in, off-by-default
 omnibox suggestion endpoint `duckduckgo.com`
 ([#78](https://github.com/8b-is/qwave/issues/78)), now documented in
-[docs/NETWORK.md](docs/NETWORK.md). The launch-path assertion is the part with
-real teeth: it registers a `URLProtocol` recorder over the actual shields
-launch path and asserts nothing was requested.
+[docs/NETWORK.md](docs/NETWORK.md). The launch-path assertion is the one thing
+here checked dynamically rather than by review: it registers a `URLProtocol`
+recorder over the shields launch path and asserts nothing was requested. Its
+reach is bounded, though — `URLProtocol.registerClass` only sees sessions built
+from the default or shared configuration, so a custom-configuration
+`URLSession` (the ephemeral DuckDuckGo suggestion session, `FaviconLoader`) and
+WebKit's own network process are both invisible to it, and the test builds its
+own `ShieldsDirector` rather than running the app's launch sequence.
 
 ## Architecture at a glance
 
@@ -371,11 +382,11 @@ Research (measured, version-stamped, Qwave-specific):
 ## Status
 
 Shipped in v1.0.0: the browser core, shields, WebExtensions MV3 bridge,
-MemoryWave, post-quantum KEM implementation, signed release workflow, and
-Swift 6 concurrency migration — all covered by package tests.
+MemoryWave, Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
+post-quantum KEM implementation, signed release workflow, and Swift 6
+concurrency migration — all covered by package tests.
 
-Since 1.0.0: Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
-downloads UI, crash-safe session restore, a `qwave://diagnostics`
+Since 1.0.0: downloads UI, crash-safe session restore, a `qwave://diagnostics`
 telemetry page, VoiceOver accessibility on the chrome, on-device semantic memory
 recall, a command palette, first-run bookmark import with Spotlight entities,
 container-bound Focus filters with a Spaces sidebar, keychain-only AutoFill

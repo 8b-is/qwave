@@ -114,11 +114,12 @@ It holds the login/passkey value types,
 `KeychainWebCredentialStore`, domain matching, and `WebAuthnOriginPolicy` —
 the WebAuthn §5.1.3 origin binding, which authorises an `rpId` only when it
 equals the frame's origin host or is a registrable-domain suffix of it, so a
-cross-origin frame cannot drive a ceremony for an arbitrary relying party. It
-is pure (no WebKit, no URL parser, no keychain) and returns the *normalized*
-rpID rather than a bool, so a caller cannot run the ceremony with a string
-other than the one authorised. The absent public-suffix list is a documented
-limitation in the source, not a silent gap.
+cross-origin frame cannot drive a ceremony for an arbitrary relying party.
+`WebAuthnOriginPolicy` itself is pure (no WebKit, no URL parser, no keychain —
+unlike its module-mate `KeychainWebCredentialStore`) and returns the
+*normalized* rpID rather than a bool, so a caller cannot run the ceremony with
+a string other than the one authorised. The absent public-suffix list is a
+documented limitation in the source, not a silent gap.
 
 `CredentialProvider` is a macOS `app-extension` target
 (`Sources/CredentialProvider`, extension point
@@ -177,10 +178,15 @@ See [docs/VPN_STAGE_B.md](VPN_STAGE_B.md) and [docs/CRYPTO_REVIEW.md](CRYPTO_REV
 ## Network ownership
 
 Qwave distinguishes between its own requests, page traffic initiated by a
-navigation, and WebKit service traffic. Category-A requests are guarded by a
-committed host allowlist and `EgressGuardTests`. New Qwave-owned network code
-must document its host, trigger, opt-in state, and test coverage in
-[docs/NETWORK.md](NETWORK.md).
+navigation, and WebKit service traffic. Category-A hosts are recorded in a
+committed allowlist, but that allowlist is a **reviewed test oracle, not a
+runtime gate**: `EgressAllowlist.permits(host:)` has no production call site, so
+adding a `URLSession` call to a new host does not fail CI on its own
+([#77](https://github.com/8b-is/qwave/issues/77)). `EgressGuardTests` pins three
+known endpoints by hand and asserts the shields launch path makes no request.
+New Qwave-owned network code must document its host, trigger, opt-in state, and
+test coverage in [docs/NETWORK.md](NETWORK.md) — that document, not CI, is what
+catches it.
 
 ## Testing boundaries
 

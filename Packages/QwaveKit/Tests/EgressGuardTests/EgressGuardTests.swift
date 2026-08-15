@@ -8,17 +8,25 @@ import XCTest
 
 /// The egress regression gate (docs/NETWORK.md, "prove what it sends").
 ///
-/// Two guarantees:
-///  1. Every Category-A endpoint this codebase can contact by default is on
-///     the committed `EgressAllowlist`. Add a new default endpoint without
-///     allowlisting it → this fails.
+/// Two checks, both narrower than they first look:
+///  1. Three known Category-A endpoints are pinned to the committed
+///     `EgressAllowlist` by the hand-written assertions below. Nothing
+///     enumerates network call sites, so adding a new default endpoint
+///     WITHOUT allowlisting it does not fail this test (issue #77);
+///     `duckduckgo.com` is a live example of exactly that state.
 ///  2. The always-on launch path (shields preparation) makes no URLSession
-///     request at all — the launch-time blocklist fetch was removed.
+///     request — the launch-time blocklist fetch was removed. Scope: the
+///     recorder below is installed with `URLProtocol.registerClass`, which
+///     only intercepts sessions built from the default/shared configuration,
+///     and this test drives a `ShieldsDirector` it constructs itself rather
+///     than the app's launch sequence.
 ///
-/// Honest scope: this catches Category A (Qwave's own egress). It cannot see
-/// Category B (page subresources) or Category C (WebKit's own network
-/// process, e.g. the fraudulent-website warning) — those do not route through
-/// this process's `URLSession`. See docs/NETWORK.md.
+/// Honest scope: this catches Category A (Qwave's own egress) that goes
+/// through a default-configuration `URLSession`. It cannot see a
+/// custom-configuration session (e.g. the ephemeral DuckDuckGo suggestion
+/// session, `FaviconLoader`), Category B (page subresources), or Category C
+/// (WebKit's own network process, e.g. the fraudulent-website warning).
+/// See docs/NETWORK.md.
 final class EgressGuardTests: XCTestCase {
 
     // MARK: - Allowlist ↔ endpoint consistency
