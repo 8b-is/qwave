@@ -10,6 +10,7 @@ import URLIdentity
 import MemoryWave
 import QwaveSupport
 import WebCredentials
+import QwaveUI
 import os
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
@@ -1298,6 +1299,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         )
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
         shieldsPopover = popover
+    }
+
+    /// Toolbar action: toggle the downloads popover anchored to its button.
+    @objc func toggleDownloads(_ sender: Any?) {
+        guard let button = downloadsButton else { return }
+        if let popover = downloadsPopover, popover.isShown {
+            popover.close()
+            downloadsPopover = nil
+            return
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: DownloadsPopoverView(
+                downloads: environment.downloads,
+                onRetry: { [weak self] itemID in
+                    guard let self, let webView = self.tabManager.selectedTab?.webView else { return }
+                    self.environment.downloads.retry(itemID: itemID, using: webView)
+                }
+            )
+        )
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        downloadsPopover = popover
     }
 
     /// Extensions toolbar action: popup of the first installed extension

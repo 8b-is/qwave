@@ -18,7 +18,7 @@ let package = Package(
             name: "QwaveKit",
             targets: [
                 "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
-                "URLIdentity", "MemoryWave", "Summarize",
+                "URLIdentity", "MemoryWave", "Summarize", "QwaveUI",
             ]
         ),
         // Slim product linked by the PacketTunnel system extension.
@@ -112,6 +112,14 @@ let package = Package(
             dependencies: ["BrowserCore", "QwaveSupport"],
             resources: [
                 .process("Resources")
+            ],
+            swiftSettings: swift6
+        ),
+        .target(
+            name: "QwaveUI",
+            dependencies: [
+                "BrowserCore",
+                "Shields",
             ],
             swiftSettings: swift6
         ),

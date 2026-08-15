@@ -5,16 +5,21 @@ import SwiftUI
 /// Toolbar downloads popover: live list of active and finished downloads with
 /// per-item progress and reveal / open / cancel / retry actions. Anchored to the
 /// downloads toolbar button (see `BrowserWindowController`).
-struct DownloadsPopoverView: View {
-    @ObservedObject var downloads: DownloadManager
+public struct DownloadsPopoverView: View {
+    @ObservedObject public var downloads: DownloadManager
     /// Restart a failed/cancelled item — routed to the front tab's web view.
-    var onRetry: (UUID) -> Void
+    public var onRetry: (UUID) -> Void
+
+    public init(downloads: DownloadManager, onRetry: @escaping (UUID) -> Void) {
+        self.downloads = downloads
+        self.onRetry = onRetry
+    }
 
     private var hasClearable: Bool {
         downloads.items.contains { $0.state != .inProgress }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Image(systemName: "arrow.down.circle")
@@ -183,32 +188,5 @@ private struct DownloadRowView: View {
     private func reveal() {
         guard let destination = item.destination else { return }
         NSWorkspace.shared.activateFileViewerSelecting([destination])
-    }
-}
-
-// MARK: - Toolbar wiring
-
-extension BrowserWindowController {
-    /// Toolbar action: toggle the downloads popover anchored to its button.
-    @objc func toggleDownloads(_ sender: Any?) {
-        guard let button = downloadsButton else { return }
-        if let popover = downloadsPopover, popover.isShown {
-            popover.close()
-            downloadsPopover = nil
-            return
-        }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(
-            rootView: DownloadsPopoverView(
-                downloads: environment.downloads,
-                onRetry: { [weak self] itemID in
-                    guard let self, let webView = self.tabManager.selectedTab?.webView else { return }
-                    self.environment.downloads.retry(itemID: itemID, using: webView)
-                }
-            )
-        )
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
-        downloadsPopover = popover
     }
 }
