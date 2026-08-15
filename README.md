@@ -4,18 +4,23 @@
 [![Platform](https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple)](https://apple.com)
 [![Swift](https://img.shields.io/badge/Swift-6-orange?style=flat-square&logo=swift)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![8b.IS Docs](https://img.shields.io/badge/8b.IS-Documentation%20Hub-00ff9f?style=flat-square)](https://www.8b.is/documentation)
+[![Public Docs](https://img.shields.io/badge/docs-8b--public--documents-00b8ff?style=flat-square)](https://github.com/8b-is/8b-public-documents)
+[![MEM|8 Wave](https://img.shields.io/badge/Memory-MEM%7C8%20Wave-ff00ff?style=flat-square)](https://www.8b.is/waves/mem8)
 
 ![Qwave hero](docs/assets/hero-v2.jpg)
 
 Qwave is an open-source, WebKit-native macOS browser for people who want
 stronger boundaries around browsing data without giving up the system engine.
+Part of the **[8b.IS Ecosystem](https://8b.is)** and documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
 It combines per-container storage universes, native content shields, tab
 hibernation, an optional Mullvad WireGuard tunnel, a post-quantum negotiation
 path, an on-device page summarizer, and an egress allowlist that makes Qwave's
 own network activity auditable.
 
 > Qwave is privacy-oriented software, not a promise of anonymity. Read the
-> [threat model](SECURITY.md) and the [network inventory](docs/NETWORK.md).
+> [threat model](SECURITY.md), the [network inventory](docs/NETWORK.md), and the
+> [8b.IS Architectural Documentation](https://www.8b.is/documentation).
 
 ## What makes it different
 

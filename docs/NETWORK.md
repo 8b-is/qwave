@@ -209,3 +209,5 @@ result — egress that bought the user nothing; that has been removed.) See
 *If the honest answer to any row is "we send this and you cannot turn it
 off", this page says so. A disclosed limitation is worth more than an
 omitted one.*
+
+Published as part of the **[8b.IS Documentation Hub](https://www.8b.is/documentation)** and **[8b-public-documents](https://github.com/8b-is/8b-public-documents)**.
