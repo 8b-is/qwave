@@ -82,7 +82,9 @@ public final class ShieldsPolicy: ObservableObject {
     }
 
     public func resolvedPolicy(forHost host: String?) -> ResolvedShieldsPolicy {
-        let override = host.flatMap { overrides[Self.normalize($0)] }
+        // Skip the WebURL host parse in normalize() when there are no per-site
+        // overrides (the common case) — an empty dict can only miss.
+        let override = overrides.isEmpty ? nil : host.flatMap { overrides[Self.normalize($0)] }
         return ResolvedShieldsPolicy(
             adsBlocked: override?.adsBlocked ?? defaultAdsBlocked,
             httpsFirst: override?.httpsFirst ?? defaultHTTPSFirst,

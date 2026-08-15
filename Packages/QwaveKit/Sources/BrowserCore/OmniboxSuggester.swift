@@ -150,35 +150,38 @@ public enum OmniboxSuggester {
         // Open tabs rank highest: switching to a page you already have open is
         // higher value than reloading it.
         for tab in openTabs {
-            guard let base = matchScore(trimmed, host: tab.url.host, urlString: tab.url.absoluteString, title: tab.title) else { continue }
+            let urlString = tab.url.absoluteString
+            guard let base = matchScore(trimmed, host: tab.url.host, urlString: urlString, title: tab.title) else { continue }
             consider(
                 base + 25,
                 OmniboxSuggestion(url: tab.url, title: tab.displayTitle, kind: .openTab(id: tab.id)),
-                key: "url:\(tab.url.absoluteString)"
+                key: "url:\(urlString)"
             )
         }
 
         // History, weighted by frequency and recency (same formula as the
         // history-only path).
         for entry in history {
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: entry.url.absoluteString, title: entry.title) else { continue }
+            let urlString = entry.url.absoluteString
+            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title) else { continue }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
             let recency: Double = age < 7 * 86_400 ? 10 : (age < 30 * 86_400 ? 5 : 0)
             consider(
                 base + frequency + recency,
                 OmniboxSuggestion(url: entry.url, title: entry.title, kind: .history),
-                key: "url:\(entry.url.absoluteString)"
+                key: "url:\(urlString)"
             )
         }
 
         // Bookmarks: a small bonus over a bare history match — the user chose to save them.
         for bookmark in bookmarks {
-            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: bookmark.url.absoluteString, title: bookmark.title) else { continue }
+            let urlString = bookmark.url.absoluteString
+            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: urlString, title: bookmark.title) else { continue }
             consider(
                 base + 8,
                 OmniboxSuggestion(url: bookmark.url, title: bookmark.title, kind: .bookmark),
-                key: "url:\(bookmark.url.absoluteString)"
+                key: "url:\(urlString)"
             )
         }
 
