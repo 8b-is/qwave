@@ -62,6 +62,14 @@ targets:
         # web content only (app-level URLSession traffic stays ATS-enforced).
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsInWebContent: true
+        # TCC purpose strings for web content: WebKit routes getUserMedia and the
+        # Geolocation API through the app's usage descriptions. Without these keys
+        # the first camera/mic/location request hard-kills the process. Access is
+        # still gated per-origin by the in-app prompt (see WebPermissionArbiter);
+        # these strings only explain the OS-level consent sheet.
+        NSCameraUsageDescription: Qwave asks for the camera only when a website you are visiting requests it, such as for a video call.
+        NSMicrophoneUsageDescription: Qwave asks for the microphone only when a website you are visiting requests it, such as for a call or voice input.
+        NSLocationWhenInUseUsageDescription: Qwave shares your location only when a website you are visiting requests it, such as for maps or local search.
         LSApplicationCategoryType: public.app-category.productivity
         # Register Qwave as an http/https handler so macOS lists it as a
         # candidate default browser (System Settings, or the in-app "Set Qwave

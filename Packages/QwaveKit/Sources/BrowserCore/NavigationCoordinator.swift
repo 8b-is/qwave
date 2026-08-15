@@ -443,7 +443,23 @@ extension NavigationCoordinator: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
-        decisionHandler(.prompt)
+        WebPermissionArbiter.decideMediaCapture(
+            host: origin.host,
+            type: type,
+            containerID: tab?.containerID,
+            completion: decisionHandler)
+    }
+
+    public func webView(
+        _ webView: WKWebView,
+        requestGeolocationPermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        WebPermissionArbiter.decideGeolocation(
+            host: origin.host,
+            containerID: tab?.containerID,
+            completion: decisionHandler)
     }
 
     public func webViewDidClose(_ webView: WKWebView) {
