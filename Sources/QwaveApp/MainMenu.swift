@@ -119,6 +119,22 @@ enum MainMenu {
             withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
 
+        // Develop — WebKit's Web Inspector (Elements/Console/Network/Sources/…),
+        // the WebKit-native equivalent of Chrome DevTools. isInspectable is set
+        // in WebViewFactory, so right-click "Inspect Element" also opens it.
+        let developItem = NSMenuItem()
+        main.addItem(developItem)
+        let developMenu = NSMenu(title: "Develop")
+        developItem.submenu = developMenu
+        let inspector = developMenu.addItem(
+            withTitle: "Show Web Inspector",
+            action: #selector(BrowserWindowController.showWebInspector(_:)), keyEquivalent: "i")
+        inspector.keyEquivalentModifierMask = [.command, .option]
+        let jsConsole = developMenu.addItem(
+            withTitle: "Show JavaScript Console",
+            action: #selector(BrowserWindowController.showJavaScriptConsole(_:)), keyEquivalent: "c")
+        jsConsole.keyEquivalentModifierMask = [.command, .option]
+
         // History
         let historyItem = NSMenuItem()
         main.addItem(historyItem)
