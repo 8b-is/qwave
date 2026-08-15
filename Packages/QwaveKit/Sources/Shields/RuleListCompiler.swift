@@ -21,6 +21,11 @@ public final class RuleListCompiler {
         /// (see docs/BLOCKLIST.md for the pipeline and license boundary).
         case adsAndTrackers = "easylist-compiled"
         case httpsUpgrade = "https-upgrade"
+        /// Zero-egress Safe Browsing: known-malicious hosts blocked entirely
+        /// on-device. Compiled from Resources/malicious-hosts.txt by
+        /// HostsRuleListCompiler (see docs/SAFE-BROWSING.md). No host or URL is
+        /// ever sent to a network service; matching is 100% local.
+        case safeBrowsing = "malicious-hosts-compiled"
     }
 
     private let store: WKContentRuleListStore
