@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import WebKit
 import QwaveSupport
 
@@ -27,7 +31,7 @@ public final class TabHibernator {
         // The async form keeps the image on the main actor: bridging the
         // completion handler through a continuation would send a main
         // actor-isolated `NSImage` across isolation, which mode 6 rejects.
-        let snapshot: NSImage? = try? await webView.takeSnapshot(configuration: configuration)
+        let snapshot: PlatformImage? = try? await webView.takeSnapshot(configuration: configuration)
 
         let record = HibernationRecord(
             url: webView.url ?? tab.url,

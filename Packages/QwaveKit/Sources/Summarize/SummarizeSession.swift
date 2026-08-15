@@ -30,7 +30,7 @@ public enum SummarizeSession {
     /// `SystemLanguageModel.Availability`. Call before showing the feature.
     public static func availability() -> SummarizeAvailability {
         #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, iOS 26.0, *) {
                 switch SystemLanguageModel.default.availability {
                 case .available:
                     return .available
@@ -52,7 +52,7 @@ public enum SummarizeSession {
         policy: SummarizeRetryPolicy = SummarizeRetryPolicy()
     ) async throws -> SummarizeResult {
         #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, iOS 26.0, *) {
                 let prompt = SummarizePrompt.forText(text)
                 let session = LanguageModelSession(
                     model: SystemLanguageModel(useCase: .general, guardrails: .default)
@@ -96,7 +96,7 @@ public enum SummarizeSession {
     /// documented footnote in docs/SUMMARIZE.md, whichever way it lands.
     public static func prewarm() {
         #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, iOS 26.0, *) {
                 let session = LanguageModelSession(
                     model: SystemLanguageModel(useCase: .general, guardrails: .default)
                 )

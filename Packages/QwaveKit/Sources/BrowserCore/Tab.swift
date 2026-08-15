@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import WebKit
 
 /// State captured when a background tab is torn down to save memory/energy.
@@ -8,9 +12,9 @@ public struct HibernationRecord {
     /// Opaque WebKit interaction state (back/forward list, scroll, form data).
     public var interactionState: Data?
     /// Last visual state, shown as a placeholder until restore completes.
-    public var snapshot: NSImage?
+    public var snapshot: PlatformImage?
 
-    public init(url: URL?, title: String, interactionState: Data?, snapshot: NSImage?) {
+    public init(url: URL?, title: String, interactionState: Data?, snapshot: PlatformImage?) {
         self.url = url
         self.title = title
         self.interactionState = interactionState
@@ -45,7 +49,7 @@ public final class Tab: Identifiable {
     public var isPinned = false
     /// Site favicon, fetched by the app layer (per-container cache; the
     /// fetch itself carries no cookies — see FaviconLoader).
-    public var favicon: NSImage?
+    public var favicon: PlatformImage?
     public private(set) var lastActivated = Date()
 
     /// The URL to load once a web view exists (set when a tab is created for
