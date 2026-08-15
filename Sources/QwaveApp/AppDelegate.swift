@@ -226,7 +226,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func importBookmarks(_ sender: Any?) {
         guard let store = environment?.bookmarks else { return }
         let history = environment?.history
-        BookmarkImportService.run(into: store) { bookmarks in
+        BookmarkImportService.run(into: store) { [weak self] bookmarks in
+            self?.environment?.invalidateBookmarkCache()
             // reindexAll deletes every Spotlight domain first, so history must be
             // re-added afterward (mirrors SpotlightLaunchSync) — otherwise
             // importing bookmarks wipes the history index until the next launch.
