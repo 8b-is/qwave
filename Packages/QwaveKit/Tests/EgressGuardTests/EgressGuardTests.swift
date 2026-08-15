@@ -185,10 +185,16 @@ final class EgressGuardTests: XCTestCase {
         do {
             _ = try await session.data(from: URL(string: "https://evil.tracker.net/probe")!)
             XCTFail("request to a non-allowlisted host must not succeed")
-        } catch let error as EgressGuard.BlockedError {
-            XCTAssertEqual(error.host, "evil.tracker.net")
         } catch {
-            XCTFail("expected EgressGuard.BlockedError, got \(error)")
+            // Recovered rather than type-cast: URLSession re-wraps a
+            // URLProtocol failure in an NSError of its own, so `as?
+            // BlockedError` does not match here even though the guard is
+            // what failed the request. This asserts the thing that actually
+            // matters to a caller — that they can still tell OUR refusal
+            // apart from a network failure, and learn which host.
+            let blocked = EgressGuard.BlockedError(recovering: error)
+            XCTAssertNotNil(blocked, "caller must be able to identify an egress block, got \(error)")
+            XCTAssertEqual(blocked?.host, "evil.tracker.net")
         }
 
         XCTAssertEqual(EgressGuard.onBlock.hosts(), ["evil.tracker.net"])
