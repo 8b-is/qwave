@@ -48,6 +48,25 @@ VPN activation requires a signed local build with Network Extension entitlements
 see [docs/SIGNING.md](docs/SIGNING.md). A successful unsigned build does not
 prove that VPN activation is distributable.
 
+### Running the whole CI gate set locally
+
+```sh
+scripts/ci-local.sh
+```
+
+`scripts/ci-local.sh` mirrors `.github/workflows/ci.yml` on your Mac: the five
+blocking lanes (`format`, `unit-tests`, `build-app`, `benchmarks`,
+`zig-validation`) and the three `continue-on-error` advisory lanes
+(`dead-code-report`, `unit-tests-next`, `perf-anchor`). Advisory lanes report
+but never change the exit status, exactly as in CI. It prints one pasteable
+transcript — commit, machine, toolchain, per-lane PASS/FAIL with timings, and a
+verdict line — which is the evidence to attach to a pull request when GitHub
+Actions is unavailable. Per-lane logs land in `build/ci-local/`. It does not
+install toolchains or `sudo xcode-select`; a missing tool fails a blocking lane
+and skips an advisory one. If your Xcode is not the version `ci.yml` pins, the
+header says so — `swift-format` rules and compiler diagnostics move between
+releases, so the transcript must record which toolchain produced the result.
+
 ## Swift 6 and concurrency
 
 - Keep QwaveKit targets in Swift 6 language mode with complete strict
