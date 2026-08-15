@@ -532,6 +532,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     @objc func goBack(_ sender: Any?) { tabManager.selectedTab?.webView?.goBack() }
     @objc func goForward(_ sender: Any?) { tabManager.selectedTab?.webView?.goForward() }
 
+    @objc func showWebInspector(_ sender: Any?) {
+        guard let webView = tabManager.selectedTab?.webView else { return }
+        WebInspector.show(for: webView)
+    }
+
+    @objc func showJavaScriptConsole(_ sender: Any?) {
+        guard let webView = tabManager.selectedTab?.webView else { return }
+        WebInspector.showConsole(for: webView)
+    }
+
     @objc func zoomIn(_ sender: Any?) {
         guard let webView = tabManager.selectedTab?.webView else { return }
         webView.pageZoom = min(webView.pageZoom + 0.1, 3.0)
