@@ -21,8 +21,14 @@ own network activity auditable.
 
 - **Container universes** — each profile gets its own WebKit data store;
   ephemeral tabs use non-persistent storage and are never restored.
-- **Native shields** — a compiled EasyList/uBlock rule set, per-host JavaScript
-  controls, and HTTPS-First operate at WebKit policy boundaries.
+- **Native shields & MV3 DNR** — EasyList/uBlock rules compiled to native WebKit
+  C++ content rules at sub-millisecond speeds with per-host JavaScript controls.
+- **Apple Silicon UMA SQLite** — 256MB zero-copy `mmap_size`, WAL mode, 64MB cache,
+  and 4 P-core sorting threads for instant URL completions and history search.
+- **Persistent FaviconStore** — container-isolated SQLite BLOB caching for instant
+  favicon rendering with zero cross-container telemetry leakage.
+- **Hybrid Omnibox** — blended local browsing history and remote search suggestions
+  with bounded top-$k$ insertion sorting on every keystroke.
 - **Energy-aware tabs** — background WebKit views can be hibernated while tab
   state, history, and scroll position remain restorable.
 - **Optional VPN** — Mullvad relay discovery and WireGuard live in a dedicated
@@ -32,8 +38,6 @@ own network activity auditable.
   you explicitly configure a remote provider.
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
-- **WebExtensions MV3** — a focused `browser.*` bridge for tabs, storage, and
-  runtime messaging without embedding a second browser engine.
 
 ## How it works — concept diagrams
 
