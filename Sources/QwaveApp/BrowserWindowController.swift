@@ -193,8 +193,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         omnibox.delegate = self
         suggestions.onCommit = { [weak self] suggestion in
             guard let self else { return }
-            self.omnibox.stringValue = suggestion.url.absoluteString
             self.suggestions.hide()
+            // A "switch to open tab" row activates the existing tab instead of
+            // reloading its URL.
+            if case .openTab(let id) = suggestion.kind {
+                self.tabManager.select(tabID: id)
+                self.omnibox.stringValue = self.tabManager.selectedTab?.url?.absoluteString ?? ""
+                self.window?.makeFirstResponder(self.containerView)
+                return
+            }
+            self.omnibox.stringValue = suggestion.url.absoluteString
             self.omniboxCommitted(nil)
         }
     }
@@ -1271,11 +1279,27 @@ extension BrowserWindowController: NSTextFieldDelegate {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
+            // On-device sources first — these never leave the machine.
+            let openTabs = self.tabManager.tabs.compactMap { tab -> OpenTabInfo? in
+                guard tab.id != self.tabManager.selectedTabID, let url = tab.url else { return nil }
+                return OpenTabInfo(id: tab.id, title: tab.displayTitle, url: url)
+            }
             let entries = (try? await self.environment.history?.entries(matching: query, limit: 50)) ?? []
-            let remote = (try? await DuckDuckGoSuggestionProvider().fetchSuggestions(for: query)) ?? []
+            let bookmarks = (try? await self.environment.bookmarks?.all()) ?? []
+            // Network suggestions are strictly opt-in (default OFF). Only when
+            // the user has enabled them do we send the query to a third party.
+            let remote: [RemoteSearchSuggestion]
+            if self.environment.settings.networkSuggestionsEnabled {
+                remote = (try? await DuckDuckGoSuggestionProvider().fetchSuggestions(for: query)) ?? []
+            } else {
+                remote = []
+            }
             let ranked = OmniboxSuggester.hybridSuggestions(
                 for: query,
                 history: entries,
+                bookmarks: bookmarks,
+                openTabs: openTabs,
+                actions: OmniboxAction.defaults,
                 remoteSuggestions: remote
             )
             guard self.omnibox.stringValue == query else { return }

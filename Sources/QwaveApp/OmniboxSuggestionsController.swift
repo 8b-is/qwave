@@ -151,6 +151,12 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
             iconView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
         case .history:
             iconView.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
+        case .bookmark:
+            iconView.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: "Bookmark")
+        case .openTab:
+            iconView.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: "Open tab")
+        case .action:
+            iconView.image = NSImage(systemSymbolName: "command", accessibilityDescription: "Action")
         }
 
         let text = NSTextField(labelWithString: "")
@@ -170,7 +176,25 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
                         .foregroundColor: NSColor.tertiaryLabelColor,
                     ]
                 ))
-        case .history:
+        case .action:
+            composed.append(
+                NSAttributedString(
+                    string: "  — Action",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.tertiaryLabelColor,
+                    ]
+                ))
+        case .openTab:
+            composed.append(
+                NSAttributedString(
+                    string: "  Switch to tab",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.tertiaryLabelColor,
+                    ]
+                ))
+        case .history, .bookmark:
             composed.append(
                 NSAttributedString(
                     string: "  \(suggestion.url.absoluteString)",

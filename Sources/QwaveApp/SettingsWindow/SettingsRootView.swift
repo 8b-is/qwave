@@ -30,6 +30,7 @@ private struct GeneralPane: View {
     let environment: BrowserEnvironment
     let updater: SPUUpdater?
     @State private var searchEngine: SearchEngine = .duckduckgo
+    @State private var networkSuggestions = false
     @State private var restoreSession = true
     @State private var hibernationMinutes: Double = 15
     @State private var autoCheckUpdates = false
@@ -44,6 +45,19 @@ private struct GeneralPane: View {
             .onChange(of: searchEngine) { _, newValue in
                 environment.settings.searchEngine = newValue
             }
+
+            Toggle("Search-engine suggestions as you type", isOn: $networkSuggestions)
+                .onChange(of: networkSuggestions) { _, newValue in
+                    environment.settings.networkSuggestionsEnabled = newValue
+                }
+            Text(
+                "When off (the default), omnibox suggestions come only from your "
+                    + "on-device history, bookmarks, and open tabs \u{2014} nothing is sent "
+                    + "anywhere. When on, each keystroke is sent to your search engine to "
+                    + "fetch autocomplete results."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             Toggle("Restore previous session at launch", isOn: $restoreSession)
                 .onChange(of: restoreSession) { _, newValue in
@@ -88,6 +102,7 @@ private struct GeneralPane: View {
         .padding(20)
         .onAppear {
             searchEngine = environment.settings.searchEngine
+            networkSuggestions = environment.settings.networkSuggestionsEnabled
             restoreSession = environment.settings.restoreSessionOnLaunch
             hibernationMinutes = environment.settings.hibernationTimeout / 60
             autoCheckUpdates = updater?.automaticallyChecksForUpdates ?? false
