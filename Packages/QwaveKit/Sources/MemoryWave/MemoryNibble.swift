@@ -104,16 +104,26 @@ public enum NibbleMarkdown {
     /// tell an AES-GCM-sealed nibble apart from a pre-#81 plaintext one.
     public static let sealedMarker = "aes-gcm-256"
 
-    /// Encodes a nibble as front-matter + AES-GCM-sealed title/body/url,
+    /// Encodes a nibble as front-matter + AES-GCM-sealed tags/title/body/url,
     /// keyed by the same Memory Wave master key that seals `MemoryStore`
     /// (issue #81: the vault used to mirror the sealed DB body as plaintext
-    /// markdown on disk). Only `tags`, `kind`, `lane`, `created`, `id` and
-    /// `container` stay in the clear -- short, low-sensitivity metadata the
-    /// vault needs for tag search and file naming without decrypting every
-    /// file. Opening the `.md` file outside Qwave shows ciphertext, not the
-    /// page text.
+    /// markdown on disk). Only `kind`, `lane`, `created`, `id` and `container`
+    /// stay in the clear -- content-free bookkeeping the vault needs for file
+    /// naming and ordering. Opening the `.md` file outside Qwave shows
+    /// ciphertext, not the page text.
+    ///
+    /// The tags are sealed too, though they were left in the clear when the
+    /// rest was sealed: they are *derived from the content* -- the URL host and
+    /// the words of the title (`NibbleCutter.tags`) -- so a nibble for a
+    /// medical page published the host and the diagnosis words on disk in the
+    /// same file that claimed to hold only ciphertext. Sealing them costs no
+    /// recall: `NibbleVault.matching(tags:)` reaches them through `all(limit:)`,
+    /// which already reads and decodes every file, so nothing ever searched the
+    /// front matter without decrypting it.
     public static func encode(_ nibble: MemoryNibble, key: SymmetricKey) throws -> String {
-        let tagList = nibble.tags.joined(separator: ", ")
+        let tagsSealed =
+            try MemoryCipher.seal(Data(nibble.tags.joined(separator: ", ").utf8), key: key)
+            .base64EncodedString()
         let created = ISO8601DateFormatter().string(from: nibble.created)
         let container = nibble.containerID?.uuidString ?? ""
         let titleSealed = try MemoryCipher.seal(Data(nibble.title.utf8), key: key).base64EncodedString()
@@ -127,7 +137,7 @@ public enum NibbleMarkdown {
             id: \(nibble.id)
             kind: nibble
             source: \(nibble.kind.rawValue)
-            tags: [\(tagList)]
+            tags_sealed: \(tagsSealed)
             url_sealed: \(urlSealed)
             created: \(created)
             container: \(container)
@@ -160,7 +170,19 @@ public enum NibbleMarkdown {
             let value = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
             fields[fieldKey] = value
         }
-        let tags = parseTagList(fields["tags"] ?? "")
+        // `tags_sealed` is the current layout; `tags` is the plaintext list
+        // written before the tags were sealed (and by the pre-#81 format), kept
+        // readable so those files are not dropped from recall.
+        let tags: [String]
+        if let sealedTags = fields["tags_sealed"], !sealedTags.isEmpty,
+            let tagsBox = Data(base64Encoded: sealedTags),
+            let tagsData = try? MemoryCipher.open(tagsBox, key: key),
+            let tagList = String(data: tagsData, encoding: .utf8)
+        {
+            tags = parseTagList(tagList)
+        } else {
+            tags = parseTagList(fields["tags"] ?? "")
+        }
         let created = fields["created"].flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
         let kind = fields["source"].flatMap(MemoryKind.init(rawValue:)) ?? .nibble
         let container = fields["container"].flatMap { $0.isEmpty ? nil : UUID(uuidString: $0) }

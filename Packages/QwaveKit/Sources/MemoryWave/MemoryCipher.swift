@@ -51,8 +51,18 @@ public enum MemoryCipher {
         return combined
     }
 
+    /// Opens a combined AES-GCM box (12-byte nonce + ciphertext + 16-byte tag).
+    ///
+    /// The length gate is `>=`, not `>`: an empty plaintext seals to exactly
+    /// nonce + tag = 28 bytes, and rejecting that as malformed made every
+    /// record with an empty sealed field -- an untitled nibble, a page with a
+    /// title but no extractable text -- permanently unreadable, since both
+    /// `MemoryStore.decode` and `NibbleMarkdown.decode` drop what they cannot
+    /// open. Nothing below 28 bytes can carry a complete nonce and tag, so it
+    /// is still malformed, and the authentication itself is unchanged: a
+    /// 28-byte box whose tag does not verify still fails closed.
     public static func open(_ box: Data, key: SymmetricKey) throws -> Data {
-        guard box.count > 12 + 16 else { throw MemoryCipherError.malformedBox }
+        guard box.count >= 12 + 16 else { throw MemoryCipherError.malformedBox }
         do {
             return try AES.GCM.open(try AES.GCM.SealedBox(combined: box), using: key)
         } catch {

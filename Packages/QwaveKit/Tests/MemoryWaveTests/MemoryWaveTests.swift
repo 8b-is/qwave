@@ -275,6 +275,64 @@ final class MemoryCipherTests: XCTestCase {
         XCTAssertThrowsError(try MemoryCipher.open(box, key: key))
     }
 
+    /// Sealing an empty plaintext yields exactly 12 (nonce) + 0 (ciphertext)
+    /// + 16 (tag) = 28 bytes. `open` used to require `count > 12 + 16`, so a
+    /// valid, fully authenticated empty box was rejected as malformed and
+    /// every record carrying an empty sealed field became unreadable forever.
+    func testSealOpenRoundTripOfEmptyPlaintext() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let box = try MemoryCipher.seal(Data(), key: key)
+        XCTAssertEqual(box.count, 12 + 16, "AES-GCM combined form of an empty plaintext is nonce + tag")
+        XCTAssertEqual(try MemoryCipher.open(box, key: key), Data())
+    }
+
+    /// Accepting the 28-byte empty box must not soften the length gate: a box
+    /// too short to carry a full nonce and tag is still malformed.
+    func testBoxShorterThanNonceAndTagIsRejected() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let box = try MemoryCipher.seal(Data(), key: key)
+        for length in [0, 12, 16, 27] {
+            XCTAssertThrowsError(try MemoryCipher.open(box.prefix(length), key: key)) { error in
+                XCTAssertEqual(error as? MemoryCipherError, .malformedBox, "length \(length) must be malformed")
+            }
+        }
+    }
+
+    /// Nor may it soften authentication: a 28-byte box whose tag was flipped
+    /// must fail closed rather than open as "empty".
+    func testTamperedEmptyBoxFailsAuthentication() throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        var box = try MemoryCipher.seal(Data(), key: key)
+        box[box.count - 1] ^= 0xFF
+        XCTAssertThrowsError(try MemoryCipher.open(box, key: key)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .authenticationFailed)
+        }
+    }
+
+    /// A page with a title but no extractable text reaches `remember` with an
+    /// empty body (`ArticleExtractor` accepts a title-only extract), so
+    /// `body_box` is the 28-byte empty box. The row is written, then dropped
+    /// by `decode` on every read -- stored, unreadable, and never reported.
+    func testRecordWithEmptyBodySurvivesRoundTrip() async throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        _ = try await store.insert(
+            title: "Untitled capture", body: "", url: URL(string: "https://example.com/empty"),
+            kind: .browse, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.map(\.title), ["Untitled capture"])
+        XCTAssertEqual(records.first?.body, "")
+    }
+
+    func testRecordWithEmptyTitleSurvivesRoundTrip() async throws {
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: InMemorySecretStore())
+        _ = try await store.insert(
+            title: "", body: "a body with no heading above it", url: nil,
+            kind: .note, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.map(\.body), ["a body with no heading above it"])
+        XCTAssertEqual(records.first?.title, "")
+    }
+
     /// decode() authenticates `signature_box` as a fail-closed validity gate
     /// (its plaintext is otherwise unused since the signature is recomputed from
     /// content). A record whose signature_box no longer authenticates must drop.
@@ -679,7 +737,12 @@ final class NibbleTests: XCTestCase {
         XCTAssertEqual(decoded?.body, nibble.body)
         XCTAssertEqual(decoded?.tags, nibble.tags)
         XCTAssertEqual(decoded?.url, nibble.url)
-        XCTAssertTrue(text.contains("tags: [webkit, memory-wave]"))
+        // The tags round-trip (asserted above) but are no longer legible on
+        // disk: they are derived from the host and the title, so the plaintext
+        // `tags: [...]` line leaked exactly what the sealing is for.
+        XCTAssertTrue(text.contains("tags_sealed: "))
+        XCTAssertFalse(text.contains("webkit"))
+        XCTAssertFalse(text.contains("memory-wave"))
         XCTAssertTrue(text.contains("sealed: aes-gcm-256"))
         // Issue #81: the on-disk file must not contain the plaintext title,
         // body or url that MemoryStore would seal for the same content.
@@ -690,6 +753,116 @@ final class NibbleTests: XCTestCase {
         // MemoryStore's AES-GCM authentication).
         XCTAssertNil(NibbleMarkdown.decode(text, key: SymmetricKey(size: .bits256)))
         XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
+    }
+
+    /// A nibble whose title is empty must round-trip. `NibbleCutter` produces
+    /// exactly that whenever the captured markdown opens a section with a bare
+    /// `#` heading: the section title is the empty string, and a single-chunk
+    /// page keeps it verbatim as the nibble title. Sealing "" is a valid
+    /// 28-byte box, so the file is written -- and used to be undecodable, which
+    /// silently lost the whole nibble, body included.
+    func testUntitledNibbleRoundTrips() throws {
+        let key = SymmetricKey(size: .bits256)
+        let nibble = MemoryNibble(
+            title: "",
+            body: "Body text that must survive even though the heading was blank.",
+            tags: ["qwave"],
+            url: URL(string: "https://example.com/untitled"),
+            kind: .browse,
+            containerID: nil
+        )
+        let text = try NibbleMarkdown.encode(nibble, key: key)
+        let decoded = NibbleMarkdown.decode(text, key: key)
+        XCTAssertNotNil(decoded, "an untitled nibble must not become permanently unreadable")
+        XCTAssertEqual(decoded?.title, "")
+        XCTAssertEqual(decoded?.body, nibble.body)
+        XCTAssertEqual(decoded?.url, nibble.url)
+    }
+
+    /// The same, end to end from the cutter through the vault: a bare `#`
+    /// heading in the page text is the real-world producer of the empty title.
+    func testUntitledPageNibbleRoundTripsThroughTheVault() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let vault = try NibbleVault(directory: dir, key: key)
+        let nibbles = NibbleCutter.cut(
+            title: "Fallback",
+            // "# " with nothing after it: a heading line whose text is empty.
+            body: "# \nOnly one section here, and the heading above it carries no text at all.",
+            url: URL(string: "https://example.com/untitled"),
+            kind: .browse,
+            containerID: nil
+        )
+        XCTAssertEqual(nibbles.count, 1)
+        XCTAssertEqual(nibbles.first?.title, "", "a bare heading yields an empty nibble title")
+        for nibble in nibbles {
+            _ = try await vault.write(nibble)
+        }
+        let readBack = try await vault.all()
+        XCTAssertEqual(readBack.count, 1, "the untitled nibble must be readable back off disk")
+        XCTAssertEqual(readBack.first?.body, nibbles.first?.body)
+    }
+
+    /// The front matter used to carry the derived tags in the clear, so a
+    /// nibble for a medical page left the host and the title words readable on
+    /// disk in the very file #107 says holds only ciphertext.
+    func testVaultFileDoesNotLeakHostOrTitleWordsThroughTags() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let vault = try NibbleVault(directory: dir, key: key)
+        let store = MemoryStore(database: try SQLiteDatabase(), key: key)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        _ = try await director.remember(
+            title: "Sekrit Diagnosis Results",
+            body: "A paragraph about the appointment that is definitely long enough to keep. #oncology",
+            url: URL(string: "https://very-specific-patient-portal.example/records"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+        let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)!
+        let mdFiles = enumerator.allObjects
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "md" && $0.lastPathComponent != "README.md" }
+        XCTAssertFalse(mdFiles.isEmpty)
+        for file in mdFiles {
+            let raw = try String(contentsOf: file, encoding: .utf8)
+            for leak in ["patient-portal", "diagnosis", "sekrit", "oncology"] {
+                XCTAssertFalse(
+                    raw.lowercased().contains(leak),
+                    "vault file leaked '\(leak)' through front-matter tags: \(file.lastPathComponent)")
+            }
+        }
+        // Sealing the tags must not cost tag recall: it already decodes every
+        // file, so the tags come back decrypted in memory.
+        let hits = try await vault.matching(tags: ["oncology"], limit: 8)
+        XCTAssertEqual(hits.count, 1)
+    }
+
+    /// Nibbles written between #107 and the tag sealing carry `sealed:` plus
+    /// plaintext `tags:`. They must keep decoding, tags included.
+    func testDecodeReadsPlaintextTagsFromPreTagSealingFiles() throws {
+        let key = SymmetricKey(size: .bits256)
+        let nibble = MemoryNibble(
+            title: "Older nibble", body: "body", tags: ["webkit"], url: nil, kind: .note, containerID: nil)
+        let current = try NibbleMarkdown.encode(nibble, key: key)
+        // Rebuild the pre-tag-sealing layout: same sealed payloads, tags in the
+        // clear, no `tags_sealed:` field.
+        var legacy: [String] = []
+        for line in current.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("tags_sealed:") {
+                legacy.append("tags: [webkit]")
+            } else {
+                legacy.append(String(line))
+            }
+        }
+        let decoded = NibbleMarkdown.decode(legacy.joined(separator: "\n"), key: key)
+        XCTAssertEqual(decoded?.tags, ["webkit"])
+        XCTAssertEqual(decoded?.title, "Older nibble")
     }
 
     func testMarkdownRoundTripThrowsIsAvoidedByHappyPath() throws {
