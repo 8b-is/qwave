@@ -47,6 +47,37 @@ public struct KeychainWebCredentialStore: WebCredentialStore {
         return query
     }
 
+    /// Turns raw keychain dictionaries into credentials, skipping any item
+    /// that fails to decode.
+    ///
+    /// `compactMap`, not `map`: one keychain item that fails to decode
+    /// (missing account/value, or a password blob that isn't valid UTF-8 —
+    /// plausible for items another tool wrote into this shared access group)
+    /// must not discard every *other* healthy credential for the domain. Skip
+    /// and log the bad item; keep the rest. That is the guarantee from #74.
+    ///
+    /// Split out of ``credentials(forDomain:)`` so the guarantee is provable
+    /// without touching the real keychain: the integration test that seeds
+    /// `SecItemAdd` can only run where the process holds a keychain-access
+    /// entitlement, which neither an unsigned local test binary nor CI has
+    /// (`ci.yml` sets up no keychain), so it skips there. This function is the
+    /// part that actually implements the guarantee, and it is pure.
+    static func decode(items: [[String: Any]], domain normalizedDomain: String) -> [WebCredential] {
+        items.compactMap { item in
+            guard
+                let account = item[kSecAttrAccount as String] as? String,
+                let data = item[kSecValueData as String] as? Data,
+                let password = String(data: data, encoding: .utf8)
+            else {
+                Self.log.error(
+                    "skipping malformed keychain item for domain \(normalizedDomain, privacy: .private)"
+                )
+                return nil
+            }
+            return WebCredential(domain: normalizedDomain, username: account, password: password)
+        }
+    }
+
     public func credentials(forDomain domain: String) throws -> [WebCredential] {
         var query = baseQuery(domain: domain)
         query[kSecMatchLimit as String] = kSecMatchLimitAll
@@ -60,25 +91,7 @@ public struct KeychainWebCredentialStore: WebCredentialStore {
             guard let items = result as? [[String: Any]] else {
                 throw WebCredentialError.malformedItem
             }
-            let normalizedDomain = WebCredentialMatching.normalize(domain)
-            // `compactMap`, not `map`: one keychain item that fails to decode
-            // (missing account/value, or a password blob that isn't valid
-            // UTF-8 — plausible for items another tool wrote into this shared
-            // access group) must not discard every *other* healthy credential
-            // for the domain. Skip and log the bad item; keep the rest.
-            return items.compactMap { item in
-                guard
-                    let account = item[kSecAttrAccount as String] as? String,
-                    let data = item[kSecValueData as String] as? Data,
-                    let password = String(data: data, encoding: .utf8)
-                else {
-                    Self.log.error(
-                        "skipping malformed keychain item for domain \(normalizedDomain, privacy: .private)"
-                    )
-                    return nil
-                }
-                return WebCredential(domain: normalizedDomain, username: account, password: password)
-            }
+            return Self.decode(items: items, domain: WebCredentialMatching.normalize(domain))
         case errSecItemNotFound:
             return []
         default:
