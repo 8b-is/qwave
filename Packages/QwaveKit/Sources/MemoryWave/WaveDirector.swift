@@ -23,6 +23,10 @@ public final class WaveDirector {
     public let vault: NibbleVault?
     public let preferences: MemoryWavePreferences
     public var providerOverride: (any MemoryProviding)?
+    /// On-device semantic reranker. Optional so recall stays pure lexical when
+    /// passed `nil`; the on-device model is used only when its assets already
+    /// exist (never downloaded), otherwise recall falls back to resonance order.
+    public let embedder: SemanticEmbedder?
 
     public static let systemPrompt = """
         You are Qwave's page assistant. Use only the text the user provided. \
@@ -30,10 +34,16 @@ public final class WaveDirector {
         stored memories. If the text is insufficient, say so.
         """
 
-    public init(store: MemoryStore?, preferences: MemoryWavePreferences, vault: NibbleVault? = nil) {
+    public init(
+        store: MemoryStore?,
+        preferences: MemoryWavePreferences,
+        vault: NibbleVault? = nil,
+        embedder: SemanticEmbedder? = SemanticEmbedder()
+    ) {
         self.store = store
         self.preferences = preferences
         self.vault = vault
+        self.embedder = embedder
     }
 
     public func remember(
@@ -207,6 +217,19 @@ public final class WaveDirector {
                     uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
                 records.sort { lhs, rhs in
                     (order[lhs.wave.createdAt] ?? Int.max) < (order[rhs.wave.createdAt] ?? Int.max)
+                }
+                // Semantic rerank: the resonance sort above is a cheap lexical
+                // prefilter; when the on-device contextual-embedding asset is
+                // present, reorder those candidates by cosine similarity of
+                // their embeddings. Missing embeddings keep the lexical order.
+                if let embedder, let queryVector = await embedder.vector(for: query) {
+                    var candidates: [(item: MemoryRecord, vector: SemanticVector?)] = []
+                    candidates.reserveCapacity(records.count)
+                    for record in records {
+                        let vector = await embedder.vector(for: record.title + "\n" + record.body)
+                        candidates.append((record, vector))
+                    }
+                    records = SemanticReranker.rerank(query: queryVector, candidates: candidates)
                 }
             }
             if let vault, let hits = try? vault.matching(query: query, limit: limit) {
