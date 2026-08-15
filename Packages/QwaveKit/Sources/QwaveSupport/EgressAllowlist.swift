@@ -12,12 +12,16 @@ import Foundation
 /// shared-configuration session). See #77.
 ///
 /// It still is **not** a mechanical guarantee over the whole codebase: it
-/// governs Category A only, a custom-configuration session that skips
+/// governs Category A only, a constructed session that skips
 /// `EgressGuard.install(into:)` is not caught, and some Category-A clients
 /// (Memory Wave's user-configurable endpoint, the favicon loader, the
 /// remote-markdown fetch, the VPN's in-tunnel quantum handshake) are
 /// deliberately excluded because their destination is not a fixed host by
 /// design — see `EgressGuard`'s doc comment for the per-client rationale.
+/// Those exclusions are not all the same mechanism: most simply never install
+/// the guard, but the remote-markdown fetch runs on `URLSession.shared` — the
+/// one session global registration does reach — and is excluded only because
+/// it marks its request with `EgressGuard.markPageDriven(_:)`.
 /// Nothing enumerates network call sites either, so a *new* fixed-host
 /// client still has to be wired up (and documented in docs/NETWORK.md) by
 /// whoever adds it. Keep the list current: it is both what `EgressGuard`
@@ -26,7 +30,10 @@ public enum EgressAllowlist {
     /// Permitted Category-A hosts, each with why it exists. Favicon and
     /// remote-markdown fetches are deliberately absent: their host is
     /// whatever page you navigated to, so they are page-driven (Category B
-    /// in spirit) and cannot be allowlisted to a fixed set.
+    /// in spirit) and cannot be allowlisted to a fixed set. Absence from this
+    /// list is not what exempts them — being absent is exactly what
+    /// `EgressGuard` blocks on — so do not read this comment as the
+    /// exemption; the mechanism is in `EgressGuard`.
     public static let hosts: Set<String> = [
         // Auto-update feed (Sparkle). User-consented; see docs/NETWORK.md.
         "github.com",

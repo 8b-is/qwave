@@ -47,7 +47,7 @@ There are three kinds of outbound connection, and the difference matters:
 | `duckduckgo.com/ac/` | Omnibox autocomplete: suggestions for what you are typing | Only while you type in the omnibox, **and** only if you turned network suggestions on | **Yes — off by default** (`networkSuggestionsEnabled` defaults to `false`). Off means on-device suggestions only — history, bookmarks, open tabs, actions — and nothing leaves the Mac. When on, the transport is deliberately **cookieless and ephemeral** (no cookie storage, 3 s timeout), so the query carries no session identity. | transport config `BrowserCore/SearchSuggestionProvider.swift:51-61`, request `:63-78`; call site `BrowserWindowController.swift:1406-1413`; default `Persistence/SettingsStore.swift:97-100` |
 | The relay's in-tunnel gateway (`10.64.0.1`, inside the VPN) | Post-quantum key exchange for the VPN tunnel | Only during a quantum-resistant VPN connection | **Yes** — only if you use the VPN with quantum resistance on. This address is reachable only *inside* the tunnel, never on the open internet. | `VPNKit/QuantumTransport.swift` |
 | The favicon URL of a site you visit | Show the site's icon in the tab | When you load a page | Tied to browsing. Fetched with a **cookie-free, storage-free** session and cached per container, so a favicon fetch can never carry one container's identity into another. | `Sources/QwaveApp/FaviconLoader.swift` |
-| A `.md`/directory URL you navigate to | Render remote markdown in the reader | When you navigate to a markdown document | Tied to that navigation — it fetches exactly the document you asked for. | `BrowserCore/NavigationCoordinator.swift` |
+| A `.md`/directory URL you navigate to | Render remote markdown in the reader | When you navigate to a markdown document | Tied to that navigation — it fetches exactly the document you asked for, and only after WebKit has already fetched a response from that host. Exempt from the allowlist by an explicit `EgressGuard.markPageDriven(_:)` marker, not by accident. | `BrowserCore/NavigationCoordinator.swift` |
 
 ### What Memory Wave actually sends to a remote provider
 
@@ -89,12 +89,12 @@ the shields launch path, and asserts zero requests were observed
 (`EgressGuardTests.swift:105-138`).
 
 Its reach, stated exactly, because it is narrower than "no egress at launch".
-The recorder is installed with `URLProtocol.registerClass`
-(`EgressGuardTests.swift:118`), which only intercepts sessions built from the
-default or shared configuration. A `URLSession` created with a **custom**
-configuration never consults it — including the ephemeral DuckDuckGo suggestion
-session (`SearchSuggestionProvider.swift:51-61`) and `FaviconLoader`'s
-(`FaviconLoader.swift:20-24`). WebKit's own network process is out of reach for
+The recorder is installed with `URLProtocol.registerClass`, which reaches
+`URLSession.shared` and nothing else. A `URLSession` you **construct** never
+consults it — not even one built from `URLSessionConfiguration.default`, which
+earlier wording here implied was covered. That includes the ephemeral
+DuckDuckGo suggestion session (`SearchSuggestionProvider.swift:51-61`) and
+`FaviconLoader`'s (`FaviconLoader.swift:20-24`). WebKit's own network process is out of reach for
 the same structural reason, which the test file already states
 (`EgressGuardTests.swift:24-29`). And the test constructs its own
 `ShieldsDirector` (`:127-131`) rather than running the app's launch sequence, so
@@ -110,8 +110,8 @@ is now backed by a real runtime enforcement point,
 request whose host is not listed, wired into every fixed-host Qwave client —
 `MullvadAPIClient` (via `URLSession.mullvadPinned()`), the DuckDuckGo
 suggestion provider, and, through a process-wide
-`URLProtocol.registerClass` at launch, any client that uses a default- or
-shared-configuration session. `duckduckgo.com` is on the allowlist as of this
+`URLProtocol.registerClass` at launch, any client that uses
+`URLSession.shared`. `duckduckgo.com` is on the allowlist as of this
 change ([#78](https://github.com/8b-is/qwave/issues/78)) precisely because
 runtime enforcement would otherwise break the opt-in suggestion feature the
 moment someone turned it on.
@@ -139,6 +139,29 @@ deliberately open to any user-typed HTTPS endpoint (guarded instead by
 and `FaviconLoader` / the remote-markdown fetch are page-driven rather than a
 fixed set of hosts. See `EgressGuard`'s doc comment for the full, per-client
 rationale.
+
+**Those exclusions are not one mechanism, and treating them as one broke a
+feature.** Memory Wave and `FaviconLoader` construct their own sessions and
+never install the guard, so it never sees them. The remote-markdown fetch does
+the opposite: it runs on `URLSession.shared`, the one session global
+registration *does* reach. For as long as this page and three other places said
+that fetch was ungated, it was gated — navigating to any `.md` URL outside the
+four allowlisted hosts (`raw.githubusercontent.com`, say) failed with an egress
+block instead of rendering. It is now exempt by an explicit, greppable marker,
+`EgressGuard.markPageDriven(_:)`, applied at the single call site in
+`NavigationCoordinator.fetchAndPresentMarkdown`.
+
+Being straight about the cost, since a page-driven exemption is a hole in the
+guard by construction: any caller that applies the marker bypasses the
+allowlist, and only review stops one from doing so. Two things bound it. It is
+per **request**, not per host or per session — `URLSession.shared` stays gated
+for everything else, and an unmarked request to the very same host is still
+refused (both pinned by
+`testPageDrivenExemptionDoesNotExemptTheHostOrTheSession`). And at its one call
+site it discloses nothing new: the fetch runs from `decidePolicyFor
+navigationResponse`, i.e. after WebKit has already connected to that host and
+received response headers, so the marked request re-fetches a document the
+browser just retrieved because you asked it to.
 
 ## Category B — pages you asked for
 

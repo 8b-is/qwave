@@ -10,14 +10,18 @@ import Foundation
 ///
 /// Scope, honestly, same caveats the issue raised:
 ///  - `URLProtocol.registerClass(EgressGuard.self)` (called once at process
-///    start, see `main.swift`) only intercepts sessions built from the
-///    default or shared `URLSessionConfiguration`. A session with a
-///    **custom** configuration — every fixed-host Qwave client on `main`
-///    builds one — does not consult a globally registered protocol; each
-///    such session must add `EgressGuard.self` to its own
-///    `protocolClasses` explicitly. See `EgressGuard.install(into:)` below
-///    and its call sites (`MullvadCertificatePinner.mullvadPinned()`,
-///    `SearchSuggestionProvider.swift`).
+///    start, see `main.swift`) reaches exactly one session: `URLSession
+///    .shared`, which is documented to consult the shared custom-protocol
+///    list. It does **not** reach a session you construct yourself, not even
+///    from `URLSessionConfiguration.default` — a constructed session consults
+///    only its own `protocolClasses`. Every fixed-host Qwave client on `main`
+///    builds its own session, so each must add `EgressGuard.self` explicitly:
+///    see `EgressGuard.install(into:)` below and its call sites
+///    (`MullvadCertificatePinner.mullvadPinned()`,
+///    `SearchSuggestionProvider.swift`). Pinned by
+///    `EgressGuardTests.testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`,
+///    because reading that sentence as "default-configuration sessions are
+///    covered" is what let the markdown regression below through.
 ///  - It governs Category A only (docs/NETWORK.md) — connections this
 ///    codebase's own `URLSession` clients initiate. It cannot see Category B
 ///    (page subresources) or Category C (WebKit's own network process);
@@ -31,7 +35,62 @@ import Foundation
 ///    intentionally excluded from the open-internet allowlist. Gating those
 ///    here would either break an intentional feature or duplicate an
 ///    existing guard; see the call sites for the per-client rationale.
+///
+/// Two of those exclusions hold for **different mechanical reasons**, and
+/// conflating them cost a working feature. `FaviconLoader` and Memory Wave
+/// each build their own session and simply never call `install(into:)`, so
+/// nothing here ever sees them. The remote-markdown fetch does not: it runs on
+/// `URLSession.shared` (`BrowserCore/NavigationCoordinator.swift`), the one
+/// session `registerClass` above *does* reach. So for four documents' worth of
+/// prose claiming it was ungated, it was in fact gated — and navigating to any
+/// `.md` URL off the four-host allowlist failed with `BlockedError` instead of
+/// rendering. `markPageDriven(_:)` below is the exclusion those documents
+/// described, made real and greppable.
 public final class EgressGuard: URLProtocol {
+    /// Key under which ``markPageDriven(_:)`` stamps its provenance flag. A
+    /// `URLProtocol` property rather than a header: it reaches `canInit`
+    /// through `URLSession` but never appears on the wire, so marking a
+    /// request tells the guard something without telling the destination
+    /// anything.
+    private static let pageDrivenKey = "is.8b.qwave.EgressGuard.pageDriven"
+
+    /// Marks a request as **page-driven** — its destination host comes from
+    /// the page the user navigated to, not from a host Qwave's own source
+    /// picked — and so exempts it from `EgressAllowlist`. The allowlist is a
+    /// list of hosts *Qwave* chose to contact; it has nothing to say about a
+    /// host *you* chose by typing a URL.
+    ///
+    /// **This is a hole in the guard by construction, so it is worth being
+    /// exact about how big.** Any code that calls this bypasses the allowlist,
+    /// and nothing mechanically restricts who may call it — a reviewer does,
+    /// which is why the marker is a distinct greppable symbol rather than a
+    /// side effect of which `URLSessionConfiguration` constant someone happened
+    /// to type. What bounds it in practice is that it is per-request, not
+    /// per-session: `URLSession.shared` stays gated for everything else, and a
+    /// fixed-host client added to that session later is still caught.
+    ///
+    /// The privacy cost at the sole call site is close to nil, and that is not
+    /// a general licence. `NavigationCoordinator.fetchAndPresentMarkdown` runs
+    /// from `decidePolicyFor navigationResponse` — WebKit has *already*
+    /// connected to that host and received response headers by then (Category
+    /// B/C, outside this guard's reach either way). The marked request is a
+    /// second fetch of a document the browser just retrieved at the user's
+    /// explicit instruction: no new destination, no data the host did not
+    /// already receive. A future caller that cannot make that same argument
+    /// does not belong here.
+    public static func markPageDriven(_ request: URLRequest) -> URLRequest {
+        guard let mutable = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        URLProtocol.setProperty(true, forKey: pageDrivenKey, in: mutable)
+        return mutable as URLRequest
+    }
+
+    /// Whether `request` carries the ``markPageDriven(_:)`` provenance flag.
+    static func isPageDriven(_ request: URLRequest) -> Bool {
+        URLProtocol.property(forKey: pageDrivenKey, in: request) != nil
+    }
+
     /// Failure surfaced to the caller when a request's host is not on
     /// `EgressAllowlist`. Callers see this exactly as any other
     /// `URLSession` transport error (thrown from `session.data(for:)`, etc).
@@ -110,6 +169,10 @@ public final class EgressGuard: URLProtocol {
     }
 
     public override class func canInit(with request: URLRequest) -> Bool {
+        // Page-driven: the host came from the page the user navigated to, not
+        // from Qwave's source, so `EgressAllowlist` does not apply. See
+        // `markPageDriven(_:)` for the (deliberately narrow) rationale.
+        if isPageDriven(request) { return false }
         guard let host = request.url?.host else {
             // No host to check (e.g. a file: URL) — nothing for the
             // allowlist to say; let normal handling proceed.
