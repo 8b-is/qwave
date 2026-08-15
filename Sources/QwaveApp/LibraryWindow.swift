@@ -46,7 +46,7 @@ private struct LibraryView: View {
     @State private var bookmarkEntries: [Bookmark] = []
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Picker("", selection: $section) {
                 ForEach(Section.allCases) { section in
                     Text(section.rawValue).tag(section)
@@ -54,9 +54,11 @@ private struct LibraryView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .accessibilityLabel("Library Section")
 
             TextField("Search", text: $searchText)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Search history and bookmarks")
 
             switch section {
             case .history:
@@ -80,6 +82,9 @@ private struct LibraryView: View {
                             reload()
                         }
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(historyEntries.isEmpty)
+                    .accessibilityLabel("Clear All History")
                 }
             case .bookmarks:
                 List(bookmarkEntries) { bookmark in
@@ -93,7 +98,7 @@ private struct LibraryView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(16)
         .onAppear { reload() }
         .onChange(of: searchText) { _, _ in reload() }
         .onChange(of: section) { _, _ in reload() }
@@ -106,7 +111,7 @@ private struct LibraryView: View {
         onDelete: @escaping () -> Void
     ) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title).lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
@@ -121,10 +126,12 @@ private struct LibraryView: View {
             }
             .buttonStyle(.borderless)
             .help("Open in new tab")
+            .accessibilityLabel("Open \(title) in new tab")
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Delete \(title)")
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {

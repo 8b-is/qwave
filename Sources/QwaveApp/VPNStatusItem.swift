@@ -159,6 +159,7 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         }
         statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.toolTip = description
     }
 
     /// Live throughput as the status item title while connected.
