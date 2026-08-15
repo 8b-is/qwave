@@ -68,10 +68,11 @@ appcast pipeline in both secret-present and secret-absent modes, Mullvad
 certificate pinning, the egress allowlist, WebURL host identity, and the
 negative/tamper KATs for all three KEMs.
 
-**The real feature gaps** are in the extensions/UX set: `declarativeNetRequest`
-is entirely **missing**; MV3 `content_scripts` injection is **model-only** (no
-injection engine); omnibox has no remote search suggestions; favicons are
-in-memory only (lost on relaunch).
+**Extensions & UX feature gaps resolved (Shipped to main):**
+- `declarativeNetRequest`: Fully implemented and compiled to `WKContentRuleList` JSON rulesets.
+- MV3 `content_scripts` injection: Complete injection engine wired to `WKUserContentController` with `URLMatchPattern` scoping and `run_at` timing.
+- Omnibox remote search suggestions: `SearchSuggestionProvider` (DuckDuckGo + OpenSearch) with hybrid ranking.
+- Persistent Favicons: High-performance SQLite `FaviconStore` with zero-copy mmap, WAL mode, and container-isolated AppKit disk caching.
 
 ### Settled verdicts carried forward (not relitigated here)
 
