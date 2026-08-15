@@ -317,14 +317,26 @@ or fill logic.
   so nothing writes when the user hasn't turned the extension on. This is the
   first (and only) call site of `ASCredentialIdentityStore` in the tree.
 - `PasswordCaptureBridge` (`Sources/QwaveApp/PasswordCaptureBridge.swift`): the
-  capture prompt. A `WKUserScript` (main frame only, mirrors `WebAuthnBridge`'s
-  origin scoping) observes password-form submissions without touching the
-  submission itself, and posts `{ url, username, password }` to the native
-  side. On receipt, if the login isn't already stored identically, an `NSAlert`
-  sheet asks "Save Password?"; confirming routes it through `CredentialSaver`.
-  Wired into every non-private tab's `WKWebView` in `BrowserWindowController`.
-  `CapturedFormCredential`'s JSON parsing is unit-tested
-  (`CapturedFormCredentialTests`) the same way `PasskeyAssertionRequest` is.
+  capture prompt. A `WKUserScript` (main frame only) observes password-form
+  submissions without touching the submission itself, and posts
+  `{ username, passwords: [{ value, autocomplete }] }` to the native side. The
+  shim and its message handler live in their own `WKContentWorld`, so page JS
+  can neither forge a capture message nor suppress the shim by pre-setting its
+  installed flag. Like `WebAuthnBridge`'s `rpId` check, the domain a login is
+  saved under comes from `frameInfo.securityOrigin` and never from the message
+  body — a page can only offer a password for itself. Which of the form's
+  password fields is captured is decided by `PasswordFieldSelection`
+  (`autocomplete="new-password"` wins; a change-password form saves the new
+  password, not the current one). On receipt, if the login isn't already stored
+  identically, an `NSAlert` sheet asks "Save Password?" — or, when a *different*
+  password is already stored for that username, "Update the saved password for
+  X?", since confirming overwrites it. Inbound messages are rate limited
+  (`PasswordCaptureThrottle`: one outstanding prompt, one message per origin per
+  second) because a page can post without a user gesture. Wired into every tab
+  that `PasswordCapturePolicy.captureIsAllowed` permits — never a private window
+  and never an ephemeral tab, which exists in normal windows too (Cmd-Opt-T).
+  All of these rules are unit-tested (`CapturedFormCredentialTests`,
+  `PasswordCaptureTests`) the same way `PasskeyAssertionRequest` is.
 
 Known limits of the landed save path (follow-ups, not blocking):
 
