@@ -59,6 +59,24 @@ public actor NibbleVault {
         return url
     }
 
+    /// Deletes every nibble markdown file in the vault. The directory and its
+    /// `README.md` are left in place — only the plaintext nibbles themselves
+    /// go — so a subsequent `write(_:)` has nowhere new to create.
+    ///
+    /// Mirrors `MemoryStore.deleteAll()`: both must be called together for a
+    /// "forget everything" action to actually forget everything, since the
+    /// vault is a separate, undeduped mirror of what the store holds.
+    public func deleteAll() throws {
+        for file in try markdownFiles() {
+            try? FileManager.default.removeItem(at: file.url)
+        }
+        // Drop the decode cache too: `all(limit:)` would no longer serve the
+        // removed files anyway, but a wipe shouldn't leave their decoded
+        // plaintext sitting in memory.
+        cache = nil
+        QwaveLog.memory.info("Deleted all nibble markdown files")
+    }
+
     public func all(limit: Int = 400) throws -> [MemoryNibble] {
         let files = try markdownFiles()
         // Limits beyond the cache window read directly and skip caching so the

@@ -91,7 +91,7 @@ struct MemoryWavePane: View {
                 }
                 Button("Forget all memories on this Mac", role: .destructive) {
                     Task { @MainActor in
-                        try? await environment.memoryWave.store?.deleteAll()
+                        try? await environment.memoryWave.forgetAll()
                         status = "Local wave store emptied."
                     }
                 }
