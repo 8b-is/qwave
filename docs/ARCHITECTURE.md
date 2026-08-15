@@ -179,14 +179,19 @@ See [docs/VPN_STAGE_B.md](VPN_STAGE_B.md) and [docs/CRYPTO_REVIEW.md](CRYPTO_REV
 
 Qwave distinguishes between its own requests, page traffic initiated by a
 navigation, and WebKit service traffic. Category-A hosts are recorded in a
-committed allowlist, but that allowlist is a **reviewed test oracle, not a
-runtime gate**: `EgressAllowlist.permits(host:)` has no production call site, so
-adding a `URLSession` call to a new host does not fail CI on its own
-([#77](https://github.com/8b-is/qwave/issues/77)). `EgressGuardTests` pins three
-known endpoints by hand and asserts the shields launch path makes no request.
-New Qwave-owned network code must document its host, trigger, opt-in state, and
-test coverage in [docs/NETWORK.md](NETWORK.md) — that document, not CI, is what
-catches it.
+committed allowlist, and — since [#77](https://github.com/8b-is/qwave/issues/77) —
+`EgressGuard` (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that
+consults `EgressAllowlist.permits(host:)` at runtime and fails any request to
+a host not listed, wired into every fixed-host Qwave network client
+(`MullvadAPIClient`, the DuckDuckGo suggestion provider) plus, process-wide,
+any default- or shared-configuration session. It is still not a mechanical
+guarantee over new code: a fixed-host client that skips
+`EgressGuard.install(into:)` is not caught by anything mechanical, only by
+review, and `EgressGuardTests` still pins three known endpoints by hand and
+asserts the shields launch path makes no request. New Qwave-owned network
+code must add its host to the allowlist, wire `EgressGuard` into its session
+if the host is fixed, and document its host, trigger, opt-in state, and test
+coverage in [docs/NETWORK.md](NETWORK.md).
 
 ## Testing boundaries
 

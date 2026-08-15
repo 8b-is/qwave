@@ -1,21 +1,27 @@
 import Foundation
 
 /// The committed allowlist of hosts Qwave's OWN code (Category A in
-/// docs/NETWORK.md) is permitted to contact. This is a **reviewed statement of
-/// intent, not a runtime gate**: `permits(host:)` has no production call site
-/// — every caller is in `EgressGuardTests` — so a running Qwave never consults
-/// it, and adding a connection to a host that is not here does NOT fail the
-/// test by itself. Nothing enumerates network call sites; a reviewer has to
-/// notice the new one and add an assertion (issue #77). Keep the list current
-/// anyway: it is what a reviewer checks a diff against, and new egress must be
-/// documented in docs/NETWORK.md.
+/// docs/NETWORK.md) is permitted to contact.
 ///
-/// Scope, honestly: this governs **Category A** only — connections this
-/// codebase initiates. It does NOT cover Category B (subresources of a page
-/// you navigated to — those are the open web, governed by Shields, not an
-/// allowlist) or Category C (WebKit's own service traffic, e.g. the
-/// fraudulent-website warning — those originate inside WebKit's network
-/// process, which this cannot see). See docs/NETWORK.md.
+/// `permits(host:)` now has a real runtime call site: `EgressGuard`
+/// (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that consults this
+/// allowlist and fails any request to a host not listed here, and it is
+/// wired into every fixed-host Qwave network client (`MullvadAPIClient` via
+/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, and —
+/// through `URLProtocol.registerClass` at process start — any default- or
+/// shared-configuration session). See #77.
+///
+/// It still is **not** a mechanical guarantee over the whole codebase: it
+/// governs Category A only, a custom-configuration session that skips
+/// `EgressGuard.install(into:)` is not caught, and some Category-A clients
+/// (Memory Wave's user-configurable endpoint, the favicon loader, the
+/// remote-markdown fetch, the VPN's in-tunnel quantum handshake) are
+/// deliberately excluded because their destination is not a fixed host by
+/// design — see `EgressGuard`'s doc comment for the per-client rationale.
+/// Nothing enumerates network call sites either, so a *new* fixed-host
+/// client still has to be wired up (and documented in docs/NETWORK.md) by
+/// whoever adds it. Keep the list current: it is both what `EgressGuard`
+/// checks against at runtime and what a reviewer checks a diff against.
 public enum EgressAllowlist {
     /// Permitted Category-A hosts, each with why it exists. Favicon and
     /// remote-markdown fetches are deliberately absent: their host is
@@ -32,6 +38,10 @@ public enum EgressAllowlist {
         // hosts instead. Stored memory bodies are never attached.
         // See docs/NETWORK.md.
         "api.x.ai",
+        // Omnibox autocomplete suggestions (off by default;
+        // networkSuggestionsEnabled). Cookieless, ephemeral transport;
+        // see BrowserCore/SearchSuggestionProvider.swift and issue #78.
+        "duckduckgo.com",
     ]
 
     /// True when `host` is a permitted Category-A destination — exact match

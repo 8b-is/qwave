@@ -187,44 +187,50 @@ local by default, remote only when configured. See
 
 ### Egress audit
 
-Qwave's own egress is held to a committed allowlist that a reviewer checks each
-diff against, and the shields launch path is asserted request-free by a test
-whose reach is bounded (caveats below). See
+Qwave's own egress is held to a committed allowlist, and — since
+[#77](https://github.com/8b-is/qwave/issues/77) — `EgressGuard`, a
+`URLProtocol` wired into every fixed-host client, checks it at runtime instead
+of only in review. The shields launch path is separately asserted
+request-free by a test whose reach is bounded (caveats below). See
 [`EgressAllowlist`](Packages/QwaveKit/Sources/QwaveSupport/EgressAllowlist.swift),
+[`EgressGuard`](Packages/QwaveKit/Sources/QwaveSupport/EgressGuard.swift),
 [docs/NETWORK.md](docs/NETWORK.md).
 
 ```text
- any Qwave network client
+ any wired Qwave network client
       │
       ▼
- EgressAllowlist.swift (committed) ── reviewed against each diff
-      │                                (a test oracle, not a runtime check
-      │                                 — see below and issue #77)
+ EgressGuard (URLProtocol) ── checks EgressAllowlist.permits(host:)
+      │                        allowed → steps aside, request proceeds
+      │                        blocked → fails the request, logs, records
       ▼
- allowlisted hosts (3): github.com          Sparkle appcast
+ allowlisted hosts (4): github.com          Sparkle appcast
                         api.mullvad.net     VPN control API
                         api.x.ai            default remote AI endpoint
+                        duckduckgo.com      omnibox suggestions (opt-in)
       │
       ▼
  launch path ── EgressGuardTests URLProtocol recorder ──▶ zero requests
                 (no launch-time blocklist fetch since 0.4.4)
 ```
 
-Two honest caveats, both tracked. `EgressAllowlist.permits(host:)` is **never
-called in production** — every call site is in `EgressGuardTests`, so it is a
-reviewed oracle rather than a runtime gate, and adding a call to a new host does
-not fail CI by itself ([#77](https://github.com/8b-is/qwave/issues/77)). One
-Category-A host is in exactly that state today: the opt-in, off-by-default
-omnibox suggestion endpoint `duckduckgo.com`
-([#78](https://github.com/8b-is/qwave/issues/78)), now documented in
-[docs/NETWORK.md](docs/NETWORK.md). The launch-path assertion is the one thing
-here checked dynamically rather than by review: it registers a `URLProtocol`
-recorder over the shields launch path and asserts nothing was requested. Its
-reach is bounded, though — `URLProtocol.registerClass` only sees sessions built
-from the default or shared configuration, so a custom-configuration
-`URLSession` (the ephemeral DuckDuckGo suggestion session, `FaviconLoader`) and
-WebKit's own network process are both invisible to it, and the test builds its
-own `ShieldsDirector` rather than running the app's launch sequence.
+Two honest caveats remain. `EgressGuard` only reaches a client that installs
+it: a default- or shared-configuration session gets it for free from the
+process-wide `URLProtocol.registerClass` in `main.swift`, but a
+custom-configuration session (ephemeral, pinned, etc.) has to call
+`EgressGuard.install(into:)` explicitly — `URLSession.mullvadPinned()` and
+`DuckDuckGoSuggestionProvider` do; a new fixed-host client that skips this
+would not be caught here, only by review. And some Category-A clients are
+deliberately **not** gated by `EgressGuard` at all, because their destination
+isn't a fixed host by design — Memory Wave's user-configurable endpoint
+(guarded instead by `EndpointRedirectPolicy` and `MemoryWavePolicy`),
+`FaviconLoader`, and remote-markdown fetches are all page- or
+user-driven. The shields launch-path assertion is the one thing here checked
+dynamically rather than by review of the wiring itself: it registers a
+`URLProtocol` recorder over the shields launch path and asserts nothing was
+requested; the test builds its own `ShieldsDirector` rather than running the
+app's launch sequence, and WebKit's own network process (Category C) is
+invisible to any `URLProtocol`-based check, `EgressGuard` included.
 
 ## Architecture at a glance
 

@@ -26,6 +26,7 @@ public enum QwaveLog {
     public static let tunnel = QwaveLogger(category: "tunnel")
     public static let memory = QwaveLogger(category: "memory")
     public static let summarize = QwaveLogger(category: "summarize")
+    public static let egress = QwaveLogger(category: "egress")
 }
 
 /// Signposters for Instruments — hibernate/wake cycles show up as intervals

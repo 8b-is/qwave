@@ -159,7 +159,7 @@ let package = Package(
         // allowlist against every module that can make Qwave's own requests.
         .testTarget(
             name: "EgressGuardTests",
-            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave"],
+            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave", "BrowserCore"],
             swiftSettings: swift6
         ),
     ]
