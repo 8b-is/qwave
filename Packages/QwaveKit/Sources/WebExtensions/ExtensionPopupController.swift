@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import WebKit
 
@@ -59,3 +60,4 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
         popover.performClose(nil)
     }
 }
+#endif

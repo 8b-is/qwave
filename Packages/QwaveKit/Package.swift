@@ -9,7 +9,8 @@ let swift6: [SwiftSetting] = [
 let package = Package(
     name: "QwaveKit",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v14),
+        .iOS(.v17),
     ],
     products: [
         // Umbrella product linked by the Qwave app target.

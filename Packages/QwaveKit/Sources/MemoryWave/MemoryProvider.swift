@@ -89,7 +89,7 @@ public struct OnDeviceMemoryProvider: MemoryProviding {
 
     public var isAvailable: Bool {
         #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, iOS 26.0, *) {
                 return true
             }
         #endif
@@ -98,7 +98,7 @@ public struct OnDeviceMemoryProvider: MemoryProviding {
 
     public func complete(system: String, user: String) async throws -> String {
         #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
+            if #available(macOS 26.0, iOS 26.0, *) {
                 return try await FoundationModelsBridge.complete(system: system, user: user)
             }
         #endif
@@ -109,7 +109,7 @@ public struct OnDeviceMemoryProvider: MemoryProviding {
 #if canImport(FoundationModels)
     import FoundationModels
 
-    @available(macOS 26.0, *)
+    @available(macOS 26.0, iOS 26.0, *)
     enum FoundationModelsBridge {
         static func complete(system: String, user: String) async throws -> String {
             let session = LanguageModelSession()

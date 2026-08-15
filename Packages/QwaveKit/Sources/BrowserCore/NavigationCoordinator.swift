@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import WebKit
 import Shields
 import Persistence
@@ -117,7 +121,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
         // reading of it (IDN/percent/authority divergences are a bypass).
         let host = url.flatMap(CanonicalHost.host(of:))
 
-        // Cmd-click → background tab in the same container.
+        // Cmd-click → background tab in the same container. Pointer+keyboard
+        // interaction; the iOS UI layer (Phase 1) uses long-press instead, and
+        // WKNavigationAction.modifierFlags is iOS 18.4+ regardless.
+#if os(macOS)
         if isMainFrame,
             navigationAction.navigationType == .linkActivated,
             navigationAction.modifierFlags.contains(.command),
@@ -127,6 +134,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
             onOpenNewTab?(url, navigationAction.modifierFlags.contains(.shift))
             return
         }
+#endif
 
         if isMainFrame, let url, url.scheme == QwaveSchemeHandler.scheme {
             preferences.allowsContentJavaScript = true
@@ -391,6 +399,9 @@ extension NavigationCoordinator: WKUIDelegate {
         return nil
     }
 
+    // JS dialog + file-open panels use AppKit modals; the iOS UI layer
+    // (Phase 1) will present these from a view controller.
+#if os(macOS)
     public func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
@@ -452,6 +463,7 @@ extension NavigationCoordinator: WKUIDelegate {
             completionHandler(response == .OK ? panel.urls : nil)
         }
     }
+#endif
 
     public func webView(
         _ webView: WKWebView,

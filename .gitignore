@@ -11,6 +11,7 @@ Resources/CredentialProvider/CredentialProvider.entitlements
 
 # Build products
 .build/
+.build-ios/
 build/
 DerivedData/
 *.xcresult
