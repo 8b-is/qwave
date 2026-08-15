@@ -38,7 +38,7 @@ final class FaviconLoader {
         // Asynchronously load from persistent SQLite FaviconStore if available
         if let store, !inFlight.contains(cacheKey) {
             inFlight.insert(cacheKey)
-            Task { @MainActor [weak self] in
+            Task(priority: .utility) { @MainActor [weak self] in
                 defer { self?.inFlight.remove(cacheKey) }
                 if let data = try? await store.load(host: host, containerID: containerID),
                     let image = NSImage(data: data) {
@@ -71,7 +71,7 @@ final class FaviconLoader {
         guard !inFlight.contains(cacheKey) else { return }
         inFlight.insert(cacheKey)
 
-        Task { @MainActor [weak self] in
+        Task(priority: .utility) { @MainActor [weak self] in
             defer { self?.inFlight.remove(cacheKey) }
             guard let (data, response) = try? await self?.session.data(from: iconURL),
                 let http = response as? HTTPURLResponse, http.statusCode == 200,
@@ -86,7 +86,7 @@ final class FaviconLoader {
 
             // Persist to SQLite store
             if let store = self?.store {
-                Task {
+                Task(priority: .background) {
                     try? await store.store(
                         host: pageHost,
                         containerID: containerID,

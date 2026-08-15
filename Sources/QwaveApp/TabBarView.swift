@@ -78,6 +78,18 @@ final class TabBarView: NSView {
             stack.bottomAnchor.constraint(equalTo: clipView.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
         ])
+
+        // Accessibility: expose the strip as a tab group. `accessibilityChildren`
+        // flattens the intervening scroll view so VoiceOver announces a clean
+        // "N tabs" group instead of burying the items under a scroll area.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.tabGroup)
+        setAccessibilityLabel("Browser Tabs")
+        newTabButton.setAccessibilityLabel("New Tab")
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        stack.arrangedSubviews + [newTabButton]
     }
 
     @objc private func newTabClicked(_ sender: NSButton) {
@@ -246,6 +258,32 @@ private final class TabItemView: NSView {
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 16),
         ])
+
+        // Accessibility: the whole item is a single button VoiceOver reads and
+        // presses to select the tab. The favicon and title are folded into the
+        // button's label rather than announced as separate elements; the close
+        // button stays reachable as a child so VO users can still close tabs.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(Self.accessibilityLabel(for: model))
+        if isSelected { setAccessibilityValue("selected") }
+        favicon.setAccessibilityElement(false)
+        label.setAccessibilityElement(false)
+        closeButton.setAccessibilityLabel("Close \(model.title.isEmpty ? "tab" : model.title)")
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onSelect?()
+        return true
+    }
+
+    private static func accessibilityLabel(for model: TabDisplayModel) -> String {
+        var parts = [model.title.isEmpty ? "Untitled" : model.title]
+        if model.isPinned { parts.append("pinned") }
+        if model.isHibernated { parts.append("sleeping") }
+        if model.isLoading { parts.append("loading") }
+        if model.isEphemeral { parts.append("ephemeral") }
+        return parts.joined(separator: ", ")
     }
 
     @available(*, unavailable)

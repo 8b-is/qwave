@@ -652,7 +652,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         lastAutoRemember[tab.id] = (url, Date())
-        Task { @MainActor [weak self] in
+        Task(priority: .utility) { @MainActor [weak self] in
             guard let self else { return }
             let result = try? await webView.evaluateJavaScript(ArticleExtractor.userScript)
             let extract =
@@ -1238,6 +1238,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         let button = NSButton(image: image, target: self, action: action)
         button.bezelStyle = .texturedRounded
         button.isBordered = true
+        button.setAccessibilityLabel(label)
         return button
     }
 
@@ -1250,6 +1251,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         omnibox.lineBreakMode = .byTruncatingTail
         omnibox.cell?.sendsActionOnEndEditing = false
         omnibox.font = .systemFont(ofSize: 13)
+        omnibox.setAccessibilityLabel("Address and search")
         return omnibox
     }
 }

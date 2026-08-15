@@ -103,7 +103,7 @@ public final class RuleListCompiler {
             // from the cache so the stale list + JSON don't both stay resident.
             let jsonCopy = json
             jsonCache.removeValue(forKey: list)
-            Task { @MainActor [weak self] in
+            Task(priority: .utility) { @MainActor [weak self] in
                 guard let self else { return }
                 do {
                     let fresh = try await self.compile(identifier: identifier, json: jsonCopy)
