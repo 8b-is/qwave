@@ -4,6 +4,18 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Apple Music "Now Playing" HUD in the toolbar.** When you have an active
+  Apple Music subscription and something is playing, a compact HUD appears
+  next to the omnibox with artwork, title/artist, and play/pause/skip
+  controls — animated in and out with a spring-based pop, no subscription or
+  nothing playing means zero footprint. Built as a new `AppleMusicKit`
+  package (MusicKit isolated to a single file, mirroring `Summarize`'s
+  `FoundationModels` isolation) plus `Sources/QwaveApp/MusicHUDView.swift`.
+  MusicKit authorization is requested only on first use, never at launch. See
+  [docs/MUSIC.md](docs/MUSIC.md) and the new Category A row in
+  [docs/NETWORK.md](docs/NETWORK.md).
+
 ### Documentation
 - **`duckduckgo.com` omnibox suggestion egress added to `EgressAllowlist` and
   `docs/NETWORK.md`.** `DuckDuckGoSuggestionProvider` has hardcoded

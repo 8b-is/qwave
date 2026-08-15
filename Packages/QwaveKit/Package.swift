@@ -18,7 +18,7 @@ let package = Package(
             name: "QwaveKit",
             targets: [
                 "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
-                "URLIdentity", "MemoryWave", "Summarize",
+                "URLIdentity", "MemoryWave", "Summarize", "AppleMusicKit",
             ]
         ),
         // Slim product linked by the PacketTunnel system extension.
@@ -115,6 +115,16 @@ let package = Package(
             ],
             swiftSettings: swift6
         ),
+        // Apple Music "now playing" HUD: subscription/authorization gate plus
+        // system-player observation. The only MusicKit touchpoint is
+        // AppleMusicSession behind canImport/available, mirroring Summarize's
+        // FoundationModels isolation — everything else here is pure and
+        // testable on any Mac.
+        .target(
+            name: "AppleMusicKit",
+            dependencies: ["QwaveSupport"],
+            swiftSettings: swift6
+        ),
 
         .testTarget(
             name: "QwaveSupportTests",
@@ -145,6 +155,7 @@ let package = Package(
             swiftSettings: swift6),
         .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: swift6),
         .testTarget(name: "SummarizeTests", dependencies: ["Summarize", "BrowserCore"], swiftSettings: swift6),
+        .testTarget(name: "AppleMusicKitTests", dependencies: ["AppleMusicKit"], swiftSettings: swift6),
         .testTarget(
             name: "VPNKitTests",
             dependencies: ["VPNKit"],

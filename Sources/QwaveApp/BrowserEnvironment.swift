@@ -7,6 +7,7 @@ import VPNKit
 import WebExtensions
 import MemoryWave
 import QwaveSupport
+import AppleMusicKit
 
 /// The app-wide service graph, built once at launch.
 @MainActor
@@ -32,6 +33,10 @@ final class BrowserEnvironment {
     let memoryWave: WaveDirector
     let memoryPreferences: MemoryWavePreferences
     let secrets: SecretStore
+    /// Apple Music "now playing" HUD backend. One instance, shared across
+    /// windows — it observes the single system music player, not a per-tab
+    /// or per-window state. See docs/MUSIC.md.
+    let appleMusic = AppleMusicSession()
 
     private let directory: URL
     private var startPageMemories: [StartMemoryChip] = []
@@ -219,6 +224,9 @@ final class BrowserEnvironment {
         let directory = supportDirectory
         let environment = await BrowserEnvironment(directory: directory)
         await environment.refreshInternalPages()
+        // Read-only status check — MusicAuthorization.currentStatus, not a
+        // request — so this never surfaces a permission prompt on launch.
+        await environment.appleMusic.refreshAvailability()
         return environment
     }
 

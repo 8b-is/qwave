@@ -74,6 +74,10 @@ targets:
         NSCameraUsageDescription: Qwave asks for the camera only when a website you are visiting requests it, such as for a video call.
         NSMicrophoneUsageDescription: Qwave asks for the microphone only when a website you are visiting requests it, such as for a call or voice input.
         NSLocationWhenInUseUsageDescription: Qwave shares your location only when a website you are visiting requests it, such as for maps or local search.
+        # MusicKit: reading Apple Music subscription status and the system
+        # player's now-playing state for the toolbar HUD. Requested only when
+        # you open the HUD for the first time — see docs/MUSIC.md.
+        NSAppleMusicUsageDescription: Qwave shows what's playing in Apple Music in the toolbar. This only reads playback status — Qwave never streams or stores music.
         LSApplicationCategoryType: public.app-category.productivity
         # Register Qwave as an http/https handler so macOS lists it as a
         # candidate default browser (System Settings, or the in-app "Set Qwave
@@ -115,6 +119,9 @@ targets:
           - $(TeamIdentifierPrefix)group.is.8b.qwave
         keychain-access-groups:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
+        # Now Playing HUD: read Apple Music subscription + system player
+        # state (docs/MUSIC.md). No catalog playback, no library writes.
+        com.apple.developer.musickit: true
 
   PacketTunnel:
     type: system-extension

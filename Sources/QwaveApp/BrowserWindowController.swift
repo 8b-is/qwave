@@ -10,6 +10,7 @@ import URLIdentity
 import MemoryWave
 import QwaveSupport
 import WebCredentials
+import AppleMusicKit
 import os
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
@@ -1409,6 +1410,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         omnibox.setAccessibilityLabel("Address and search")
         return omnibox
     }
+
+    /// Apple Music HUD, hosted directly in the toolbar (the "top bar") next
+    /// to the omnibox. `MusicHUDContainerView` owns whether it renders
+    /// anything at all — vanish-cleanly, no subscription/no playback means
+    /// zero footprint, not a greyed-out placeholder.
+    private func makeMusicHUDView() -> NSView {
+        let hosting = NSHostingView(rootView: MusicHUDContainerView(session: environment.appleMusic))
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        return hosting
+    }
 }
 
 // MARK: - Omnibox suggestions (NSTextFieldDelegate)
@@ -1500,6 +1511,7 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let forwardItem = NSToolbarItem.Identifier("qwave.forward")
     private static let reloadItem = NSToolbarItem.Identifier("qwave.reload")
     private static let omniboxItem = NSToolbarItem.Identifier("qwave.omnibox")
+    private static let musicHUDItem = NSToolbarItem.Identifier("qwave.musicHUD")
     private static let shieldsItem = NSToolbarItem.Identifier("qwave.shields")
     private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
     private static let summarizeItem = NSToolbarItem.Identifier("qwave.summarize")
@@ -1508,7 +1520,8 @@ extension BrowserWindowController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
+            Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem,
+            Self.musicHUDItem, .flexibleSpace,
             Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
         ]
     }
@@ -1543,6 +1556,10 @@ extension BrowserWindowController: NSToolbarDelegate {
             item.label = "Address"
             item.minSize = NSSize(width: 240, height: 24)
             item.maxSize = NSSize(width: 900, height: 24)
+        case Self.musicHUDItem:
+            item.view = makeMusicHUDView()
+            item.label = "Now Playing"
+            item.visibilityPriority = .high
         case Self.memoryItem:
             memoryButton = makeToolbarButton(
                 symbol: "waveform", label: "Memory Wave", action: #selector(toggleMemoryWave(_:)))
