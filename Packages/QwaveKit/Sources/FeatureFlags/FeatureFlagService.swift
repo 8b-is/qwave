@@ -39,6 +39,10 @@ public final class FeatureFlagService: ObservableObject {
 
     private let defaults: UserDefaults
     private let safety: FeatureFlagSafety
+    /// Raw `_WKFeature` SPI objects, cached once (the surface is invariant for
+    /// the process lifetime) so `apply(to:)` does not re-reflect the SPI on
+    /// every new `WKPreferences`. Refreshed by `loadFeatures()`.
+    private var rawFeatureObjects: [NSObject] = []
     private var overrides: [String: Bool] {
         didSet {
             defaults.set(overrides, forKey: Self.overridesKey)
@@ -75,6 +79,7 @@ public final class FeatureFlagService: ObservableObject {
 
     public func loadFeatures() {
         let (found, rawFeatures) = Self.rawFeatures()
+        rawFeatureObjects = rawFeatures
         let probe = WKPreferences()
         let parsed = rawFeatures.compactMap { raw -> WebFeature? in
             guard
@@ -181,7 +186,7 @@ public final class FeatureFlagService: ObservableObject {
     /// `WebViewFactory` for every new configuration.
     public func apply(to preferences: WKPreferences) {
         guard isSPIAvailable, !overrides.isEmpty else { return }
-        let (_, rawFeatures) = Self.rawFeatures()
+        let rawFeatures = rawFeatureObjects
         guard !rawFeatures.isEmpty else { return }
         guard preferences.responds(to: Self.setEnabledSelector) else { return }
 
