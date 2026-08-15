@@ -229,10 +229,17 @@ public final class WaveDirector {
                 let (grid, gridRecords) = try await store.gridWithRecords(containerID: containerID)
                 records = Array(gridRecords.prefix(64))
                 let ranked = grid.resonate(query: probe)
+                // `createdAt` is not a unique key — two records inserted with
+                // one explicit `at:` timestamp share it, and
+                // `Dictionary(uniqueKeysWithValues:)` traps on the duplicate
+                // (issue #110). Key on the full wave identity instead (both
+                // arrays decode the same grid), and collapse duplicates to
+                // their best rank so the sort intent survives.
                 let order = Dictionary(
-                    uniqueKeysWithValues: ranked.enumerated().map { ($0.element.1.createdAt, $0.offset) })
+                    ranked.enumerated().map { ($0.element.1, $0.offset) },
+                    uniquingKeysWith: min)
                 records.sort { lhs, rhs in
-                    (order[lhs.wave.createdAt] ?? Int.max) < (order[rhs.wave.createdAt] ?? Int.max)
+                    (order[lhs.wave] ?? Int.max) < (order[rhs.wave] ?? Int.max)
                 }
                 // Semantic rerank: the resonance sort above is a cheap lexical
                 // prefilter; when the on-device contextual-embedding asset is

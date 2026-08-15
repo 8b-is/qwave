@@ -195,6 +195,16 @@ All notable changes to Qwave will be documented in this file.
   The official ACVP vectors replace them as the oracle.
 
 ### Fixed
+- **`WaveDirector.recall` no longer traps on duplicate `createdAt` (#110).**
+  The resonance rank map was built with
+  `Dictionary(uniqueKeysWithValues:)` keyed on the nanosecond `createdAt`
+  timestamp, which is not a unique key: any two records sharing a
+  caller-supplied `at:` date (an importer, sync path, or backfill) aborted
+  the process — and since the trap fired in `recall`, the poisoned container
+  crashed the app on every subsequent memory query until the row was
+  deleted. The map now keys on the full wave identity and collapses
+  duplicates to their best rank with `uniquingKeysWith: min`, keeping the
+  existing sort intent.
 - Memory Wave's remote OpenAI-compatible provider now applies an explicit
   request timeout (30s idle, 60s overall), so an endpoint that hangs or
   dribbles bytes can no longer stall inference indefinitely.
