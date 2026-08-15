@@ -29,6 +29,46 @@ final class MLKEM768Tests: XCTestCase {
         XCTAssertEqual(MLKEM768.decaps(dk: dk, ct: tampered), MLKEM768.decaps(dk: dk, ct: tampered))
     }
 
+    /// Regression for #93: `encaps`/`decaps` used to index their `Data`
+    /// arguments with absolute offsets, so a slice with a non-zero
+    /// `startIndex` (e.g. a subrange carved out of a larger buffer) would
+    /// trap instead of working like any other equal-content `Data`.
+    func testEncapsDecapsAcceptNonZeroBasedSlices() throws {
+        let d = Data((0..<32).map { UInt8(($0 * 7) % 251) })
+        let m = Data((0..<32).map { UInt8(($0 * 13) % 251) })
+        let (ek, dk) = MLKEM768.keygen(d: d, z: Data(repeating: 0x11, count: 32))
+
+        // Pad each buffer with a junk prefix/suffix, then take the interior
+        // slice back out. The slice is byte-for-byte identical to the
+        // original, but its `startIndex` is > 0 — exactly the shape of Data
+        // the old absolute-offset indexing couldn't handle.
+        func nonZeroBasedSlice(_ data: Data) -> Data {
+            var padded = Data(repeating: 0xEE, count: 7)
+            padded.append(data)
+            padded.append(Data(repeating: 0xEE, count: 5))
+            let slice = padded[padded.startIndex.advanced(by: 7)..<padded.startIndex.advanced(by: 7 + data.count)]
+            XCTAssertNotEqual(slice.startIndex, 0, "test fixture must produce a non-zero-based slice")
+            XCTAssertEqual(Data(slice), data)
+            return slice
+        }
+
+        let ekSlice = nonZeroBasedSlice(ek)
+        let mSlice = nonZeroBasedSlice(m)
+        let dkSlice = nonZeroBasedSlice(dk)
+
+        let (ct, ss) = try MLKEM768.encaps(ek: ekSlice, m: mSlice)
+        let ctSlice = nonZeroBasedSlice(ct)
+
+        XCTAssertEqual(MLKEM768.decaps(dk: dkSlice, ct: ctSlice), ss)
+
+        // Cross-check against the zero-based path to make sure the slice
+        // variant isn't merely "not trapping" but actually correct.
+        let (ctZero, ssZero) = try MLKEM768.encaps(ek: ek, m: m)
+        XCTAssertEqual(ct, ctZero)
+        XCTAssertEqual(ss, ssZero)
+        XCTAssertEqual(MLKEM768.decaps(dk: dk, ct: ct), ssZero)
+    }
+
     // MARK: - NTT algebra (the load-bearing arithmetic)
 
     private func randomPoly(seed: UInt64) -> [Int] {

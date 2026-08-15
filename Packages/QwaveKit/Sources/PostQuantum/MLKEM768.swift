@@ -463,7 +463,14 @@ public enum MLKEM768 {
 
     /// FIPS 203 Algorithm 17 (ML-KEM.Encaps_internal), preceded by the §7.2
     /// input check. m: 32-byte randomness. Returns (ct, ss).
-    public static func encaps(ek: Data, m: Data) throws -> (ct: Data, ss: Data) {
+    ///
+    /// `ek`/`m` are rebased to zero-based `Data` up front — `kpkeEncrypt` (and
+    /// the byte decoders it calls) index with absolute offsets, so a
+    /// caller-supplied slice with a non-zero `startIndex` (e.g. a subrange of
+    /// a larger buffer) would otherwise trap instead of failing gracefully.
+    public static func encaps(ek ekIn: Data, m mIn: Data) throws -> (ct: Data, ss: Data) {
+        let ek = Data(ekIn)
+        let m = Data(mIn)
         precondition(m.count == 32)
         guard validateEncapsulationKey(ek) else { throw MLKEMError.invalidEncapsulationKey }
         // H is SHA3-256 (FIPS 203 §4.1), not SHAKE256. H(ek) feeds G(m ‖ H(ek)),
@@ -480,7 +487,14 @@ public enum MLKEM768 {
 
     /// FIPS 203 Algorithm 18 (ML-KEM.Decaps_internal, with implicit
     /// rejection). Returns ss.
-    public static func decaps(dk: Data, ct: Data) -> Data {
+    ///
+    /// `dk`/`ct` are rebased to zero-based `Data` up front for the same
+    /// reason as `encaps`: this function and `kpkeDecrypt`/`kpkeEncrypt` slice
+    /// with absolute offsets, which only holds if the input's `startIndex` is
+    /// 0. Without the rebase, a non-zero-based slice traps.
+    public static func decaps(dk dkIn: Data, ct ctIn: Data) -> Data {
+        let dk = Data(dkIn)
+        let ct = Data(ctIn)
         precondition(dk.count == dkSize && ct.count == ctSize)
         let dkKPKE = dk.prefix(384 * k)
         let ek = dk.subdata(in: (384 * k)..<(384 * k + ekSize))
