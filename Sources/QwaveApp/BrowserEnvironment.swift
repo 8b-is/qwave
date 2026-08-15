@@ -40,6 +40,9 @@ final class BrowserEnvironment {
     /// is queried once rather than on every character. Invalidated whenever a
     /// bookmark is added or removed (see `invalidateBookmarkCache`).
     private var bookmarkCache: [Bookmark]?
+    /// Bumped on every invalidation so a load that suspended across a mutation
+    /// does not write its stale result back into the cache (see cachedBookmarks).
+    private var bookmarkGeneration = 0
 
     private init(directory: URL) async {
         self.directory = directory
@@ -103,8 +106,14 @@ final class BrowserEnvironment {
     /// `bookmarks?.all()`; only the query frequency changes.
     func cachedBookmarks() async -> [Bookmark] {
         if let bookmarkCache { return bookmarkCache }
+        let generation = bookmarkGeneration
         let all = (try? await bookmarks?.all()) ?? []
-        bookmarkCache = all
+        // Only cache if no add/remove invalidated us during the await; otherwise
+        // return this (now-stale) read but leave the cache empty so the next
+        // call reloads fresh, instead of poisoning it.
+        if bookmarkGeneration == generation {
+            bookmarkCache = all
+        }
         return all
     }
 
@@ -112,6 +121,7 @@ final class BrowserEnvironment {
     /// Call after any bookmark add/remove.
     func invalidateBookmarkCache() {
         bookmarkCache = nil
+        bookmarkGeneration &+= 1
     }
 
     var providerLabel: String {
