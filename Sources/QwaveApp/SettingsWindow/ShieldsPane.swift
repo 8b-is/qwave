@@ -13,10 +13,12 @@ struct ShieldsPane: View {
                     .onChange(of: policy.defaultAdsBlocked) { _, newValue in
                         settings.shieldsEnabledByDefault = newValue
                     }
+                    .accessibilityLabel("Block ads & trackers by default")
                 Toggle("HTTPS-first (upgrade insecure connections)", isOn: $policy.defaultHTTPSFirst)
                     .onChange(of: policy.defaultHTTPSFirst) { _, newValue in
                         settings.httpsFirstEnabled = newValue
                     }
+                    .accessibilityLabel("HTTPS-first (upgrade insecure connections)")
             } header: {
                 Text("Defaults")
             } footer: {
@@ -40,7 +42,9 @@ struct ShieldsPane: View {
                                 Button("Clear") {
                                     policy.setOverride(SitePolicy(), forHost: host)
                                 }
+                                .buttonStyle(.bordered)
                                 .controlSize(.small)
+                                .accessibilityLabel("Clear override for \(host)")
                             }
                         }
                     }
@@ -48,11 +52,13 @@ struct ShieldsPane: View {
                     Button("Clear all overrides") {
                         policy.clearAllOverrides()
                     }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Clear all per-site overrides")
                 }
             }
         }
         .formStyle(.grouped)
-        .padding(12)
+        .padding(16)
     }
 
     private func describe(_ sitePolicy: SitePolicy) -> String {

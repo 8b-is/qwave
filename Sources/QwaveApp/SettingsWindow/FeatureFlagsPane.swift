@@ -45,12 +45,16 @@ struct FeatureFlagsPane: View {
                 HStack {
                     TextField("Filter features", text: $searchText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Filter features")
                     Toggle("Show internal", isOn: $showInternal)
                         .toggleStyle(.checkbox)
+                        .accessibilityLabel("Show internal WebKit feature flags")
                     Button("Reset All") {
                         service.resetAll()
                     }
+                    .buttonStyle(.bordered)
                     .disabled(service.overriddenCount == 0)
+                    .accessibilityLabel("Reset all feature overrides")
                 }
 
                 Text("Toggles apply to new tabs. \(service.overriddenCount) overridden.")
@@ -87,6 +91,7 @@ struct FeatureFlagsPane: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.mini)
+                        .accessibilityLabel("Toggle \(feature.name)")
                     }
                     .padding(.vertical, 2)
                 }

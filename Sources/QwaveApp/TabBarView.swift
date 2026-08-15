@@ -60,10 +60,12 @@ final class TabBarView: NSView {
         newTabButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
         newTabButton.bezelStyle = .texturedRounded
         newTabButton.isBordered = false
+        newTabButton.contentTintColor = .secondaryLabelColor
         newTabButton.target = self
         newTabButton.action = #selector(newTabClicked(_:))
         newTabButton.translatesAutoresizingMaskIntoConstraints = false
         newTabButton.menu = nil
+        newTabButton.toolTip = "New Tab"
         addSubview(newTabButton)
 
         NSLayoutConstraint.activate([
@@ -86,6 +88,7 @@ final class TabBarView: NSView {
         setAccessibilityRole(.tabGroup)
         setAccessibilityLabel("Browser Tabs")
         newTabButton.setAccessibilityLabel("New Tab")
+        newTabButton.setAccessibilityHelp("Open a new tab")
     }
 
     override func accessibilityChildren() -> [Any]? {
@@ -211,6 +214,8 @@ private final class TabItemView: NSView {
 
     private var dragOrigin: NSPoint?
     private var isDragging = false
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
 
     /// The tab id this view currently renders — the diffing key for reuse.
     var tabID: UUID { model.id }
@@ -241,9 +246,11 @@ private final class TabItemView: NSView {
         closeButton.isBordered = false
         closeButton.bezelStyle = .inline
         closeButton.controlSize = .small
+        closeButton.contentTintColor = .secondaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(closeClicked(_:))
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.toolTip = "Close Tab"
         addSubview(closeButton)
 
         let width = widthAnchor.constraint(equalToConstant: 180)
@@ -279,6 +286,45 @@ private final class TabItemView: NSView {
         apply(model: model, isSelected: isSelected)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackgroundColor()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackgroundColor()
+    }
+
+    private func updateBackgroundColor() {
+        if isSelected {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
+                : NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        } else {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.labelColor.withAlphaComponent(0.06).cgColor
+                : NSColor.clear.cgColor
+        }
+    }
+
     /// Re-render this view for a (possibly new) model without reallocating it or
     /// re-activating its layout constraints. Produces the exact visual and
     /// accessibility state a freshly-constructed item would have.
@@ -286,10 +332,7 @@ private final class TabItemView: NSView {
         self.model = model
         self.isSelected = isSelected
 
-        layer?.backgroundColor =
-            isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
+        updateBackgroundColor()
 
         if model.isEphemeral {
             stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
@@ -309,10 +352,12 @@ private final class TabItemView: NSView {
         if model.isHibernated { title = "💤 " + title }
         if model.isLoading { title = "⋯ " + title }
         label.stringValue = title
+        label.textColor = isSelected ? .labelColor : .secondaryLabelColor
         label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
 
         widthConstraint.constant = model.isPinned ? 120 : 180
 
+        toolTip = model.title.isEmpty ? "Untitled Tab" : model.title
         setAccessibilityLabel(Self.accessibilityLabel(for: model))
         setAccessibilityValue(isSelected ? "selected" : nil)
         closeButton.setAccessibilityLabel("Close \(model.title.isEmpty ? "tab" : model.title)")

@@ -27,9 +27,12 @@ struct VPNPane: View {
                     Button("Log Out & Remove Device") {
                         Task { await vpn.logout() }
                     }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Log Out and Remove Device")
                 } else {
                     SecureField("Mullvad account number", text: $accountNumber)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Mullvad account number")
                     Button(vpn.isBusy ? "Logging in…" : "Log In") {
                         Task {
                             if await vpn.login(accountNumber: accountNumber) {
@@ -38,7 +41,9 @@ struct VPNPane: View {
                             }
                         }
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(vpn.isBusy || accountNumber.isEmpty)
+                    .accessibilityLabel("Log In to Mullvad VPN")
                 }
             }
 
@@ -49,16 +54,22 @@ struct VPNPane: View {
                         Text(country.name).tag(country.code)
                     }
                 }
+                .accessibilityLabel("Country selection")
                 .onChange(of: selectedCountry) { _, newValue in
                     vpn.constraints.location = newValue.isEmpty ? nil : newValue
                 }
                 Toggle("Mullvad-owned servers only", isOn: $vpn.constraints.ownedOnly)
+                    .accessibilityLabel("Mullvad-owned servers only")
                 Toggle("Require DAITA (traffic-analysis defense)", isOn: $vpn.constraints.requireDaita)
+                    .accessibilityLabel("Require DAITA traffic-analysis defense")
                 Toggle("Quantum-resistant tunnel", isOn: $vpn.quantumResistant)
+                    .accessibilityLabel("Quantum-resistant tunnel")
                 if vpn.relayList == nil {
                     Button("Load relay list") {
                         Task { await vpn.loadRelays() }
                     }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Load relay list")
                 }
             }
 
@@ -68,11 +79,15 @@ struct VPNPane: View {
                     Button(connectTitle) {
                         Task { await vpn.connect() }
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(!vpn.account.isLoggedIn || vpn.isBusy || isConnected)
+                    .accessibilityLabel("Connect VPN")
                     Button("Disconnect") {
                         vpn.disconnect()
                     }
+                    .buttonStyle(.bordered)
                     .disabled(!isConnected && tunnel.state != .connecting)
+                    .accessibilityLabel("Disconnect VPN")
                 }
                 Button("Install VPN System Extension…") {
                     extensionStatus = "Requesting activation…"
@@ -80,6 +95,8 @@ struct VPNPane: View {
                         extensionStatus = status
                     }
                 }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Install VPN System Extension")
                 if !extensionStatus.isEmpty {
                     Text(extensionStatus)
                         .font(.caption)
@@ -93,7 +110,7 @@ struct VPNPane: View {
             }
         }
         .formStyle(.grouped)
-        .padding(12)
+        .padding(16)
         .onAppear {
             selectedCountry = vpn.constraints.location ?? ""
             Task { await vpn.tunnel.refresh() }

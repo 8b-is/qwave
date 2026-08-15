@@ -1,21 +1,25 @@
 import AppKit
 
 /// In-page find bar: search field + previous/next/done. Toggled by Cmd-F.
-final class FindBarView: NSView {
-    let searchField = NSSearchField()
+public final class FindBarView: NSView {
+    public let searchField = NSSearchField()
 
     /// (query, forward)
-    var onSearch: ((String, Bool) -> Void)?
-    var onClose: (() -> Void)?
+    public var onSearch: ((String, Bool) -> Void)?
+    public var onClose: (() -> Void)?
 
-    override init(frame frameRect: NSRect) {
+    public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
     }
 
-    required init?(coder: NSCoder) {
+    public required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
+    }
+
+    public convenience init() {
+        self.init(frame: .zero)
     }
 
     private func setup() {
@@ -82,7 +86,7 @@ final class FindBarView: NSView {
         onClose?()
     }
 
-    override func cancelOperation(_ sender: Any?) {
+    override public func cancelOperation(_ sender: Any?) {
         onClose?()
     }
 }

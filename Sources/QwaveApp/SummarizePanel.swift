@@ -12,16 +12,20 @@ struct SummarizePanelView: View {
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "text.badge.star")
+                    .accessibilityHidden(true)
                 Text("Summarize").font(.headline)
                 Spacer()
                 if isBusy {
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Summarizing content")
                 } else if bodyText.isEmpty {
                     Image(systemName: "bolt.slash")
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Summary unavailable")
                 }
             }
             Text(title)
@@ -40,6 +44,8 @@ struct SummarizePanelView: View {
                     Text("On-device · ~10–20 s on this Mac").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Cancel", role: .cancel, action: onCancel)
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Cancel summarization")
                 }
             } else {
                 Text(footnote)
@@ -48,7 +54,7 @@ struct SummarizePanelView: View {
                     .lineLimit(2)
             }
         }
-        .padding(12)
+        .padding(16)
         .frame(width: 360)
     }
 }

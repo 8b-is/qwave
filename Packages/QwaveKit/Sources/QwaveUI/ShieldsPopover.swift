@@ -1,13 +1,19 @@
-import SwiftUI
 import Shields
+import SwiftUI
 
 /// Brave-style per-site shields popover, anchored to the toolbar shield.
-struct ShieldsPopoverView: View {
-    let host: String
-    @ObservedObject var policy: ShieldsPolicy
-    var onChanged: () -> Void
+public struct ShieldsPopoverView: View {
+    public let host: String
+    @ObservedObject public var policy: ShieldsPolicy
+    public var onChanged: () -> Void
 
-    var body: some View {
+    public init(host: String, policy: ShieldsPolicy, onChanged: @escaping () -> Void) {
+        self.host = host
+        self.policy = policy
+        self.onChanged = onChanged
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Shields for \(host)")
                 .font(.headline)

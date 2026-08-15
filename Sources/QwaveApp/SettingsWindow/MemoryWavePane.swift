@@ -55,6 +55,7 @@ struct MemoryWavePane: View {
                     .foregroundStyle(.secondary)
                     TextField("Base URL", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Remote Base URL")
                         .onChange(of: baseURL) { _, newValue in
                             if let url = URL(string: newValue), url.scheme?.lowercased() == "https" {
                                 environment.memoryPreferences.remoteBaseURL = url
@@ -65,11 +66,13 @@ struct MemoryWavePane: View {
                         }
                     TextField("Model", text: $model)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Remote Model")
                         .onChange(of: model) { _, newValue in
                             environment.memoryPreferences.remoteModel = newValue
                         }
                     SecureField("API key (Keychain)", text: $apiKey)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("API Key")
                         .onChange(of: apiKey) { _, newValue in
                             try? environment.memoryPreferences.setAPIKey(newValue)
                         }
@@ -89,15 +92,19 @@ struct MemoryWavePane: View {
                         NSWorkspace.shared.open(directory)
                     }
                 }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Open nibble folder in Finder")
                 Button("Forget all memories on this Mac", role: .destructive) {
                     Task { @MainActor in
                         try? await environment.memoryWave.forgetAll()
                         status = "Local wave store emptied."
                     }
                 }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Forget all memories on this Mac")
             }
         }
-        .padding(20)
+        .padding(16)
         .onAppear {
             provider = environment.memoryPreferences.providerKind
             baseURL = environment.memoryPreferences.remoteBaseURL.absoluteString
