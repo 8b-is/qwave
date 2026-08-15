@@ -15,8 +15,8 @@ meaningfully weakened by quantum attacks.
    (gRPC on the in-tunnel gateway, port 1337 in mullvadvpn-app's
    `talpid-tunnel-config-client`).
 3. Run **two KEMs** and mix the results:
-   - **ML-KEM-1024** (CRYSTALS-Kyber, NIST-standardized lattice KEM)
-   - **Classic McEliece 460896f** (code-based, very conservative, huge keys)
+   - **ML-KEM-768** (FIPS 203 standardized lattice KEM / CRYSTALS-Kyber)
+   - **Classic McEliece 348864** (code-based conservative McEliece; Mullvad reference also supports 460896f)
    The PSK is derived by hashing the two shared secrets together; an attacker
    must break *both* (and Curve25519) to recover traffic.
 4. The client requests a new ephemeral peer with `psk` enabled, then swaps the

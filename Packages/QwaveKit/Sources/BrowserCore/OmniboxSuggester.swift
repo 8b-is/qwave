@@ -3,26 +3,23 @@ import Persistence
 
 /// One row in the omnibox suggestions dropdown.
 public struct OmniboxSuggestion: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case history
+        case search(provider: String)
+    }
+
     public let url: URL
     public let title: String
+    public let kind: Kind
 
-    public init(url: URL, title: String) {
+    public init(url: URL, title: String, kind: Kind = .history) {
         self.url = url
         self.title = title
+        self.kind = kind
     }
 }
 
-/// Ranks history entries against the typed omnibox query. Pure logic — the
-/// dropdown UI feeds it `HistoryStore.entries(matching:)` results and renders
-/// what comes back.
-///
-/// Scoring favors what address bars are actually used for: host prefixes
-/// beat URL prefixes beat substring hits, frequently and recently visited
-/// pages float up, and one URL never appears twice.
-///
-/// Optimised for the keystroke path: bounded partial sort instead of a full
-/// sort, scheme stripping via prefix checks instead of replacingOccurrences,
-/// and a single lowercased pass per entry.
+/// Ranks history entries and blends remote search suggestions against the typed omnibox query.
 public enum OmniboxSuggester {
     public static func suggestions(
         for query: String,
@@ -58,7 +55,40 @@ public enum OmniboxSuggester {
             }
         }
 
-        return best.map { OmniboxSuggestion(url: $0.entry.url, title: $0.entry.title) }
+        return best.map { OmniboxSuggestion(url: $0.entry.url, title: $0.entry.title, kind: .history) }
+    }
+
+    /// Blends local history suggestions with remote search engine suggestions.
+    public static func hybridSuggestions(
+        for query: String,
+        history: [HistoryEntry],
+        remoteSuggestions: [RemoteSearchSuggestion] = [],
+        searchURLBuilder: (String) -> URL? = { query in
+            guard let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+            return URL(string: "https://duckduckgo.com/?q=\(enc)")
+        },
+        now: Date = Date(),
+        limit: Int = 6
+    ) -> [OmniboxSuggestion] {
+        let local = suggestions(for: query, history: history, now: now, limit: limit)
+        var combined = local
+        var seenTexts = Set(local.map { $0.title.lowercased() })
+
+        for remote in remoteSuggestions {
+            guard combined.count < limit else { break }
+            let lower = remote.text.lowercased()
+            guard !seenTexts.contains(lower), let searchURL = searchURLBuilder(remote.text) else { continue }
+            seenTexts.insert(lower)
+            combined.append(
+                OmniboxSuggestion(
+                    url: searchURL,
+                    title: remote.text,
+                    kind: .search(provider: remote.provider)
+                )
+            )
+        }
+
+        return combined
     }
 
     private static func matchScore(_ query: String, entry: HistoryEntry) -> Double? {

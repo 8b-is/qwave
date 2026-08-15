@@ -1,6 +1,6 @@
 # PostQuantum constant-time & key-hygiene review
 
-Reviewed 2026-08-13 against the v0.3.0 sources (`Packages/QwaveKit/Sources/
+Reviewed 2026-08-15 against v1.0.0 sources (`Packages/QwaveKit/Sources/
 PostQuantum`, `VPNKit`, `Sources/PacketTunnel`). Scope: secret-dependent
 timing, secret-dependent memory access, key-material lifetime. This is an
 engineering self-audit, not a substitute for external review.

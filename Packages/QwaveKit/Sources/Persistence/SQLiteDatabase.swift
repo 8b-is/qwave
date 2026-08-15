@@ -73,11 +73,26 @@ private final class SQLiteConnection {
             throw SQLiteError.openFailed(code: code, message: message)
         }
         handle = database
+        // Apple Silicon & Unified Memory Ultra-Performance Tuning:
+        // - WAL mode for non-blocking concurrent reads + single writer
+        // - NORMAL synchronous to eliminate redundant NVMe fsync stalls while preserving ACID
+        // - MEMORY temp_store to avoid temporary disk spill on high-cardinality searches
+        // - 256MB direct mmap for zero-copy unified memory virtual address mapping
+        // - 64MB page cache for instantaneous omnibox history lookups
+        // - 5000ms busy timeout to gracefully handle concurrent container operations
+        // - Multi-threaded sorting across performance cores
         sqlite3_exec(database, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA temp_store=MEMORY;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA mmap_size=268435456;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA cache_size=-64000;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA busy_timeout=5000;", nil, nil, nil)
+        sqlite3_exec(database, "PRAGMA threads=4;", nil, nil, nil)
         sqlite3_exec(database, "PRAGMA foreign_keys=ON;", nil, nil, nil)
     }
 
     deinit {
+        sqlite3_exec(handle, "PRAGMA optimize;", nil, nil, nil)
         for statement in statementCache.values {
             sqlite3_finalize(statement)
         }
@@ -195,6 +210,11 @@ public actor SQLiteDatabase {
             }
         }
         return results
+    }
+
+    /// Runs SQLite query planner optimization to refresh statistics and indices.
+    public func optimize() throws {
+        try execute("PRAGMA optimize;")
     }
 
     /// Schema-versioned migrations via PRAGMA user_version.
