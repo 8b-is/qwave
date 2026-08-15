@@ -1,13 +1,16 @@
 # AutoFill Credential Provider — design + implementation
 
-> Status: **wired vertical slice.** The `CredentialProvider` app-extension
-> target now exists in `project.yml`, is embedded in `Qwave.app`
+> Status: **fill + save wired.** The `CredentialProvider` app-extension target
+> exists in `project.yml`, is embedded in `Qwave.app`
 > (`Contents/PlugIns/CredentialProvider.appex`), and fills saved website logins
-> from the OS keychain (iCloud Keychain when enabled). The app also drives
-> platform passkey ceremonies as a WebAuthn client. What remains deferred is
-> listed under [Implemented vs deferred](#implemented-vs-deferred). The design
-> below is retained as the rationale; sections that describe a future step are
-> now realised except where the deferred list says otherwise.
+> from the OS keychain (iCloud Keychain when enabled). The browser also
+> captures newly submitted logins, prompts to save them, and writes them to
+> both the keychain and `ASCredentialIdentityStore` (see the issue #72 entry
+> under [Implemented vs deferred](#implemented-vs-deferred)). The app also
+> drives platform passkey ceremonies as a WebAuthn client. What remains
+> deferred is listed under the same section. The design below is retained as
+> the rationale; sections that describe a future step are now realised except
+> where the deferred list says otherwise.
 
 ## Why a browser needs this at all
 
@@ -301,13 +304,41 @@ or fill logic.
 - Verified: the built `.appex` links neither WireGuard/qpacket nor the ML-KEM
   stack — the crypto-separation boundary holds by construction.
 
+**Landed (issue #72 — the save path):**
+
+- `CredentialSaver` (`Packages/QwaveKit/Sources/WebCredentials/CredentialSaving.swift`):
+  the single write path that turns a captured or imported login into both a
+  `WebCredentialStore.save` and an `ASCredentialIdentityStore` registration, so
+  the two can never drift apart. Unit-tested against a fake identity syncer
+  (`CredentialSaverTests`) without touching the real keychain or system store.
+- `SystemCredentialIdentityStore` (`Sources/QwaveApp/SystemCredentialIdentityStore.swift`):
+  the `ASCredentialIdentityStore.shared`-backed implementation — registers/
+  removes `ASPasswordCredentialIdentity` entries, gated on `getState().isEnabled`
+  so nothing writes when the user hasn't turned the extension on. This is the
+  first (and only) call site of `ASCredentialIdentityStore` in the tree.
+- `PasswordCaptureBridge` (`Sources/QwaveApp/PasswordCaptureBridge.swift`): the
+  capture prompt. A `WKUserScript` (main frame only, mirrors `WebAuthnBridge`'s
+  origin scoping) observes password-form submissions without touching the
+  submission itself, and posts `{ url, username, password }` to the native
+  side. On receipt, if the login isn't already stored identically, an `NSAlert`
+  sheet asks "Save Password?"; confirming routes it through `CredentialSaver`.
+  Wired into every non-private tab's `WKWebView` in `BrowserWindowController`.
+  `CapturedFormCredential`'s JSON parsing is unit-tested
+  (`CapturedFormCredentialTests`) the same way `PasskeyAssertionRequest` is.
+
+Known limits of the landed save path (follow-ups, not blocking):
+
+- Main-frame forms only — a login form inside a cross-origin iframe (some SSO
+  flows) is not observed, matching `WebAuthnBridge`'s existing scoping.
+- No "never save for this site" — declining the prompt just doesn't save; it
+  reappears on the next matching submission.
+- No import flow (bulk CSV/1Password-style import) — only in-page capture.
+- Username heuristic is a DOM-order guess (`autocomplete="username"` first,
+  then the nearest preceding text/email/tel field); unusual form markup can
+  guess wrong.
+
 **Deferred:**
 
-- `ASCredentialIdentityStore` sync (QuickType registration) on save/import/delete.
-  Nothing writes identities yet, so the AutoFill bar shows Qwave entries only via
-  the interactive list, not proactive QuickType suggestions.
-- A UI in the browser to *save* logins (the store's `save` path exists and is
-  tested, but no capture prompt / import flow is wired into page navigation yet).
 - Passkey **storage** in the extension (`prepareInterface(forPasskeyRegistration:)`
   still cancels) and passkey assertion *through the extension*
   (`prepareCredentialList(for:requestParameters:)`).

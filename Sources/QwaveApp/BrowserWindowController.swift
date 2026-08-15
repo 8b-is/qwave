@@ -9,6 +9,8 @@ import SwiftUI
 import URLIdentity
 import MemoryWave
 import QwaveSupport
+import WebCredentials
+import os
 
 /// One browser window: toolbar (navigation + omnibox + shields), tab strip,
 /// and the web view container. Owns a `TabManager` and per-tab coordinators.
@@ -76,6 +78,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     /// PasskeyCeremonyController / WebAuthnBridge and docs/AUTOFILL.md.
     private lazy var passkeyCeremony = PasskeyCeremonyController(presentationWindow: window)
     private lazy var webAuthnBridge = WebAuthnBridge(ceremony: passkeyCeremony)
+
+    /// Shared keychain-backed login store. Same access-group convention as
+    /// `CredentialProviderViewController` (`accessGroup: nil` resolves to the
+    /// single shared `keychain-access-groups` entitlement), so a login the
+    /// browser saves here is exactly what the extension fills.
+    private let webCredentialStore: any WebCredentialStore = KeychainWebCredentialStore(accessGroup: nil)
+    /// The write path issue #72 found missing: routes a save/remove through
+    /// both the keychain store above and the system's AutoFill identity index.
+    private lazy var credentialSaver = CredentialSaver(
+        store: webCredentialStore,
+        identitySync: SystemCredentialIdentityStore(),
+        onIdentitySyncError: { [log = credentialLog] error in
+            log.error("credential identity sync failed: \(String(describing: error), privacy: .public)")
+        }
+    )
+    private let credentialLog = Logger(subsystem: "is.8b.qwave", category: "credential-save")
+    /// Detects password-form submissions and prompts to save them. See
+    /// docs/AUTOFILL.md and PasswordCaptureBridge.swift.
+    private lazy var passwordCaptureBridge = PasswordCaptureBridge(
+        saver: credentialSaver,
+        existingCredentials: { [webCredentialStore] domain in
+            (try? webCredentialStore.credentials(forDomain: domain)) ?? []
+        }
+    )
 
     // MARK: - Init
 
@@ -368,6 +394,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         let userContent = webView.configuration.userContentController
         userContent.add(webAuthnBridge, name: WebAuthnBridge.messageName)
         userContent.addUserScript(WebAuthnBridge.userScript)
+        // Password-save capture: detects a submitted login form and, on
+        // confirmation, writes it to the keychain + AutoFill identity index
+        // (see docs/AUTOFILL.md, issue #72). Skipped for private tabs — an
+        // ephemeral tab must never persist a login.
+        if !isPrivate {
+            userContent.add(passwordCaptureBridge, name: PasswordCaptureBridge.messageName)
+            userContent.addUserScript(PasswordCaptureBridge.userScript)
+        }
 
         let coordinator = coordinators[tab.id] ?? environment.makeCoordinator(for: tab)
         coordinators[tab.id] = coordinator
