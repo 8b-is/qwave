@@ -140,23 +140,42 @@ final class TabBarView: NSView {
         models = tabs
         self.selectedID = selectedID
 
-        stack.arrangedSubviews.forEach { view in
-            stack.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        // Diff against the currently-rendered items: reuse the view already
+        // showing a given tab id (updating its label/favicon/selection/width in
+        // place), create views only for newly-inserted ids, and drop views for
+        // ids that vanished. Views are then reordered to match the model.
+        var existing: [UUID: TabItemView] = [:]
+        for case let item as TabItemView in stack.arrangedSubviews {
+            existing[item.tabID] = item
         }
+
+        var newViews: [TabItemView] = []
         for (index, model) in tabs.enumerated() {
-            let item = TabItemView(model: model, isSelected: model.id == selectedID)
+            let item: TabItemView
+            if let reused = existing[model.id] {
+                item = reused
+                item.apply(model: model, isSelected: model.id == selectedID)
+            } else {
+                item = TabItemView(model: model, isSelected: model.id == selectedID)
+            }
             item.onSelect = { [weak self] in self?.onSelect?(model.id) }
             item.onClose = { [weak self] in self?.onClose?(model.id) }
             item.onDragEnded = { [weak self, weak item] event in
                 guard let self, let item else { return }
                 self.commitReorder(of: item, from: index, with: event)
             }
-            stack.addArrangedSubview(item)
-            NSLayoutConstraint.activate([
-                item.widthAnchor.constraint(equalToConstant: model.isPinned ? 120 : 180),
-                item.heightAnchor.constraint(equalToConstant: 28),
-            ])
+            newViews.append(item)
+        }
+
+        let keep = Set(newViews.map(ObjectIdentifier.init))
+        for view in stack.arrangedSubviews where !keep.contains(ObjectIdentifier(view)) {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (i, view) in newViews.enumerated() {
+            if i < stack.arrangedSubviews.count, stack.arrangedSubviews[i] === view { continue }
+            stack.removeArrangedSubview(view)
+            stack.insertArrangedSubview(view, at: i)
         }
     }
 
@@ -186,50 +205,35 @@ private final class TabItemView: NSView {
     private let label = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private let stripe = NSView()
-    private let isSelected: Bool
+    private var model: TabDisplayModel
+    private var isSelected: Bool
+    private var widthConstraint: NSLayoutConstraint!
 
     private var dragOrigin: NSPoint?
     private var isDragging = false
 
+    /// The tab id this view currently renders — the diffing key for reuse.
+    var tabID: UUID { model.id }
+
     init(model: TabDisplayModel, isSelected: Bool) {
+        self.model = model
         self.isSelected = isSelected
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
         layer?.cornerRadius = 6
-        layer?.backgroundColor =
-            isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
 
         stripe.wantsLayer = true
         stripe.translatesAutoresizingMaskIntoConstraints = false
-        if model.isEphemeral {
-            stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
-        } else if let hex = model.containerColorHex, let color = NSColor(hexString: hex) {
-            stripe.layer?.backgroundColor = color.cgColor
-        } else {
-            stripe.layer?.backgroundColor = NSColor.clear.cgColor
-        }
         stripe.layer?.cornerRadius = 1.5
         addSubview(stripe)
 
-        favicon.image =
-            model.favicon
-            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-        favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
         favicon.imageScaling = .scaleProportionallyDown
         favicon.translatesAutoresizingMaskIntoConstraints = false
         addSubview(favicon)
 
-        var title = model.title
-        if model.isPinned { title = "📌 " + title }
-        if model.isHibernated { title = "💤 " + title }
-        if model.isLoading { title = "⋯ " + title }
-        label.stringValue = title
         label.lineBreakMode = .byTruncatingTail
-        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
@@ -242,6 +246,8 @@ private final class TabItemView: NSView {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        let width = widthAnchor.constraint(equalToConstant: 180)
+        widthConstraint = width
         NSLayoutConstraint.activate([
             stripe.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             stripe.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -257,6 +263,8 @@ private final class TabItemView: NSView {
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 16),
+            width,
+            heightAnchor.constraint(equalToConstant: 28),
         ])
 
         // Accessibility: the whole item is a single button VoiceOver reads and
@@ -265,10 +273,48 @@ private final class TabItemView: NSView {
         // button stays reachable as a child so VO users can still close tabs.
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(Self.accessibilityLabel(for: model))
-        if isSelected { setAccessibilityValue("selected") }
         favicon.setAccessibilityElement(false)
         label.setAccessibilityElement(false)
+
+        apply(model: model, isSelected: isSelected)
+    }
+
+    /// Re-render this view for a (possibly new) model without reallocating it or
+    /// re-activating its layout constraints. Produces the exact visual and
+    /// accessibility state a freshly-constructed item would have.
+    func apply(model: TabDisplayModel, isSelected: Bool) {
+        self.model = model
+        self.isSelected = isSelected
+
+        layer?.backgroundColor =
+            isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+            : NSColor.clear.cgColor
+
+        if model.isEphemeral {
+            stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
+        } else if let hex = model.containerColorHex, let color = NSColor(hexString: hex) {
+            stripe.layer?.backgroundColor = color.cgColor
+        } else {
+            stripe.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+
+        favicon.image =
+            model.favicon
+            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
+
+        var title = model.title
+        if model.isPinned { title = "📌 " + title }
+        if model.isHibernated { title = "💤 " + title }
+        if model.isLoading { title = "⋯ " + title }
+        label.stringValue = title
+        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+
+        widthConstraint.constant = model.isPinned ? 120 : 180
+
+        setAccessibilityLabel(Self.accessibilityLabel(for: model))
+        setAccessibilityValue(isSelected ? "selected" : nil)
         closeButton.setAccessibilityLabel("Close \(model.title.isEmpty ? "tab" : model.title)")
     }
 

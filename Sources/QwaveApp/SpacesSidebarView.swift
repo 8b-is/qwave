@@ -148,30 +148,70 @@ final class SpacesSidebarView: NSView {
     }
 
     private func rebuildSpaces() {
-        spacesStack.arrangedSubviews.forEach { view in
-            spacesStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        // Diff by space id: reuse the chip already showing a given space
+        // (updating name/color/count/active in place), create chips only for
+        // new ids, drop chips for ids that vanished, and reorder to match.
+        var existing: [UUID?: SpaceChipView] = [:]
+        for case let chip as SpaceChipView in spacesStack.arrangedSubviews {
+            existing[chip.spaceID] = chip
         }
+
+        var newViews: [SpaceChipView] = []
         for model in spaces {
-            let chip = SpaceChipView(model: model)
+            let chip: SpaceChipView
+            if let reused = existing[model.id] {
+                chip = reused
+                chip.apply(model: model)
+            } else {
+                chip = SpaceChipView(model: model)
+                chip.widthAnchor.constraint(equalTo: spacesStack.widthAnchor).isActive = true
+            }
             chip.onSelect = { [weak self] in self?.onSelectSpace?(model.id) }
-            spacesStack.addArrangedSubview(chip)
-            chip.widthAnchor.constraint(equalTo: spacesStack.widthAnchor).isActive = true
+            newViews.append(chip)
         }
+
+        reconcile(spacesStack, to: newViews)
     }
 
     private func rebuildTabs() {
-        tabsStack.arrangedSubviews.forEach { view in
-            tabsStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        // Diff by tab id, mirroring `rebuildSpaces`: reuse rows in place,
+        // insert/remove only for real changes, reorder to match the model.
+        var existing: [UUID: SidebarTabRow] = [:]
+        for case let row as SidebarTabRow in tabsStack.arrangedSubviews {
+            existing[row.tabID] = row
         }
+
+        var newViews: [SidebarTabRow] = []
         for model in tabs {
-            let row = SidebarTabRow(model: model, isSelected: model.id == selectedID)
+            let row: SidebarTabRow
+            if let reused = existing[model.id] {
+                row = reused
+                row.apply(model: model, isSelected: model.id == selectedID)
+            } else {
+                row = SidebarTabRow(model: model, isSelected: model.id == selectedID)
+                row.widthAnchor.constraint(equalTo: tabsStack.widthAnchor).isActive = true
+                row.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            }
             row.onSelect = { [weak self] in self?.onSelectTab?(model.id) }
             row.onClose = { [weak self] in self?.onCloseTab?(model.id) }
-            tabsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: tabsStack.widthAnchor).isActive = true
-            row.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            newViews.append(row)
+        }
+
+        reconcile(tabsStack, to: newViews)
+    }
+
+    /// Make `stack`'s arranged subviews equal `newViews` in order, dropping
+    /// views no longer present and moving reused views into position.
+    private func reconcile(_ stack: NSStackView, to newViews: [NSView]) {
+        let keep = Set(newViews.map(ObjectIdentifier.init))
+        for view in stack.arrangedSubviews where !keep.contains(ObjectIdentifier(view)) {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (i, view) in newViews.enumerated() {
+            if i < stack.arrangedSubviews.count, stack.arrangedSubviews[i] === view { continue }
+            stack.removeArrangedSubview(view)
+            stack.insertArrangedSubview(view, at: i)
         }
     }
 }
@@ -181,31 +221,30 @@ final class SpacesSidebarView: NSView {
 private final class SpaceChipView: NSView {
     var onSelect: (() -> Void)?
 
+    private let dot = NSView()
+    private let label = NSTextField(labelWithString: "")
+    private let count = NSTextField(labelWithString: "")
+    private var model: SpaceChipModel
+
+    /// The space id this chip currently renders — the diffing key for reuse.
+    var spaceID: UUID? { model.id }
+
     init(model: SpaceChipModel) {
+        self.model = model
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         layer?.cornerRadius = 6
-        layer?.backgroundColor =
-            model.isActive
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
 
-        let dot = NSView()
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 5
-        dot.layer?.backgroundColor =
-            (NSColor(hexString: model.colorHex) ?? .systemGray).cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(dot)
 
-        let label = NSTextField(labelWithString: model.name)
-        label.font = .systemFont(ofSize: 13, weight: model.isActive ? .semibold : .regular)
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
-        let count = NSTextField(labelWithString: model.tabCount > 0 ? "\(model.tabCount)" : "")
         count.font = .systemFont(ofSize: 11)
         count.textColor = .tertiaryLabelColor
         count.translatesAutoresizingMaskIntoConstraints = false
@@ -226,11 +265,28 @@ private final class SpaceChipView: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.radioButton)
-        setAccessibilityLabel("\(model.name) space, \(model.tabCount) tabs")
-        if model.isActive { setAccessibilityValue("selected") }
         dot.setAccessibilityElement(false)
         label.setAccessibilityElement(false)
         count.setAccessibilityElement(false)
+
+        apply(model: model)
+    }
+
+    /// Re-render this chip for a (possibly new) model in place, matching the
+    /// visual and accessibility state of a freshly-constructed chip.
+    func apply(model: SpaceChipModel) {
+        self.model = model
+        layer?.backgroundColor =
+            model.isActive
+            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+            : NSColor.clear.cgColor
+        dot.layer?.backgroundColor =
+            (NSColor(hexString: model.colorHex) ?? .systemGray).cgColor
+        label.stringValue = model.name
+        label.font = .systemFont(ofSize: 13, weight: model.isActive ? .semibold : .regular)
+        count.stringValue = model.tabCount > 0 ? "\(model.tabCount)" : ""
+        setAccessibilityLabel("\(model.name) space, \(model.tabCount) tabs")
+        setAccessibilityValue(model.isActive ? "selected" : nil)
     }
 
     @available(*, unavailable)
@@ -255,45 +311,33 @@ private final class SidebarTabRow: NSView {
     var onClose: (() -> Void)?
 
     private let closeButton = NSButton()
+    private let stripe = NSView()
+    private let favicon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private var model: TabDisplayModel
+    private var isSelected: Bool
+
+    /// The tab id this row currently renders — the diffing key for reuse.
+    var tabID: UUID { model.id }
 
     init(model: TabDisplayModel, isSelected: Bool) {
+        self.model = model
+        self.isSelected = isSelected
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         layer?.cornerRadius = 6
-        layer?.backgroundColor =
-            isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
 
-        let stripe = NSView()
         stripe.wantsLayer = true
         stripe.translatesAutoresizingMaskIntoConstraints = false
-        if model.isEphemeral {
-            stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
-        } else if let hex = model.containerColorHex, let color = NSColor(hexString: hex) {
-            stripe.layer?.backgroundColor = color.cgColor
-        } else {
-            stripe.layer?.backgroundColor = NSColor.clear.cgColor
-        }
         stripe.layer?.cornerRadius = 1.5
         addSubview(stripe)
 
-        let favicon = NSImageView()
-        favicon.image =
-            model.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-        favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
         favicon.imageScaling = .scaleProportionallyDown
         favicon.translatesAutoresizingMaskIntoConstraints = false
         addSubview(favicon)
 
-        var title = model.title
-        if model.isPinned { title = "📌 " + title }
-        if model.isHibernated { title = "💤 " + title }
-        if model.isLoading { title = "⋯ " + title }
-        let label = NSTextField(labelWithString: title)
         label.lineBreakMode = .byTruncatingTail
-        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
@@ -325,10 +369,44 @@ private final class SidebarTabRow: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(model.title.isEmpty ? "Untitled" : model.title)
-        if isSelected { setAccessibilityValue("selected") }
         favicon.setAccessibilityElement(false)
         label.setAccessibilityElement(false)
+
+        apply(model: model, isSelected: isSelected)
+    }
+
+    /// Re-render this row for a (possibly new) model in place, matching the
+    /// visual and accessibility state of a freshly-constructed row.
+    func apply(model: TabDisplayModel, isSelected: Bool) {
+        self.model = model
+        self.isSelected = isSelected
+
+        layer?.backgroundColor =
+            isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+            : NSColor.clear.cgColor
+
+        if model.isEphemeral {
+            stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
+        } else if let hex = model.containerColorHex, let color = NSColor(hexString: hex) {
+            stripe.layer?.backgroundColor = color.cgColor
+        } else {
+            stripe.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+
+        favicon.image =
+            model.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        favicon.contentTintColor = model.favicon == nil ? .tertiaryLabelColor : nil
+
+        var title = model.title
+        if model.isPinned { title = "📌 " + title }
+        if model.isHibernated { title = "💤 " + title }
+        if model.isLoading { title = "⋯ " + title }
+        label.stringValue = title
+        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+
+        setAccessibilityLabel(model.title.isEmpty ? "Untitled" : model.title)
+        setAccessibilityValue(isSelected ? "selected" : nil)
         closeButton.setAccessibilityLabel("Close \(model.title.isEmpty ? "tab" : model.title)")
     }
 
