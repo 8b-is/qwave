@@ -7,6 +7,8 @@ import Foundation
 /// Pages call `browser.storage.local.get(...)` etc.; the bridge forwards
 /// `{id, method, args}` to the `qwaveExtension` message handler and resolves
 /// the promise when native code replies via `window.__qwaveNative.respond`.
+///
+/// Supports multi-listener `browser.runtime.onMessage` fan-out and native message dispatch.
 public enum BrowserBridgeScript {
     public static let messageHandlerName = "qwaveExtension"
 
@@ -18,6 +20,7 @@ public enum BrowserBridgeScript {
 
           const pending = new Map();
           let nextId = 1;
+          const messageListeners = new Set();
 
           function call(method, args) {
             return new Promise((resolve, reject) => {
@@ -41,6 +44,35 @@ public enum BrowserBridgeScript {
               pending.delete(id);
               if (ok) entry.resolve(value);
               else entry.reject(value instanceof Error ? value : new Error(String(value)));
+            },
+            dispatchMessage(message, sender, messageId) {
+              let responded = false;
+              const sendResponse = (reply) => {
+                if (responded) return;
+                responded = true;
+                if (messageId != null && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.qwaveExtension) {
+                  window.webkit.messageHandlers.qwaveExtension.postMessage({
+                    id: messageId,
+                    method: 'runtime.onMessageReply',
+                    args: [reply]
+                  });
+                }
+              };
+
+              for (const listener of messageListeners) {
+                try {
+                  const result = listener(message, sender || {}, sendResponse);
+                  if (result === true) {
+                    // Async sendResponse will be invoked by listener
+                  } else if (result && typeof result.then === 'function') {
+                    result.then(sendResponse).catch(err => {
+                      sendResponse({ error: String(err) });
+                    });
+                  }
+                } catch (err) {
+                  console.error('[QwaveExtension] listener error:', err);
+                }
+              }
             }
           };
 
@@ -49,7 +81,17 @@ public enum BrowserBridgeScript {
             sendMessage(message) {
               return call('runtime.sendMessage', [message]);
             },
-            onMessage: { addListener() {}, removeListener() {} }
+            onMessage: {
+              addListener(fn) {
+                if (typeof fn === 'function') messageListeners.add(fn);
+              },
+              removeListener(fn) {
+                messageListeners.delete(fn);
+              },
+              hasListener(fn) {
+                return messageListeners.has(fn);
+              }
+            }
           };
           api.tabs = {
             query(queryInfo) {
