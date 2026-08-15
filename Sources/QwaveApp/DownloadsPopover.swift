@@ -80,9 +80,18 @@ private struct DownloadRowView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
     }
 
-    private var iconImage: NSImage {
+    /// Resolved file icons keyed by path — a file's icon is stable, so this
+    /// avoids a disk stat + NSWorkspace icon fetch on every SwiftUI render
+    /// (which re-runs on each progress publish while a download is active).
+    @MainActor private static var iconCache: [String: NSImage] = [:]
+
+    @MainActor private var iconImage: NSImage {
         if let destination = item.destination, FileManager.default.fileExists(atPath: destination.path) {
-            return NSWorkspace.shared.icon(forFile: destination.path)
+            let path = destination.path
+            if let cached = Self.iconCache[path] { return cached }
+            let icon = NSWorkspace.shared.icon(forFile: path)
+            Self.iconCache[path] = icon
+            return icon
         }
         return NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil) ?? NSImage()
     }
