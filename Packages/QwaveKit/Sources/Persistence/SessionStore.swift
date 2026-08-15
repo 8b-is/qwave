@@ -5,12 +5,20 @@ public struct TabSnapshot: Codable, Equatable, Sendable {
     public var title: String
     public var containerID: UUID?
     public var isPinned: Bool
+    /// Opaque WebKit `interactionState` (back/forward list + scroll + form
+    /// data). Persisted so a restored — or crash-recovered — tab comes back
+    /// with its full history and scroll position, not just its current URL.
+    /// `nil` for tabs that never had a live web view. Encodes as base64 JSON.
+    public var interactionState: Data?
 
-    public init(url: URL?, title: String, containerID: UUID?, isPinned: Bool) {
+    public init(
+        url: URL?, title: String, containerID: UUID?, isPinned: Bool, interactionState: Data? = nil
+    ) {
         self.url = url
         self.title = title
         self.containerID = containerID
         self.isPinned = isPinned
+        self.interactionState = interactionState
     }
 }
 

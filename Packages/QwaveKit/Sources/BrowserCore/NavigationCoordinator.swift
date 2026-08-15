@@ -271,6 +271,23 @@ extension NavigationCoordinator: WKNavigationDelegate {
         }
     }
 
+    /// The WebContent process crashed (or was jettisoned under memory
+    /// pressure), leaving a blank view. Restore from `interactionState` when
+    /// WebKit still holds it (brings back history + scroll), otherwise reload
+    /// the current back/forward item — never leave the user staring at a blank
+    /// tab.
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        QwaveLog.browser.warning("WebContent process terminated; restoring tab")
+        if let state = webView.interactionState as? Data {
+            webView.interactionState = state
+        } else if webView.url != nil || webView.backForwardList.currentItem != nil {
+            webView.reload()
+        } else if let url = tab?.url ?? tab?.pendingURL {
+            webView.load(URLRequest(url: url))
+        }
+        onStateChange?()
+    }
+
     public func webView(
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
     ) {

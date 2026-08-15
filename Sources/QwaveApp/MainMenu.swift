@@ -55,10 +55,16 @@ enum MainMenu {
         fileItem.submenu = fileMenu
         fileMenu.addItem(
             withTitle: "New Tab", action: #selector(BrowserWindowController.newTab(_:)), keyEquivalent: "t")
+        // ⇧⌘T is the platform-standard Reopen Closed Tab shortcut (Safari/Chrome),
+        // so New Ephemeral Tab moves to ⌥⌘T to free it.
+        let reopenClosed = fileMenu.addItem(
+            withTitle: "Reopen Closed Tab", action: #selector(BrowserWindowController.reopenClosedTab(_:)),
+            keyEquivalent: "t")
+        reopenClosed.keyEquivalentModifierMask = [.command, .shift]
         let ephemeral = fileMenu.addItem(
             withTitle: "New Ephemeral Tab", action: #selector(BrowserWindowController.newEphemeralTab(_:)),
             keyEquivalent: "t")
-        ephemeral.keyEquivalentModifierMask = [.command, .shift]
+        ephemeral.keyEquivalentModifierMask = [.command, .option]
         fileMenu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
         let privateWindow = fileMenu.addItem(
             withTitle: "New Private Window", action: #selector(AppDelegate.newPrivateWindow(_:)), keyEquivalent: "n")

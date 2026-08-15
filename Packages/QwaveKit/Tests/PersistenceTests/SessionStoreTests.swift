@@ -30,4 +30,26 @@ final class SessionStoreTests: XCTestCase {
         let clearedSnapshot = await store.load()
         XCTAssertNil(clearedSnapshot)
     }
+
+    func testInteractionStatePersistsToDisk() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = try await SessionStore(directory: dir)
+        let snapshot = SessionSnapshot(windows: [
+            WindowSnapshot(
+                tabs: [
+                    TabSnapshot(
+                        url: URL(string: "https://example.com/"), title: "Example", containerID: nil,
+                        isPinned: false, interactionState: Data([0, 1, 2, 255]))
+                ],
+                selectedIndex: 0
+            )
+        ])
+        try await store.save(snapshot)
+
+        let loaded = await store.load()
+        XCTAssertEqual(loaded?.windows[0].tabs[0].interactionState, Data([0, 1, 2, 255]))
+    }
 }

@@ -21,6 +21,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     let isPrivate: Bool
 
     var onWindowClosed: ((BrowserWindowController) -> Void)?
+    /// Fired on any change that affects the persisted session (tab add/close/
+    /// move/select, navigation commit, pin). Debounced by the app's autosaver.
+    var onSessionChange: (() -> Void)?
 
     private let tabBar = TabBarView()
     private let containerView = WebViewContainerView()
@@ -158,6 +161,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     private func wireTabManager() {
         tabManager.onChange = { [weak self] in
             self?.render()
+            self?.onSessionChange?()
         }
         tabManager.onTabClosed = { [weak self] tab in
             self?.teardown(tab: tab)
@@ -279,6 +283,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         coordinator.onStateChange = { [weak self] in
             self?.setChromeNeedsRefresh()
+            self?.onSessionChange?()
         }
         coordinator.onInternalAction = { [weak self] action in
             self?.handleInternalAction(action)
@@ -300,7 +305,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
         coordinator.attach(to: webView)
 
-        if let state = record?.interactionState {
+        // Restoring interactionState reloads the current back/forward item with
+        // its scroll position, so no separate load() is needed. Precedence:
+        // a hibernation record, then a session/reopen-restored pending state,
+        // then a plain URL load.
+        if let state = record?.interactionState ?? tab.pendingInteractionState {
+            tab.pendingInteractionState = nil
+            tab.pendingURL = nil
             webView.interactionState = state
         } else if let pending = tab.pendingURL ?? record?.url {
             tab.pendingURL = nil
@@ -513,6 +524,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func newTab(_ sender: Any?) { appendFreshTab(activate: true) }
 
+    /// ⇧⌘T — reopen the most recently closed tab (with its history + scroll).
+    @objc func reopenClosedTab(_ sender: Any?) {
+        tabManager.reopenLastClosedTab()
+    }
+
     @objc func newEphemeralTab(_ sender: Any?) {
         openNewTab(url: nil, ephemeral: true, activate: true)
     }
@@ -605,6 +621,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         guard let selected = tabManager.selectedTab else { return }
         selected.isPinned.toggle()
         render()
+        onSessionChange?()
     }
 
     @objc func openDocument(_ sender: Any?) {

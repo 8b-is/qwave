@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// MetricKit-backed local reliability telemetry feeding qwave://diagnostics.
     private var diagnosticsStore: DiagnosticsStore?
 
+    /// Debounced, periodic crash-safe session autosave (see SessionAutosaver).
+    private var sessionAutosaver: SessionAutosaver?
+
     // MARK: - Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             async let vpnRefreshed: Void = environment.vpn.tunnel.refresh()
             await restoreOrOpenFirstWindow()
             replayPendingOpenURLs()
+            startSessionAutosaver()
             startEnergyTimer()
             // Do not abandon the concurrent warmups (an unawaited async let is
             // cancelled at scope end); the gate already made them non-blocking.
@@ -139,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let controller = BrowserWindowController(environment: environment, tabManager: tabManager, isPrivate: isPrivate)
         controller.onWindowClosed = { [weak self] closed in
             self?.windowControllers.removeAll { $0 === closed }
+            // A window closing is itself a session change worth persisting.
+            self?.sessionAutosaver?.requestSave()
+        }
+        controller.onSessionChange = { [weak self] in
+            self?.sessionAutosaver?.requestSave()
         }
         windowControllers.append(controller)
         controller.showWindow(nil)
@@ -278,6 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationWillTerminate(_ notification: Notification) {
         energyTimer?.cancel()
+        sessionAutosaver?.stop()
         for observer in energyObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -303,6 +313,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let managers = windowControllers.map(\.tabManager)
         let snapshot = SessionRestorer.snapshot(of: managers)
         try? await store.save(snapshot)
+    }
+
+    /// Starts the crash-safe autosaver once the environment and first windows
+    /// exist. Debounced saves fire on navigation/tab changes; a periodic floor
+    /// bounds worst-case loss on a hard crash.
+    private func startSessionAutosaver() {
+        guard let store = environment.sessionStore, sessionAutosaver == nil else { return }
+        sessionAutosaver = SessionAutosaver(store: store) { [weak self] in
+            guard let self else { return SessionSnapshot(windows: []) }
+            return SessionRestorer.snapshot(of: self.windowControllers.map(\.tabManager))
+        }
     }
 
     // MARK: - Energy management
