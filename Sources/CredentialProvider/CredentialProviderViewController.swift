@@ -40,7 +40,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// one match and no unlock is needed; otherwise fall back to the UI path.
     override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {
         guard credentialRequest.type == .password,
-              let identity = credentialRequest.credentialIdentity as? ASPasswordCredentialIdentity
+            let identity = credentialRequest.credentialIdentity as? ASPasswordCredentialIdentity
         else {
             cancel(.credentialIdentityNotFound)
             return
@@ -59,7 +59,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// identity so the user can confirm which login to fill.
     override func prepareInterfaceToProvideCredential(for credentialRequest: any ASCredentialRequest) {
         guard credentialRequest.type == .password,
-              let identity = credentialRequest.credentialIdentity as? ASPasswordCredentialIdentity
+            let identity = credentialRequest.credentialIdentity as? ASPasswordCredentialIdentity
         else {
             cancel(.credentialIdentityNotFound)
             return

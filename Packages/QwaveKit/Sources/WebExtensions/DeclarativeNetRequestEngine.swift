@@ -150,13 +150,14 @@ public enum DeclarativeNetRequestConverter {
 
             webKitRules.append([
                 "trigger": trigger,
-                "action": action
+                "action": action,
             ])
         }
 
         let data = try JSONSerialization.data(withJSONObject: webKitRules, options: [.prettyPrinted])
         guard let jsonString = String(data: data, encoding: .utf8) else {
-            throw NSError(domain: "DNRConverter", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to encode WebKit JSON"])
+            throw NSError(
+                domain: "DNRConverter", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to encode WebKit JSON"])
         }
         return jsonString
     }

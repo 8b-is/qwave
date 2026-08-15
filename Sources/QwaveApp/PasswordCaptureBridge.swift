@@ -46,41 +46,41 @@ final class PasswordCaptureBridge: NSObject, WKScriptMessageHandler {
     /// so it survives pages that replace the DOM after `DOMContentLoaded`.
     static var userScript: WKUserScript {
         let source = """
-        (function () {
-          if (window.__qwavePasswordCaptureInstalled) { return; }
-          window.__qwavePasswordCaptureInstalled = true;
-          function usernameFor(form, passwordField) {
-            const candidates = form.querySelectorAll(
-              'input[autocomplete="username"], input[type="email"], input[type="text"], input[type="tel"]'
-            );
-            for (const el of candidates) {
-              if (el.value && el.compareDocumentPosition(passwordField) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                return el.value;
+            (function () {
+              if (window.__qwavePasswordCaptureInstalled) { return; }
+              window.__qwavePasswordCaptureInstalled = true;
+              function usernameFor(form, passwordField) {
+                const candidates = form.querySelectorAll(
+                  'input[autocomplete="username"], input[type="email"], input[type="text"], input[type="tel"]'
+                );
+                for (const el of candidates) {
+                  if (el.value && el.compareDocumentPosition(passwordField) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                    return el.value;
+                  }
+                }
+                for (const el of candidates) {
+                  if (el.value) { return el.value; }
+                }
+                return '';
               }
-            }
-            for (const el of candidates) {
-              if (el.value) { return el.value; }
-            }
-            return '';
-          }
-          document.addEventListener('submit', function (event) {
-            const form = event.target;
-            if (!(form instanceof HTMLFormElement)) { return; }
-            const passwordField = form.querySelector('input[type="password"]');
-            if (!passwordField || !passwordField.value) { return; }
-            const username = usernameFor(form, passwordField);
-            try {
-              window.webkit.messageHandlers.qwavePasswordCapture.postMessage({
-                url: window.location.href,
-                username: username,
-                password: passwordField.value,
-              });
-            } catch (e) {
-              // No handler installed (e.g. private-window policy) — nothing to do.
-            }
-          }, true);
-        })();
-        """
+              document.addEventListener('submit', function (event) {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement)) { return; }
+                const passwordField = form.querySelector('input[type="password"]');
+                if (!passwordField || !passwordField.value) { return; }
+                const username = usernameFor(form, passwordField);
+                try {
+                  window.webkit.messageHandlers.qwavePasswordCapture.postMessage({
+                    url: window.location.href,
+                    username: username,
+                    password: passwordField.value,
+                  });
+                } catch (e) {
+                  // No handler installed (e.g. private-window policy) — nothing to do.
+                }
+              }, true);
+            })();
+            """
         return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
     }
 

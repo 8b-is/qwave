@@ -41,7 +41,8 @@ final class FaviconLoader {
             Task(priority: .utility) { @MainActor [weak self] in
                 defer { self?.inFlight.remove(cacheKey) }
                 if let data = try? await store.load(host: host, containerID: containerID),
-                    let image = NSImage(data: data) {
+                    let image = NSImage(data: data)
+                {
                     image.size = NSSize(width: 16, height: 16)
                     self?.cache[cacheKey] = image
                 }

@@ -117,9 +117,10 @@ public enum NibbleMarkdown {
         let created = ISO8601DateFormatter().string(from: nibble.created)
         let container = nibble.containerID?.uuidString ?? ""
         let titleSealed = try MemoryCipher.seal(Data(nibble.title.utf8), key: key).base64EncodedString()
-        let urlSealed = try nibble.url.map {
-            try MemoryCipher.seal(Data($0.absoluteString.utf8), key: key).base64EncodedString()
-        } ?? ""
+        let urlSealed =
+            try nibble.url.map {
+                try MemoryCipher.seal(Data($0.absoluteString.utf8), key: key).base64EncodedString()
+            } ?? ""
         let bodySealed = try MemoryCipher.seal(Data(nibble.body.utf8), key: key).base64EncodedString()
         return """
             ---

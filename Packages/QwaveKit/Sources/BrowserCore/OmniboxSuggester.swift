@@ -151,7 +151,9 @@ public enum OmniboxSuggester {
         // higher value than reloading it.
         for tab in openTabs {
             let urlString = tab.url.absoluteString
-            guard let base = matchScore(trimmed, host: tab.url.host, urlString: urlString, title: tab.title) else { continue }
+            guard let base = matchScore(trimmed, host: tab.url.host, urlString: urlString, title: tab.title) else {
+                continue
+            }
             consider(
                 base + 25,
                 OmniboxSuggestion(url: tab.url, title: tab.displayTitle, kind: .openTab(id: tab.id)),
@@ -163,7 +165,9 @@ public enum OmniboxSuggester {
         // history-only path).
         for entry in history {
             let urlString = entry.url.absoluteString
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title) else { continue }
+            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title) else {
+                continue
+            }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
             let recency: Double = age < 7 * 86_400 ? 10 : (age < 30 * 86_400 ? 5 : 0)
@@ -177,7 +181,8 @@ public enum OmniboxSuggester {
         // Bookmarks: a small bonus over a bare history match — the user chose to save them.
         for bookmark in bookmarks {
             let urlString = bookmark.url.absoluteString
-            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: urlString, title: bookmark.title) else { continue }
+            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: urlString, title: bookmark.title)
+            else { continue }
             consider(
                 base + 8,
                 OmniboxSuggestion(url: bookmark.url, title: bookmark.title, kind: .bookmark),
@@ -259,7 +264,9 @@ public enum OmniboxSuggester {
 
     /// Scores a candidate (history entry, bookmark, or open tab) against the
     /// query. Higher is a better match; nil means no match at all.
-    static func matchScore(_ query: String, host rawHost: String?, urlString rawURL: String, title rawTitle: String) -> Double? {
+    static func matchScore(_ query: String, host rawHost: String?, urlString rawURL: String, title rawTitle: String)
+        -> Double?
+    {
         let host = (rawHost ?? "").lowercased()
         let hostSansWWW = host.hasPrefix("www.") ? host[host.index(host.startIndex, offsetBy: 4)...] : Substring(host)
         let urlString = rawURL.lowercased()

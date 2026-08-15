@@ -43,9 +43,9 @@ final class SearchSuggestionProviderTests: XCTestCase {
         ]
 
         let remote = [
-            RemoteSearchSuggestion(text: "swift on github", provider: "DuckDuckGo"), // duplicate should be filtered
+            RemoteSearchSuggestion(text: "swift on github", provider: "DuckDuckGo"),  // duplicate should be filtered
             RemoteSearchSuggestion(text: "swift documentation", provider: "DuckDuckGo"),
-            RemoteSearchSuggestion(text: "swift concurrency", provider: "DuckDuckGo")
+            RemoteSearchSuggestion(text: "swift concurrency", provider: "DuckDuckGo"),
         ]
 
         let hybrid = OmniboxSuggester.hybridSuggestions(

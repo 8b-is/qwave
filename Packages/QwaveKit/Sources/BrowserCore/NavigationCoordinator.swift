@@ -1,7 +1,7 @@
 #if canImport(AppKit)
-import AppKit
+    import AppKit
 #elseif canImport(UIKit)
-import UIKit
+    import UIKit
 #endif
 import WebKit
 import Shields
@@ -124,17 +124,17 @@ extension NavigationCoordinator: WKNavigationDelegate {
         // Cmd-click → background tab in the same container. Pointer+keyboard
         // interaction; the iOS UI layer (Phase 1) uses long-press instead, and
         // WKNavigationAction.modifierFlags is iOS 18.4+ regardless.
-#if os(macOS)
-        if isMainFrame,
-            navigationAction.navigationType == .linkActivated,
-            navigationAction.modifierFlags.contains(.command),
-            let url
-        {
-            decisionHandler(.cancel, preferences)
-            onOpenNewTab?(url, navigationAction.modifierFlags.contains(.shift))
-            return
-        }
-#endif
+        #if os(macOS)
+            if isMainFrame,
+                navigationAction.navigationType == .linkActivated,
+                navigationAction.modifierFlags.contains(.command),
+                let url
+            {
+                decisionHandler(.cancel, preferences)
+                onOpenNewTab?(url, navigationAction.modifierFlags.contains(.shift))
+                return
+            }
+        #endif
 
         if isMainFrame, let url, url.scheme == QwaveSchemeHandler.scheme {
             preferences.allowsContentJavaScript = true
@@ -401,69 +401,69 @@ extension NavigationCoordinator: WKUIDelegate {
 
     // JS dialog + file-open panels use AppKit modals; the iOS UI layer
     // (Phase 1) will present these from a view controller.
-#if os(macOS)
-    public func webView(
-        _ webView: WKWebView,
-        runJavaScriptAlertPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable () -> Void
-    ) {
-        let alert = NSAlert()
-        alert.messageText = frame.securityOrigin.host
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-        completionHandler()
-    }
-
-    public func webView(
-        _ webView: WKWebView,
-        runJavaScriptConfirmPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
-    ) {
-        let alert = NSAlert()
-        alert.messageText = frame.securityOrigin.host
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn)
-    }
-
-    public func webView(
-        _ webView: WKWebView,
-        runJavaScriptTextInputPanelWithPrompt prompt: String,
-        defaultText: String?,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable (String?) -> Void
-    ) {
-        let alert = NSAlert()
-        alert.messageText = frame.securityOrigin.host
-        alert.informativeText = prompt
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.stringValue = defaultText ?? ""
-        alert.accessoryView = field
-        let response = alert.runModal()
-        completionHandler(response == .alertFirstButtonReturn ? field.stringValue : nil)
-    }
-
-    public func webView(
-        _ webView: WKWebView,
-        runOpenPanelWith parameters: WKOpenPanelParameters,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void
-    ) {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.canChooseDirectories = parameters.allowsDirectories
-        panel.canChooseFiles = true
-        panel.begin { response in
-            completionHandler(response == .OK ? panel.urls : nil)
+    #if os(macOS)
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptAlertPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping @MainActor @Sendable () -> Void
+        ) {
+            let alert = NSAlert()
+            alert.messageText = frame.securityOrigin.host
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            completionHandler()
         }
-    }
-#endif
+
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptConfirmPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+        ) {
+            let alert = NSAlert()
+            alert.messageText = frame.securityOrigin.host
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        }
+
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptTextInputPanelWithPrompt prompt: String,
+            defaultText: String?,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping @MainActor @Sendable (String?) -> Void
+        ) {
+            let alert = NSAlert()
+            alert.messageText = frame.securityOrigin.host
+            alert.informativeText = prompt
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            field.stringValue = defaultText ?? ""
+            alert.accessoryView = field
+            let response = alert.runModal()
+            completionHandler(response == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
+
+        public func webView(
+            _ webView: WKWebView,
+            runOpenPanelWith parameters: WKOpenPanelParameters,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void
+        ) {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.canChooseFiles = true
+            panel.begin { response in
+                completionHandler(response == .OK ? panel.urls : nil)
+            }
+        }
+    #endif
 
     public func webView(
         _ webView: WKWebView,

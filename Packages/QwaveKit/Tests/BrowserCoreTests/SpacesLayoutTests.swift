@@ -20,10 +20,10 @@ final class SpacesLayoutTests: XCTestCase {
     func testTabIDsGroupsByContainerAndSkipsEphemeral() {
         let work = UUID()
         let placements = [
-            TabPlacement(id: UUID(), containerID: nil, isEphemeral: false),   // default
+            TabPlacement(id: UUID(), containerID: nil, isEphemeral: false),  // default
             TabPlacement(id: UUID(), containerID: work, isEphemeral: false),  // work
             TabPlacement(id: UUID(), containerID: work, isEphemeral: false),  // work
-            TabPlacement(id: UUID(), containerID: nil, isEphemeral: true),    // burner, never grouped
+            TabPlacement(id: UUID(), containerID: nil, isEphemeral: true),  // burner, never grouped
         ]
         XCTAssertEqual(SpacesLayout.tabIDs(inSpace: nil, tabs: placements), [placements[0].id])
         XCTAssertEqual(SpacesLayout.tabIDs(inSpace: work, tabs: placements), [placements[1].id, placements[2].id])

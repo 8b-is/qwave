@@ -41,32 +41,32 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
     /// in ``userContentController(_:didReceive:)``.
     static var userScript: WKUserScript {
         let source = """
-        (function () {
-          if (window.__qwavePasskeyGet) { return; }
-          const pending = new Map();
-          let seq = 0;
-          window.__qwavePasskeyResolve = function (id, ok, payload) {
-            const entry = pending.get(id);
-            if (!entry) { return; }
-            pending.delete(id);
-            ok ? entry.resolve(payload) : entry.reject(new Error(payload));
-          };
-          function call(kind, options) {
-            return new Promise(function (resolve, reject) {
-              const id = String(++seq);
-              pending.set(id, { resolve: resolve, reject: reject });
-              try {
-                window.webkit.messageHandlers.qwavePasskey.postMessage({ id: id, kind: kind, options: options || {} });
-              } catch (e) {
+            (function () {
+              if (window.__qwavePasskeyGet) { return; }
+              const pending = new Map();
+              let seq = 0;
+              window.__qwavePasskeyResolve = function (id, ok, payload) {
+                const entry = pending.get(id);
+                if (!entry) { return; }
                 pending.delete(id);
-                reject(e);
+                ok ? entry.resolve(payload) : entry.reject(new Error(payload));
+              };
+              function call(kind, options) {
+                return new Promise(function (resolve, reject) {
+                  const id = String(++seq);
+                  pending.set(id, { resolve: resolve, reject: reject });
+                  try {
+                    window.webkit.messageHandlers.qwavePasskey.postMessage({ id: id, kind: kind, options: options || {} });
+                  } catch (e) {
+                    pending.delete(id);
+                    reject(e);
+                  }
+                });
               }
-            });
-          }
-          window.__qwavePasskeyGet = function (options) { return call('get', options); };
-          window.__qwavePasskeyCreate = function (options) { return call('create', options); };
-        })();
-        """
+              window.__qwavePasskeyGet = function (options) { return call('get', options); };
+              window.__qwavePasskeyCreate = function (options) { return call('create', options); };
+            })();
+            """
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 

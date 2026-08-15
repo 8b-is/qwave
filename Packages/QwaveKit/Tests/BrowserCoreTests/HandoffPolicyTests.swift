@@ -29,7 +29,8 @@ final class HandoffPolicyTests: XCTestCase {
         XCTAssertNil(
             HandoffPolicy.webpageURL(url: url("qwave://start"), isPrivateWindow: false, isEphemeralTab: false))
         XCTAssertNil(
-            HandoffPolicy.webpageURL(url: url("file:///Users/x/doc.pdf"), isPrivateWindow: false, isEphemeralTab: false))
+            HandoffPolicy.webpageURL(url: url("file:///Users/x/doc.pdf"), isPrivateWindow: false, isEphemeralTab: false)
+        )
         XCTAssertNil(
             HandoffPolicy.webpageURL(url: url("about:blank"), isPrivateWindow: false, isEphemeralTab: false))
     }

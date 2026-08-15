@@ -58,7 +58,8 @@ final class CapturedFormCredentialTests: XCTestCase {
 
     func testAsWebCredentialCarriesTheParsedFields() {
         let captured = CapturedFormCredential(domain: "example.com", username: "alice", password: "s3cret")
-        XCTAssertEqual(captured.asWebCredential, WebCredential(domain: "example.com", username: "alice", password: "s3cret"))
+        XCTAssertEqual(
+            captured.asWebCredential, WebCredential(domain: "example.com", username: "alice", password: "s3cret"))
     }
 }
 
