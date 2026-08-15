@@ -145,16 +145,20 @@ final class WebAuthnBridge: NSObject, WKScriptMessageHandler {
     /// The page-supplied `rpId` is an arbitrary string, so it goes through
     /// ``CanonicalHost`` first — the same WHATWG parser WebKit itself used to
     /// produce `securityOrigin.host`. Comparing raw strings would let an IDN or
-    /// percent-encoded spelling of a host miss the check, and it is the
-    /// canonical form (not the raw one) that is handed to the ceremony, so
-    /// what is validated is exactly what is used.
+    /// percent-encoded spelling of a host miss the check.
+    ///
+    /// The authorized value comes back *from the policy*, not from this
+    /// function's own inputs: the policy normalizes further than WHATWG
+    /// canonicalisation does (a trailing root dot, which `CanonicalHost` keeps),
+    /// and it is that normalized string the ceremony runs with — so what is
+    /// validated is exactly what is used.
     private func authorizedRPID(_ requested: String, originHost: String) -> String? {
-        guard let rpID = CanonicalHost.host(ofURLString: "https://\(requested)") else {
+        guard let canonical = CanonicalHost.host(ofURLString: "https://\(requested)") else {
             log.error("refusing passkey: rpId \(requested) is not a host")
             return nil
         }
-        guard WebAuthnOriginPolicy.rpIDIsAuthorized(rpID, forOriginHost: originHost) else {
-            log.error("refusing passkey: rpId \(rpID) is not authorized for origin \(originHost)")
+        guard let rpID = WebAuthnOriginPolicy.authorizedRPID(canonical, forOriginHost: originHost) else {
+            log.error("refusing passkey: rpId \(canonical) is not authorized for origin \(originHost)")
             return nil
         }
         return rpID

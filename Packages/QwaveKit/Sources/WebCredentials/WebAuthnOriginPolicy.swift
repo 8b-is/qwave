@@ -14,33 +14,48 @@ import Foundation
 /// frame, and the page-supplied `rpId` run through `URLIdentity.CanonicalHost` —
 /// because this type deliberately does no URL parsing of its own.
 public enum WebAuthnOriginPolicy {
-    /// True when `rpID` is equal to, or a registrable-domain suffix of,
-    /// `originHost`.
+    /// The `rpID` a ceremony for `originHost` may run with — normalized — or nil
+    /// when the origin may not claim it.
     ///
-    /// The suffix must break on a label boundary: `login.example.com` is covered
-    /// by `example.com`, while `evil-example.com` is not.
+    /// Returning the value rather than a bool is deliberate: normalization
+    /// (case, trailing root dot) happens *inside* the decision, so a caller that
+    /// re-used its own input string would hand the authenticator something other
+    /// than what was authorized. `example.com.` is authorized as, and comes back
+    /// as, `example.com`.
+    ///
+    /// `rpID` is authorized when it is equal to, or a registrable-domain suffix
+    /// of, `originHost`. The suffix must break on a label boundary:
+    /// `login.example.com` is covered by `example.com`, while `evil-example.com`
+    /// is not.
     ///
     /// Known limitation: with no public-suffix list in the tree, a suffix that
     /// is itself a public suffix (`co.uk` claimed from `evil.co.uk`) cannot be
     /// rejected. Single-label suffixes (`com`) are refused outright, which
     /// covers the common shape; a real PSL is the follow-up — the same one
     /// ``WebCredentialMatching`` already defers.
-    public static func rpIDIsAuthorized(_ rpID: String, forOriginHost originHost: String) -> Bool {
+    public static func authorizedRPID(_ rpID: String, forOriginHost originHost: String) -> String? {
         let rp = normalizeHost(rpID)
         let origin = normalizeHost(originHost)
-        guard !rp.isEmpty, !origin.isEmpty else { return false }
+        guard !rp.isEmpty, !origin.isEmpty else { return nil }
         // Same effective domain: always allowed, including single-label intranet
         // hosts and IP literals, where "registrable suffix" has no meaning.
-        if rp == origin { return true }
+        if rp == origin { return rp }
         // An IP-literal origin has no registrable domain, so nothing but exact
         // equality may authorise it — otherwise "1.2.3.4" would hand rpId "3.4"
         // a ceremony.
-        guard !isIPLiteral(origin) else { return false }
+        guard !isIPLiteral(origin) else { return nil }
         // A single-label rpId is never a site's registrable domain; refusing it
         // stops a page at "example.com" from claiming the whole "com" suffix.
-        guard rp.contains(".") else { return false }
+        guard rp.contains(".") else { return nil }
         // The dot is what forces the match onto a label boundary.
-        return origin.hasSuffix("." + rp)
+        return origin.hasSuffix("." + rp) ? rp : nil
+    }
+
+    /// True when ``authorizedRPID(_:forOriginHost:)`` would permit the ceremony.
+    /// Decision only — a caller that goes on to *run* the ceremony must use the
+    /// rpID that function returns, not its own input.
+    public static func rpIDIsAuthorized(_ rpID: String, forOriginHost originHost: String) -> Bool {
+        authorizedRPID(rpID, forOriginHost: originHost) != nil
     }
 
     /// Lowercase and drop one trailing root-label dot (`example.com.` is the

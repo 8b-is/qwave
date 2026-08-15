@@ -71,6 +71,19 @@ final class WebAuthnOriginPolicyTests: XCTestCase {
         XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com.", forOriginHost: "login.example.com"))
     }
 
+    /// The value that reaches the authenticator, not just the allow/deny bit:
+    /// normalization happens inside the decision, so the authorized rpId is
+    /// handed back normalized. `example.com.` (which `CanonicalHost` keeps
+    /// dotted) must run the ceremony as `example.com` — no authenticator holds a
+    /// credential for the dotted spelling.
+    func testAuthorizedRPIDReturnsTheNormalizedValueThatWasValidated() {
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.com.", forOriginHost: "login.example.com"), "example.com")
+        XCTAssertEqual(WebAuthnOriginPolicy.authorizedRPID("example.com.", forOriginHost: "example.com"), "example.com")
+        XCTAssertEqual(WebAuthnOriginPolicy.authorizedRPID("EXAMPLE.com", forOriginHost: "example.com"), "example.com")
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("example.com.", forOriginHost: "attacker.test"))
+    }
+
     /// An opaque origin (sandboxed iframe, data: document) has an empty host.
     func testEmptyHostsAreRefused() {
         XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: ""))
