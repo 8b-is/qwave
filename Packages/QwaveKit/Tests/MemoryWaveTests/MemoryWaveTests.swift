@@ -325,6 +325,78 @@ final class MemoryCipherTests: XCTestCase {
         XCTAssertEqual(key.withUnsafeBytes { Data($0) }, stored)
         XCTAssertEqual(try secrets.secret(for: MemoryCipher.keyAccount), stored)
     }
+
+    /// The guard above only helps when the *read* sees the truth. This is the
+    /// case where it does not: `secret(for:)` reports nothing stored while a
+    /// perfectly good key is in fact there. The create branch must fail closed
+    /// on the write, not overwrite. Asserted on the bytes, because "threw" and
+    /// "did not destroy" are different claims.
+    func testCreatePathFailsClosedWhenAReadMissesAnExistingKey() throws {
+        let realKey = Data(repeating: 0x7E, count: 32)
+        let secrets = BlindReadSecretStore(hidden: [MemoryCipher.keyAccount: realKey])
+        XCTAssertNil(
+            try secrets.secret(for: MemoryCipher.keyAccount),
+            "precondition: the read must miss the item that exists")
+
+        XCTAssertThrowsError(try MemoryCipher.loadOrCreateKey(in: secrets)) { error in
+            XCTAssertEqual(error as? SecretStoreError, .duplicateItem)
+        }
+        XCTAssertEqual(
+            secrets.storedBytes(for: MemoryCipher.keyAccount), realKey,
+            "an unreadable master key must survive byte-for-byte, never be re-keyed")
+    }
+
+    /// Same asymmetry, one level up: the store refuses to come up rather than
+    /// coming up on a fresh key over a full database of sealed records.
+    func testMemoryStoreFailsClosedWhenAReadMissesAnExistingKey() throws {
+        let realKey = Data(repeating: 0x7E, count: 32)
+        let secrets = BlindReadSecretStore(hidden: [MemoryCipher.keyAccount: realKey])
+        XCTAssertThrowsError(try MemoryStore(database: SQLiteDatabase(), secrets: secrets)) { error in
+            XCTAssertEqual(error as? SecretStoreError, .duplicateItem)
+        }
+        XCTAssertEqual(secrets.storedBytes(for: MemoryCipher.keyAccount), realKey)
+    }
+}
+
+/// A store whose reads miss an item that actually exists — the shape of a
+/// keychain access-group change once the app ships signed, an item living in a
+/// different keychain in the search list, or two first-run constructions
+/// racing. Reads report nil; the add-only write sees the truth and refuses.
+private final class BlindReadSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data]
+
+    init(hidden: [String: Data]) {
+        storage = hidden
+    }
+
+    func secret(for key: String) throws -> Data? { nil }
+
+    func setSecret(_ data: Data, for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage[key] = data
+    }
+
+    func addSecret(_ data: Data, for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard storage[key] == nil else { throw SecretStoreError.duplicateItem }
+        storage[key] = data
+    }
+
+    func removeSecret(for key: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.removeValue(forKey: key)
+    }
+
+    /// What is really stored, bypassing the blind read.
+    func storedBytes(for key: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[key]
+    }
 }
 
 final class MemoryStoreTests: XCTestCase {

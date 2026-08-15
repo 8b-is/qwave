@@ -88,6 +88,10 @@ final class BrowserEnvironment {
             memoryStore = nil
             QwaveLog.memory.error(
                 "Memory Wave locked: stored master key is malformed; memories are sealed, not lost")
+        } catch SecretStoreError.duplicateItem {
+            memoryStore = nil
+            QwaveLog.memory.error(
+                "Memory Wave locked: a master key exists but could not be read back; not re-keyed")
         } catch {
             memoryStore = nil
             QwaveLog.memory.error("Memory Wave unavailable: \(error)")
