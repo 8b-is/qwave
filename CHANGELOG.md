@@ -4,6 +4,27 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **WebExtensions bridge hardening.** Four fixes to the `browser.*` bridge:
+  - Bridge replies and dispatched messages are now encoded with a single
+    JSON-based JS-literal encoder instead of a hand-rolled escaper that only
+    escaped `"`. `JSONSerialization` refuses a bare top-level string and raises
+    an uncatchable Objective-C exception, so *every* string payload took the
+    unsafe path — including the `"Unknown method: <method>"` error reply built
+    from a page-supplied method name. Any page could reach it with one
+    `postMessage`. Values are now array-wrapped before serialisation (the same
+    approach already used by `WebAuthnBridge.jsonLiteral`), backslashes,
+    newlines, quotes and U+2028/U+2029 are escaped, and values JSON cannot
+    represent degrade to `null` rather than raising.
+  - The bridge, its `qwaveExtension` message handler, and all injected content
+    scripts now run in a dedicated `WKContentWorld` instead of the page's own
+    JavaScript world, so a hostile page can no longer observe, wrap, or replace
+    them.
+  - Bridge replies are routed back to the web view the call arrived from
+    instead of through a single shared responder slot pointed at the
+    last-opened popup, so a reply can no longer land on the wrong surface.
+  - With no extensions installed, no bridge is injected into tabs at all.
+
 ### Added
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
   on-device page summarisation via FoundationModels, behind the Summarize

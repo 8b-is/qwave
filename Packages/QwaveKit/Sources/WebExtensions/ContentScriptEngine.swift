@@ -41,12 +41,17 @@ public struct InjectedContentScript: Sendable, Equatable {
     }
 
     /// Converts this content script into a WebKit `WKUserScript`.
+    ///
+    /// Injected into `ExtensionContentWorld.isolated`, not the page's own JS
+    /// world: page script must not be able to observe, wrap, or replace an
+    /// extension's content script (or the `browser.*` bridge it talks to).
     @MainActor
     public var userScript: WKUserScript {
         WKUserScript(
             source: source,
             injectionTime: injectionTime,
-            forMainFrameOnly: forMainFrameOnly
+            forMainFrameOnly: forMainFrameOnly,
+            in: ExtensionContentWorld.isolated
         )
     }
 }

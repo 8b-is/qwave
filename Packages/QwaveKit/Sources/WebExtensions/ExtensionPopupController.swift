@@ -10,7 +10,6 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
     public let router: ExtensionMessageRouter
 
     private let webView: WKWebView
-    private var responder: WebViewBridgeResponder?
 
     public init(router: ExtensionMessageRouter) {
         self.router = router
@@ -18,11 +17,16 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
 
-        configuration.userContentController.add(router, name: BrowserBridgeScript.messageHandlerName)
+        configuration.userContentController.add(
+            router,
+            contentWorld: ExtensionContentWorld.isolated,
+            name: BrowserBridgeScript.messageHandlerName
+        )
         let script = WKUserScript(
             source: BrowserBridgeScript.source,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: true,
+            in: ExtensionContentWorld.isolated
         )
         configuration.userContentController.addUserScript(script)
 
@@ -39,10 +43,11 @@ public final class ExtensionPopupController: NSObject, NSPopoverDelegate {
     }
 
     /// Shows the popup for an extension anchored to `positioningView`.
+    ///
+    /// The popup registers no responder with the router: the router replies
+    /// into whichever web view a bridge call arrived from, so opening a second
+    /// popup can no longer steal the first one's replies.
     public func showPopup(for ext: WebExtension, relativeTo positioningView: NSView, of positioningRect: NSRect) {
-        responder = WebViewBridgeResponder(webView: webView)
-        router.responder = responder
-
         if let popupURL = ext.popupURL {
             webView.loadFileURL(popupURL, allowingReadAccessTo: ext.bundleURL)
         } else {
