@@ -162,6 +162,80 @@ final class MarineDetectorTests: XCTestCase {
     }
 }
 
+final class SemanticVectorTests: XCTestCase {
+    func testIdenticalVectorsAreMaximallySimilar() {
+        let a = SemanticVector([0.2, 0.9, -0.4, 0.1])
+        XCTAssertEqual(a.cosineSimilarity(to: a), 1.0, accuracy: 1e-6)
+    }
+
+    func testOrthogonalVectorsScoreZero() {
+        let a = SemanticVector([1, 0, 0])
+        let b = SemanticVector([0, 1, 0])
+        XCTAssertEqual(a.cosineSimilarity(to: b), 0.0, accuracy: 1e-6)
+    }
+
+    func testOppositeVectorsScoreNegativeOne() {
+        let a = SemanticVector([0.5, 0.5])
+        let b = SemanticVector([-0.5, -0.5])
+        XCTAssertEqual(a.cosineSimilarity(to: b), -1.0, accuracy: 1e-6)
+    }
+
+    func testMismatchedDimensionsScoreZero() {
+        let a = SemanticVector([1, 0, 0])
+        let b = SemanticVector([1, 0])
+        XCTAssertEqual(a.cosineSimilarity(to: b), 0.0)
+    }
+}
+
+final class SemanticRerankerTests: XCTestCase {
+    func testRerankOrdersByCosineSimilarity() {
+        let query = SemanticVector([1, 0, 0])
+        let candidates: [(item: String, vector: SemanticVector?)] = [
+            ("far", SemanticVector([0, 1, 0])),
+            ("near", SemanticVector([0.9, 0.1, 0])),
+            ("mid", SemanticVector([0.5, 0.5, 0])),
+        ]
+        XCTAssertEqual(SemanticReranker.rerank(query: query, candidates: candidates), ["near", "mid", "far"])
+    }
+
+    func testUnembeddedCandidatesKeepLexicalOrderAtTail() {
+        let query = SemanticVector([1, 0])
+        let candidates: [(item: String, vector: SemanticVector?)] = [
+            ("lexA", nil),
+            ("scored", SemanticVector([0.8, 0.2])),
+            ("lexB", nil),
+        ]
+        // Scored candidate leads; the two nil-embedding rows preserve input order.
+        XCTAssertEqual(SemanticReranker.rerank(query: query, candidates: candidates), ["scored", "lexA", "lexB"])
+    }
+
+    func testAllUnembeddedFallsBackToLexicalOrder() {
+        let query = SemanticVector([1, 0])
+        let candidates: [(item: String, vector: SemanticVector?)] = [
+            ("first", nil),
+            ("second", nil),
+            ("third", nil),
+        ]
+        XCTAssertEqual(SemanticReranker.rerank(query: query, candidates: candidates), ["first", "second", "third"])
+    }
+}
+
+@MainActor
+final class SemanticRecallTests: XCTestCase {
+    func testRecallWithoutEmbedderFallsBackToLexical() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        // Passing embedder: nil disables the semantic path — recall stays lexical.
+        let director = WaveDirector(store: store, preferences: prefs, embedder: nil)
+        _ = try await director.remember(
+            title: "Wave memory", body: "resonance and recall", url: nil,
+            containerID: nil, isEphemeral: false)
+        let hits = try await director.recall(containerID: nil, query: "recall", limit: 8)
+        XCTAssertFalse(hits.isEmpty)
+    }
+}
+
 final class MemoryCipherTests: XCTestCase {
     func testSealOpenRoundTrip() throws {
         let secrets = InMemorySecretStore()
