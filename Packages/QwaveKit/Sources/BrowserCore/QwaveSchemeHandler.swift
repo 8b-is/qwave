@@ -18,6 +18,9 @@ public enum QwaveInternal {
     public static var timelinePageHTML: () -> String = {
         InternalPages.timelineHTML(days: [], summary: nil, rememberEverything: false, providerLabel: "Remember only")
     }
+    public static var diagnosticsPageHTML: () -> String = {
+        InternalPages.diagnosticsHTML(records: [], submissionEnabled: false)
+    }
     public static var lastTimelineSummary: String = ""
 }
 
@@ -70,6 +73,11 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
 
         if host == "timeline" || (host.isEmpty && path == "/timeline") {
             finish(urlSchemeTask, url: url, mime: "text/html", body: Data(QwaveInternal.timelinePageHTML().utf8))
+            return
+        }
+
+        if host == "diagnostics" || (host.isEmpty && path == "/diagnostics") {
+            finish(urlSchemeTask, url: url, mime: "text/html", body: Data(QwaveInternal.diagnosticsPageHTML().utf8))
             return
         }
 

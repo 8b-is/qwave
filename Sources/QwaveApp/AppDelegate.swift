@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var underMemoryPressure = false
 
+    /// MetricKit-backed local reliability telemetry feeding qwave://diagnostics.
+    private var diagnosticsStore: DiagnosticsStore?
+
     // MARK: - Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -33,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         updaterController = updater
         NSApp.mainMenu = MainMenu.build(updater: updater)
         refreshSummarizePresence()
+        startDiagnostics()
         startMemoryPressureSource()
         startEnergyObservers()
         Task {
@@ -331,6 +335,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
     }
 
+    /// Subscribes to MetricKit at launch and wires the read-only
+    /// qwave://diagnostics page to the locally-stored payloads. Nothing is ever
+    /// uploaded — the page is a local, opt-in-to-submit view (submission has no
+    /// endpoint; it never phones home).
+    private func startDiagnostics() {
+        let store = DiagnosticsStore()
+        diagnosticsStore = store
+        QwaveInternal.diagnosticsPageHTML = { [weak store] in
+            InternalPages.diagnosticsHTML(
+                records: store?.records ?? [],
+                submissionEnabled: store?.submissionEnabled ?? false
+            )
+        }
+    }
+
     private func startMemoryPressureSource() {
         let source = DispatchSource.makeMemoryPressureSource(
             eventMask: [.normal, .warning, .critical], queue: .main)
@@ -338,9 +357,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self else { return }
             let event = source.data
             self.underMemoryPressure = event.contains(.warning) || event.contains(.critical)
+            // Fast path: react in milliseconds instead of waiting up to 30 s for
+            // the energy timer. A .warning fires an immediate energy tick (which,
+            // under pressure, tightens the hibernation timeout); a .critical also
+            // hibernates non-essential tabs right now.
+            guard event.contains(.warning) || event.contains(.critical) else { return }
+            let critical = event.contains(.critical)
+            Task { @MainActor [weak self] in
+                await self?.reactToMemoryPressure(critical: critical)
+            }
         }
         source.resume()
         memoryPressureSource = source
+    }
+
+    /// Immediate reaction to a memory-pressure event. On `.critical` every
+    /// non-selected tab hibernates now; both tiers then run an energy tick so
+    /// the governor's tightened policy applies without waiting for the timer.
+    private func reactToMemoryPressure(critical: Bool) async {
+        // Pressure can arrive before the environment finishes bootstrapping.
+        guard environment != nil else { return }
+        if critical {
+            QwaveLog.browser.info("Memory pressure critical — hibernating inactive tabs now")
+            for controller in windowControllers {
+                controller.hibernateInactiveTabs(nil)
+            }
+        }
+        await energyTick()
     }
 
     func inferenceAllowedNow() -> Bool {
