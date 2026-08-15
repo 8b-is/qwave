@@ -35,6 +35,18 @@ public struct WaveInt: Equatable, Hashable, Sendable {
 
     public static let frameSize = 79
 
+    /// Nanoseconds since the Unix epoch, clamped to 0 for dates before 1970.
+    /// `UInt64.init(_: Double)` traps on a negative value, and hand-edited
+    /// vault markdown can legitimately carry a `created:` date earlier than
+    /// the epoch (e.g. backfilled notes) -- clamp instead of trapping.
+    public static func nanosecondsSince1970(_ date: Date) -> UInt64 {
+        let seconds = date.timeIntervalSince1970
+        guard seconds > 0 else { return 0 }
+        let nanos = seconds * 1_000_000_000
+        guard nanos < Double(UInt64.max) else { return UInt64.max }
+        return UInt64(nanos)
+    }
+
     public init(
         baseAmplitude: Rational,
         frequency: Rational,

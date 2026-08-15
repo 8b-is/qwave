@@ -229,7 +229,7 @@ public actor MemoryStore {
             MemoryWaveConstants.consciousness.doubleValue
             * MemoryWaveConstants.goldenRatio.doubleValue
         let signature = WaveSignature.fromContent(payload, identityFrequency: identity)
-        let nanos = UInt64(date.timeIntervalSince1970 * 1_000_000_000)
+        let nanos = WaveInt.nanosecondsSince1970(date)
         let wave = WaveInt(
             baseAmplitude: Rational(1, 1)!,
             frequency: frequencyRational(signature.dominantFrequency),

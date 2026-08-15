@@ -568,6 +568,38 @@ final class NibbleTests: XCTestCase {
         XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
     }
 
+    /// A hand-edited vault file can carry a `created:` date before 1970 (e.g.
+    /// a backfilled note). Decoding it, and computing the wave for it, must
+    /// not trap converting a negative nanosecond count to UInt64 -- issue #85.
+    func testDecodePre1970CreatedDateDoesNotTrap() {
+        let text = """
+            ---
+            id: 11111111-1111-1111-1111-111111111111
+            kind: nibble
+            source: note
+            tags: [apollo]
+            url:
+            created: 1969-07-20T20:17:00Z
+            container:
+            lane: odd
+            ---
+
+            # Tranquility Base
+
+            The Eagle has landed.
+            """
+        let decoded = NibbleMarkdown.decode(text)
+        XCTAssertEqual(decoded?.title, "Tranquility Base")
+        XCTAssertEqual(
+            decoded?.created,
+            ISO8601DateFormatter().date(from: "1969-07-20T20:17:00Z")
+        )
+        // The wave is computed eagerly in MemoryNibble.init when no explicit
+        // wave is supplied -- this is where the pre-fix trap fired.
+        XCTAssertEqual(decoded?.wave.createdAt, 0)
+        XCTAssertEqual(decoded?.wave.lastAccessed, 0)
+    }
+
     func testCutterSplitsHeadingsAndKeepsHashtags() {
         let nibbles = NibbleCutter.cut(
             title: "Article",
