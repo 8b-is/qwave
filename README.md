@@ -27,8 +27,9 @@ own network activity auditable.
   and 4 P-core sorting threads for instant URL completions and history search.
 - **Persistent FaviconStore** — container-isolated SQLite BLOB caching for instant
   favicon rendering with zero cross-container telemetry leakage.
-- **Hybrid Omnibox** — blended local browsing history and remote search suggestions
-  with bounded top-$k$ insertion sorting on every keystroke.
+- **On-device omnibox** — suggestions from local history, bookmarks, open tabs, and
+  actions, ranked on every keystroke. Network search suggestions are opt-in and off
+  by default, so keystrokes never leave the Mac unless you turn them on.
 - **Energy-aware tabs** — background WebKit views can be hibernated while tab
   state, history, and scroll position remain restorable.
 - **Optional VPN** — Mullvad relay discovery and WireGuard live in a dedicated
@@ -38,6 +39,11 @@ own network activity auditable.
   you explicitly configure a remote provider.
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
+- **AutoFill** — passwords and passkeys through an `ASCredentialProvider` extension
+  and WebAuthn, kept in the OS / iCloud keychain and deliberately separate from the
+  post-quantum / `DeviceKeyManager` stack.
+- **Spaces** — the container universes surface as first-class Spaces with a vertical
+  tab sidebar; a system Focus filter can switch the active Space and tighten shields.
 
 ## How it works — concept diagrams
 
@@ -206,6 +212,7 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── WebExtensions               MV3 registry and browser.* bridge
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
+│   ├── WebCredentials              keychain-only passwords + passkeys (AutoFill)
 │   └── QwaveSupport                logging, keychain, egress guard
 └── PacketTunnel.systemextension    WireGuardKit + NetworkExtension boundary
 ```
@@ -235,6 +242,9 @@ the exact graph, isolation rules, data flow, and test boundaries.
   [source](Packages/QwaveKit/Sources/PostQuantum/) · [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md)
 - **WebExtensions** — MV3 registry and `browser.*` bridge.
   [source](Packages/QwaveKit/Sources/WebExtensions/)
+- **WebCredentials** — keychain-only website logins and passkeys for AutoFill.
+  Foundation + Security only; never links the crypto/VPN stack. Key types:
+  `WebCredential`, `WebCredentialStore`. [source](Packages/QwaveKit/Sources/WebCredentials/)
 - **URLIdentity** — WHATWG/WebKit-compatible host identity (fixes a shielding
   bypass, per `research/collections-foundation/weburl.md`).
   [source](Packages/QwaveKit/Sources/URLIdentity/)
@@ -342,9 +352,21 @@ Research (measured, version-stamped, Qwave-specific):
 Shipped in v1.0.0: the browser core, shields, WebExtensions MV3 bridge,
 MemoryWave, Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
 post-quantum KEM implementation, signed release workflow, and Swift 6
-concurrency migration — all covered by package tests. The VPN system extension
-still depends on Apple Network Extension entitlements for signed distribution;
-see [docs/SIGNING.md](docs/SIGNING.md) for the exact gap.
+concurrency migration — all covered by package tests.
+
+Since 1.0.0: downloads UI, crash-safe session restore, a `qwave://diagnostics`
+telemetry page, VoiceOver accessibility on the chrome, on-device semantic memory
+recall, a command palette, first-run bookmark import with Spotlight entities,
+container-bound Focus filters with a Spaces sidebar, keychain-only AutoFill
+(passwords + passkeys), and a zero-egress Safe Browsing host-set.
+
+The VPN system extension still depends on Apple Network Extension entitlements
+for signed distribution (Apple DTS case open); see
+[docs/SIGNING.md](docs/SIGNING.md) for the exact gap.
+
+An iPhone port is in progress: the shared QwaveKit package now compiles for iOS
+(Phase 0). A SwiftUI app target, iOS AutoFill, and a NetworkExtension VPN are the
+following phases.
 
 ## License
 
