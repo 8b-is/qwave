@@ -2,8 +2,20 @@ import Foundation
 import QwaveSupport
 
 /// Markdown-on-disk vault of nibbles. Human-readable, tag-indexed, local only.
-public final class NibbleVault {
-    public let directory: URL
+///
+/// An actor so the enumeration + file reads in `all(limit:)` run off the main
+/// thread when awaited from `@MainActor` callers, and so the decode cache is
+/// mutated under serialized isolation.
+public actor NibbleVault {
+    public nonisolated let directory: URL
+
+    /// Decoded nibbles memoized by the vault directory's modification time.
+    /// Repeated recalls with an unchanged vault reuse this instead of
+    /// re-reading and re-decoding every file. `write(_:)` clears it since a new
+    /// file may land in an existing month folder without bumping the top-level
+    /// directory's mtime.
+    private var cache: (key: Date, files: [URL], nibbles: [URL: MemoryNibble])?
+    private static let cacheLimit = 400
 
     public init(directory: URL) throws {
         self.directory = directory
@@ -37,16 +49,33 @@ public final class NibbleVault {
         let name = "\(safeFile(stamp.string(from: nibble.created)))-\(safeFile(slug))-\(String(nibble.id.prefix(8))).md"
         let url = folder.appendingPathComponent(name)
         try NibbleMarkdown.encode(nibble).write(to: url, atomically: true, encoding: .utf8)
+        cache = nil
         QwaveLog.memory.info("Wrote nibble markdown")
         return url
     }
 
     public func all(limit: Int = 400) throws -> [MemoryNibble] {
-        let files = try markdownFiles()
-        return files.prefix(limit).compactMap { url in
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-            return NibbleMarkdown.decode(text)
+        let mtime = directoryModificationDate()
+        if limit <= Self.cacheLimit, let cache, cache.key == mtime {
+            return cache.files.prefix(limit).compactMap { cache.nibbles[$0] }
         }
+        let files = try markdownFiles()
+        // Limits beyond the cache window read directly and skip caching so the
+        // stored set never under-serves a larger request.
+        guard limit <= Self.cacheLimit else {
+            return files.prefix(limit).compactMap { read($0) }
+        }
+        var nibbles: [URL: MemoryNibble] = [:]
+        for url in files.prefix(Self.cacheLimit) {
+            if let nibble = read(url) { nibbles[url] = nibble }
+        }
+        cache = (mtime, files, nibbles)
+        return files.prefix(limit).compactMap { nibbles[$0] }
+    }
+
+    private func read(_ url: URL) -> MemoryNibble? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return NibbleMarkdown.decode(text)
     }
 
     public func matching(tags: [String], limit: Int = 32) throws -> [MemoryNibble] {
@@ -82,6 +111,11 @@ public final class NibbleVault {
             if lhs.value != rhs.value { return lhs.value > rhs.value }
             return lhs.key < rhs.key
         }.prefix(limit).map(\.key)
+    }
+
+    private func directoryModificationDate() -> Date {
+        (try? directory.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            ?? .distantPast
     }
 
     private func markdownFiles() throws -> [URL] {
