@@ -14,9 +14,13 @@ All notable changes to Qwave will be documented in this file.
   is a registrable-domain suffix of, the requesting frame's own origin host
   (`WKFrameInfo.securityOrigin`). The match breaks on a label boundary, so
   `evil-example.com` cannot claim `example.com`, and the `rpId` is canonicalised
-  through the same WHATWG parser WebKit uses, so the value validated is the
-  value the ceremony runs with. Legitimate same-origin and
-  subdomain → parent-domain ceremonies are unaffected.
+  through the same WHATWG parser WebKit uses, so an IDN or percent-encoded
+  spelling cannot slip past the check. The ceremony then runs with the value
+  the policy returned as authorised, not with the bridge's own input — the two
+  can still differ, because WHATWG canonicalisation keeps a trailing root dot
+  (`example.com.`) that the policy drops — so the value validated is the value
+  the ceremony runs with. Legitimate same-origin and subdomain → parent-domain
+  ceremonies are unaffected.
 
 ### Added
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
