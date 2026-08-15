@@ -33,27 +33,31 @@ private final class ErrorBox: @unchecked Sendable {
     func append(_ error: Error) { errors.append(error) }
 }
 
+/// The parser's origin binding and password-field rules have their own file:
+/// see `PasswordCaptureTests`.
 final class CapturedFormCredentialTests: XCTestCase {
-    func testParsesAndNormalizesDomainFromFullURL() {
+    func testParsesAndNormalizesDomainFromTheFrameOrigin() {
         let json: [String: Any] = [
-            "url": "https://www.example.com/login?next=/account",
             "username": "alice",
-            "password": "s3cret",
+            "passwords": [["value": "s3cret", "autocomplete": ""]],
         ]
-        let captured = CapturedFormCredential(json: json)
+        let captured = CapturedFormCredential(json: json, frameOriginHost: "www.example.com")
         XCTAssertEqual(captured, CapturedFormCredential(domain: "example.com", username: "alice", password: "s3cret"))
     }
 
     func testRejectsMissingUsername() {
-        XCTAssertNil(CapturedFormCredential(json: ["url": "https://example.com", "password": "x"]))
+        let json: [String: Any] = ["passwords": [["value": "x", "autocomplete": ""]]]
+        XCTAssertNil(CapturedFormCredential(json: json, frameOriginHost: "example.com"))
     }
 
     func testRejectsEmptyPassword() {
-        XCTAssertNil(CapturedFormCredential(json: ["url": "https://example.com", "username": "alice", "password": ""]))
+        let json: [String: Any] = ["username": "alice", "passwords": [["value": "", "autocomplete": ""]]]
+        XCTAssertNil(CapturedFormCredential(json: json, frameOriginHost: "example.com"))
     }
 
     func testRejectsUnparsableDomain() {
-        XCTAssertNil(CapturedFormCredential(json: ["url": "", "username": "alice", "password": "x"]))
+        let json: [String: Any] = ["username": "alice", "passwords": [["value": "x", "autocomplete": ""]]]
+        XCTAssertNil(CapturedFormCredential(json: json, frameOriginHost: ""))
     }
 
     func testAsWebCredentialCarriesTheParsedFields() {
