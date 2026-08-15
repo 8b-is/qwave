@@ -82,14 +82,17 @@ final class SpacesSidebarView: NSView {
         newTabButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab in Space")
         newTabButton.imagePosition = .imageLeading
         newTabButton.title = " New Tab"
-        newTabButton.font = .systemFont(ofSize: 12)
+        newTabButton.font = .systemFont(ofSize: 12, weight: .medium)
         newTabButton.bezelStyle = .texturedRounded
         newTabButton.isBordered = false
+        newTabButton.contentTintColor = .secondaryLabelColor
         newTabButton.alignment = .left
         newTabButton.target = self
         newTabButton.action = #selector(newTabClicked)
         newTabButton.translatesAutoresizingMaskIntoConstraints = false
+        newTabButton.toolTip = "New Tab in Space"
         newTabButton.setAccessibilityLabel("New Tab in Space")
+        newTabButton.setAccessibilityHelp("Create a new tab in the current space")
         addSubview(newTabButton)
 
         NSLayoutConstraint.activate([
@@ -226,6 +229,8 @@ private final class SpaceChipView: NSView {
     private let label = NSTextField(labelWithString: "")
     private let count = NSTextField(labelWithString: "")
     private var model: SpaceChipModel
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
 
     /// The space id this chip currently renders — the diffing key for reuse.
     var spaceID: UUID? { model.id }
@@ -273,19 +278,58 @@ private final class SpaceChipView: NSView {
         apply(model: model)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackgroundColor()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackgroundColor()
+    }
+
+    private func updateBackgroundColor() {
+        if model.isActive {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
+                : NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        } else {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.labelColor.withAlphaComponent(0.06).cgColor
+                : NSColor.clear.cgColor
+        }
+    }
+
     /// Re-render this chip for a (possibly new) model in place, matching the
     /// visual and accessibility state of a freshly-constructed chip.
     func apply(model: SpaceChipModel) {
         self.model = model
-        layer?.backgroundColor =
-            model.isActive
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
+        updateBackgroundColor()
         dot.layer?.backgroundColor =
-            (NSColor(hexString: model.colorHex) ?? .systemGray).cgColor
+            (NSColor(hexString: model.colorHex) ?? .secondaryLabelColor).cgColor
         label.stringValue = model.name
+        label.textColor = model.isActive ? .labelColor : .secondaryLabelColor
         label.font = .systemFont(ofSize: 13, weight: model.isActive ? .semibold : .regular)
         count.stringValue = model.tabCount > 0 ? "\(model.tabCount)" : ""
+        count.textColor = model.isActive ? .secondaryLabelColor : .tertiaryLabelColor
+        toolTip = "\(model.name) Space (\(model.tabCount) tabs)"
         setAccessibilityLabel("\(model.name) space, \(model.tabCount) tabs")
         setAccessibilityValue(model.isActive ? "selected" : nil)
     }
@@ -317,6 +361,8 @@ private final class SidebarTabRow: NSView {
     private let label = NSTextField(labelWithString: "")
     private var model: TabDisplayModel
     private var isSelected: Bool
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
 
     /// The tab id this row currently renders — the diffing key for reuse.
     var tabID: UUID { model.id }
@@ -346,9 +392,11 @@ private final class SidebarTabRow: NSView {
         closeButton.isBordered = false
         closeButton.bezelStyle = .inline
         closeButton.controlSize = .small
+        closeButton.contentTintColor = .secondaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.toolTip = "Close Tab"
         addSubview(closeButton)
 
         NSLayoutConstraint.activate([
@@ -376,16 +424,52 @@ private final class SidebarTabRow: NSView {
         apply(model: model, isSelected: isSelected)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackgroundColor()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackgroundColor()
+    }
+
+    private func updateBackgroundColor() {
+        if isSelected {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
+                : NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        } else {
+            layer?.backgroundColor =
+                isHovered
+                ? NSColor.labelColor.withAlphaComponent(0.06).cgColor
+                : NSColor.clear.cgColor
+        }
+    }
+
     /// Re-render this row for a (possibly new) model in place, matching the
     /// visual and accessibility state of a freshly-constructed row.
     func apply(model: TabDisplayModel, isSelected: Bool) {
         self.model = model
         self.isSelected = isSelected
 
-        layer?.backgroundColor =
-            isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            : NSColor.clear.cgColor
+        updateBackgroundColor()
 
         if model.isEphemeral {
             stripe.layer?.backgroundColor = NSColor.systemPurple.cgColor
@@ -404,8 +488,10 @@ private final class SidebarTabRow: NSView {
         if model.isHibernated { title = "💤 " + title }
         if model.isLoading { title = "⋯ " + title }
         label.stringValue = title
+        label.textColor = isSelected ? .labelColor : .secondaryLabelColor
         label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
 
+        toolTip = model.title.isEmpty ? "Untitled Tab" : model.title
         setAccessibilityLabel(model.title.isEmpty ? "Untitled" : model.title)
         setAccessibilityValue(isSelected ? "selected" : nil)
         closeButton.setAccessibilityLabel("Close \(model.title.isEmpty ? "tab" : model.title)")

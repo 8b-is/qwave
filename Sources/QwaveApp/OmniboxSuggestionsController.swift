@@ -43,6 +43,7 @@ final class OmniboxSuggestionsController: NSObject {
         table.target = self
         table.action = #selector(rowClicked(_:))
         table.refusesFirstResponder = true
+        table.setAccessibilityLabel("Suggestions")
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -146,24 +147,33 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.contentTintColor = .secondaryLabelColor
 
+        let kindDescription: String
         switch suggestion.kind {
         case .search:
             iconView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
+            kindDescription = "Search"
         case .history:
             iconView.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
+            kindDescription = "History"
         case .bookmark:
             iconView.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: "Bookmark")
+            kindDescription = "Bookmark"
         case .openTab:
             iconView.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: "Open tab")
+            kindDescription = "Open tab"
         case .action:
             iconView.image = NSImage(systemSymbolName: "command", accessibilityDescription: "Action")
+            kindDescription = "Action"
         }
 
         let text = NSTextField(labelWithString: "")
         let title = suggestion.title.isEmpty ? (suggestion.url.host ?? "") : suggestion.title
         let composed = NSMutableAttributedString(
             string: title,
-            attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)]
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+            ]
         )
 
         switch suggestion.kind {
@@ -191,7 +201,7 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
                     string: "  Switch to tab",
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
-                        .foregroundColor: NSColor.tertiaryLabelColor,
+                        .foregroundColor: NSColor.controlAccentColor,
                     ]
                 ))
         case .history, .bookmark:
@@ -208,6 +218,11 @@ extension OmniboxSuggestionsController: NSTableViewDataSource, NSTableViewDelega
         text.attributedStringValue = composed
         text.lineBreakMode = .byTruncatingTail
         text.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.setAccessibilityElement(true)
+        cell.setAccessibilityRole(.button)
+        cell.setAccessibilityLabel("\(kindDescription): \(title)")
+        cell.toolTip = suggestion.url.absoluteString
 
         cell.addSubview(iconView)
         cell.addSubview(text)
