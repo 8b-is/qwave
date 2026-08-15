@@ -28,4 +28,7 @@ zig-core/zig-out/
 .swiftpm/
 *.zip
 
+# Local agent worktree scratch space
+.claude/
+
 
