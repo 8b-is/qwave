@@ -273,6 +273,58 @@ final class MemoryCipherTests: XCTestCase {
         let after = try await store.records(containerID: nil)
         XCTAssertTrue(after.isEmpty, "record with an unauthenticated signature_box must fail closed")
     }
+
+    /// Regression: a stored key of the wrong length used to fall through to the
+    /// generate-and-store path, silently re-keying the store and making every
+    /// existing memory undecryptable. The stored bytes must survive untouched —
+    /// that is the real guarantee: locked, never destroyed.
+    func testMalformedStoredKeyThrowsAndLeavesTheSecretUntouched() throws {
+        let secrets = InMemorySecretStore()
+        let stored = Data(repeating: 0xAB, count: 16)
+        try secrets.setSecret(stored, for: MemoryCipher.keyAccount)
+
+        XCTAssertThrowsError(try MemoryCipher.loadOrCreateKey(in: secrets)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .malformedKey)
+        }
+        XCTAssertEqual(
+            try secrets.secret(for: MemoryCipher.keyAccount), stored,
+            "a malformed master key must never be overwritten")
+    }
+
+    /// The store must refuse to open rather than come up empty, so callers can
+    /// tell "locked" from "nothing remembered yet".
+    func testMemoryStoreRefusesToOpenWithMalformedKey() throws {
+        let secrets = InMemorySecretStore()
+        try secrets.setSecret(Data(repeating: 0x01, count: 31), for: MemoryCipher.keyAccount)
+        XCTAssertThrowsError(try MemoryStore(database: SQLiteDatabase(), secrets: secrets)) { error in
+            XCTAssertEqual(error as? MemoryCipherError, .malformedKey)
+        }
+    }
+
+    /// Genuine first run: no secret at all still creates and persists one.
+    func testFirstRunCreatesAndReusesKey() throws {
+        let secrets = InMemorySecretStore()
+        XCTAssertNil(try secrets.secret(for: MemoryCipher.keyAccount))
+
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        let stored = try XCTUnwrap(try secrets.secret(for: MemoryCipher.keyAccount))
+        XCTAssertEqual(stored.count, 32)
+        XCTAssertEqual(key.withUnsafeBytes { Data($0) }, stored)
+
+        let reloaded = try MemoryCipher.loadOrCreateKey(in: secrets)
+        XCTAssertEqual(reloaded.withUnsafeBytes { Data($0) }, stored, "a second load must not re-key")
+    }
+
+    /// A valid 32-byte secret still loads, unchanged.
+    func testValidStoredKeyLoadsUnchanged() throws {
+        let secrets = InMemorySecretStore()
+        let stored = Data(repeating: 0x5A, count: 32)
+        try secrets.setSecret(stored, for: MemoryCipher.keyAccount)
+
+        let key = try MemoryCipher.loadOrCreateKey(in: secrets)
+        XCTAssertEqual(key.withUnsafeBytes { Data($0) }, stored)
+        XCTAssertEqual(try secrets.secret(for: MemoryCipher.keyAccount), stored)
+    }
 }
 
 final class MemoryStoreTests: XCTestCase {

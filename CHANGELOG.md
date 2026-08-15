@@ -4,6 +4,17 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Memory Wave no longer destroys its own master key.** If the stored key was
+  present but not 256 bits, `MemoryCipher.loadOrCreateKey` fell through to the
+  first-run path and overwrote it with a fresh key, making every existing
+  memory permanently undecryptable — and silently, since `MemoryStore.decode`
+  drops rows it cannot open. It now fails closed: an existing secret is never
+  overwritten, a malformed one throws `MemoryCipherError.malformedKey` and is
+  left byte-for-byte intact, so memories are locked rather than lost, and the
+  app logs the locked state distinctly instead of showing an empty timeline.
+  Genuine first run (no secret stored) is unchanged.
+
 ### Added
 - **Summarize Page** (macOS 26+ on Apple Silicon with Apple Intelligence):
   on-device page summarisation via FoundationModels, behind the Summarize
