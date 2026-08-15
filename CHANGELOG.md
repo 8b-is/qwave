@@ -138,6 +138,17 @@ All notable changes to Qwave will be documented in this file.
   dark for 24h.
 
 ### Added
+- **AutoFill credential save path** (#72): AutoFill was fill-only — the
+  keychain store's `save` path existed and was tested, but nothing under
+  `Sources/` ever called it, and `ASCredentialIdentityStore` appeared nowhere
+  in Swift source, so a fresh install had no way to get a login in and the
+  AutoFill bar never showed proactive suggestions. `PasswordCaptureBridge`
+  now observes password-form submissions (main frame only, non-private tabs
+  only) and prompts to save; confirming routes through the new
+  `CredentialSaver`, which writes the login to the keychain **and** registers
+  its identity with `ASCredentialIdentityStore` via the new
+  `SystemCredentialIdentityStore`, so a saved login is both fillable and
+  proactively suggested. See `docs/AUTOFILL.md`.
 - **A regression pin for `HybridKEM`'s own derivation constants**
   (`Fixtures/hybrid_psk_regression_pin.json`, `HybridKEMPinSuite`). Deleting
   `hybrid_vectors.json` had left `pskLabel` ("qwave/pq-psk/v1"),
