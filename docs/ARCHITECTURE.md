@@ -16,6 +16,7 @@ Qwave.app
 │   ├── Shields           content rules, HTTPS-First, blocklist updates
 │   ├── Persistence       SQLite database and actor-isolated stores
 │   ├── MemoryWave        encrypted memory substrate and providers
+│   ├── Summarize         on-device page summarisation (FoundationModels, availability-gated)
 │   ├── VPNKit            Mullvad API, relays, tunnel lifecycle
 │   ├── PostQuantum        Keccak, ML-KEM-768, Classic McEliece, hybrid KEM
 │   ├── WebExtensions      Manifest V3 registry and browser.* bridge
@@ -41,6 +42,8 @@ QwaveApp
    ├── VPNKit ───────┬── PostQuantum
    │                 └── QwaveSupport
    ├── MemoryWave ───┬── Persistence
+   │                 └── QwaveSupport
+   ├── Summarize ────┬── BrowserCore
    │                 └── QwaveSupport
    └── WebExtensions ─── QwaveSupport
 
@@ -83,6 +86,16 @@ the UI; SQLite handles and rows do not.
 optional provider calls. Local remember/recall stays on device. Remote
 inference is explicit and opt-in; its network behavior is documented in
 [docs/NETWORK.md](NETWORK.md).
+
+### On-device Summarize
+
+`SummarizeSession` wraps FoundationModels behind `canImport` +
+`#available(macOS 26, *)`; the feature vanishes cleanly when the model is
+unavailable or Apple Intelligence is disabled, and defers while the energy
+tier is not `.normal` (memory pressure included). An explicit command runs the
+readability extractor, then a **respond-only** generation — the stream path
+refuses this workload on macOS 26.4 (see [docs/SUMMARIZE.md](SUMMARIZE.md)) —
+and renders inert selectable text. Nothing is persisted; nothing egresses.
 
 ### Concurrency
 
@@ -136,6 +149,7 @@ swift test --package-path Packages/QwaveKit -c release
 
 The package suite covers pure state machines, URL identity, blocklist
 compilation, actor persistence behavior, cryptographic known-answer tests,
-VPN configuration, WebExtensions messaging, and egress policy. The app target
+VPN configuration, WebExtensions messaging, egress policy, and summarization
+gating. The app target
 is verified separately through XcodeGen and an unsigned macOS build. Signed VPN
 activation requires the entitlements described in [docs/SIGNING.md](SIGNING.md).
