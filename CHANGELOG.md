@@ -16,10 +16,16 @@ All notable changes to Qwave will be documented in this file.
     approach already used by `WebAuthnBridge.jsonLiteral`), backslashes,
     newlines, quotes and U+2028/U+2029 are escaped, and values JSON cannot
     represent degrade to `null` rather than raising.
-  - The bridge, its `qwaveExtension` message handler, and all injected content
-    scripts now run in a dedicated `WKContentWorld` instead of the page's own
-    JavaScript world, so a hostile page can no longer observe, wrap, or replace
-    them.
+  - On untrusted web pages, the bridge, its `qwaveExtension` message handler,
+    and every injected content script now run in a dedicated `WKContentWorld`
+    instead of the page's own JavaScript world, so a hostile page can no longer
+    observe, wrap, or replace them. The extension's own popup chrome is
+    deliberately excluded: it keeps running in the page world of its own
+    dedicated web view, which loads nothing but the extension's `popup.html`,
+    because that document *is* the extension and isolating it from itself would
+    only break `browser.*`. The content world is now a property carried by each
+    surface rather than a global constant, so a reply is always evaluated into
+    the world the call came from.
   - Bridge replies are routed back to the web view the call arrived from
     instead of through a single shared responder slot pointed at the
     last-opened popup, so a reply can no longer land on the wrong surface.
