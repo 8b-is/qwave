@@ -147,11 +147,18 @@ final class BrowserEnvironment {
         }
     }
 
-    static func bootstrap() async -> BrowserEnvironment {
+    /// The on-disk home for all app state (containers.json, shields.json, the
+    /// SQLite db, …). Exposed so out-of-band callers such as App Intent queries
+    /// can read persisted state (e.g. containers) without the running graph.
+    static var supportDirectory: URL {
         let base =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let directory = base.appendingPathComponent("Qwave", isDirectory: true)
+        return base.appendingPathComponent("Qwave", isDirectory: true)
+    }
+
+    static func bootstrap() async -> BrowserEnvironment {
+        let directory = supportDirectory
         let environment = await BrowserEnvironment(directory: directory)
         await environment.refreshInternalPages()
         return environment

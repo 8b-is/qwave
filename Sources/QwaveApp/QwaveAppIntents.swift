@@ -1,5 +1,6 @@
 import AppIntents
 import AppKit
+import BrowserCore
 import Foundation
 
 // MARK: - Intent error
@@ -49,6 +50,24 @@ enum QwaveIntentHost {
         }
         let window = delegate?.frontmostBrowserWindow ?? delegate?.openWindow()
         window?.openNewTab(url: url)
+    }
+
+    /// Applies a resolved Focus decision to the live app: switches the active
+    /// window into the mapped container (opening one if the app has none) and
+    /// tightens Shields when the filter asks for it.
+    static func applyFocus(_ decision: FocusContainerDecision) throws {
+        let environment = try requireEnvironment()
+        let window = delegate?.frontmostBrowserWindow ?? delegate?.openWindow()
+        if decision.makeEphemeral {
+            window?.openNewTab(url: nil, ephemeral: true, activate: true)
+        } else if let id = decision.switchToContainerID {
+            window?.openNewTab(url: nil, containerID: id, ephemeral: false, activate: true)
+        }
+        window?.window?.makeKeyAndOrderFront(nil)
+        if decision.tightenShields {
+            environment.shieldsPolicy.defaultAdsBlocked = true
+            environment.shieldsPolicy.defaultHTTPSFirst = true
+        }
     }
 }
 
