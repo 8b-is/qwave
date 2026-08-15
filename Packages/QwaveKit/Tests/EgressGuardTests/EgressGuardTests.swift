@@ -74,6 +74,19 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(EgressAllowlist.permits(host: "objects.githubusercontent.com") == false)
     }
 
+    /// Omnibox network suggestions (off by default) hit `duckduckgo.com/ac/`
+    /// — see `DuckDuckGoSuggestionProvider` in
+    /// `BrowserCore/SearchSuggestionProvider.swift`. Issue #78: this host was
+    /// hardcoded in a call site but absent from the allowlist and
+    /// docs/NETWORK.md's Category A table.
+    func testDuckDuckGoSuggestionEndpointIsAllowlisted() {
+        let url = URL(string: "https://duckduckgo.com/ac/?q=swift&type=list")
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: url?.host),
+            "DuckDuckGo suggestion host \(url?.host ?? "nil") must be on the egress allowlist"
+        )
+    }
+
     /// The post-quantum key exchange targets the relay's in-tunnel gateway
     /// (10.64.0.1), reachable only INSIDE the VPN — never open-internet
     /// egress. It is deliberately NOT on the allowlist, and the allowlist

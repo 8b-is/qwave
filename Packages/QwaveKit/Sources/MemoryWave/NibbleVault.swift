@@ -9,12 +9,18 @@ import QwaveSupport
 public actor NibbleVault {
     public nonisolated let directory: URL
 
-    /// Decoded nibbles memoized by the vault directory's modification time.
+    /// Decoded nibbles memoized per source file's modification time.
     /// Repeated recalls with an unchanged vault reuse this instead of
-    /// re-reading and re-decoding every file. `write(_:)` clears it since a new
-    /// file may land in an existing month folder without bumping the top-level
-    /// directory's mtime.
-    private var cache: (key: Date, files: [URL], nibbles: [URL: MemoryNibble])?
+    /// re-reading and re-decoding every file. The vault root's own mtime is
+    /// *not* a reliable signal here: nibbles live in nested `/YYYY/MM/`
+    /// folders, and on APFS an add/edit/delete inside a leaf folder bumps
+    /// that folder's mtime, not the root's -- and edits made outside this
+    /// process (Finder, another app, git) are exactly the case that matters,
+    /// since `write(_:)` can invalidate its own writes but not those. Instead
+    /// each `all(limit:)` call re-enumerates the (cheap, stat-only) file list
+    /// and compares per-file mtimes, only re-reading and re-decoding files
+    /// that are new or whose mtime changed since the last cache fill.
+    private var cache: (mtimes: [URL: Date], nibbles: [URL: MemoryNibble])?
     private static let cacheLimit = 400
 
     public init(directory: URL) throws {
@@ -49,28 +55,46 @@ public actor NibbleVault {
         let name = "\(safeFile(stamp.string(from: nibble.created)))-\(safeFile(slug))-\(String(nibble.id.prefix(8))).md"
         let url = folder.appendingPathComponent(name)
         try NibbleMarkdown.encode(nibble).write(to: url, atomically: true, encoding: .utf8)
-        cache = nil
         QwaveLog.memory.info("Wrote nibble markdown")
         return url
     }
 
-    public func all(limit: Int = 400) throws -> [MemoryNibble] {
-        let mtime = directoryModificationDate()
-        if limit <= Self.cacheLimit, let cache, cache.key == mtime {
-            return cache.files.prefix(limit).compactMap { cache.nibbles[$0] }
+    /// Deletes every nibble markdown file in the vault. The directory and its
+    /// `README.md` are left in place — only the plaintext nibbles themselves
+    /// go — so a subsequent `write(_:)` has nowhere new to create.
+    ///
+    /// Mirrors `MemoryStore.deleteAll()`: both must be called together for a
+    /// "forget everything" action to actually forget everything, since the
+    /// vault is a separate, undeduped mirror of what the store holds.
+    public func deleteAll() throws {
+        for file in try markdownFiles() {
+            try? FileManager.default.removeItem(at: file.url)
         }
+        // Drop the decode cache too: `all(limit:)` would no longer serve the
+        // removed files anyway, but a wipe shouldn't leave their decoded
+        // plaintext sitting in memory.
+        cache = nil
+        QwaveLog.memory.info("Deleted all nibble markdown files")
+    }
+
+    public func all(limit: Int = 400) throws -> [MemoryNibble] {
         let files = try markdownFiles()
         // Limits beyond the cache window read directly and skip caching so the
         // stored set never under-serves a larger request.
         guard limit <= Self.cacheLimit else {
-            return files.prefix(limit).compactMap { read($0) }
+            return files.prefix(limit).map(\.url).compactMap { read($0) }
         }
+        let window = Array(files.prefix(Self.cacheLimit))
         var nibbles: [URL: MemoryNibble] = [:]
-        for url in files.prefix(Self.cacheLimit) {
-            if let nibble = read(url) { nibbles[url] = nibble }
+        for (url, mtime) in window {
+            if let cached = cache, cached.mtimes[url] == mtime, let nibble = cached.nibbles[url] {
+                nibbles[url] = nibble
+            } else if let nibble = read(url) {
+                nibbles[url] = nibble
+            }
         }
-        cache = (mtime, files, nibbles)
-        return files.prefix(limit).compactMap { nibbles[$0] }
+        cache = (Dictionary(uniqueKeysWithValues: window.map { ($0.url, $0.mtime) }), nibbles)
+        return window.prefix(limit).map(\.url).compactMap { nibbles[$0] }
     }
 
     private func read(_ url: URL) -> MemoryNibble? {
@@ -113,12 +137,7 @@ public actor NibbleVault {
         }.prefix(limit).map(\.key)
     }
 
-    private func directoryModificationDate() -> Date {
-        (try? directory.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-            ?? .distantPast
-    }
-
-    private func markdownFiles() throws -> [URL] {
+    private func markdownFiles() throws -> [(url: URL, mtime: Date)] {
         guard
             let enumerator = FileManager.default.enumerator(
                 at: directory,
@@ -126,7 +145,7 @@ public actor NibbleVault {
                 options: [.skipsHiddenFiles]
             )
         else { return [] }
-        var files: [(URL, Date)] = []
+        var files: [(url: URL, mtime: Date)] = []
         for case let url as URL in enumerator {
             guard url.pathExtension.lowercased() == "md", url.lastPathComponent != "README.md" else { continue }
             let date =
@@ -134,7 +153,7 @@ public actor NibbleVault {
                 ?? .distantPast
             files.append((url, date))
         }
-        return files.sorted { $0.1 > $1.1 }.map(\.0)
+        return files.sorted { $0.mtime > $1.mtime }
     }
 
     private func safeFile(_ raw: String) -> String {

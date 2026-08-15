@@ -110,15 +110,23 @@ public final class ContentScriptEngine: @unchecked Sendable {
     }
 
     /// Installs all resolved content scripts for a URL into a `WKUserContentController`.
+    ///
+    /// Returns the `WKUserScript` instances that were added, so a caller that
+    /// tracks its own injections (see `WebExtensionHost.uninstallBridge`) can
+    /// remove exactly these later without disturbing scripts anyone else
+    /// added to the same, possibly shared, controller.
+    @discardableResult
     @MainActor
     public func installContentScripts(
         into controller: WKUserContentController,
         for url: URL,
         extensions: [WebExtension]
-    ) {
+    ) -> [WKUserScript] {
         let scripts = resolveScripts(for: url, extensions: extensions)
-        for script in scripts {
-            controller.addUserScript(script.userScript)
+        return scripts.map { script in
+            let userScript = script.userScript
+            controller.addUserScript(userScript)
+            return userScript
         }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import QwaveSupport
 import WebKit
 
 /// A Manifest V3 `declarativeNetRequest` rule specification.
@@ -84,6 +85,18 @@ public struct DNRRule: Codable, Equatable, Sendable {
 /// Compiles DNR rules into WebKit `WKContentRuleList` JSON format.
 public enum DeclarativeNetRequestConverter {
     /// Converts an array of `DNRRule` into a WebKit content blocker JSON string.
+    ///
+    /// `WKContentRuleList`'s trigger/action grammar has no `redirect` action —
+    /// it can only block a load, unblock it (`ignore-previous-rules`), or
+    /// upgrade its scheme. A `redirect` rule (rewrite to another URL, or a
+    /// regex substitution) therefore has no WebKit equivalent and cannot be
+    /// compiled. Downgrading it to `block` would silently change the rule's
+    /// semantics: the target load would fail outright instead of being
+    /// redirected, and nothing would tell the extension author. Instead,
+    /// `redirect` rules are dropped from the compiled list — the request is
+    /// left unaffected by that rule rather than incorrectly blocked — and the
+    /// drop is reported loudly via `QwaveLog.shields` so it shows up in logs
+    /// instead of failing silently.
     public static func convertToWebKitRulesJSON(_ rules: [DNRRule]) throws -> String {
         var webKitRules: [[String: Any]] = []
 
@@ -126,7 +139,13 @@ public enum DeclarativeNetRequestConverter {
             case .allow:
                 action["type"] = "ignore-previous-rules"
             case .redirect:
-                action["type"] = "block" // WebKit standard content-blocker fallback
+                // No WKContentRuleList equivalent exists for `redirect` (see
+                // the doc comment above). Drop the rule instead of silently
+                // reinterpreting it as `block`, and say so loudly.
+                QwaveLog.shields.warning(
+                    "declarativeNetRequest rule \(rule.id) uses an unsupported 'redirect' action; WKContentRuleList has no redirect equivalent, so the rule is being dropped instead of silently converted to 'block'"
+                )
+                continue
             }
 
             webKitRules.append([

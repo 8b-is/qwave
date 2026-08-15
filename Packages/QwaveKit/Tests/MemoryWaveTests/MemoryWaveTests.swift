@@ -274,6 +274,54 @@ final class MemoryCipherTests: XCTestCase {
         XCTAssertTrue(after.isEmpty, "record with an unauthenticated signature_box must fail closed")
     }
 
+    /// `MemoryRecord.signature` is derived from `title`/`body` on demand
+    /// (see `MemoryRecord.swift`), not recomputed and stored eagerly by
+    /// `MemoryStore.decode`. Confirm the on-demand value still matches what
+    /// direct construction from the same content produces, so the laziness
+    /// is free of behavior change for callers that do read `.signature`.
+    func testDecodedRecordSignatureMatchesContentDerivedSignature() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        _ = try await store.insert(
+            title: "Wave", body: "resonance", url: nil, kind: .pin, containerID: nil)
+        let records = try await store.records(containerID: nil)
+        XCTAssertEqual(records.count, 1)
+        let expected = WaveSignature.fromContent(
+            Data("Wave\nresonance".utf8),
+            identityFrequency: MemoryWaveConstants.consciousness.doubleValue
+                * MemoryWaveConstants.goldenRatio.doubleValue
+        )
+        XCTAssertEqual(records[0].signature.interferenceHash, expected.interferenceHash)
+        XCTAssertTrue(records[0].signature.verify())
+    }
+
+    /// Issue #86: `decode` used to recompute a `WaveSignature` (a ~1000-step,
+    /// 8-harmonic trig reconstruction — ~16,000 trig calls) for every row even
+    /// though nothing read the result. `MemoryRecord.signature` is now computed
+    /// on demand instead of eagerly in `decode`, so reading back a full
+    /// container should stay fast even at the 256-row ceiling `gridWithRecords`
+    /// requests. This bound is generous (a regression here would be a 10-100x
+    /// slowdown, not a marginal one) so it should not be flaky in CI, while
+    /// still catching the eager-signature computation coming back.
+    func testDecodingManyRecordsStaysFastWithoutEagerSignatureComputation() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        for index in 0..<256 {
+            _ = try await store.insert(
+                title: "Title \(index)", body: "Body content for record \(index)",
+                url: nil, kind: .note, containerID: nil)
+        }
+        let started = Date()
+        for _ in 0..<5 {
+            let records = try await store.records(containerID: nil, limit: 256)
+            XCTAssertEqual(records.count, 256)
+        }
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 5,
+            "decoding 256 rows x5 should be dominated by AES-GCM/SQLite work, "
+                + "not a re-triggered ~16,000-trig-op signature per row")
+    }
+
     /// Regression: a stored key of the wrong length used to fall through to the
     /// generate-and-store path, silently re-keying the store and making every
     /// existing memory undecryptable. The stored bytes must survive untouched —
@@ -451,6 +499,48 @@ final class MemoryStoreTests: XCTestCase {
         let records = try await store.records(containerID: id)
         XCTAssertTrue(records.isEmpty)
     }
+
+    /// #84: an unopenable row must be logged and counted, not silently
+    /// vanish from the result with no trace it was ever there.
+    func testUnopenableRowIsCountedNotSilentlyDropped() async throws {
+        let database = try SQLiteDatabase()
+        let store = try MemoryStore(database: database, secrets: InMemorySecretStore())
+        let containerID = UUID()
+        _ = try await store.insert(
+            title: "Good One", body: "opens fine", url: nil, kind: .note, containerID: containerID)
+        let corrupted = try await store.insert(
+            title: "Will Be Corrupted", body: "won't survive", url: nil, kind: .note,
+            containerID: containerID)
+        _ = try await store.insert(
+            title: "Good Two", body: "also opens fine", url: nil, kind: .note, containerID: containerID)
+
+        // Simulate a row whose title box was sealed under a different key
+        // (Keychain reset, restore-to-new-Mac, etc.) by writing garbage
+        // ciphertext directly into the row's title_box.
+        try await database.run(
+            "UPDATE memories SET title_box = ?1 WHERE id = ?2",
+            [.blob(Data(repeating: 0xFF, count: 48)), .integer(corrupted.id)]
+        )
+
+        let before = await store.droppedRowCount
+        XCTAssertEqual(before, 0)
+
+        let records = try await store.records(containerID: containerID)
+
+        // The two healthy rows still come back...
+        XCTAssertEqual(Set(records.map(\.title)), ["Good One", "Good Two"])
+        // ...and the corrupted one is neither present...
+        XCTAssertFalse(records.contains { $0.id == corrupted.id })
+        // ...nor invisible: it was counted...
+        let after = await store.droppedRowCount
+        XCTAssertEqual(after, 1)
+
+        // A second read against an already-corrupted row keeps accumulating
+        // the total rather than resetting it.
+        _ = try await store.records(containerID: containerID)
+        let afterSecondRead = await store.droppedRowCount
+        XCTAssertEqual(afterSecondRead, 2)
+    }
 }
 
 final class MemoryWavePolicyTests: XCTestCase {
@@ -568,6 +658,38 @@ final class NibbleTests: XCTestCase {
         XCTAssertEqual(NibbleMarkdown.tags(inQuery: "see #webkit and #MEM8"), ["webkit", "mem8"])
     }
 
+    /// A hand-edited vault file can carry a `created:` date before 1970 (e.g.
+    /// a backfilled note). Decoding it, and computing the wave for it, must
+    /// not trap converting a negative nanosecond count to UInt64 -- issue #85.
+    func testDecodePre1970CreatedDateDoesNotTrap() {
+        let text = """
+            ---
+            id: 11111111-1111-1111-1111-111111111111
+            kind: nibble
+            source: note
+            tags: [apollo]
+            url:
+            created: 1969-07-20T20:17:00Z
+            container:
+            lane: odd
+            ---
+
+            # Tranquility Base
+
+            The Eagle has landed.
+            """
+        let decoded = NibbleMarkdown.decode(text)
+        XCTAssertEqual(decoded?.title, "Tranquility Base")
+        XCTAssertEqual(
+            decoded?.created,
+            ISO8601DateFormatter().date(from: "1969-07-20T20:17:00Z")
+        )
+        // The wave is computed eagerly in MemoryNibble.init when no explicit
+        // wave is supplied -- this is where the pre-fix trap fired.
+        XCTAssertEqual(decoded?.wave.createdAt, 0)
+        XCTAssertEqual(decoded?.wave.lastAccessed, 0)
+    }
+
     func testCutterSplitsHeadingsAndKeepsHashtags() {
         let nibbles = NibbleCutter.cut(
             title: "Article",
@@ -613,6 +735,102 @@ final class NibbleTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
         let files = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") }
         XCTAssertGreaterThan(files.count, 1)
+    }
+
+    /// Regression test for #83: the decode cache used to be keyed on the
+    /// vault root's own mtime, which nested `/YYYY/MM/` writes never bump.
+    /// An external edit -- a file touched by something other than
+    /// `NibbleVault.write(_:)`, e.g. the user in a text editor -- must still
+    /// invalidate the cache.
+    func testVaultAllPicksUpExternalEditWithoutBumpingRootMtime() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let vault = try NibbleVault(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let original = MemoryNibble(
+            title: "Original title",
+            body: "Original body about tagged wave retrieval. #qwave",
+            tags: ["qwave"],
+            url: nil,
+            kind: .pin,
+            containerID: nil
+        )
+        let fileURL = try await vault.write(original)
+
+        let rootMtimeBefore = try FileManager.default.attributesOfItem(atPath: dir.path)[.modificationDate] as? Date
+
+        // Populate the decode cache.
+        let firstRead = try await vault.all()
+        XCTAssertTrue(firstRead.contains(where: { $0.title == "Original title" }))
+
+        // Simulate an external edit: rewrite the file's content directly
+        // (bypassing NibbleVault.write) and force its mtime forward, without
+        // touching the vault root's mtime at all -- exactly the case #83
+        // describes for nested-folder edits.
+        let edited = MemoryNibble(
+            id: original.id,
+            title: "Edited externally",
+            body: "Edited body about tagged wave retrieval. #qwave",
+            tags: ["qwave"],
+            url: nil,
+            created: original.created,
+            kind: .pin,
+            containerID: nil
+        )
+        try NibbleMarkdown.encode(edited).write(to: fileURL, atomically: true, encoding: .utf8)
+        let future = Date().addingTimeInterval(120)
+        try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+        let rootMtimeAfter = try FileManager.default.attributesOfItem(atPath: dir.path)[.modificationDate] as? Date
+        XCTAssertEqual(rootMtimeBefore, rootMtimeAfter, "test setup should not itself bump the root mtime")
+
+        let secondRead = try await vault.all()
+        XCTAssertTrue(
+            secondRead.contains(where: { $0.title == "Edited externally" }),
+            "cache should invalidate on an externally edited nibble even though the root mtime is unchanged"
+        )
+        XCTAssertFalse(secondRead.contains(where: { $0.title == "Original title" }))
+
+        // Simulate an external delete: the vault must stop serving it from
+        // cache once the file is gone, not just decline to re-decode it.
+        try FileManager.default.removeItem(at: fileURL)
+        let thirdRead = try await vault.all()
+        XCTAssertFalse(thirdRead.contains(where: { $0.title == "Edited externally" }))
+    }
+
+    /// Regression for #82: "Forget all memories" wiped the SQLite store but
+    /// left every plaintext nibble markdown file on disk. `forgetAll()` must
+    /// prune the vault mirror too, not just the store.
+    func testForgetAllPrunesTheVaultMirrorToo() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let vault = try NibbleVault(directory: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let prefs = MemoryWavePreferences(defaults: defaults, secrets: secrets)
+        let director = WaveDirector(store: store, preferences: prefs, vault: vault)
+        _ = try await director.remember(
+            title: "Nibble test",
+            body: "A paragraph about tagged wave retrieval that is definitely long enough. #qwave",
+            url: URL(string: "https://qwave.example/nibble"),
+            kind: .pin,
+            containerID: nil,
+            isEphemeral: false
+        )
+        let filesBefore = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        XCTAssertGreaterThan(filesBefore.count, 0)
+        let recordsBefore = try await store.records(containerID: nil, limit: 32)
+        XCTAssertFalse(recordsBefore.isEmpty)
+
+        try await director.forgetAll()
+
+        let recordsAfter = try await store.records(containerID: nil, limit: 32)
+        XCTAssertTrue(recordsAfter.isEmpty)
+        let filesAfter = try FileManager.default.subpathsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".md") && $0 != "README.md" }
+        XCTAssertTrue(filesAfter.isEmpty, "Expected the vault mirror to be pruned, found: \(filesAfter)")
+        // README.md is left in place — the directory itself is not removed.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("README.md").path))
     }
 }
 

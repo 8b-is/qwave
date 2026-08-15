@@ -48,11 +48,6 @@ public struct MemoryNibble: Equatable, Sendable, Identifiable {
             title: title,
             body: body,
             wave: wave,
-            signature: WaveSignature.fromContent(
-                Data((title + "\n" + body).utf8),
-                identityFrequency: MemoryWaveConstants.consciousness.doubleValue
-                    * MemoryWaveConstants.goldenRatio.doubleValue
-            ),
             tags: tags
         )
     }
@@ -188,8 +183,8 @@ public enum NibbleMarkdown {
             phase: .zero,
             emotionalValence: .zero,
             arousal: Rational(1, 2)!,
-            createdAt: UInt64(created.timeIntervalSince1970 * 1_000_000_000),
-            lastAccessed: UInt64(created.timeIntervalSince1970 * 1_000_000_000),
+            createdAt: WaveInt.nanosecondsSince1970(created),
+            lastAccessed: WaveInt.nanosecondsSince1970(created),
             accessCount: 1,
             decayRate: Rational(1, 10)!,
             id: nil,

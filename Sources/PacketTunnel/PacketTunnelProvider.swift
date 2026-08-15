@@ -77,9 +77,20 @@ private actor PacketTunnelState {
     private let secrets = KeychainSecretStore()
     private let adapter: WireGuardAdapter
 
+    /// How long to wait for a corroborating handshake before rolling a
+    /// rekey back (issue #91). Bounded well under `REJECT_AFTER_TIME`
+    /// (~180s), so a rollback still lands before the existing session keys
+    /// would otherwise age out.
+    private static let rekeyConfirmationAttempts = 5
+    private static let rekeyConfirmationPollInterval: TimeInterval = 2
+
     private var filterHandle: UnsafeMutableRawPointer?
     private var sessionConfig: TunnelSessionConfig?
     private var baseConfiguration: TunnelConfiguration?
+    /// The configuration (including PSK) currently installed on the
+    /// adapter. Snapshotted before every rekey attempt so an unconfirmed
+    /// rekey can be rolled back instead of leaving a tampered PSK in place.
+    private var activeConfiguration: TunnelConfiguration?
     private var lastRekey: Date?
     private var rekeyTimer: DispatchSourceTimer?
 
@@ -143,6 +154,7 @@ private actor PacketTunnelState {
             } else {
                 self.sessionConfig = sessionConfig
                 self.baseConfiguration = base
+                self.activeConfiguration = tunnelConfiguration
                 self.lastRekey = negotiatedAt
                 if negotiatedAt != nil {
                     scheduleRekeyTimer()
@@ -161,6 +173,7 @@ private actor PacketTunnelState {
         rekeyTimer = nil
         sessionConfig = nil
         baseConfiguration = nil
+        activeConfiguration = nil
         lastRekey = nil
         if let handle = filterHandle {
             qpacket_filter_deinit(handle)
@@ -213,9 +226,15 @@ private actor PacketTunnelState {
     }
 
     /// Negotiates a fresh ephemeral PSK and installs it via
-    /// `WireGuardAdapter.update`. A failed rekey keeps the current PSK (the
-    /// tunnel stays quantum-resistant on the previous key) and retries at the
-    /// next timer tick or wake — unlike start, there is no downgrade to block.
+    /// `WireGuardAdapter.update`, then waits (bounded) for a corroborating
+    /// handshake before committing to it — see `RekeyConfirmation` (issue
+    /// #91). ML-KEM's implicit rejection means `negotiator` never throws on
+    /// a tampered ciphertext; it just returns a wrong secret, so the adapter
+    /// update above always "succeeds" whether or not the PSK is the one the
+    /// relay holds. If no handshake confirms the new PSK within the window,
+    /// the previous configuration is restored and `lastRekey` is *not*
+    /// advanced, so the rekey retries at the next timer tick or wake —
+    /// exactly the retry behaviour a throwing negotiation gets.
     private func rekeyNow() async {
         guard let sessionConfig, let baseConfiguration, sessionConfig.quantumResistant else { return }
         do {
@@ -229,17 +248,67 @@ private actor PacketTunnelState {
                 interface: baseConfiguration.interface,
                 peers: [pskPeer]
             )
+
+            let rollbackConfiguration = activeConfiguration ?? baseConfiguration
+            let baselineHandshake = await lastHandshakeTime()
+
             if let error = await updateAdapter(updated) {
                 QwaveLog.tunnel.error(
                     "Rekey update failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
-            } else {
+                return
+            }
+
+            if await waitForHandshakeConfirmation(after: baselineHandshake) {
+                activeConfiguration = updated
                 QwaveLog.tunnel.info("Ephemeral peer PSK rotated")
                 lastRekey = Date()
+            } else {
+                QwaveLog.tunnel.error("Rekey PSK unconfirmed (no handshake seen); rolling back")
+                if let error = await updateAdapter(rollbackConfiguration) {
+                    QwaveLog.tunnel.error(
+                        "Rekey rollback failed: \(error.localizedDescription, privacy: .public)")
+                }
             }
         } catch {
             QwaveLog.tunnel.error(
                 "Rekey negotiation failed; keeping current PSK: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Polls the adapter's runtime config for a handshake newer than
+    /// `baseline`, bounded by `rekeyConfirmationAttempts` × `..PollInterval`.
+    private func waitForHandshakeConfirmation(after baseline: Date?) async -> Bool {
+        for _ in 0..<Self.rekeyConfirmationAttempts {
+            try? await Task.sleep(nanoseconds: UInt64(Self.rekeyConfirmationPollInterval * 1_000_000_000))
+            let observed = await lastHandshakeTime()
+            if RekeyConfirmation.isConfirmed(baseline: baseline, observed: observed) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The peer's `last_handshake_time_sec`, read from the adapter's live
+    /// UAPI config (see `WireGuardAdapter.getRuntimeConfiguration`). `nil` on
+    /// any read failure or if no handshake has ever completed. This parses
+    /// only the one field the corroboration check needs — the full UAPI
+    /// parser (`TunnelConfiguration(fromUapiConfig:)`) lives in WireGuardApp,
+    /// a wg-quick/UI helper that is not part of the extension's linked
+    /// module.
+    private func lastHandshakeTime() async -> Date? {
+        let uapi = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            adapter.getRuntimeConfiguration { continuation.resume(returning: $0) }
+        }
+        guard let uapi else { return nil }
+        for line in uapi.split(separator: "\n") {
+            guard let equalsIndex = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<equalsIndex])
+            guard key == "last_handshake_time_sec" else { continue }
+            let value = String(line[line.index(after: equalsIndex)...])
+            guard let seconds = UInt64(value), seconds != 0 else { return nil }
+            return Date(timeIntervalSince1970: TimeInterval(seconds))
+        }
+        return nil
     }
 
     private func startAdapter(_ configuration: TunnelConfiguration) async -> WireGuardAdapterError? {

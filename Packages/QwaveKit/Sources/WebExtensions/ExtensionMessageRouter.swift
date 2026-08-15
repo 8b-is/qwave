@@ -121,7 +121,15 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
         guard let sourceWebView = message.webView else { return }
         let args = (body["args"] as? [Any]) ?? []
         let call = ExtensionBridgeCall(id: id, method: method, args: args)
-        let extensionID = "page"
+        // Every extension currently shares one bridge script per web view, so
+        // there is no per-call signal carrying which extension's content
+        // script (or popup) made this particular call. With exactly one
+        // extension installed that identity is unambiguous; with zero or
+        // several it falls back to a placeholder that resolves to no
+        // permissions (deny), rather than guessing wrong. Disambiguating a
+        // shared bridge across multiple simultaneously-installed extensions
+        // is tracked as a follow-up to #75, not solved here.
+        let extensionID = registry.extensions.count == 1 ? registry.extensions[0].id : "page"
         handle(
             call,
             extensionID: extensionID,
@@ -140,6 +148,20 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
         func respond(_ id: Int, success: Bool, value: Any?) {
             sink?.respond(id: id, success: success, value: value)
         }
+        // Gate: an API call is only serviced if the *installed* extension's
+        // manifest declared the corresponding permission. An `extensionID`
+        // that doesn't resolve to an installed extension (the shared-bridge
+        // placeholder, see `userContentController(_:didReceive:)`) has no
+        // permissions at all, so it is denied the same as a declared-but-
+        // missing permission — never silently granted.
+        func requirePermission(_ permission: String) -> Bool {
+            guard registry.installed(extensionID: extensionID)?.manifest.permissions.contains(permission) == true
+            else {
+                respond(call.id, success: false, value: "Missing permission: \(permission)")
+                return false
+            }
+            return true
+        }
         // JSON null arrives as NSNull; normalize to Swift nil.
         let firstArg: Any? = {
             guard let value = call.args.first else { return nil }
@@ -147,6 +169,7 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
         }()
         switch call.method {
         case "storage.local.get":
+            guard requirePermission("storage") else { return }
             do {
                 let value = try storage.get(extensionID: extensionID, keys: firstArg)
                 respond(call.id, success: true, value: value)
@@ -154,10 +177,12 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
                 respond(call.id, success: false, value: error.localizedDescription)
             }
         case "storage.local.set":
+            guard requirePermission("storage") else { return }
             let items = (call.args.first as? [String: Any]) ?? [:]
             storage.set(extensionID: extensionID, items: items)
             respond(call.id, success: true, value: nil)
         case "storage.local.remove":
+            guard requirePermission("storage") else { return }
             do {
                 try storage.remove(extensionID: extensionID, keys: firstArg)
                 respond(call.id, success: true, value: nil)
@@ -165,13 +190,18 @@ public final class ExtensionMessageRouter: NSObject, WKScriptMessageHandler {
                 respond(call.id, success: false, value: error.localizedDescription)
             }
         case "tabs.query":
+            guard requirePermission("tabs") else { return }
             let query = (call.args.first as? [String: Any]) ?? [:]
             let tabs = tabQueryHandler?(query) ?? []
             respond(call.id, success: true, value: tabs)
         case "tabs.create":
+            guard requirePermission("tabs") else { return }
             let props = (call.args.first as? [String: Any]) ?? [:]
             tabCreateHandler?(props)
             respond(call.id, success: true, value: nil)
+        // `runtime.sendMessage`/`onMessage` are intentionally left ungated:
+        // per the WebExtensions spec, basic extension messaging does not
+        // require a declared permission (unlike `storage` and `tabs`).
         case "runtime.sendMessage":
             let payload = firstArg
             guard let runtimeMessageHandler else {

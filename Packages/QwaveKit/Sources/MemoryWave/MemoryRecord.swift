@@ -20,7 +20,6 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
     public var title: String
     public var body: String
     public var wave: WaveInt
-    public var signature: WaveSignature
     public var tags: [String]
 
     public init(
@@ -33,7 +32,6 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         title: String,
         body: String,
         wave: WaveInt,
-        signature: WaveSignature,
         tags: [String] = []
     ) {
         self.id = id
@@ -45,8 +43,20 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         self.title = title
         self.body = body
         self.wave = wave
-        self.signature = signature
         self.tags = tags
+    }
+
+    /// Recomputed on demand from `title`/`body`. This is a ~1000-step, 8-harmonic
+    /// trig reconstruction (`WaveSignature.fromContent`), so it is deliberately
+    /// *not* a stored/eager property: nothing in the store's decode or ranking
+    /// path reads it, and callers that do need it (e.g. tests calling `verify()`)
+    /// pay the cost only when they actually ask for it.
+    public var signature: WaveSignature {
+        WaveSignature.fromContent(
+            Data((title + "\n" + body).utf8),
+            identityFrequency:
+                MemoryWaveConstants.consciousness.doubleValue * MemoryWaveConstants.goldenRatio.doubleValue
+        )
     }
 }
 

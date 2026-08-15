@@ -38,9 +38,10 @@ public enum EgressAllowlist {
         // hosts instead. Stored memory bodies are never attached.
         // See docs/NETWORK.md.
         "api.x.ai",
-        // Omnibox autocomplete suggestions (off by default;
-        // networkSuggestionsEnabled). Cookieless, ephemeral transport;
-        // see BrowserCore/SearchSuggestionProvider.swift and issue #78.
+        // Omnibox autocomplete suggestions (off by default,
+        // `networkSuggestionsEnabled`). Carries the text you are typing into
+        // the omnibox; transport is cookieless and ephemeral. See
+        // docs/NETWORK.md and issue #78.
         "duckduckgo.com",
     ]
 

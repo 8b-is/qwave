@@ -114,6 +114,15 @@ public final class WaveDirector {
         return written
     }
 
+    /// Wipes both halves of local memory: the encrypted SQLite store and the
+    /// plaintext `NibbleVault` mirror. The vault is a separate, undeduped copy
+    /// of what gets written to the store (see `writeNibbles`), so a "forget
+    /// everything" action that only clears the store leaves nibbles behind.
+    public func forgetAll() async throws {
+        try await store?.deleteAll()
+        try await vault?.deleteAll()
+    }
+
     public func timeline(range: TimelineRange, limit: Int = 200) async throws -> [TimelineDay] {
         guard let store else { return [] }
         let window = range.interval()

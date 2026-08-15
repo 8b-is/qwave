@@ -4,6 +4,21 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+- **`duckduckgo.com` omnibox suggestion egress added to `EgressAllowlist` and
+  `docs/NETWORK.md`.** `DuckDuckGoSuggestionProvider` has hardcoded
+  `https://duckduckgo.com/ac/` as its suggestion endpoint since the omnibox
+  network-suggestions feature shipped, but the host was on neither the
+  committed `EgressAllowlist` nor the Category A table in `docs/NETWORK.md` —
+  the allowlist's own docstring requires new egress to be added deliberately
+  and documented. Both are now fixed: `EgressAllowlist.hosts` lists
+  `duckduckgo.com`, `EgressGuardTests` pins it, and `docs/NETWORK.md`'s
+  Category A table documents it as off-by-default
+  (`networkSuggestionsEnabled`), cookieless, and ephemeral. Behaviour is
+  unchanged — the feature was already opt-in and honestly disclosed in the
+  Settings UI; this closes the allowlist/documentation gap.
+  ([#78](https://github.com/8b-is/qwave/issues/78))
+
 ### Security
 - **WebAuthn/passkey origin binding.** The passkey bridge accepted the `rpId`
   a page supplied without ever looking at which frame sent it, and its shim was
@@ -111,6 +126,16 @@ All notable changes to Qwave will be documented in this file.
   McEliece half. No fix is included here — a correct one has to corroborate
   the new PSK against a real handshake before discarding the old one, which
   is a provider design change, not a patch. Tracked in issue #91.
+- **Issue #91 fixed: the daily rekey no longer installs an uncorroborated
+  PSK.** `PacketTunnelProvider.rekeyNow` now snapshots the currently-active
+  configuration and the peer's handshake timestamp before installing a
+  candidate PSK, then polls for a completed WireGuard handshake under it
+  within a bounded window (`RekeyConfirmation.isConfirmed` in `VPNKit`). A
+  confirmed rekey commits and advances `lastRekey` as before; an unconfirmed
+  one — a tampered, corrupted or hostile ciphertext — rolls the adapter back
+  to the previous PSK and leaves `lastRekey` untouched, so it retries at the
+  next timer tick or wake instead of silently reporting success and going
+  dark for 24h.
 
 ### Added
 - **A regression pin for `HybridKEM`'s own derivation constants**
@@ -165,6 +190,14 @@ All notable changes to Qwave will be documented in this file.
   overwrite semantics for the callers that need update-in-place.
   Note: rows that fail to decrypt are still dropped silently by
   `MemoryStore.decode`; that half is tracked separately in issue #84.
+- **`WebExtensionHost.uninstallBridge` no longer wipes out the WebAuthn
+  shim.** It called `WKUserContentController.removeAllUserScripts()` on a
+  controller shared with the passkey bridge's injected script (and any
+  content scripts other extensions added), so tearing down the WebExtensions
+  bridge would silently drop `window.__qwavePasskeyGet/Create` too. The host
+  now tracks the exact `WKUserScript` instances it added and removes only
+  those, reconstructing the controller's remaining scripts around them.
+  (#76)
 
 ## [1.0.0] - 2026-08-14
 

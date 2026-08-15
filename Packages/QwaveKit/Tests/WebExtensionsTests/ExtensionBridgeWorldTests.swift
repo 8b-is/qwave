@@ -16,13 +16,29 @@ final class ExtensionBridgeWorldTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    private func makeRouter() -> ExtensionMessageRouter {
-        let dir = FileManager.default.temporaryDirectory
+    /// Installs one extension declaring `storage` so the router's permission
+    /// gate (#75) grants the `browser.storage.local` round trips these tests
+    /// drive through a real bridge. With exactly one extension installed, the
+    /// router resolves the shared bridge's caller identity to it (see
+    /// `ExtensionMessageRouter.userContentController(_:didReceive:)`).
+    private func makeRouter() throws -> ExtensionMessageRouter {
+        let bundleDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwave-ext-world-bundle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+        let manifest = """
+            { "name": "World Test Ext", "version": "1.0", "manifest_version": 3,
+              "permissions": ["storage", "tabs"] }
+            """
+        try manifest.write(to: bundleDir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+        let storageDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-ext-world-\(UUID().uuidString)", isDirectory: true)
         let defaults = UserDefaults(suiteName: "qwave-test-world-\(UUID().uuidString)")!
+        let registry = WebExtensionRegistry(defaults: defaults)
+        try registry.install(bundleDirectory: bundleDir)
         return ExtensionMessageRouter(
-            registry: WebExtensionRegistry(defaults: defaults),
-            storage: ExtensionStorageService(directory: dir)
+            registry: registry,
+            storage: ExtensionStorageService(directory: storageDir)
         )
     }
 
@@ -132,7 +148,7 @@ final class ExtensionBridgeWorldTests: XCTestCase {
     /// If the bridge is installed anywhere else, the popup sees no `browser.*`
     /// and no message handler, and every real extension popup throws.
     func testExtensionPageDocumentCanReachTheBridge() async throws {
-        let router = makeRouter()
+        let router = try makeRouter()
         let webView = makeWebView(bridgeWorld: ExtensionContentWorld.extensionPage, router: router)
         try await loadProbe(into: webView)
 
@@ -150,7 +166,7 @@ final class ExtensionBridgeWorldTests: XCTestCase {
     /// The reply half: a native response must be evaluated back into the same
     /// world the call came from, or the pending-promise map never resolves.
     func testExtensionPageDocumentCompletesAFullRoundTrip() async throws {
-        let router = makeRouter()
+        let router = try makeRouter()
         let webView = makeWebView(bridgeWorld: ExtensionContentWorld.extensionPage, router: router)
         try await loadProbe(into: webView)
 
@@ -166,7 +182,7 @@ final class ExtensionBridgeWorldTests: XCTestCase {
     /// live in an isolated world, so a hostile page cannot read, wrap, or replace
     /// either one.
     func testPageScriptCannotSeeTheIsolatedContentScriptBridge() async throws {
-        let router = makeRouter()
+        let router = try makeRouter()
         let marker = WKUserScript(
             source: "window.__qwaveContentScriptMarker = 'secret';",
             injectionTime: .atDocumentStart,
@@ -199,7 +215,7 @@ final class ExtensionBridgeWorldTests: XCTestCase {
 
     /// A content script in the isolated world must still get its replies back.
     func testIsolatedContentScriptCompletesAFullRoundTrip() async throws {
-        let router = makeRouter()
+        let router = try makeRouter()
         let webView = makeWebView(bridgeWorld: ExtensionContentWorld.isolated, router: router)
         try await loadProbe(into: webView)
 
