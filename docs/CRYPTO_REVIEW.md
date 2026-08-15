@@ -5,6 +5,35 @@ PostQuantum`, `VPNKit`, `Sources/PacketTunnel`). Scope: secret-dependent
 timing, secret-dependent memory access, key-material lifetime. This is an
 engineering self-audit, not a substitute for external review.
 
+> **⚠️ PENDING RE-STAMP — this document has not been re-reviewed since the
+> FIPS 203 conformance change (branch `crypto/mlkem-fips203-conformance`).**
+> Deliberately left otherwise untouched so the owner re-stamps it. Precise
+> list of what moved underneath it:
+>
+> - **Scope shrank.** `ClassicMcEliece348864.swift` is deleted. **F2 no longer
+>   applies to any shipping code** and should be struck or rewritten as
+>   history. The `SECURITY.md` out-of-scope bullet that pointed here for
+>   McEliece decoder timing was repointed at wire-format conformance.
+> - **F1 still holds** — the constant-time re-encryption compare and branchless
+>   select survive verbatim. What changed around it: the accept path now
+>   returns `K'` directly (the `SHAKE256(K ‖ ct)` KDF is gone) and the reject
+>   path's `K̄ = J(z ‖ c)` is computed unconditionally before the select, so
+>   both branches still do identical work. The KAT set that "pins the outputs"
+>   is now the official NIST ACVP vectors, not the self-generated fixtures
+>   (those are deleted).
+> - **F4 needs a fresh look.** `SampleNTT` now does real rejection sampling, so
+>   the *number of XOF squeezes is data-dependent* — still on the public seed ρ
+>   only, so the "variable time is harmless" conclusion should survive, but the
+>   sentence describing the sampling no longer matches the code, and the new
+>   `Keccak.SHAKE128Reader` is unreviewed by this document.
+> - **F5/F6/F7 are believed unaffected.** F6's throwing boundary gained one
+>   more error, `MLKEM768.MLKEMError.invalidEncapsulationKey`, thrown by
+>   `encaps` on a FIPS 203 §7.2 failure and propagated through
+>   `HybridKEM.encapsulate`.
+> - **Not covered by any test, then or now:** decapsulation-key validation
+>   (ACVP `decapsulationKeyCheck`), constant-time behaviour measured rather
+>   than argued, and the ephemeral-peer wire format.
+
 ## Threat model context
 
 The hybrid KEM runs **once per tunnel start and once per daily rekey** —

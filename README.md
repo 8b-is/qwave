@@ -155,9 +155,8 @@ a hybrid post-quantum KEM. See
 ```text
  Qwave.app ──▶ Mullvad relay discovery ──▶ WireGuard handshake
       │                                        │
-      └── PSK via hybrid KEM ──────────────────┘
-          ML-KEM-768 + Classic McEliece 348864
-          (fails closed: no PQ-negotiated PSK ⇒ no tunnel)
+      └── PSK via ML-KEM-768 KEM ──────────────┘
+          (FIPS 203; fails closed: no PQ-negotiated PSK ⇒ no tunnel)
 
  PacketTunnel.systemextension  (Network Extension, WireGuardKit)
 ```
@@ -208,7 +207,7 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── MemoryWave                 encrypted MEM8 memory substrate
 │   ├── Summarize                  on-device page summarization (macOS 26+)
 │   ├── VPNKit                     Mullvad API, tunnel lifecycle, PQ seam
-│   ├── PostQuantum                 Keccak, ML-KEM, Classic McEliece, hybrid KEM
+│   ├── PostQuantum                 Keccak, ML-KEM-768, hybrid (PQ+classical) KEM
 │   ├── WebExtensions               MV3 registry and browser.* bridge
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
@@ -238,7 +237,7 @@ the exact graph, isolation rules, data flow, and test boundaries.
   `SummarizeSession`, `SummarizePolicy`, `ArticleExtractor` (byte-identical
   probe script). [source](Packages/QwaveKit/Sources/Summarize/) · [docs/SUMMARIZE.md](docs/SUMMARIZE.md)
 - **VPNKit** — Mullvad API, tunnel lifecycle, PQ PSK seam. [source](Packages/QwaveKit/Sources/VPNKit/)
-- **PostQuantum** — Keccak, ML-KEM-768, Classic McEliece 348864, hybrid KEM.
+- **PostQuantum** — Keccak, ML-KEM-768 (official NIST ACVP vectors), hybrid KEM.
   [source](Packages/QwaveKit/Sources/PostQuantum/) · [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md)
 - **WebExtensions** — MV3 registry and `browser.*` bridge.
   [source](Packages/QwaveKit/Sources/WebExtensions/)

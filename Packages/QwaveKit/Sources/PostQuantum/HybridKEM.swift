@@ -9,9 +9,9 @@ import Foundation
 /// of Mullvad's quantum tunnels (docs/VPN_STAGE_B.md).
 ///
 /// A second, code-based KEM leg (a construction named "ClassicMcEliece348864")
-/// was removed in v0.6.0: it did not implement Classic McEliece and had no
-/// conformance vectors, so it added review surface and key size without adding
-/// any assurance. See CHANGELOG.md.
+/// was removed: it did not implement Classic McEliece and had no conformance
+/// vectors, so it added review surface and key size without adding any
+/// assurance. See CHANGELOG.md.
 public enum HybridKEM {
     public static let ekSize = MLKEM768.ekSize
     public static let dkSize = MLKEM768.dkSize
