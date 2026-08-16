@@ -31,14 +31,26 @@ All notable changes to Qwave will be documented in this file.
   provider request. The documented reason for the exclusion (the base URL is
   user-configurable to any HTTPS endpoint, so it cannot be pinned to a
   committed list) was true of the committed list and true of nothing else.
-  The provider's session now installs the guard, and the user-configurable
-  half is carried by `EgressAllowlist.userConfiguredHost`: one slot, exact
-  match only (the committed list matches subdomains; a host you typed does
-  not), written from one place — `WaveDirector.resolveProvider()` — out of the
-  same preference the base URL comes from. Configuring a new endpoint revokes
-  the previous host; switching provider clears it. Custom endpoints keep
-  working; a host neither committed nor configured is now refused before the
-  request reaches the network.
+  The provider's session now installs the guard. The user-configurable half is
+  carried **per request**: `OpenAICompatibleProvider` marks its own request
+  with `EgressGuard.markUserConfiguredEndpoint(_:)` (the same shape as the
+  existing `markPageDriven(_:)`), and the guard resolves that mark against the
+  endpoint configured in Settings *at the moment it checks* — exact match only,
+  where the committed list matches subdomains. Custom endpoints keep working;
+  a host neither committed nor configured is refused before the request reaches
+  the network.
+
+  Two consequences worth stating plainly, because the first draft of this
+  change got both wrong by keeping the host in a process-wide slot on
+  `EgressAllowlist`. **Revocation is immediate**: Settings writes the
+  preference and calls nothing else, so a permission derived from a provider
+  being built would have survived until the next inference — and, if you had
+  just switched the provider off, for the rest of the process. Nothing is
+  cached, so there is nothing to go stale. And **the permission is not
+  process-wide**: the endpoint you configured for Memory Wave is reachable by
+  Memory Wave's own request, not by `URLSession.mullvadPinned()`, the
+  DuckDuckGo suggestion session, or anything on `URLSession.shared`.
+  `EgressAllowlist.permits(host:)` remains purely the committed list.
 - **NibbleVault no longer mirrors Memory Wave bodies as plaintext markdown
   (#81).** `MemoryStore` AES-GCM seals title/body/url before they touch
   SQLite, but the same content was, on every `remember()`, also written by

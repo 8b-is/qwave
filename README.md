@@ -231,11 +231,13 @@ fixed-host client that skips this would not be caught here, only by review.
 Memory Wave's provider was itself the standing example of that gap: its
 session is ephemeral, it never called `install(into:)`, and so `api.x.ai` sat
 on the allowlist without one provider request ever being checked against it.
-It is gated now, against the committed list plus one exact-match host slot
-carrying whatever HTTPS endpoint you configured
-(`EgressAllowlist.userConfiguredHost`, set only from
-`WaveDirector.resolveProvider()`; setting a new endpoint revokes the previous
-host, and switching provider clears it). Some Category-A clients are still
+It is gated now, against the committed list plus — on its own request, and
+nobody else's — an exact match on whatever HTTPS endpoint you configured
+(`EgressGuard.markUserConfiguredEndpoint(_:)`). That match is resolved out of
+the live preference each time the guard checks, so changing the endpoint or
+switching the provider off revokes the previous host immediately, with no
+inference needed in between, and no other client in the process ever gains it.
+Some Category-A clients are still
 deliberately **not** gated at all, because their destination isn't a fixed
 host by design — `FaviconLoader` and remote-markdown fetches are page-driven.
 The shields launch-path assertion is the one thing here checked
