@@ -100,14 +100,18 @@ public enum OmniboxSuggester {
         seenURLs.reserveCapacity(limit)
 
         for entry in history {
-            guard let base = matchScore(trimmed, entry: entry) else { continue }
+            // One `absoluteString` per entry: it feeds both the match and the
+            // dedup key, and building it twice cost an allocation per entry
+            // on every keystroke.
+            let urlString = entry.url.absoluteString
+            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title)
+            else { continue }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
             let recency: Double = age < 7 * 86_400 ? 10 : (age < 30 * 86_400 ? 5 : 0)
             let score = base + frequency + recency
 
-            let key = entry.url.absoluteString
-            guard seenURLs.insert(key).inserted else { continue }
+            guard seenURLs.insert(urlString).inserted else { continue }
 
             // Insert in sorted position, capped at `limit`.
             let insertIndex = best.firstIndex { $0.score < score } ?? best.endIndex
@@ -140,9 +144,9 @@ public enum OmniboxSuggester {
         guard !trimmed.isEmpty else { return [] }
 
         var scored: [(score: Double, suggestion: OmniboxSuggestion)] = []
-        var seenKeys: Set<String> = []
+        var seenKeys: Set<DedupKey> = []
 
-        func consider(_ score: Double, _ suggestion: OmniboxSuggestion, key: String) {
+        func consider(_ score: Double, _ suggestion: OmniboxSuggestion, key: DedupKey) {
             guard seenKeys.insert(key).inserted else { return }
             scored.append((score, suggestion))
         }
@@ -157,7 +161,7 @@ public enum OmniboxSuggester {
             consider(
                 base + 25,
                 OmniboxSuggestion(url: tab.url, title: tab.displayTitle, kind: .openTab(id: tab.id)),
-                key: "url:\(urlString)"
+                key: .url(urlString)
             )
         }
 
@@ -174,7 +178,7 @@ public enum OmniboxSuggester {
             consider(
                 base + frequency + recency,
                 OmniboxSuggestion(url: entry.url, title: entry.title, kind: .history),
-                key: "url:\(urlString)"
+                key: .url(urlString)
             )
         }
 
@@ -186,7 +190,7 @@ public enum OmniboxSuggester {
             consider(
                 base + 8,
                 OmniboxSuggestion(url: bookmark.url, title: bookmark.title, kind: .bookmark),
-                key: "url:\(urlString)"
+                key: .url(urlString)
             )
         }
 
@@ -196,7 +200,7 @@ public enum OmniboxSuggester {
             consider(
                 base,
                 OmniboxSuggestion(url: action.url, title: action.title, kind: .action),
-                key: "action:\(action.url.absoluteString)"
+                key: .action(action.url.absoluteString)
             )
         }
 
@@ -258,16 +262,78 @@ public enum OmniboxSuggester {
         return combined
     }
 
-    private static func matchScore(_ query: String, entry: HistoryEntry) -> Double? {
-        matchScore(query, host: entry.url.host, urlString: entry.url.absoluteString, title: entry.title)
+    /// Namespaces a dedup key without building a prefixed `String` per
+    /// candidate. The old `"url:\(urlString)"` / `"action:\(...)"` keys
+    /// allocated one throwaway String per row on every keystroke purely to
+    /// keep the two namespaces apart; the case discriminator does that for
+    /// free.
+    private enum DedupKey: Hashable {
+        case url(String)
+        case action(String)
     }
 
     /// Scores a candidate (history entry, bookmark, or open tab) against the
     /// query. Higher is a better match; nil means no match at all.
+    ///
+    /// `query` is expected pre-trimmed and lowercased; only the candidate side
+    /// is case-folded here.
     static func matchScore(_ query: String, host rawHost: String?, urlString rawURL: String, title rawTitle: String)
         -> Double?
     {
-        let host = (rawHost ?? "").lowercased()
+        let rawHost = rawHost ?? ""
+        // The ASCII path is the overwhelmingly common one and allocates
+        // nothing; the Unicode path is a verbatim fallback. See
+        // `isASCIIFoldable` for why the split is safe.
+        if isASCIIFoldable(query), isASCIIFoldable(rawHost), isASCIIFoldable(rawURL), isASCIIFoldable(rawTitle) {
+            return asciiMatchScore(query, host: rawHost, urlString: rawURL, title: rawTitle)
+        }
+        return unicodeMatchScore(query, host: rawHost, urlString: rawURL, title: rawTitle)
+    }
+
+    /// Allocation-free scoring over the raw UTF-8 bytes.
+    ///
+    /// Structurally identical to `unicodeMatchScore` — same tiers, same order,
+    /// same short-circuits — but it case-folds a byte at a time while
+    /// comparing instead of materialising three lowercased `String`s per
+    /// candidate. Those three strings were the omnibox's hottest allocation
+    /// site: they were rebuilt for every history row on every keystroke, over
+    /// data that had not changed.
+    private static func asciiMatchScore(
+        _ query: String, host rawHost: String, urlString rawURL: String, title rawTitle: String
+    ) -> Double? {
+        let needle = query.utf8
+        let host = rawHost.utf8
+        // `dropFirst(0)` rather than the bare view so both branches share one
+        // type (and so no copy is made either way).
+        let hostSansWWW = asciiHasPrefix(host, "www.".utf8) ? host.dropFirst(4) : host.dropFirst(0)
+
+        let url = rawURL.utf8
+        let urlSansScheme: Substring.UTF8View
+        if asciiHasPrefix(url, "https://".utf8) {
+            urlSansScheme = url.dropFirst(8)
+        } else if asciiHasPrefix(url, "http://".utf8) {
+            urlSansScheme = url.dropFirst(7)
+        } else {
+            urlSansScheme = url.dropFirst(0)
+        }
+        let title = rawTitle.utf8
+
+        if asciiHasPrefix(hostSansWWW, needle) || asciiHasPrefix(host, needle) { return 100 }
+        if asciiHasPrefix(urlSansScheme, needle) { return 90 }
+        if asciiContains(hostSansWWW, needle) { return 60 }
+        if asciiHasPrefix(title, needle) { return 50 }
+        if asciiContains(title, needle) { return 40 }
+        if asciiContains(urlSansScheme, needle) { return 30 }
+        return nil
+    }
+
+    /// The original, Unicode-correct scoring. Retained verbatim as the
+    /// fallback for anything `asciiMatchScore` must not touch, so those
+    /// candidates rank exactly as they always did.
+    private static func unicodeMatchScore(
+        _ query: String, host rawHost: String, urlString rawURL: String, title rawTitle: String
+    ) -> Double? {
+        let host = rawHost.lowercased()
         let hostSansWWW = host.hasPrefix("www.") ? host[host.index(host.startIndex, offsetBy: 4)...] : Substring(host)
         let urlString = rawURL.lowercased()
         // Strip scheme via prefix drop instead of replacingOccurrences.
@@ -288,5 +354,61 @@ public enum OmniboxSuggester {
         if title.contains(query) { return 40 }
         if urlSansScheme.contains(query) { return 30 }
         return nil
+    }
+
+    // MARK: - Byte-wise case-insensitive matching
+
+    /// True when `string` can be matched byte-wise without changing the answer
+    /// `lowercased()` would have given.
+    ///
+    /// Two things have to hold, and both fail outside this set:
+    ///
+    /// 1. **Lowercasing must be byte-local.** For `A...Z` it is exactly
+    ///    `| 0x20`. Outside ASCII it is not: `İ` (U+0130) lowercases to *two*
+    ///    scalars, `K` (U+212A KELVIN SIGN) lowercases to plain ASCII `k`, and
+    ///    `ß` lowercases to itself while `SS` lowercases to `ss`. A byte-wise
+    ///    fold would miss or invent matches in all three cases.
+    /// 2. **String comparison must be byte equality.** Swift compares under
+    ///    canonical equivalence, so `e` + U+0301 equals `é`; and CR LF is a
+    ///    single grapheme cluster, the one place ASCII has a multi-scalar
+    ///    character. CR is therefore excluded along with everything >= 0x80.
+    ///
+    /// Anything rejected here goes to `unicodeMatchScore` unchanged, so this
+    /// is a fast path, never a behaviour change.
+    private static func isASCIIFoldable(_ string: String) -> Bool {
+        !string.utf8.contains { $0 >= 0x80 || $0 == 0x0D }
+    }
+
+    @inline(__always)
+    private static func asciiLowercased(_ byte: UInt8) -> UInt8 {
+        (byte &- 0x41) < 26 ? byte | 0x20 : byte
+    }
+
+    /// `haystack` is folded to lowercase as it is read; `needle` is compared
+    /// as-is, because callers pass an already-lowercased query — exactly what
+    /// the `String` version did.
+    private static func asciiHasPrefix<Haystack: Collection, Needle: Collection>(
+        _ haystack: Haystack, _ needle: Needle
+    ) -> Bool where Haystack.Element == UInt8, Needle.Element == UInt8 {
+        var bytes = haystack.makeIterator()
+        for wanted in needle {
+            guard let byte = bytes.next(), asciiLowercased(byte) == wanted else { return false }
+        }
+        return true
+    }
+
+    /// Naive sliding search. The needle is the handful of characters the user
+    /// has typed and the haystack a single URL or title, so the quadratic
+    /// worst case is not reachable at these sizes.
+    private static func asciiContains<Haystack: Collection, Needle: Collection>(
+        _ haystack: Haystack, _ needle: Needle
+    ) -> Bool where Haystack.Element == UInt8, Needle.Element == UInt8 {
+        if needle.isEmpty { return true }
+        var start = haystack.startIndex
+        while start != haystack.endIndex {
+            if asciiHasPrefix(haystack[start...], needle) { return true }
+            haystack.formIndex(after: &start)
+        }
+        return false
     }
 }
