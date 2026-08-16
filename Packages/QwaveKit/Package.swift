@@ -37,6 +37,18 @@ let package = Package(
             name: "WebCredentials",
             targets: ["WebCredentials"]
         ),
+        // Read-only MCP surface. Deliberately NOT part of the QwaveKit umbrella
+        // product: the MCP SDK links EventSource (an SSE/URLSession client) on
+        // Apple platforms, and the browser must not gain that code just because
+        // an out-of-process tool wants it. Only `qwave-mcp` links this.
+        .library(
+            name: "MCPSurface",
+            targets: ["MCPSurface"]
+        ),
+        .executable(
+            name: "qwave-mcp",
+            targets: ["QwaveMCP"]
+        ),
     ],
     dependencies: [
         // WHATWG URL parser — canonical host identity for policy decisions
@@ -52,6 +64,13 @@ let package = Package(
         // OrderedDictionary for TabManager: ordered + unique + O(1) keyed
         // lookup is exactly the tab strip's shape.
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
+        // Model Context Protocol reference SDK. Pinned EXACTLY, not by range:
+        // this is a 0.x package whose minor bumps are breaking (0.12 renamed
+        // Tool.Content cases), and it is the parse surface for input arriving
+        // from another process — a floating pin would let that surface change
+        // under us without review. Its platform floor is macOS 13 / iOS 16,
+        // below Qwave's 14 / 17, so it fits; verified by building.
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk", exact: "0.12.1"),
     ],
     targets: [
         // MIGRATED to Swift 6 language mode.
@@ -127,6 +146,28 @@ let package = Package(
             ],
             swiftSettings: swift6
         ),
+        // Read-only MCP server surface: tool definitions and handlers over the
+        // stores Persistence already writes to disk. Depends on Persistence and
+        // nothing else of Qwave's — in particular NOT on MemoryWave, so the
+        // sealed memory bodies are unreachable from here by construction.
+        .target(
+            name: "MCPSurface",
+            dependencies: [
+                "Persistence",
+                .product(name: "MCP", package: "swift-sdk"),
+            ],
+            swiftSettings: swift6
+        ),
+        // The stdio binary itself. Thin on purpose: everything worth testing
+        // lives in MCPSurface.
+        .executableTarget(
+            name: "QwaveMCP",
+            dependencies: [
+                "MCPSurface",
+                .product(name: "MCP", package: "swift-sdk"),
+            ],
+            swiftSettings: swift6
+        ),
 
         .testTarget(
             name: "QwaveSupportTests",
@@ -169,6 +210,15 @@ let package = Package(
             name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"], swiftSettings: swift6),
         // Egress regression gate: enforces the committed Category-A host
         // allowlist against every module that can make Qwave's own requests.
+        .testTarget(
+            name: "MCPSurfaceTests",
+            dependencies: [
+                "MCPSurface",
+                "Persistence",
+                .product(name: "MCP", package: "swift-sdk"),
+            ],
+            swiftSettings: swift6
+        ),
         .testTarget(
             name: "EgressGuardTests",
             dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave", "BrowserCore"],

@@ -98,4 +98,24 @@ public final class SettingsStore {
         get { defaults.object(forKey: Key.networkSuggestions) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.networkSuggestions) }
     }
+
+    /// The defaults key behind ``mcpServerEnabled``.
+    ///
+    /// Public, and `nonisolated`, because the reader is a *different process*:
+    /// `qwave-mcp` reads this exact key out of the app's defaults domain
+    /// (`is.8b.qwave`), since its own `UserDefaults.standard` is a different
+    /// domain and would never see what the app wrote. One key constant, so the
+    /// writer and the out-of-process reader cannot drift apart.
+    public nonisolated static let mcpServerEnabledKey = "qwave.mcpServer"
+
+    /// When ON, the out-of-process `qwave-mcp` MCP server is permitted to
+    /// answer read-only tool calls over this profile's history, bookmarks and
+    /// last saved session. Defaults to OFF, and deliberately so: turning it on
+    /// lets *any* process that can spawn the binary read the user's browsing
+    /// history without a further prompt. Nothing in Qwave exposes that surface
+    /// unless the user asks for it.
+    public var mcpServerEnabled: Bool {
+        get { defaults.object(forKey: Self.mcpServerEnabledKey) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Self.mcpServerEnabledKey) }
+    }
 }

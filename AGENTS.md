@@ -12,7 +12,7 @@
 - **Toolchain:** CI pins Xcode 26.3 and asserts it provides **Swift 6.2** — that compiler, not your local one, is the ceiling. Development machines on 26.4.x run Swift 6.3.1, so code can compile locally and still fail CI. `Benchmarks/Package.swift` is deliberately left at tools 5.10; bumping it flips the default language mode and surfaces a real data race in the benchmark harness.
 - **Build System:** XcodeGen (`project.yml` is the single source of truth; `Qwave.xcodeproj` is gitignored).
 - **Core Engine:** WebKit `WKWebView`, `WKWebsiteDataStore`, `WKContentRuleList`.
-- **Modular Package:** `Packages/QwaveKit` — **13 library targets** and 13 test targets: QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags, WebCredentials, BrowserCore, PostQuantum, VPNKit, WebExtensions, MemoryWave, Summarize, QwaveUI. (Authoritative source is `swift package dump-package`, not this list — check it if the two disagree.)
+- **Modular Package:** `Packages/QwaveKit` — **14 library targets** and 14 test targets: QwaveSupport, URLIdentity, Persistence, Shields, FeatureFlags, WebCredentials, BrowserCore, PostQuantum, VPNKit, WebExtensions, MemoryWave, Summarize, QwaveUI, MCPSurface. Plus one executable target, QwaveMCP (`qwave-mcp`). (Authoritative source is `swift package dump-package`, not this list — check it if the two disagree.)
 - **VPN Extension:** `Sources/PacketTunnel` WireGuardKit system extension (`NETunnelProviderManager`).
 - **CI/CD:** GitHub Actions (`.github/workflows/ci.yml` & `release.yml`).
 
