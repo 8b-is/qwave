@@ -20,6 +20,30 @@ All notable changes to Qwave will be documented in this file.
   ([#78](https://github.com/8b-is/qwave/issues/78))
 
 ### Security
+- **Nibble files left plaintext by a pre-#107 release are now re-sealed on
+  disk (#120).** #107 sealed the vault, but only for files written after it;
+  everything a shipped release wrote before that still had its `# Title`, page
+  text and `url:` in the clear, in the same folder whose README told the user
+  it held ciphertext. The legacy-plaintext fallback in `NibbleMarkdown.decode`
+  kept those memories in recall — correctly — which is exactly why they were
+  never upgraded. `NibbleVault.resealLegacyNibbles()` now runs in the
+  background at launch and rewrites them, along with the in-between generation
+  that carried `sealed:` plus a cleartext `tags:` line derived from the URL
+  host and title words. It is idempotent (the decision is per file, from its
+  own front matter, so a second run rewrites nothing and a restored backup is
+  still upgraded), atomic (sealed replacement written to a sibling temp file,
+  fsynced, decoded back and compared field-by-field, then `rename(2)`d over
+  the original — the rename is the only destructive step), and it never
+  deletes: anything it cannot read or cannot decode with this key is left
+  exactly as found and counted. If the master key is missing or malformed the
+  pass does nothing at all and logs it, rather than sealing memories under a
+  key the rest of the user's data does not use.
+
+  Scope, stated plainly: this rewrites the files in Qwave's own vault folder
+  and nothing else. Plaintext that already escaped it stays escaped — Spotlight
+  index entries, Time Machine snapshots, any other backup, and any copy already
+  synced to iCloud Drive, Dropbox or another Mac are untouched and out of reach
+  of this pass. A user who needs those gone has to clear them by hand.
 - **NibbleVault no longer mirrors Memory Wave bodies as plaintext markdown
   (#81).** `MemoryStore` AES-GCM seals title/body/url before they touch
   SQLite, but the same content was, on every `remember()`, also written by
