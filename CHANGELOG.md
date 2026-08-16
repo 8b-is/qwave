@@ -20,6 +20,25 @@ All notable changes to Qwave will be documented in this file.
   ([#78](https://github.com/8b-is/qwave/issues/78))
 
 ### Security
+- **`EgressGuard` now covers Memory Wave's remote provider, which it never
+  did.** The guard had two production install sites
+  (`URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider).
+  `OpenAICompatibleProvider` builds its session from
+  `URLSessionConfiguration.ephemeral` — which the process-wide
+  `URLProtocol.registerClass` in `main.swift` does not reach — and never
+  called `EgressGuard.install(into:)`. So `api.x.ai` was on `EgressAllowlist`
+  as a comment: the guard had never blocked, permitted or observed one
+  provider request. The documented reason for the exclusion (the base URL is
+  user-configurable to any HTTPS endpoint, so it cannot be pinned to a
+  committed list) was true of the committed list and true of nothing else.
+  The provider's session now installs the guard, and the user-configurable
+  half is carried by `EgressAllowlist.userConfiguredHost`: one slot, exact
+  match only (the committed list matches subdomains; a host you typed does
+  not), written from one place — `WaveDirector.resolveProvider()` — out of the
+  same preference the base URL comes from. Configuring a new endpoint revokes
+  the previous host; switching provider clears it. Custom endpoints keep
+  working; a host neither committed nor configured is now refused before the
+  request reaches the network.
 - **NibbleVault no longer mirrors Memory Wave bodies as plaintext markdown
   (#81).** `MemoryStore` AES-GCM seals title/body/url before they touch
   SQLite, but the same content was, on every `remember()`, also written by

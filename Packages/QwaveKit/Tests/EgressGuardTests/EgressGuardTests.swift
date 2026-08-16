@@ -20,7 +20,7 @@ import XCTest
 /// calling `EgressAllowlist.permits(host:)` directly) rather than only
 /// asserting over the allowlist's data.
 ///
-/// Three groups of checks, still narrower than they first look:
+/// Five groups of checks, still narrower than they first look:
 ///  1. Three known Category-A endpoints are pinned to the committed
 ///     `EgressAllowlist` by the hand-written assertions below. Nothing
 ///     enumerates network call sites, so adding a new default endpoint
@@ -31,9 +31,13 @@ import XCTest
 ///     not depend on `BrowserCore` at all until then.
 ///  2. `EgressGuard` runtime tests: a disallowed host is blocked when routed
 ///     through a session that installed the guard, an allowlisted host is
-///     not, and the two production call sites (`URLSession.mullvadPinned()`,
-///     `DuckDuckGoSuggestionProvider`'s default session) are asserted to
-///     have installed it.
+///     not, and the three production call sites (`URLSession.mullvadPinned()`,
+///     `DuckDuckGoSuggestionProvider`'s default session,
+///     `OpenAICompatibleProvider`'s default session) are asserted to
+///     have installed it. The provider's is the newest of the three and the
+///     one that was missing: its session is ephemeral and never installed the
+///     guard, so `api.x.ai` sat on the allowlist while not one provider
+///     request was ever checked against it.
 ///  3. The always-on launch path (shields preparation) makes no URLSession
 ///     request — the launch-time blocklist fetch was removed. Scope: the
 ///     recorder below is installed with `URLProtocol.registerClass`, which
@@ -44,16 +48,21 @@ import XCTest
 ///     non-allowlisted host must still render, the exemption must not widen
 ///     to the host or the session, and `registerClass`'s actual reach is
 ///     pinned so the prose about it cannot drift again.
+///  5. The user-configured host slot, which is what lets the provider be
+///     gated without breaking the endpoint a user typed: the committed
+///     default endpoint still reaches the transport, a host set in the slot is
+///     reached, a *subdomain* of that host is not, and replacing or clearing
+///     the slot revokes the previous host.
 ///
 /// Honest scope: `EgressGuard` catches Category A (Qwave's own egress) for
 /// any client that either uses `URLSession.shared` (covered by the
 /// process-wide `URLProtocol.registerClass` in `main.swift`) or installs it
 /// into its own configuration explicitly (`EgressGuard.install(into:)`).
 /// It does not cover a fixed-host client that skips that call, a
-/// deliberately open-ended client (Memory Wave's user-configurable endpoint,
-/// `FaviconLoader`, remote-markdown fetch — see `EgressGuard`'s doc comment),
-/// Category B (page subresources), or Category C (WebKit's own network
-/// process, e.g. the fraudulent-website warning). See docs/NETWORK.md.
+/// deliberately open-ended client (`FaviconLoader`, remote-markdown fetch —
+/// see `EgressGuard`'s doc comment), Category B (page subresources), or
+/// Category C (WebKit's own network process, e.g. the fraudulent-website
+/// warning). See docs/NETWORK.md.
 final class EgressGuardTests: XCTestCase {
 
     /// `EgressAllowlist.userConfiguredHost` is process-lifetime state, like

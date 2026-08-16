@@ -42,11 +42,13 @@ own network activity auditable.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
   AI-agnostic inference providers. Stored memory **bodies** never reach a
   remote provider: `WaveDirector` attaches recalled memories only when the
-  provider is on-device (`WaveDirector.swift:338`), and `MemoryWavePolicy.decide`
+  provider is on-device (`WaveDirector.swift:370`), and `MemoryWavePolicy.decide`
   denies a remote request that *declares* it carries them
   (`.deny(.cognitiveEgress)`, `MemoryWavePolicy.swift:81-82`) — a
   declared-intent gate plus a caller-side guard, not a filter on the outgoing
-  prompt. One carve-out: a **timeline summary** with a remote provider sends the
+  prompt. The caller-side guard is the one doing the work today; the policy is
+  a tripwire behind it, dormant while `ask` declares stored memory only for
+  the on-device provider. One carve-out: a **timeline summary** with a remote provider sends the
   title, time, and host of every record in the window, and no snippets
   (`WaveDirector.swift:153-154`, `MemoryTimeline.swift:63-79`). Pages you
   explicitly summarise or ask about *are* sent to the provider you configured;
@@ -223,14 +225,20 @@ Two honest caveats remain. `EgressGuard` only reaches a client that installs
 it: a default- or shared-configuration session gets it for free from the
 process-wide `URLProtocol.registerClass` in `main.swift`, but a
 custom-configuration session (ephemeral, pinned, etc.) has to call
-`EgressGuard.install(into:)` explicitly — `URLSession.mullvadPinned()` and
-`DuckDuckGoSuggestionProvider` do; a new fixed-host client that skips this
-would not be caught here, only by review. And some Category-A clients are
-deliberately **not** gated by `EgressGuard` at all, because their destination
-isn't a fixed host by design — Memory Wave's user-configurable endpoint
-(guarded instead by `EndpointRedirectPolicy` and `MemoryWavePolicy`),
-`FaviconLoader`, and remote-markdown fetches are all page- or
-user-driven. The shields launch-path assertion is the one thing here checked
+`EgressGuard.install(into:)` explicitly — `URLSession.mullvadPinned()`,
+`DuckDuckGoSuggestionProvider` and Memory Wave's remote provider do; a new
+fixed-host client that skips this would not be caught here, only by review.
+Memory Wave's provider was itself the standing example of that gap: its
+session is ephemeral, it never called `install(into:)`, and so `api.x.ai` sat
+on the allowlist without one provider request ever being checked against it.
+It is gated now, against the committed list plus one exact-match host slot
+carrying whatever HTTPS endpoint you configured
+(`EgressAllowlist.userConfiguredHost`, set only from
+`WaveDirector.resolveProvider()`; setting a new endpoint revokes the previous
+host, and switching provider clears it). Some Category-A clients are still
+deliberately **not** gated at all, because their destination isn't a fixed
+host by design — `FaviconLoader` and remote-markdown fetches are page-driven.
+The shields launch-path assertion is the one thing here checked
 dynamically rather than by review of the wiring itself: it registers a
 `URLProtocol` recorder over the shields launch path and asserts nothing was
 requested; the test builds its own `ShieldsDirector` rather than running the
