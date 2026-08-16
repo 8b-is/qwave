@@ -661,6 +661,13 @@ final class MemoryWavePolicyTests: XCTestCase {
         XCTAssertEqual(ephemeral, .deny(.ephemeral))
     }
 
+    /// The policy in isolation. Note what this does *not* say: the policy is a
+    /// pure function over a context the caller supplies, so passing here says
+    /// nothing about whether any caller ever supplies this context. In normal
+    /// operation none does — `ask` declares stored memory only for the
+    /// on-device provider — which is why this branch can look decorative. That
+    /// it is genuinely reachable through `infer` is pinned separately by
+    /// `WaveDirectorTests.testDeclaringStoredMemoryAgainstARemoteProviderIsRefused`.
     func testRemoteCannotCarryStoredMemory() {
         let leak = MemoryWavePolicy.decide(
             MemoryWaveContext(
@@ -1181,6 +1188,122 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertTrue(sent.contains("visible page"))
     }
 
+    /// `MemoryWavePolicy`'s `.deny(.cognitiveEgress)` branch, reached through
+    /// `infer` rather than by calling the policy directly — the thing nothing
+    /// asserted before, and the reason it was possible to believe the branch
+    /// was decorative.
+    ///
+    /// Honest about what this test does and does not catch. It passes both
+    /// with and without the `&& provider.kind == .openaiCompatible` conjunct
+    /// this change removed, because that conjunct was exactly redundant with
+    /// the policy's own outer check. What it does catch is the edit that
+    /// conjunct *looked* like: a caller that pre-sanitises the intent it
+    /// declares (`&& provider.kind == .onDevice`, say) so the policy can never
+    /// see the dangerous pair. Do that and this test goes red.
+    ///
+    /// It is also not what protects stored memories today — the recall block
+    /// is appended only when `provider.kind == .onDevice`
+    /// (`WaveDirector.swift`), and that check runs after this one. This is
+    /// defence in depth behind it.
+    ///
+    /// Production cannot produce this pair right now: `resolveProvider()`
+    /// returns a provider of the configured kind, pinned below by
+    /// `testResolvedProviderKindMatchesTheConfiguredPreference`. An override is
+    /// how a future caller's mistake is simulated today.
+    func testDeclaringStoredMemoryAgainstARemoteProviderIsRefused() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        // `ask` declares includeStoredMemory from this preference.
+        prefs.providerKind = .onDevice
+
+        let captured = RequestCapture()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CaptureProtocol.self]
+        CaptureProtocol.capture = captured
+        CaptureProtocol.responseJSON = """
+            {"choices":[{"message":{"role":"assistant","content":"ok"}}]}
+            """
+
+        let director = WaveDirector(store: store, preferences: prefs)
+        director.providerOverride = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            session: URLSession(configuration: config)
+        )
+
+        do {
+            let answer = try await director.ask(
+                prompt: "What do you know?", page: nil, containerID: nil,
+                isEphemeral: false, inferenceAllowed: true)
+            XCTFail("stored memory declared against a remote provider must be refused, got \(answer.text)")
+        } catch {
+            XCTAssertEqual(error as? MemoryProviderError, .denied(.cognitiveEgress))
+        }
+        XCTAssertNil(captured.url, "the refused request must never be built")
+
+        // And why the declared intent has to arrive intact: hand the same
+        // policy a pre-sanitised `includeStoredMemory` — the shape the removed
+        // conjunct suggested — and it has nothing left to refuse. That is what
+        // this test goes red on.
+        XCTAssertEqual(
+            MemoryWavePolicy.decide(
+                MemoryWaveContext(
+                    isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                    provider: .openaiCompatible, includeStoredMemory: false,
+                    destination: .infer,
+                    remoteBaseURL: MemoryWavePreferences.defaultRemoteBaseURL)),
+            .allow)
+    }
+
+    /// The invariant that keeps the tripwire above dormant in normal
+    /// operation, so a future divergence fails here rather than silently
+    /// disarming the gate. `ask` decides whether to declare stored memory from
+    /// `preferences.providerKind == .onDevice`; `infer` decides whether to
+    /// actually attach it from `provider.kind == .onDevice`. Those two agree
+    /// only because `resolveProvider()` returns a provider of the configured
+    /// kind. Add a fallback there — on-device unavailable, so use the remote
+    /// one — and they diverge: the declared intent becomes true while the
+    /// provider is remote, and Ask starts failing with `.cognitiveEgress`.
+    func testResolvedProviderKindMatchesTheConfiguredPreference() throws {
+        defer { EgressAllowlist.userConfiguredHost.set(nil) }
+        for kind in MemoryProviderKind.allCases {
+            let secrets = InMemorySecretStore()
+            let prefs = MemoryWavePreferences(
+                defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+            prefs.providerKind = kind
+            try prefs.setAPIKey("test-key")
+            let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+            let resolved = try director.resolveProvider().kind
+            XCTAssertEqual(
+                resolved, kind,
+                "resolveProvider() must not substitute a different provider kind for \(kind)")
+
+            // The two expressions, evaluated over that pair.
+            let declaresStoredMemory = prefs.providerKind == .onDevice
+            let attachesStoredMemory = resolved == .onDevice
+            XCTAssertEqual(
+                declaresStoredMemory, attachesStoredMemory,
+                "the declared intent and the caller-side guard must agree for \(kind)")
+
+            // And so the context `infer` builds never trips the tripwire.
+            // (`.none` is still denied, as `.providerDisabled` — that is the
+            // offline default working, not this gate firing.)
+            XCTAssertNotEqual(
+                MemoryWavePolicy.decide(
+                    MemoryWaveContext(
+                        isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                        provider: resolved, includeStoredMemory: declaresStoredMemory,
+                        destination: .infer,
+                        remoteBaseURL: kind == .openaiCompatible ? prefs.remoteBaseURL : nil)),
+                .deny(.cognitiveEgress),
+                "the tripwire must stay dormant in normal operation for \(kind)")
+        }
+    }
+
     /// `resolveProvider()` is the only place the shipping app builds a remote
     /// provider, so it is the only place the bounded session can be lost.
     /// Passing `session: .shared` there would restore the seven-day ceiling
@@ -1209,6 +1332,38 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertEqual(
             configuration.timeoutIntervalForResource, OpenAICompatibleProvider.defaultResourceTimeout)
         XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
+    }
+
+    /// `resolveProvider()` is also the single writer of the guard's
+    /// user-configured host slot, and it has to agree with the base URL it
+    /// hands the provider in the same breath — a provider pointed at a host
+    /// the guard was not told about is refused at the transport, so a drift
+    /// between these two is the feature breaking.
+    func testResolveProviderPublishesTheConfiguredHostToTheEgressGuard() throws {
+        defer { EgressAllowlist.userConfiguredHost.set(nil) }
+        let secrets = InMemorySecretStore()
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        prefs.providerKind = .openaiCompatible
+        prefs.remoteBaseURL = URL(string: "https://ollama.self-hosted.example/v1")!
+        try prefs.setAPIKey("test-key")
+        let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+        let provider = try XCTUnwrap(director.resolveProvider() as? OpenAICompatibleProvider)
+        XCTAssertEqual(EgressAllowlist.userConfiguredHost.current(), provider.baseURL.host)
+        XCTAssertTrue(EgressAllowlist.permits(host: "ollama.self-hosted.example"))
+
+        // Switching provider revokes it — the host was permitted because the
+        // user was pointing Memory Wave at it, and they no longer are.
+        prefs.providerKind = .onDevice
+        _ = try director.resolveProvider()
+        XCTAssertNil(EgressAllowlist.userConfiguredHost.current())
+        XCTAssertFalse(EgressAllowlist.permits(host: "ollama.self-hosted.example"))
+
+        prefs.providerKind = .none
+        prefs.remoteBaseURL = URL(string: "https://ollama.self-hosted.example/v1")!
+        _ = try director.resolveProvider()
+        XCTAssertNil(EgressAllowlist.userConfiguredHost.current())
     }
 
     /// The privacy default: nothing configured means no provider and no egress.

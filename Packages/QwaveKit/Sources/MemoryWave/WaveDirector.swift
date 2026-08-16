@@ -336,13 +336,29 @@ public final class WaveDirector {
         salience: Double
     ) async throws -> WaveAnswer {
         let provider = try resolveProvider()
+        // `includeStoredMemory` is passed through as the caller declared it.
+        // It used to be `&& provider.kind == .openaiCompatible`, a conjunct
+        // that was exactly redundant — the policy reads `includeStoredMemory`
+        // only inside its own `provider == .openaiCompatible` branch, over the
+        // same `provider.kind` — but that read as though the caller
+        // pre-sanitises what it declares, which is the one thing it must not
+        // do. The policy has to receive the declared intent to be a tripwire
+        // at all.
+        //
+        // It stays dormant in normal operation, and that is correct: `ask`
+        // declares stored memory only for the on-device provider, so the
+        // policy never sees "memories + remote". What keeps recalled memories
+        // out of a remote prompt today is the `provider.kind == .onDevice`
+        // check below, which runs after this. The policy is defence in depth
+        // behind it, for a future caller that declares memories while a remote
+        // provider resolves.
         let decision = MemoryWavePolicy.decide(
             MemoryWaveContext(
                 isExplicit: true,
                 isEphemeral: isEphemeral,
                 inferenceAllowed: inferenceAllowed,
                 provider: provider.kind,
-                includeStoredMemory: includeStoredMemory && provider.kind == .openaiCompatible,
+                includeStoredMemory: includeStoredMemory,
                 destination: .infer,
                 remoteBaseURL: preferences.providerKind == .openaiCompatible ? preferences.remoteBaseURL : nil
             )
