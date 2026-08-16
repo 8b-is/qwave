@@ -49,7 +49,12 @@ public struct MemoryNibble: Equatable, Sendable, Identifiable {
             title: title,
             body: body,
             wave: wave,
-            tags: tags
+            tags: tags,
+            // The vault is a plaintext mirror with no provenance field on
+            // disk, so classify from the kind the nibble was cut from: pins
+            // and notes are per-record human decisions, summaries (model
+            // output) and browses (automatic capture) are not.
+            provenance: (kind == .pin || kind == .note) ? .authored : .derived
         )
     }
 }

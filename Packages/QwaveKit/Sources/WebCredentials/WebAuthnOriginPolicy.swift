@@ -51,13 +51,6 @@ public enum WebAuthnOriginPolicy {
         return origin.hasSuffix("." + rp) ? rp : nil
     }
 
-    /// True when ``authorizedRPID(_:forOriginHost:)`` would permit the ceremony.
-    /// Decision only — a caller that goes on to *run* the ceremony must use the
-    /// rpID that function returns, not its own input.
-    public static func rpIDIsAuthorized(_ rpID: String, forOriginHost originHost: String) -> Bool {
-        authorizedRPID(rpID, forOriginHost: originHost) != nil
-    }
-
     /// Lowercase and drop one trailing root-label dot (`example.com.` is the
     /// same host as `example.com`). Inputs are already canonical; this only
     /// makes the comparison total.

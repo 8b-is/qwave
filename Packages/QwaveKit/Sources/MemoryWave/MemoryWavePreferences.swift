@@ -3,7 +3,14 @@ import Persistence
 import QwaveSupport
 
 /// Typed Memory Wave preferences. API keys live in SecretStore, never defaults.
-public final class MemoryWavePreferences {
+///
+/// `Sendable` because `EgressGuard` reads ``egressPermittedHost`` from whatever
+/// queue `URLSession` runs its protocol on, while everything else here is on
+/// the main actor. Both stored properties are `let`s of thread-safe types —
+/// `SecretStore` is itself `Sendable`, and `UserDefaults` is documented as
+/// thread-safe but carries no `Sendable` conformance in the SDK, which is the
+/// one thing `@unchecked` is covering here.
+public final class MemoryWavePreferences: @unchecked Sendable {
     public static let defaultRemoteBaseURL = URL(string: "https://api.x.ai/v1")!
     public static let defaultRemoteModel = "grok-4.6"
     public static let apiKeyAccount = "memorywave.openai.api-key"
@@ -49,6 +56,16 @@ public final class MemoryWavePreferences {
     public var rememberEverything: Bool {
         get { defaults.bool(forKey: Key.rememberEverything) }
         set { defaults.set(newValue, forKey: Key.rememberEverything) }
+    }
+
+    /// The one host `EgressGuard` may let Memory Wave's own provider request
+    /// reach, or `nil` when no remote endpoint is configured. Read live by the
+    /// guard on every request (see `EgressUserConfiguredEndpoint`), which is
+    /// why it is derived here rather than pushed anywhere: the instant Settings
+    /// writes `providerKind` or `remoteBaseURL`, this changes with it, and the
+    /// previous host stops being permitted without anyone firing an event.
+    public var egressPermittedHost: String? {
+        providerKind == .openaiCompatible ? remoteBaseURL.host : nil
     }
 
     public func apiKey() throws -> String? {

@@ -112,9 +112,12 @@ public final class ContentScriptEngine: @unchecked Sendable {
     /// Installs all resolved content scripts for a URL into a `WKUserContentController`.
     ///
     /// Returns the `WKUserScript` instances that were added, so a caller that
-    /// tracks its own injections (see `WebExtensionHost.uninstallBridge`) can
-    /// remove exactly these later without disturbing scripts anyone else
-    /// added to the same, possibly shared, controller.
+    /// tracks its own injections can remove exactly these later without
+    /// disturbing scripts anyone else added to the same, possibly shared,
+    /// controller (issue #76).
+    ///
+    /// No shipping code path calls this — see the "content scripts are not
+    /// active in the shipping app" note on ``WebExtensionHost``.
     @discardableResult
     @MainActor
     public func installContentScripts(

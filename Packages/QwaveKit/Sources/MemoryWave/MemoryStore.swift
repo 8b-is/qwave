@@ -55,6 +55,7 @@ public actor MemoryStore {
         lane: MemoryLane = .odd,
         containerID: UUID?,
         emotion: EmotionVector = .neutral,
+        provenance: MemoryProvenance = .derived,
         at date: Date = Date()
     ) async throws -> MemoryRecord {
         try await prepare()
@@ -66,6 +67,7 @@ public actor MemoryStore {
             lane: lane,
             containerID: containerID,
             emotion: emotion,
+            provenance: provenance,
             date: date
         )
         pending.record.id = try await database.insertReturningRowID(Self.insertSQL, pending.parameters)
@@ -73,6 +75,9 @@ public actor MemoryStore {
     }
 
     /// Insert or refresh a browse wave for the same URL + container.
+    ///
+    /// Always `.derived`: a browse row exists because a page was visited, not
+    /// because a person decided to keep it, and its body is page text.
     @discardableResult
     public func upsertBrowse(
         title: String,
@@ -91,6 +96,7 @@ public actor MemoryStore {
             lane: .odd,
             containerID: containerID,
             emotion: emotion,
+            provenance: .derived,
             date: date
         )
         let containerKey = Self.key(for: containerID)
@@ -107,7 +113,7 @@ public actor MemoryStore {
     public func records(since: Date? = nil, until: Date? = nil, limit: Int = 200) async throws -> [MemoryRecord] {
         try await prepare()
         var sql = """
-            SELECT id, container_id, kind, lane, created, frame, title_box, body_box, url_box, signature_box
+            SELECT \(Self.selectColumns)
             FROM memories
             WHERE 1=1
             """
@@ -129,7 +135,7 @@ public actor MemoryStore {
         try await prepare()
         let rows = try await database.rows(
             """
-            SELECT id, container_id, kind, lane, created, frame, title_box, body_box, url_box, signature_box
+            SELECT \(Self.selectColumns)
             FROM memories
             WHERE container_id = ?1
             ORDER BY created DESC
@@ -234,6 +240,11 @@ public actor MemoryStore {
         } else {
             url = nil
         }
+        // Fail safe, not closed: an absent or unrecognised label reads as
+        // `.derived` so an unlabelled row is carried as untrusted content
+        // rather than dropped (which would lose the user's memory) or
+        // promoted (which is the bug this column exists to stop).
+        let provenance = row.text(10).flatMap(MemoryProvenance.init(rawValue:)) ?? .derived
         let containerKey = row.text(1) ?? ""
         // MemoryRecord.signature is a computed property derived from title+body
         // (see MemoryRecord.swift), so it is not recomputed here. Doing so used
@@ -248,7 +259,8 @@ public actor MemoryStore {
             url: url,
             title: title,
             body: body,
-            wave: wave
+            wave: wave,
+            provenance: provenance
         )
     }
 
@@ -258,8 +270,15 @@ public actor MemoryStore {
 
     private static let insertSQL = """
         INSERT INTO memories
-            (container_id, kind, lane, created, host_tag, frame, title_box, body_box, url_box, signature_box, url_tag)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            (container_id, kind, lane, created, host_tag, frame, title_box, body_box, url_box, signature_box,
+             url_tag, provenance)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        """
+
+    /// Column list shared by both record queries, so a new column cannot be
+    /// added to one read path and forgotten in the other.
+    private static let selectColumns = """
+        id, container_id, kind, lane, created, frame, title_box, body_box, url_box, signature_box, provenance
         """
 
     private struct PendingMemoryInsert {
@@ -275,6 +294,7 @@ public actor MemoryStore {
         lane: MemoryLane,
         containerID: UUID?,
         emotion: EmotionVector,
+        provenance: MemoryProvenance,
         date: Date
     ) throws -> PendingMemoryInsert {
         let payload = Data((title + "\n" + body).utf8)
@@ -311,7 +331,8 @@ public actor MemoryStore {
             url: url,
             title: title,
             body: body,
-            wave: wave
+            wave: wave,
+            provenance: provenance
         )
         return PendingMemoryInsert(
             record: record,
@@ -327,6 +348,7 @@ public actor MemoryStore {
                 urlBox.map(SQLiteValue.blob) ?? .null,
                 .blob(signatureBox),
                 urlTag.map(SQLiteValue.blob) ?? .null,
+                .text(provenance.rawValue),
             ]
         )
     }
@@ -355,6 +377,15 @@ public actor MemoryStore {
             ALTER TABLE memories ADD COLUMN url_tag BLOB;
             CREATE INDEX IF NOT EXISTS idx_memories_url_tag
                 ON memories(container_id, kind, url_tag);
+            """,
+            // Trust label for recall. Rows written before this migration carry
+            // no record of how they got here, and the store has held model
+            // output (`.summary`) since day one, so every pre-existing row
+            // backfills to the SAFE value: 'derived'. That understates the
+            // trust of genuine pins rather than overstating the trust of a
+            // laundered page summary.
+            """
+            ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'derived';
             """,
         ])
         isPrepared = true
