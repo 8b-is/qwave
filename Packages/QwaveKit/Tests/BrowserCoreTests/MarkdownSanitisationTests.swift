@@ -1,3 +1,4 @@
+import MemoryWave
 import XCTest
 import WebKit
 @testable import BrowserCore
@@ -261,10 +262,15 @@ final class MarkdownSanitisationTests: XCTestCase {
 ///
 /// `NavigationCoordinator.presentMarkdown` hands the raw, uncompiled `source`
 /// to `InternalPages.markdownHTML(title:bodyHTML:source:allowRemember:)`, which
-/// embeds it in a `<script type="text/markdown" id="qwave-source">` element for
-/// the "Remember page" button. The compiler fix does not cover that copy, so it
-/// needs its own proof — and reasoning about the HTML tokenizer's script-data
+/// embeds it in a `<script type="application/json" id="qwave-source">` element
+/// for the "Remember page" button. The compiler fix does not cover that copy, so
+/// it needs its own proof — and reasoning about the HTML tokenizer's script-data
 /// state is exactly the kind of thing to check against a real parser instead.
+///
+/// Issue #138 changed how that element is encoded (HTML-escaped text → a JSON
+/// string literal), so this suite has to carry both halves: the containment
+/// proof that made the old spelling safe, restated for the new one, and the
+/// round trip the old spelling could not give.
 @MainActor
 final class MarkdownSourceBlockTests: XCTestCase {
     /// A source crafted to close the `<script>` element early and inject.
@@ -281,10 +287,25 @@ final class MarkdownSourceBlockTests: XCTestCase {
             source: Self.hostileSource,
             allowRemember: true
         )
-        // Cheap invariant first: escaping leaves no `<` at all in that element,
-        // so there is no `</script` for the tokenizer to find.
+        // Cheap invariant first, and the one that matters after #138 changed
+        // the encoding: the JSON literal leaves no `<` at all in that element,
+        // so there is no `</script` for the tokenizer to find and no `<!--` to
+        // put it into the double-escaped state.
         XCTAssertFalse(html.contains("</script><img"))
-        XCTAssertTrue(html.contains("&lt;/script&gt;&lt;img"))
+        let literal = InternalPages.markdownSourceLiteral(Self.hostileSource)
+        XCTAssertTrue(html.contains(literal), "the page does not carry the literal this test is reasoning about")
+        // Stated as an absence rather than as a golden spelling: Foundation
+        // also escapes `/` as `\/`, which would block `</script` on its own,
+        // but that is an implementation detail and not what this rests on.
+        for forbidden in ["<", ">"] {
+            XCTAssertFalse(literal.contains(forbidden), "a literal \(forbidden) reached the source block")
+        }
+        XCTAssertTrue(literal.contains("\\u003c"), "the `<` re-encoding did not fire")
+        // And the literal is still the source: containment did not cost fidelity.
+        let decoded =
+            try JSONSerialization.jsonObject(
+                with: Data(literal.utf8), options: [.fragmentsAllowed]) as? String
+        XCTAssertEqual(decoded, Self.hostileSource)
 
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         webView.loadHTMLString(html, baseURL: URL(string: "file:///tmp/README.md"))
@@ -309,28 +330,161 @@ final class MarkdownSourceBlockTests: XCTestCase {
         XCTAssertEqual(tag, "SCRIPT", "the source block did not survive as one element")
     }
 
-    /// What the two consumers of that element actually get. Both
-    /// (`InternalPages.markdownScript` and
-    /// `BrowserWindowController.rememberCurrentSelection`) read `.textContent`
-    /// and hand the string to native code — no HTML sink — so this is a
-    /// fidelity check, not a security one. Recorded because the answer is
-    /// surprising: script elements are raw-text, so the parser does *not*
-    /// decode entities, and "Remember page" stores the escaped spelling.
-    func testRememberedSourceIsTheEscapedSpelling() async throws {
-        let html = InternalPages.markdownHTML(
-            title: "README.md", bodyHTML: "<p>x</p>", source: "a <b> & \"c\"", allowRemember: true)
+    /// Issue #138: what the consumers of that element actually get back.
+    ///
+    /// `script` is a **raw text** element, so the HTML parser hands
+    /// `.textContent` back with character references *undecoded*. Every
+    /// consumer reads `.textContent`, so an HTML-escaped body used to read back
+    /// as its escaped spelling — `a &lt;b&gt;` where the document said `a <b>`,
+    /// with `&` compounding on each pass — and that is what "Remember page"
+    /// stored in Memory Wave.
+    ///
+    /// The assertion below is a byte-identical **round trip**, not "looks
+    /// unescaped": a decoder that gets its substitution order wrong, or that
+    /// misses one of the four characters `MarkdownCompiler.escape` rewrites,
+    /// passes the weaker check and fails this one.
+    ///
+    /// The corpus carries all four characters `escape` rewrites, a
+    /// *pre-escaped* `&amp;` (the compounding case), a backslash and a tab
+    /// (which JSON escapes and HTML does not), a non-BMP character, and the
+    /// breakout run from `hostileSource` — so one string exercises fidelity and
+    /// containment together.
+    static let roundTripSource = """
+        a <b> c & d and "quoted" and a pre-escaped &amp; &lt;i&gt; &quot;x&quot;
+        a backslash \\ and a tab\tand a non-BMP 😀
+        </script><img src=x onerror="window.__pwned = true"><script>
+        <!--<script>
+        """
+
+    /// The real "Remember page" path, end to end: the shipped
+    /// `InternalPages.markdownScript` posts to the `qwave` message handler, and
+    /// this drives the actual button rather than re-implementing its reader.
+    func testRememberPageButtonDeliversTheSourceByteForByte() async throws {
+        let sink = MessageSink()
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(sink, name: "qwave")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString(
+            InternalPages.markdownHTML(
+                title: "README.md",
+                bodyHTML: MarkdownCompiler.compile(Self.roundTripSource, trust: .compilerOutputOnly),
+                source: Self.roundTripSource,
+                allowRemember: true
+            ),
+            baseURL: URL(string: "file:///tmp/README.md")
+        )
+
+        // The button exists as soon as the overlay parses, but the script that
+        // listens on it is the last element in `<body>` — so keep clicking until
+        // a message actually arrives rather than assuming the first click lands.
+        var clicked = false
+        for _ in 0..<80 where sink.last == nil {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let value = try? await webView.evaluateJavaScript(
+                """
+                String((function () {
+                  const b = document.querySelector('[data-remember="page"]');
+                  if (!b || document.readyState !== 'complete') { return false; }
+                  b.click();
+                  return true;
+                })())
+                """)
+            clicked = clicked || value as? String == "true"
+        }
+        try XCTSkipUnless(clicked, "WKWebView could not load a document in this test process")
+        let received = try XCTUnwrap(sink.last, "the Remember button posted no message")
+        XCTAssertEqual(received["scope"] as? String, "page")
+        XCTAssertEqual(
+            received["text"] as? String, Self.roundTripSource,
+            "Remember page did not round-trip the source")
+    }
+
+    /// `BrowserWindowController.rememberCurrentSelection` lives in the app
+    /// target, which has no test bundle — so it evaluates
+    /// `InternalPages.markdownSourceExpression`, and this exercises that exact
+    /// string against a real document. A copy of the reader in this test would
+    /// pass while the shipped one drifted.
+    func testRememberCurrentSelectionExpressionRoundTripsTheSource() async throws {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        webView.loadHTMLString(html, baseURL: URL(string: "file:///tmp/README.md"))
+        webView.loadHTMLString(
+            InternalPages.markdownHTML(
+                title: "README.md",
+                bodyHTML: MarkdownCompiler.compile(Self.roundTripSource, trust: .compilerOutputOnly),
+                source: Self.roundTripSource,
+                allowRemember: true
+            ),
+            baseURL: URL(string: "file:///tmp/README.md")
+        )
 
         var text: String?
         for _ in 0..<80 where text == nil {
             try? await Task.sleep(nanoseconds: 100_000_000)
-            let value = try? await webView.evaluateJavaScript(
-                "String((document.getElementById('qwave-source') || {}).textContent)")
-            if let string = value as? String, string != "undefined" { text = string }
+            let value = try? await webView.evaluateJavaScript(InternalPages.markdownSourceExpression)
+            if let string = value as? String, !string.isEmpty { text = string }
         }
         try XCTSkipUnless(text != nil, "WKWebView could not load a document in this test process")
-        XCTAssertEqual(text, "a &lt;b&gt; &amp; &quot;c&quot;")
+        XCTAssertEqual(text, Self.roundTripSource, "the shared reader did not round-trip the source")
+    }
+
+    /// A page with no source block reads as empty rather than throwing out of
+    /// `JSON.parse` — the `qwave://` internal pages pass `markdownSource: nil`.
+    func testSourceExpressionIsEmptyWithoutASourceBlock() async throws {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.loadHTMLString("<html><body><p>no source here</p></body></html>", baseURL: nil)
+
+        var ready = false
+        var text: String?
+        for _ in 0..<80 where !ready {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let state = try? await webView.evaluateJavaScript("String(document.readyState)")
+            guard state as? String == "complete" else { continue }
+            text = try? await webView.evaluateJavaScript(InternalPages.markdownSourceExpression) as? String
+            ready = true
+        }
+        try XCTSkipUnless(ready, "WKWebView could not load a document in this test process")
+        XCTAssertEqual(text, "")
+    }
+
+    /// The third consumer, which the issue does not name but which reads the
+    /// same element for the summariser's article text.
+    func testArticleExtractorRoundTripsTheSource() async throws {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.loadHTMLString(
+            InternalPages.markdownHTML(
+                title: "README.md",
+                bodyHTML: MarkdownCompiler.compile(Self.roundTripSource, trust: .compilerOutputOnly),
+                source: Self.roundTripSource,
+                allowRemember: true
+            ),
+            baseURL: URL(string: "file:///tmp/README.md")
+        )
+
+        var extracted: String?
+        for _ in 0..<80 where extracted == nil {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let value = try? await webView.evaluateJavaScript(ArticleExtractor.userScript)
+            if let json = value as? String,
+                let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                let text = object["text"] as? String, !text.isEmpty
+            {
+                extracted = text
+            }
+        }
+        try XCTSkipUnless(extracted != nil, "WKWebView could not load a document in this test process")
+        XCTAssertEqual(extracted, Self.roundTripSource, "the extractor did not round-trip the source")
+    }
+}
+
+/// Collects `window.webkit.messageHandlers.qwave.postMessage` payloads so a
+/// test can drive the shipped page script instead of a copy of it.
+@MainActor
+private final class MessageSink: NSObject, WKScriptMessageHandler {
+    private(set) var last: [String: Any]?
+
+    func userContentController(
+        _ controller: WKUserContentController, didReceive message: WKScriptMessage
+    ) {
+        last = message.body as? [String: Any]
     }
 }
 

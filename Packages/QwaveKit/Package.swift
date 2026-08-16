@@ -192,7 +192,12 @@ let package = Package(
         ),
         .testTarget(name: "FeatureFlagsTests", dependencies: ["FeatureFlags"], swiftSettings: swift6),
         .testTarget(name: "WebCredentialsTests", dependencies: ["WebCredentials"], swiftSettings: swift6),
-        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity"], swiftSettings: swift6),
+        .testTarget(
+            // MemoryWave: `ArticleExtractor.userScript` is a third reader of the
+            // `qwave-source` block that `InternalPages` writes, so its round trip
+            // is checked against the real embedding (issue #138).
+            name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity", "MemoryWave"],
+            swiftSettings: swift6),
         .testTarget(
             name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
             swiftSettings: swift6),

@@ -6,11 +6,20 @@ import Foundation
 public enum ArticleExtractor {
     public static let userScript = """
         (function () {
-          const src = document.getElementById('qwave-source');
-          if (src && src.textContent) {
+          // `qwave-source` carries the markdown as a JSON literal. `script` is
+          // a raw-text element, so `.textContent` does not decode character
+          // references and reading it directly yielded the escaped spelling of
+          // the document (issue #138). `JSON.parse` is the exact inverse of
+          // `InternalPages.markdownSourceLiteral`.
+          const el = document.getElementById('qwave-source');
+          let src = '';
+          if (el) {
+            try { src = JSON.parse(el.textContent); } catch (e) { src = ''; }
+          }
+          if (src) {
             return JSON.stringify({
               title: (document.title || '').trim(),
-              text: src.textContent,
+              text: src,
               href: location.href
             });
           }
