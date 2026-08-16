@@ -156,20 +156,7 @@ public enum NibbleMarkdown {
     /// written before this fix keep decoding -- they are not silently
     /// dropped from recall, they simply were never sealed to begin with.
     public static func decode(_ text: String, key: SymmetricKey) -> MemoryNibble? {
-        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        guard normalized.hasPrefix("---\n") else { return nil }
-        let rest = normalized.dropFirst(4)
-        guard let end = rest.range(of: "\n---\n") else { return nil }
-        let header = String(rest[..<end.lowerBound])
-        let bodyText = String(rest[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        var fields: [String: String] = [:]
-        for line in header.split(whereSeparator: \.isNewline) {
-            let raw = String(line)
-            guard let colon = raw.firstIndex(of: ":") else { continue }
-            let fieldKey = String(raw[..<colon]).trimmingCharacters(in: .whitespaces)
-            let value = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            fields[fieldKey] = value
-        }
+        guard let (fields, bodyText) = frontMatter(text) else { return nil }
         // `tags_sealed` is the current layout; `tags` is the plaintext list
         // written before the tags were sealed (and by the pre-#81 format), kept
         // readable so those files are not dropped from recall.
@@ -215,6 +202,47 @@ public enum NibbleMarkdown {
             id: id, title: title, body: body, tags: tags, url: url, created: created,
             kind: kind, containerID: container, lane: lane
         )
+    }
+
+    /// Splits `---` front matter from the body. Shared by `decode` and
+    /// `needsReseal(_:)` so the migration decides on exactly the fields the
+    /// decoder reads, rather than on a second, drifting parser.
+    private static func frontMatter(_ text: String) -> (fields: [String: String], body: String)? {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard normalized.hasPrefix("---\n") else { return nil }
+        let rest = normalized.dropFirst(4)
+        guard let end = rest.range(of: "\n---\n") else { return nil }
+        let header = String(rest[..<end.lowerBound])
+        let bodyText = String(rest[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var fields: [String: String] = [:]
+        for line in header.split(whereSeparator: \.isNewline) {
+            let raw = String(line)
+            guard let colon = raw.firstIndex(of: ":") else { continue }
+            let fieldKey = String(raw[..<colon]).trimmingCharacters(in: .whitespaces)
+            let value = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            fields[fieldKey] = value
+        }
+        return (fields, bodyText)
+    }
+
+    /// True when this file's front matter predates the current sealing and the
+    /// vault should rewrite it (issue #120).
+    ///
+    /// Two generations qualify: pre-#107 files with no `sealed:` marker at all
+    /// (title, body and `url:` in the clear), and the files written between
+    /// #107 and the tag sealing, which carry `sealed:` but publish the derived
+    /// host/title words through a plaintext `tags:` line. `tags_sealed` is
+    /// never empty for a file this encoder wrote -- sealing an empty tag list
+    /// still yields a 28-byte box -- so an empty value means "not written by
+    /// the current encoder", not "no tags".
+    ///
+    /// Anything that is not front-matter markdown at all returns `false`: the
+    /// migration's job is to upgrade nibbles, never to touch files it does not
+    /// recognise.
+    public static func needsReseal(_ text: String) -> Bool {
+        guard let (fields, _) = frontMatter(text) else { return false }
+        if fields["sealed"] != sealedMarker { return true }
+        return (fields["tags_sealed"] ?? "").isEmpty
     }
 
     private static func decodeLegacyPlaintext(
