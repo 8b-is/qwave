@@ -13,6 +13,7 @@ import Persistence
 /// its own domain and would never see a value the app wrote. So the gate names
 /// the app's domain (`is.8b.qwave`) explicitly. If that suite cannot be opened
 /// at all, the gate stays closed — a missing preference store is not consent.
+///
 /// `@unchecked Sendable` for the same reason `MemoryWavePreferences` is: the
 /// only stored state is a `let` `UserDefaults`, which is documented as
 /// thread-safe but carries no `Sendable` conformance in the SDK.
