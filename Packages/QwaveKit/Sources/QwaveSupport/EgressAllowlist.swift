@@ -7,17 +7,22 @@ import Foundation
 /// (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that consults this
 /// allowlist and fails any request to a host not listed here, and it is
 /// wired into every fixed-host Qwave network client (`MullvadAPIClient` via
-/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, and —
-/// through `URLProtocol.registerClass` at process start — any default- or
-/// shared-configuration session). See #77.
+/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, Memory
+/// Wave's remote provider) plus, through `URLProtocol.registerClass` at
+/// process start, `URLSession.shared` — and only that session. A session
+/// Qwave constructs is never reached by that registration, not even one built
+/// from `URLSessionConfiguration.default`; see `EgressGuard`'s doc comment and
+/// `EgressGuardTests
+/// .testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`.
+/// See #77.
 ///
 /// It still is **not** a mechanical guarantee over the whole codebase: it
 /// governs Category A only, a constructed session that skips
 /// `EgressGuard.install(into:)` is not caught, and some Category-A clients
-/// (Memory Wave's user-configurable endpoint, the favicon loader, the
-/// remote-markdown fetch, the VPN's in-tunnel quantum handshake) are
-/// deliberately excluded because their destination is not a fixed host by
-/// design — see `EgressGuard`'s doc comment for the per-client rationale.
+/// (the favicon loader, the remote-markdown fetch, the VPN's in-tunnel
+/// quantum handshake) are deliberately excluded because their destination is
+/// not a fixed host by design — see `EgressGuard`'s doc comment for the
+/// per-client rationale.
 /// Those exclusions are not all the same mechanism: most simply never install
 /// the guard, but the remote-markdown fetch runs on `URLSession.shared` — the
 /// one session global registration does reach — and is excluded only because
@@ -26,6 +31,13 @@ import Foundation
 /// client still has to be wired up (and documented in docs/NETWORK.md) by
 /// whoever adds it. Keep the list current: it is both what `EgressGuard`
 /// checks against at runtime and what a reviewer checks a diff against.
+///
+/// Memory Wave's provider used to be on that exclusion list. It no longer is:
+/// its session installs the guard like any other fixed-host client, and the
+/// one thing that makes it different — a base URL the user may point anywhere
+/// — is handled per request by `EgressGuard.markUserConfiguredEndpoint(_:)`
+/// rather than by opting out. Nothing about that reaches this list: a host the
+/// user configured is not permitted here, for anyone else, ever.
 public enum EgressAllowlist {
     /// Permitted Category-A hosts, each with why it exists. Favicon and
     /// remote-markdown fetches are deliberately absent: their host is
@@ -40,10 +52,12 @@ public enum EgressAllowlist {
         // Mullvad VPN control API. Only when the VPN is used.
         "api.mullvad.net",
         // Memory Wave remote AI provider, default endpoint (off by default,
-        // user-configurable to any HTTPS endpoint). Carries the page text you
-        // summarise or ask about; a timeline summary carries titles, times and
-        // hosts instead. Stored memory bodies are never attached.
-        // See docs/NETWORK.md.
+        // user-configurable to any HTTPS endpoint — a host you configure
+        // instead is permitted only on the provider's own request, through
+        // `EgressGuard.userConfiguredEndpoint`, never through this
+        // list). Carries the page text you summarise or ask about; a timeline
+        // summary carries titles, times and hosts instead. Stored memory
+        // bodies are never attached. See docs/NETWORK.md.
         "api.x.ai",
         // Omnibox autocomplete suggestions (off by default,
         // `networkSuggestionsEnabled`). Carries the text you are typing into
@@ -55,6 +69,11 @@ public enum EgressAllowlist {
     /// True when `host` is a permitted Category-A destination — exact match
     /// or a subdomain of an allowlisted host (e.g. `objects.githubusercontent
     /// .com` is not `github.com`, but `codeload.github.com` is).
+    ///
+    /// Committed hosts only. The one host a user may add — Memory Wave's
+    /// configured endpoint — is deliberately **not** reachable from here: it
+    /// is checked per request by `EgressGuard`, so it can never become a
+    /// destination for some other client that happens to consult this.
     public static func permits(host: String?) -> Bool {
         guard let host = host?.lowercased(), !host.isEmpty else { return false }
         if hosts.contains(host) { return true }

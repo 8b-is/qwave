@@ -4,7 +4,56 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- **Dead code sweep: `NoOpCredentialIdentitySyncing`,
+  `WebAuthnOriginPolicy.rpIDIsAuthorized`, `WebExtensionHost.uninstallBridge`
+  and `WebExtensionHost.installContentScripts`.** Each had zero shipping
+  callers, verified by grep over the whole tree.
+  `NoOpCredentialIdentitySyncing` had zero references of any kind.
+  `rpIDIsAuthorized` was a bool wrapper whose own doc warned it was the wrong
+  API to call — its only callers were `WebCredentialsTests`, which now assert
+  against `authorizedRPID` directly and so pin the normalized rpID that
+  actually reaches the authenticator, not just the allow/deny bit.
+  `uninstallBridge` had no caller outside its own two tests: every web view is
+  built with a fresh `WKWebViewConfiguration` in `WebViewFactory.makeWebView`,
+  so its `WKUserContentController` dies with the view and nothing ever tore a
+  bridge down. Its `installedUserScripts` bookkeeping (added by #103) was
+  therefore not merely unused but actively harmful — a dictionary keyed on
+  `ObjectIdentifier` of controllers that are never removed, retaining a
+  `WKUserScript` per tab for the life of the process. The scoped-removal rule
+  #76 established is preserved as a comment on
+  `ContentScriptEngine.installContentScripts`, which still returns the scripts
+  it added so a future teardown can be scoped correctly.
+
+### Changed
+- **The issue #86 performance regression test now derives its bound instead of
+  asserting a magic wall clock.** It asserted that 256 rows x5 decode in under
+  5 seconds — a constant with no relationship to the cost it was guarding.
+  It now measures what 256 `WaveSignature` reconstructions cost on the machine
+  running it and requires one 256-row read to come in under that. Failure
+  becomes arithmetic rather than tuning: an eager per-row signature would cost
+  the calibration *plus* SQLite and four AES-GCM opens per row, so it cannot
+  land below it. On this Mac the healthy path measures 0.16s against a 2.8s
+  calibration (an 18x margin), and a mutation that restores the eager
+  computation fails the assertion at 3.14s vs 2.79s.
+
 ### Documentation
+- **`WebExtensions` content scripts are not active in the shipping app.**
+  `BrowserWindowController.ensureWebView` installs the `browser.*` bridge and
+  nothing else, so `ContentScriptEngine` — match-pattern resolution and the
+  `ExtensionContentWorld.isolated` world separation alike — is reached only
+  from tests. An installed extension's `content_scripts` manifest entries are
+  never injected into a tab. This was previously implied by nothing at all; it
+  is now stated on the `WebExtensionHost` type, along with what wiring it up
+  would require (per-navigation injection keyed on the committed URL, plus
+  scoped removal against a controller shared with the WebAuthn shim, the
+  password-capture shim and the content blockers).
+- **`CredentialSaver`'s "never drift apart" guarantee holds for saves only.**
+  The type doc claimed routing every save/remove through it kept the keychain
+  and the `ASCredentialIdentityStore` index in step. `remove(domain:username:)`
+  has no shipping caller — there is no credential-deletion UI, and
+  `PasswordCaptureBridge` only ever calls `save` — so a login deleted out of
+  band leaves its AutoFill identity behind. The doc now says so.
 - **`duckduckgo.com` omnibox suggestion egress added to `EgressAllowlist` and
   `docs/NETWORK.md`.** `DuckDuckGoSuggestionProvider` has hardcoded
   `https://duckduckgo.com/ac/` as its suggestion endpoint since the omnibox
@@ -20,6 +69,62 @@ All notable changes to Qwave will be documented in this file.
   ([#78](https://github.com/8b-is/qwave/issues/78))
 
 ### Security
+- **Nibble files left plaintext by a pre-#107 release are now re-sealed on
+  disk (#120).** #107 sealed the vault, but only for files written after it;
+  everything a shipped release wrote before that still had its `# Title`, page
+  text and `url:` in the clear, in the same folder whose README told the user
+  it held ciphertext. The legacy-plaintext fallback in `NibbleMarkdown.decode`
+  kept those memories in recall — correctly — which is exactly why they were
+  never upgraded. `NibbleVault.resealLegacyNibbles()` now runs in the
+  background at launch and rewrites them, along with the in-between generation
+  that carried `sealed:` plus a cleartext `tags:` line derived from the URL
+  host and title words. It is idempotent (the decision is per file, from its
+  own front matter, so a second run rewrites nothing and a restored backup is
+  still upgraded), atomic (sealed replacement written to a sibling temp file,
+  fsynced, decoded back and compared field-by-field, then `rename(2)`d over
+  the original — the rename is the only destructive step), and it never
+  deletes: anything it cannot read or cannot decode with this key is left
+  exactly as found and counted. If the master key is missing or malformed the
+  pass does nothing at all and logs it, rather than sealing memories under a
+  key the rest of the user's data does not use.
+
+  Scope, stated plainly: this rewrites the files in Qwave's own vault folder
+  and nothing else. Plaintext that already escaped it stays escaped — Spotlight
+  index entries, Time Machine snapshots, any other backup, and any copy already
+  synced to iCloud Drive, Dropbox or another Mac are untouched and out of reach
+  of this pass. A user who needs those gone has to clear them by hand.
+
+- **`EgressGuard` now covers Memory Wave's remote provider, which it never
+  did.** The guard had two production install sites
+  (`URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider).
+  `OpenAICompatibleProvider` builds its session from
+  `URLSessionConfiguration.ephemeral` — which the process-wide
+  `URLProtocol.registerClass` in `main.swift` does not reach — and never
+  called `EgressGuard.install(into:)`. So `api.x.ai` was on `EgressAllowlist`
+  as a comment: the guard had never blocked, permitted or observed one
+  provider request. The documented reason for the exclusion (the base URL is
+  user-configurable to any HTTPS endpoint, so it cannot be pinned to a
+  committed list) was true of the committed list and true of nothing else.
+  The provider's session now installs the guard. The user-configurable half is
+  carried **per request**: `OpenAICompatibleProvider` marks its own request
+  with `EgressGuard.markUserConfiguredEndpoint(_:)` (the same shape as the
+  existing `markPageDriven(_:)`), and the guard resolves that mark against the
+  endpoint configured in Settings *at the moment it checks* — exact match only,
+  where the committed list matches subdomains. Custom endpoints keep working;
+  a host neither committed nor configured is refused before the request reaches
+  the network.
+
+  Two consequences worth stating plainly, because the first draft of this
+  change got both wrong by keeping the host in a process-wide slot on
+  `EgressAllowlist`. **Revocation is immediate**: Settings writes the
+  preference and calls nothing else, so a permission derived from a provider
+  being built would have survived until the next inference — and, if you had
+  just switched the provider off, for the rest of the process. Nothing is
+  cached, so there is nothing to go stale. And **the permission is not
+  process-wide**: the endpoint you configured for Memory Wave is reachable by
+  Memory Wave's own request, not by `URLSession.mullvadPinned()`, the
+  DuckDuckGo suggestion session, or anything on `URLSession.shared`.
+  `EgressAllowlist.permits(host:)` remains purely the committed list.
 - **NibbleVault no longer mirrors Memory Wave bodies as plaintext markdown
   (#81).** `MemoryStore` AES-GCM seals title/body/url before they touch
   SQLite, but the same content was, on every `remember()`, also written by
@@ -211,8 +316,8 @@ All notable changes to Qwave will be documented in this file.
   **Scope, corrected.** This entry first attributed the duplicate timestamp to
   "a caller-supplied `at:` date (an importer, sync path, or backfill)". No such
   caller exists in this codebase. `at:` defaults to `Date()`
-  (`MemoryStore.swift:58`, `:83`) and the only two production insert call sites
-  — `WaveDirector.swift:76` and `:79` — never pass it, so the parameter is
+  (`MemoryStore.swift:59`, `:88`) and the only two production insert call sites
+  — `WaveDirector.swift:112` and `:115` — never pass it, so the parameter is
   reached only from tests. What a production build could still hit is much
   narrower: `WaveInt.nanosecondsSince1970` (`WaveInt.swift:42-48`) multiplies a
   `Double` `timeIntervalSince1970` by 1e9, and at the current epoch that

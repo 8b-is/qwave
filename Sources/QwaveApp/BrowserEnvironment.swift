@@ -48,7 +48,15 @@ final class BrowserEnvironment {
         self.directory = directory
         settings = SettingsStore()
         secrets = KeychainSecretStore()
-        memoryPreferences = MemoryWavePreferences(secrets: secrets)
+        let memoryPreferences = MemoryWavePreferences(secrets: secrets)
+        self.memoryPreferences = memoryPreferences
+        // Tell EgressGuard where to read the Memory Wave endpoint the user has
+        // configured. A closure, not a copy: Settings writes the preference and
+        // calls nothing else, so the guard has to re-read it per request or the
+        // previous host would stay permitted after the user changed it. See
+        // EgressUserConfiguredEndpoint. Installed once, here, because this is
+        // where `memoryPreferences` is created.
+        EgressGuard.userConfiguredEndpoint.use { memoryPreferences.egressPermittedHost }
         containers = ContainerRegistry(directory: directory)
         shieldsPolicy = ShieldsPolicy(directory: directory)
         shields = ShieldsDirector(compiler: RuleListCompiler(), policy: shieldsPolicy)
@@ -109,6 +117,23 @@ final class BrowserEnvironment {
             QwaveLog.memory.error("Memory Wave unavailable: \(error)")
         }
         memoryWave = WaveDirector(store: memoryStore, preferences: memoryPreferences, vault: nibbleVault)
+        // Issue #120: nibbles written by a release older than #107 are still
+        // plaintext on disk. Re-seal them in the background at launch rather
+        // than behind a button: the vault is Qwave's own storage, its README
+        // already tells the user those files are ciphertext, and an opt-in that
+        // most people never find leaves the plaintext exactly where it is.
+        //
+        // Detached and .utility so a large vault never delays the first window;
+        // per-file temp+rename so being killed mid-pass is safe and the next
+        // launch resumes. The pass re-derives the master key itself and does
+        // nothing at all when it cannot be loaded -- it deliberately does not
+        // reuse the key above, so it can never run on a key it minted.
+        let nibbleDirectory = directory.appendingPathComponent("nibbles", isDirectory: true)
+        let migrationSecrets = secrets
+        Task.detached(priority: .utility) {
+            _ = await NibbleVault.resealLegacyNibbles(
+                directory: nibbleDirectory, secrets: migrationSecrets)
+        }
         // The blocklist ships as a committed build-time snapshot (regenerated
         // by scripts/update-blocklist.sh); there is no launch-time fetch, so
         // the app makes no network request at startup. RemoteBlocklistUpdater

@@ -379,12 +379,20 @@ final class MemoryCipherTests: XCTestCase {
     /// Issue #86: `decode` used to recompute a `WaveSignature` (a ~1000-step,
     /// 8-harmonic trig reconstruction — ~16,000 trig calls) for every row even
     /// though nothing read the result. `MemoryRecord.signature` is now computed
-    /// on demand instead of eagerly in `decode`, so reading back a full
-    /// container should stay fast even at the 256-row ceiling `gridWithRecords`
-    /// requests. This bound is generous (a regression here would be a 10-100x
-    /// slowdown, not a marginal one) so it should not be flaky in CI, while
-    /// still catching the eager-signature computation coming back.
-    func testDecodingManyRecordsStaysFastWithoutEagerSignatureComputation() async throws {
+    /// on demand instead of eagerly in `decode`.
+    ///
+    /// The bound here is derived, not guessed. The previous version of this
+    /// test asserted a flat 5-second wall clock for 256 rows x5, which the
+    /// eager path also met comfortably — it read as coverage while gating
+    /// nothing. Instead, measure what 256 signature reconstructions cost on
+    /// this machine and require one full 256-row read to come in under that.
+    ///
+    /// Failure then follows from arithmetic rather than from tuning: if
+    /// `decode` recomputed a signature per row, its cost would be exactly
+    /// those 256 reconstructions *plus* SQLite and four AES-GCM opens per row,
+    /// so it could not land below the calibration. Self-calibrating also means
+    /// a slow or loaded CI box scales both sides of the comparison together.
+    func testDecodingManyRecordsCostsLessThanRecomputingItsSignatures() async throws {
         let secrets = InMemorySecretStore()
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
         for index in 0..<256 {
@@ -392,15 +400,33 @@ final class MemoryCipherTests: XCTestCase {
                 title: "Title \(index)", body: "Body content for record \(index)",
                 url: nil, kind: .note, containerID: nil)
         }
-        let started = Date()
-        for _ in 0..<5 {
-            let records = try await store.records(containerID: nil, limit: 256)
-            XCTAssertEqual(records.count, 256)
+
+        // Calibration: exactly the work the eager path did, on exactly the
+        // content it hashed. The hashes are accumulated so the release-mode
+        // optimiser cannot discard the loop as dead code.
+        var checksum: UInt64 = 0
+        let calibrationStart = Date()
+        for index in 0..<256 {
+            let signature = WaveSignature.fromContent(
+                Data("Title \(index)\nBody content for record \(index)".utf8),
+                identityFrequency: MemoryWaveConstants.consciousness.doubleValue
+                    * MemoryWaveConstants.goldenRatio.doubleValue
+            )
+            checksum &+= UInt64(signature.interferenceHash.reduce(0) { UInt64($0) &+ UInt64($1) })
         }
+        let eagerSignatureCost = Date().timeIntervalSince(calibrationStart)
+        XCTAssertNotEqual(checksum, 0, "calibration loop must actually run")
+
+        let decodeStart = Date()
+        let records = try await store.records(containerID: nil, limit: 256)
+        let decodeCost = Date().timeIntervalSince(decodeStart)
+        XCTAssertEqual(records.count, 256)
+
         XCTAssertLessThan(
-            Date().timeIntervalSince(started), 5,
-            "decoding 256 rows x5 should be dominated by AES-GCM/SQLite work, "
-                + "not a re-triggered ~16,000-trig-op signature per row")
+            decodeCost, eagerSignatureCost,
+            "reading 256 rows took \(decodeCost)s, no less than the "
+                + "\(eagerSignatureCost)s it costs to recompute their signatures — "
+                + "decode is computing a WaveSignature per row again (issue #86)")
     }
 
     /// Regression: a stored key of the wrong length used to fall through to the
@@ -661,6 +687,13 @@ final class MemoryWavePolicyTests: XCTestCase {
         XCTAssertEqual(ephemeral, .deny(.ephemeral))
     }
 
+    /// The policy in isolation. Note what this does *not* say: the policy is a
+    /// pure function over a context the caller supplies, so passing here says
+    /// nothing about whether any caller ever supplies this context. In normal
+    /// operation none does — `ask` declares stored memory only for the
+    /// on-device provider — which is why this branch can look decorative. That
+    /// it is genuinely reachable through `infer` is pinned separately by
+    /// `WaveDirectorTests.testDeclaringStoredMemoryAgainstARemoteProviderIsRefused`.
     func testRemoteCannotCarryStoredMemory() {
         let leak = MemoryWavePolicy.decide(
             MemoryWaveContext(
@@ -1181,6 +1214,121 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertTrue(sent.contains("visible page"))
     }
 
+    /// `MemoryWavePolicy`'s `.deny(.cognitiveEgress)` branch, reached through
+    /// `infer` rather than by calling the policy directly — the thing nothing
+    /// asserted before, and the reason it was possible to believe the branch
+    /// was decorative.
+    ///
+    /// Honest about what this test does and does not catch. It passes both
+    /// with and without the `&& provider.kind == .openaiCompatible` conjunct
+    /// this change removed, because that conjunct was exactly redundant with
+    /// the policy's own outer check. What it does catch is the edit that
+    /// conjunct *looked* like: a caller that pre-sanitises the intent it
+    /// declares (`&& provider.kind == .onDevice`, say) so the policy can never
+    /// see the dangerous pair. Do that and this test goes red.
+    ///
+    /// It is also not what protects stored memories today — the recall block
+    /// is appended only when `provider.kind == .onDevice`
+    /// (`WaveDirector.swift`), and that check runs after this one. This is
+    /// defence in depth behind it.
+    ///
+    /// Production cannot produce this pair right now: `resolveProvider()`
+    /// returns a provider of the configured kind, pinned below by
+    /// `testResolvedProviderKindMatchesTheConfiguredPreference`. An override is
+    /// how a future caller's mistake is simulated today.
+    func testDeclaringStoredMemoryAgainstARemoteProviderIsRefused() async throws {
+        let secrets = InMemorySecretStore()
+        let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+        // `ask` declares includeStoredMemory from this preference.
+        prefs.providerKind = .onDevice
+
+        let captured = RequestCapture()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CaptureProtocol.self]
+        CaptureProtocol.capture = captured
+        CaptureProtocol.responseJSON = """
+            {"choices":[{"message":{"role":"assistant","content":"ok"}}]}
+            """
+
+        let director = WaveDirector(store: store, preferences: prefs)
+        director.providerOverride = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            session: URLSession(configuration: config)
+        )
+
+        do {
+            let answer = try await director.ask(
+                prompt: "What do you know?", page: nil, containerID: nil,
+                isEphemeral: false, inferenceAllowed: true)
+            XCTFail("stored memory declared against a remote provider must be refused, got \(answer.text)")
+        } catch {
+            XCTAssertEqual(error as? MemoryProviderError, .denied(.cognitiveEgress))
+        }
+        XCTAssertNil(captured.url, "the refused request must never be built")
+
+        // And why the declared intent has to arrive intact: hand the same
+        // policy a pre-sanitised `includeStoredMemory` — the shape the removed
+        // conjunct suggested — and it has nothing left to refuse. That is what
+        // this test goes red on.
+        XCTAssertEqual(
+            MemoryWavePolicy.decide(
+                MemoryWaveContext(
+                    isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                    provider: .openaiCompatible, includeStoredMemory: false,
+                    destination: .infer,
+                    remoteBaseURL: MemoryWavePreferences.defaultRemoteBaseURL)),
+            .allow)
+    }
+
+    /// The invariant that keeps the tripwire above dormant in normal
+    /// operation, so a future divergence fails here rather than silently
+    /// disarming the gate. `ask` decides whether to declare stored memory from
+    /// `preferences.providerKind == .onDevice`; `infer` decides whether to
+    /// actually attach it from `provider.kind == .onDevice`. Those two agree
+    /// only because `resolveProvider()` returns a provider of the configured
+    /// kind. Add a fallback there — on-device unavailable, so use the remote
+    /// one — and they diverge: the declared intent becomes true while the
+    /// provider is remote, and Ask starts failing with `.cognitiveEgress`.
+    func testResolvedProviderKindMatchesTheConfiguredPreference() throws {
+        for kind in MemoryProviderKind.allCases {
+            let secrets = InMemorySecretStore()
+            let prefs = MemoryWavePreferences(
+                defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+            prefs.providerKind = kind
+            try prefs.setAPIKey("test-key")
+            let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+            let resolved = try director.resolveProvider().kind
+            XCTAssertEqual(
+                resolved, kind,
+                "resolveProvider() must not substitute a different provider kind for \(kind)")
+
+            // The two expressions, evaluated over that pair.
+            let declaresStoredMemory = prefs.providerKind == .onDevice
+            let attachesStoredMemory = resolved == .onDevice
+            XCTAssertEqual(
+                declaresStoredMemory, attachesStoredMemory,
+                "the declared intent and the caller-side guard must agree for \(kind)")
+
+            // And so the context `infer` builds never trips the tripwire.
+            // (`.none` is still denied, as `.providerDisabled` — that is the
+            // offline default working, not this gate firing.)
+            XCTAssertNotEqual(
+                MemoryWavePolicy.decide(
+                    MemoryWaveContext(
+                        isExplicit: true, isEphemeral: false, inferenceAllowed: true,
+                        provider: resolved, includeStoredMemory: declaresStoredMemory,
+                        destination: .infer,
+                        remoteBaseURL: kind == .openaiCompatible ? prefs.remoteBaseURL : nil)),
+                .deny(.cognitiveEgress),
+                "the tripwire must stay dormant in normal operation for \(kind)")
+        }
+    }
+
     /// `resolveProvider()` is the only place the shipping app builds a remote
     /// provider, so it is the only place the bounded session can be lost.
     /// Passing `session: .shared` there would restore the seven-day ceiling
@@ -1211,6 +1359,39 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
     }
 
+    /// What `EgressGuard` reads on every provider request, and the one place
+    /// it is derived: the *current* preference, not a copy taken when a
+    /// provider was last built. It has to agree with the base URL
+    /// `resolveProvider()` hands the provider — a provider pointed at a host
+    /// the guard resolves differently is refused at the transport — so the two
+    /// are asserted against each other rather than against a literal.
+    ///
+    /// The revocation this buys is pinned end-to-end, through the guard, by
+    /// `EgressGuardTests.testChangingTheEndpointInSettingsRevokesTheOldHostImmediately`.
+    func testEgressPermittedHostTracksTheCurrentPreference() throws {
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: InMemorySecretStore())
+        prefs.providerKind = .openaiCompatible
+        prefs.remoteBaseURL = URL(string: "https://ollama.self-hosted.example/v1")!
+        try prefs.setAPIKey("test-key")
+        let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
+
+        let provider = try XCTUnwrap(director.resolveProvider() as? OpenAICompatibleProvider)
+        XCTAssertEqual(prefs.egressPermittedHost, provider.baseURL.host)
+
+        // Settings alone moves it: no provider is rebuilt in between, because
+        // Settings does not rebuild one.
+        prefs.remoteBaseURL = URL(string: "https://elsewhere.example/v1")!
+        XCTAssertEqual(prefs.egressPermittedHost, "elsewhere.example")
+
+        // Every non-remote kind permits nothing, whatever base URL is left
+        // lying in the preference.
+        for kind in [MemoryProviderKind.onDevice, .none] {
+            prefs.providerKind = kind
+            XCTAssertNil(prefs.egressPermittedHost, "\(kind) must permit no user-configured host")
+        }
+    }
+
     /// The privacy default: nothing configured means no provider and no egress.
     func testResolveProviderStaysOfflineByDefault() throws {
         let prefs = MemoryWavePreferences(
@@ -1225,9 +1406,11 @@ final class WaveDirectorTests: XCTestCase {
     }
 }
 
-/// The remote provider is the one deliberate step outside `EgressAllowlist`
-/// (the base URL is user-configurable). It must therefore carry an explicit
-/// deadline: a hung endpoint must not hold the summarize flow open.
+/// The remote provider is gated by `EgressGuard` like every other fixed-host
+/// client — it is not, and never should have been described as, a step outside
+/// the allowlist. What is genuinely user-configurable is its base URL, which is
+/// why it must also carry an explicit deadline: a hung endpoint must not hold
+/// the summarize flow open.
 final class RemoteProviderTimeoutTests: XCTestCase {
     func testDefaultSessionCarriesBothDeadlines() {
         let provider = OpenAICompatibleProvider(
