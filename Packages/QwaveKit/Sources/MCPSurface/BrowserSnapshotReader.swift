@@ -114,6 +114,18 @@ public enum BrowserSnapshotError: Error, Sendable, Equatable {
 /// mode with a 5s busy timeout (SQLiteDatabase.swift:84-89), so a reader in
 /// another process gets a consistent committed snapshot without blocking the
 /// browser's writer and without being blocked by it.
+///
+/// One honest caveat on "read-only": `SQLiteDatabase(url:)` opens
+/// `SQLITE_OPEN_READWRITE`, and `HistoryStore.init` runs its schema migration.
+/// Against a database the browser has already migrated that is a
+/// `PRAGMA user_version` read and nothing else; against a stale one it would
+/// apply `CREATE TABLE IF NOT EXISTS`. Every *query* below is a SELECT and
+/// there is no code path here that inserts, updates or deletes. A kernel-
+/// enforced `SQLITE_OPEN_READONLY` handle would be tidier, but it would mean
+/// hand-writing the SELECTs instead of reusing the browser's own stores — and
+/// duplicated SQL is precisely how a reporting surface drifts into lying about
+/// what the browser holds. It would also buy no security: anyone who can spawn
+/// this binary can already open `browser.db` themselves.
 public actor BrowserSnapshotReader {
     private let location: QwaveProfileLocation
     private let now: @Sendable () -> Date
