@@ -370,7 +370,21 @@ public final class WaveDirector {
         )
     }
 
+    /// Builds the provider for the configured preference, and — in the same
+    /// step, because they must not disagree — tells `EgressGuard` which single
+    /// user-chosen host the provider's session may reach.
+    ///
+    /// This is the **only** writer of `EgressAllowlist.userConfiguredHost`.
+    /// The slot exists because the remote base URL is user-configurable to any
+    /// HTTPS endpoint while the committed allowlist can only name the default;
+    /// setting it anywhere else would let it drift from the base URL actually
+    /// handed to the provider, which is the whole thing it has to match.
+    /// Every other provider kind clears it, so switching away from the remote
+    /// provider revokes the host rather than leaving it permitted.
     public func resolveProvider() throws -> any MemoryProviding {
+        EgressAllowlist.userConfiguredHost.set(
+            preferences.providerKind == .openaiCompatible ? preferences.remoteBaseURL.host : nil
+        )
         if let providerOverride { return providerOverride }
         switch preferences.providerKind {
         case .none:

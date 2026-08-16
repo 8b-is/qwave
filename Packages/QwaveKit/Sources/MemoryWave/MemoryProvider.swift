@@ -38,10 +38,18 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
     /// Ephemeral so a session carrying a bearer token shares no cookie or
     /// cache storage, and shared so repeated inferences reuse one connection
     /// pool instead of leaking a session per call.
+    ///
+    /// A custom configuration, so the process-wide `URLProtocol.registerClass`
+    /// in `main.swift` never reaches it — `EgressGuard.install(into:)` is what
+    /// gates this session, and without that call the allowlist had no opinion
+    /// on a single request this provider ever made. The user-configurable
+    /// endpoint keeps working because `WaveDirector.resolveProvider()` puts its
+    /// host in `EgressAllowlist.userConfiguredHost`.
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = defaultTimeout
         configuration.timeoutIntervalForResource = defaultResourceTimeout
+        EgressGuard.install(into: configuration)
         return URLSession(configuration: configuration)
     }()
 

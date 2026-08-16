@@ -18,7 +18,7 @@ import Foundation
 ///    builds its own session, so each must add `EgressGuard.self` explicitly:
 ///    see `EgressGuard.install(into:)` below and its call sites
 ///    (`MullvadCertificatePinner.mullvadPinned()`,
-///    `SearchSuggestionProvider.swift`). Pinned by
+///    `SearchSuggestionProvider.swift`, `MemoryProvider.swift`). Pinned by
 ///    `EgressGuardTests.testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`,
 ///    because reading that sentence as "default-configuration sessions are
 ///    covered" is what let the markdown regression below through.
@@ -27,19 +27,29 @@ import Foundation
 ///    (page subresources) or Category C (WebKit's own network process);
 ///    those never go through `URLSession` at all.
 ///  - Some Category-A clients are **deliberately** not gated here because
-///    their destination is not a fixed set of hosts by design: Memory Wave's
-///    provider is user-configurable to any HTTPS endpoint
-///    (`MemoryWavePolicy` + `EndpointRedirectPolicy` guard that path
-///    instead), the favicon loader and remote-markdown fetch are
-///    page-driven, and the VPN's in-tunnel quantum handshake target is
-///    intentionally excluded from the open-internet allowlist. Gating those
-///    here would either break an intentional feature or duplicate an
-///    existing guard; see the call sites for the per-client rationale.
+///    their destination is not a fixed set of hosts by design: the favicon
+///    loader and remote-markdown fetch are page-driven, and the VPN's
+///    in-tunnel quantum handshake target is intentionally excluded from the
+///    open-internet allowlist. Gating those here would either break an
+///    intentional feature or duplicate an existing guard; see the call sites
+///    for the per-client rationale.
+///  - Memory Wave's provider **is** gated, as of this change. It used to head
+///    the list above, on the argument that a base URL the user can point
+///    anywhere cannot be allowlisted — which was true of the committed list
+///    and true of nothing else, so the practical effect was that the guard
+///    never saw a single provider request. It now installs into the provider's
+///    session like any other fixed-host client, and the user-configurable part
+///    is carried by `EgressAllowlist.userConfiguredHost`: one slot, exact
+///    match, set only from `WaveDirector.resolveProvider()` out of the same
+///    preference the base URL comes from. `MemoryWavePolicy` and
+///    `EndpointRedirectPolicy` still guard that path for what they always
+///    guarded (declared intent, and redirects off the configured origin);
+///    this adds the host check they never performed.
 ///
 /// Two of those exclusions hold for **different mechanical reasons**, and
-/// conflating them cost a working feature. `FaviconLoader` and Memory Wave
-/// each build their own session and simply never call `install(into:)`, so
-/// nothing here ever sees them. The remote-markdown fetch does not: it runs on
+/// conflating them cost a working feature. `FaviconLoader`
+/// builds its own session and simply never calls `install(into:)`, so
+/// nothing here ever sees it. The remote-markdown fetch does not: it runs on
 /// `URLSession.shared` (`BrowserCore/NavigationCoordinator.swift`), the one
 /// session `registerClass` above *does* reach. So for four documents' worth of
 /// prose claiming it was ungated, it was in fact gated — and navigating to any

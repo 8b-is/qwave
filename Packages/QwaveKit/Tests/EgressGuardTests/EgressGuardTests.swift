@@ -244,6 +244,43 @@ final class EgressGuardTests: XCTestCase {
         )
     }
 
+    /// Production call site 3: Memory Wave's remote provider. Its default
+    /// session is built from `URLSessionConfiguration.ephemeral`, so the
+    /// process-wide `registerClass` in `main.swift` never reaches it either.
+    func testMemoryProviderDefaultSessionInstallsEgressGuard() {
+        let provider = OpenAICompatibleProvider(
+            baseURL: MemoryWavePreferences.defaultRemoteBaseURL,
+            model: "grok-4.6",
+            apiKey: "test-key"
+        )
+        XCTAssertTrue(
+            provider.session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
+            "the Memory Wave provider's default session must install EgressGuard"
+        )
+    }
+
+    /// `.invalid` is reserved by RFC 6761 and never resolves, so this makes no
+    /// real connection either way — which is exactly what makes it a clean
+    /// red/green: ungated, the request dies at DNS and `BlockedError` does not
+    /// recover; gated, the guard refuses it before the transport is reached.
+    func testMemoryProviderSessionRefusesAHostNobodyConfigured() async {
+        EgressGuard.onBlock.reset()
+        let provider = OpenAICompatibleProvider(
+            baseURL: URL(string: "https://qwave-provider-probe.invalid/v1")!,
+            model: "grok-4.6",
+            apiKey: "test-key",
+            timeout: 5
+        )
+        do {
+            _ = try await provider.complete(system: "system", user: "user")
+            XCTFail("a request to a host that is neither allowlisted nor user-set must not succeed")
+        } catch {
+            let blocked = EgressGuard.BlockedError(recovering: error)
+            XCTAssertNotNil(blocked, "the provider's session must be gated by EgressGuard, got \(error)")
+            XCTAssertEqual(blocked?.host, "qwave-provider-probe.invalid")
+        }
+    }
+
     // MARK: - Page-driven markdown fetch
 
     /// Answers requests on `URLSession.shared` (the session the production
