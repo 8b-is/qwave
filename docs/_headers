@@ -5,6 +5,12 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Access-Control-Allow-Origin: *
+  # Constellation-standard CSP. script-src carries 'unsafe-inline' because the
+  # vaked.dev zone injects Cloudflare's JS-detection challenge as an inline
+  # bootstrap into every HTML response — blocking it breaks the challenge.
+  # NOTE: GitHub Pages ignores _headers; this ships when qwave moves to
+  # Cloudflare Pages.
+  Content-Security-Policy: default-src 'self' 'unsafe-inline' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https:; connect-src 'self' https: wss:; frame-src 'self' https:
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
