@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#080406"/>
+  <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
+    <stop offset="0" stop-color="#1a0d04"/>
+    <stop offset="1" stop-color="#080406"/>
+  </radialGradient>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <g stroke="#ff7a3d" stroke-opacity="0.4" stroke-width="3" fill="none">
+    <circle cx="600" cy="470" r="170"/>
+    <ellipse cx="600" cy="470" rx="300" ry="60"/>
+  </g>
+  <linearGradient id="flame" x1="600" y1="300" x2="600" y2="530" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#e6b566"/>
+    <stop offset="0.55" stop-color="#ff7a3d"/>
+    <stop offset="1" stop-color="#a34a2a"/>
+  </linearGradient>
+  <path d="M600 250c46 66 22 88 48 118 20 24 34 44 34 76 0 52-38 92-82 92s-82-40-82-92c0-32 14-52 34-76 26-30 2-52 48-118Z" fill="url(#flame)"/>
+  <path d="M600 380c16 22 6 34 19 46 11 11 22 22 22 38 0 24-19 42-41 42s-41-18-41-42c0-16 12-30 22-41 9-11 3-24 19-43Z" fill="#ffe6b0"/>
+  <text x="600" y="150" text-anchor="middle" font-family="Georgia, serif" font-size="46" fill="#c8b8a8">bonfire</text>
+  <text x="600" y="196" text-anchor="middle" font-family="Georgia, serif" font-size="24" fill="#e6b566" font-style="italic">Közösséget nem lehet építeni. Tüzet lehet.</text>
+  <text x="600" y="600" text-anchor="middle" font-family="monospace" font-size="16" fill="#8a6a4a" letter-spacing="4">vaked.dev</text>
+</svg>
