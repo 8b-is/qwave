@@ -66,7 +66,7 @@ let benchmarks: @Sendable () -> Void = {
         """
 
     Benchmark(
-        "MarkdownCompiler.compile (internal doc page)",
+        "MarkdownCompiler.compile_(internal_doc_page)",
         configuration: .init(metrics: checkedMetrics, scalingFactor: .kilo, thresholds: tolerance)
     ) { benchmark in
         for _ in benchmark.scaledIterations {
@@ -79,7 +79,7 @@ let benchmarks: @Sendable () -> Void = {
     }
 
     Benchmark(
-        "InternalPages.startHTML (8 memories)",
+        "InternalPages.startHTML_(8_memories)",
         configuration: .init(metrics: checkedMetrics, scalingFactor: .kilo, thresholds: tolerance)
     ) { benchmark in
         for _ in benchmark.scaledIterations {
@@ -90,7 +90,7 @@ let benchmarks: @Sendable () -> Void = {
     // Exact mirror of QwaveKitBenchmarks' SessionRestorer setup so the
     // numbers are comparable to the committed 65-malloc threshold.
     Benchmark(
-        "SessionRestorer round-trip (40 tabs, re-verify)",
+        "SessionRestorer_round-trip_(40_tabs,_re-verify)",
         configuration: .init(metrics: checkedMetrics, maxDuration: .seconds(20), thresholds: tolerance)
     ) { benchmark in
         await MainActor.run {
