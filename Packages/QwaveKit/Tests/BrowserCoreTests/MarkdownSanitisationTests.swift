@@ -156,6 +156,74 @@ final class MarkdownSanitisationTests: XCTestCase {
         }
     }
 
+    // MARK: - The park marker must not be mintable from source text
+
+    /// Found in review of the #131 fix, and the reason the fix strips U+0000
+    /// rather than hardening the prefix check.
+    ///
+    /// `park` mints `"\u{0000}MD<index>\u{0000}"` and `renderBlock` returns any
+    /// block carrying that prefix **verbatim**, bypassing both escapers. U+0000
+    /// is valid UTF-8 and `LocalDocumentResolver` reads it straight through, so
+    /// before `sanitizeNULs` a downloaded `.md` whose first block began with the
+    /// forged prefix put a live `<script>` into the `file://` origin.
+    ///
+    /// Without the fix this produces `"\u{0000}MD<script>alert(1)</script>"` on
+    /// both paths.
+    func testForgedParkMarkerCannotBypassEscaping() {
+        let hostile = "\u{0000}MD<script>alert(1)</script>"
+        for trust in [MarkdownTrust.compilerOutputOnly, .rawHTMLAllowed] {
+            let html = MarkdownCompiler.compile(hostile, trust: trust)
+            XCTAssertFalse(html.contains("\u{0000}"), "a NUL reached the output under \(trust)")
+            XCTAssertTrue(
+                html.hasPrefix("<p>"),
+                "the block was still returned verbatim under \(trust): \(html.debugDescription)")
+        }
+        // On the local path the tag is now text; on the remote path CommonMark
+        // still renders it, which is the split this PR is built on.
+        XCTAssertEqual(
+            MarkdownCompiler.compile(hostile, trust: .compilerOutputOnly),
+            "<p>\u{FFFD}MD&lt;script&gt;alert(1)&lt;/script&gt;</p>")
+        XCTAssertEqual(
+            MarkdownCompiler.compile(hostile, trust: .rawHTMLAllowed),
+            "<p>\u{FFFD}MD<script>alert(1)</script></p>")
+    }
+
+    /// The other half of the same hole, which is not about raw HTML and so has
+    /// to be closed on *both* paths: a whole forged marker in the source used
+    /// to be substituted by the restore pass, replaying a parked fragment. Here
+    /// that duplicated a code fence; the point is that source text could reach
+    /// into the compiler's own store at all.
+    func testForgedParkMarkerCannotReplayAParkedFragment() {
+        let source = "```swift\nlet x = 1\n```\n\n\u{0000}MD0\u{0000}"
+        for trust in [MarkdownTrust.compilerOutputOnly, .rawHTMLAllowed] {
+            let html = MarkdownCompiler.compile(source, trust: trust)
+            XCTAssertEqual(
+                html.components(separatedBy: "<pre><code").count - 1, 1,
+                "the fence was replayed under \(trust): \(html.debugDescription)")
+            XCTAssertTrue(html.contains("\u{FFFD}MD0\u{FFFD}"), "the forged marker should survive as text")
+        }
+    }
+
+    /// U+0000 anywhere in the source, not only where a marker would go —
+    /// CommonMark 0.31.2 §2.3 requires the replacement unconditionally.
+    func testNULIsReplacedEverywhereOnBothPaths() {
+        for (label, source) in [
+            ("heading", "# a\u{0000}b"),
+            ("paragraph", "text \u{0000} more"),
+            ("fence body", "```\na\u{0000}b\n```"),
+            ("table cell", "| a\u{0000}b | c |\n|---|---|\n| 1 | 2 |"),
+            ("link label", "[a\u{0000}b](https://example.com)"),
+            ("emphasis", "*a\u{0000}b*"),
+            ("list item", "- a\u{0000}b"),
+        ] {
+            for trust in [MarkdownTrust.compilerOutputOnly, .rawHTMLAllowed] {
+                let html = MarkdownCompiler.compile(source, trust: trust)
+                XCTAssertFalse(html.contains("\u{0000}"), "\(label) kept a NUL under \(trust)")
+                XCTAssertTrue(html.contains("\u{FFFD}"), "\(label) lost the replacement under \(trust)")
+            }
+        }
+    }
+
     /// The listing path is markdown the *browser* writes
     /// (`LocalDocumentResolver.directoryListingMarkdown`), from names the
     /// browser does not control, and it renders at a `file://` URL.
@@ -186,6 +254,83 @@ final class MarkdownSanitisationTests: XCTestCase {
         // behaviour the split deliberately keeps — stated here so the two
         // paths cannot silently converge.
         XCTAssertTrue(MarkdownCompiler.compile(markdown, trust: .rawHTMLAllowed).contains("<script>"))
+    }
+}
+
+/// The *second* path the same untrusted bytes take.
+///
+/// `NavigationCoordinator.presentMarkdown` hands the raw, uncompiled `source`
+/// to `InternalPages.markdownHTML(title:bodyHTML:source:allowRemember:)`, which
+/// embeds it in a `<script type="text/markdown" id="qwave-source">` element for
+/// the "Remember page" button. The compiler fix does not cover that copy, so it
+/// needs its own proof — and reasoning about the HTML tokenizer's script-data
+/// state is exactly the kind of thing to check against a real parser instead.
+@MainActor
+final class MarkdownSourceBlockTests: XCTestCase {
+    /// A source crafted to close the `<script>` element early and inject.
+    private static let hostileSource = """
+        # notes
+        </script><img src=x onerror="window.__pwned = true"><script>
+        <!--<script>
+        """
+
+    func testSourceBlockCannotTerminateItsScriptElement() async throws {
+        let html = InternalPages.markdownHTML(
+            title: "README.md",
+            bodyHTML: MarkdownCompiler.compile(Self.hostileSource, trust: .compilerOutputOnly),
+            source: Self.hostileSource,
+            allowRemember: true
+        )
+        // Cheap invariant first: escaping leaves no `<` at all in that element,
+        // so there is no `</script` for the tokenizer to find.
+        XCTAssertFalse(html.contains("</script><img"))
+        XCTAssertTrue(html.contains("&lt;/script&gt;&lt;img"))
+
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.loadHTMLString(html, baseURL: URL(string: "file:///tmp/README.md"))
+
+        func evaluate(_ expression: String) async -> String? {
+            let value = try? await webView.evaluateJavaScript("String(\(expression))")
+            return value as? String
+        }
+
+        var ready = false
+        for _ in 0..<80 where !ready {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            ready = await evaluate("document.readyState === 'complete'") == "true"
+        }
+        try XCTSkipUnless(ready, "WKWebView could not load a document in this test process")
+
+        let pwned = await evaluate("window.__pwned === true")
+        XCTAssertEqual(pwned, "false", "the source block was broken out of")
+        let images = await evaluate("document.querySelectorAll('img').length")
+        XCTAssertEqual(images, "0")
+        let tag = await evaluate("document.getElementById('qwave-source').tagName")
+        XCTAssertEqual(tag, "SCRIPT", "the source block did not survive as one element")
+    }
+
+    /// What the two consumers of that element actually get. Both
+    /// (`InternalPages.markdownScript` and
+    /// `BrowserWindowController.rememberCurrentSelection`) read `.textContent`
+    /// and hand the string to native code — no HTML sink — so this is a
+    /// fidelity check, not a security one. Recorded because the answer is
+    /// surprising: script elements are raw-text, so the parser does *not*
+    /// decode entities, and "Remember page" stores the escaped spelling.
+    func testRememberedSourceIsTheEscapedSpelling() async throws {
+        let html = InternalPages.markdownHTML(
+            title: "README.md", bodyHTML: "<p>x</p>", source: "a <b> & \"c\"", allowRemember: true)
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.loadHTMLString(html, baseURL: URL(string: "file:///tmp/README.md"))
+
+        var text: String?
+        for _ in 0..<80 where text == nil {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let value = try? await webView.evaluateJavaScript(
+                "String((document.getElementById('qwave-source') || {}).textContent)")
+            if let string = value as? String, string != "undefined" { text = string }
+        }
+        try XCTSkipUnless(text != nil, "WKWebView could not load a document in this test process")
+        XCTAssertEqual(text, "a &lt;b&gt; &amp; &quot;c&quot;")
     }
 }
 

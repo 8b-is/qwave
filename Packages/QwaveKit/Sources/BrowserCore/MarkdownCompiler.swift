@@ -43,17 +43,40 @@ public enum MarkdownTrust: Sendable {
 /// leftover source text) instead of a tag-shape allowlist that source text
 /// could imitate: under `.compilerOutputOnly` the markup that survives is, by
 /// construction, exactly the markup this file produced.
+///
+/// "By construction" rests on the marker being unmintable from source text,
+/// which in turn rests on `compile` stripping U+0000 first. See `sanitizeNULs`.
 public enum MarkdownCompiler {
     /// - Parameter trust: what the *caller* knows about where this document
     ///   came from. Deliberately has no default: the two call sites in
     ///   `NavigationCoordinator` need opposite answers, and a wrong default is
     ///   invisible at the call site.
     public static func compile(_ source: String, trust: MarkdownTrust) -> String {
-        // Both replacements are no-op whole-string copies unless a CR is
-        // present, and almost no document has one.
-        let normalized = contains(source, 0x0D)
-            ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-            : source
+        // One scan for both bytes that have to be rewritten before anything
+        // else reads the text. Neither is present in a real document, so the
+        // common path allocates nothing; the old code scanned for CR alone and
+        // this keeps that shape.
+        var hasCR = false
+        var hasNUL = false
+        for byte in source.utf8 {
+            if byte == 0x0D {
+                hasCR = true
+                if hasNUL { break }
+            } else if byte == 0x00 {
+                hasNUL = true
+                if hasCR { break }
+            }
+        }
+        // Both replacements are no-op whole-string copies unless the byte is
+        // present, and almost no document has either.
+        var normalized = source
+        if hasCR {
+            normalized = normalized.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+        }
+        if hasNUL {
+            normalized = sanitizeNULs(normalized)
+        }
         var store: [String] = []
         func park(_ html: String) -> String {
             store.append(html)
@@ -454,6 +477,30 @@ public enum MarkdownCompiler {
         }
         result += slice(NSRange(location: cursor, length: ns.length - cursor))
         return result
+    }
+
+    /// Replaces U+0000 with U+FFFD, per CommonMark 0.31.2 §2.3 *Insecure
+    /// characters*: "For security reasons, the Unicode character `U+0000` must
+    /// be replaced with the REPLACEMENT CHARACTER (`U+FFFD`)."
+    ///
+    /// Here that spec rule is also load-bearing for the sanitiser. `park`
+    /// mints `"\u{0000}MD<index>\u{0000}"`, `renderBlock` returns any block
+    /// with that prefix **verbatim** — bypassing both escapers — and the
+    /// restore pass at the end of `compile` splices a parked fragment into any
+    /// text matching a whole marker. All three assume no marker can come out of
+    /// the source. Without this pass none of that holds: `String(contentsOf:)`
+    /// in `LocalDocumentResolver` reads U+0000 straight through (it is valid
+    /// UTF-8), so a downloaded `.md` beginning `"\u{0000}MD<script>…"` reached
+    /// the page as a live `<script>` in the `file://` origin — the exact
+    /// outcome `.compilerOutputOnly` exists to prevent — and a body containing
+    /// `"\u{0000}MD0\u{0000}"` could replay a parked fragment.
+    ///
+    /// Doing it here rather than hardening `renderBlock`'s prefix check makes
+    /// the marker unmintable rather than merely unmatched, so the guarantee
+    /// survives future changes to how markers are recognised. It applies to
+    /// both trust levels: the replay half is not about raw HTML.
+    static func sanitizeNULs(_ string: String) -> String {
+        string.replacingOccurrences(of: "\u{0000}", with: "\u{FFFD}")
     }
 
     public static func escape(_ string: String) -> String {
