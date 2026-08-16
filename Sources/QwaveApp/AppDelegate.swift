@@ -311,9 +311,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    /// Hold termination until the session write lands, then release it.
+    ///
+    /// The wait is bounded by `SessionAutosaver.terminationBudget`: a stalled
+    /// volume delays quit by at most that budget instead of wedging the app in
+    /// `.terminateLater` forever, and `SessionStore` writes atomically, so
+    /// being cut short leaves the previous good snapshot intact rather than a
+    /// half-written file. `reply` is called on every path, including when
+    /// `self` is already gone.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { [weak self] in
-            await self?.saveSession()
+            await self?.flushSessionForTermination()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -326,11 +334,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return true
     }
 
-    private func saveSession() async {
-        guard let store = environment.sessionStore else { return }
-        let managers = windowControllers.map(\.tabManager)
-        let snapshot = SessionRestorer.snapshot(of: managers)
-        try? await store.save(snapshot)
+    /// Route the quit-time save through the autosaver rather than duplicating
+    /// it here. That is what gives termination the empty-snapshot guard: this
+    /// function used to build its own snapshot and write it unconditionally, so
+    /// quitting with every window closed — which keeps the app alive by design,
+    /// see `applicationShouldTerminateAfterLastWindowClosed` — or with only a
+    /// private window open wrote `windows: []` over a perfectly good session.
+    private func flushSessionForTermination() async {
+        guard let autosaver = sessionAutosaver else { return }
+        _ = await autosaver.flushForTermination()
     }
 
     /// Starts the crash-safe autosaver once the environment and first windows
