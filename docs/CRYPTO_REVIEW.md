@@ -38,16 +38,28 @@ engineering self-audit, not a substitute for external review.
 >   `invalidEncapsulationKey`; **a tampered ciphertext throws nothing at all**
 >   — ML-KEM implicit rejection returns a well-formed but different secret,
 >   which is correct per FIPS 203. See the F7 note below for the consequence.
-> - **F7 is now materially incomplete, and this is the most important entry
->   here.** Its closing sentence ("Daily rekey failures deliberately keep the
->   *existing* PSK") still describes the *throwing* failure modes only. With
->   the McEliece leg gone, `HybridKEM.decapsulate` has **no throwing path for
->   a corrupted or hostile ciphertext**, so a bad rekey ciphertext is no
->   longer a "failure" that gets caught — it silently yields a wrong PSK that
->   `PacketTunnelProvider.rekeyNow` installs over a working tunnel, logging
->   success and not retrying for 24h. Tracked in **issue #91**; the guard
->   belongs in the provider, not in the KEM (an ML-KEM ciphertext carries no
->   integrity tag, and adding a throw would violate implicit rejection).
+> - **F7 was materially incomplete; the gap it named is now fixed (issue #91),
+>   but the entry still needs rewording.** The problem it raised was real: with
+>   the McEliece leg gone, `HybridKEM.decapsulate` has **no throwing path for a
+>   corrupted or hostile ciphertext**, so a bad rekey ciphertext is not a
+>   "failure" that gets caught — it yields a wrong PSK. F7's closing sentence
+>   ("Daily rekey failures deliberately keep the *existing* PSK") described the
+>   *throwing* failure modes only, and at the time of that note nothing covered
+>   the silent one.
+>
+>   The guard landed where the note said it belonged — in the provider, not in
+>   the KEM. `PacketTunnelProvider.rekeyNow` now snapshots the active
+>   configuration and the peer's `last_handshake_time_sec` before installing a
+>   candidate PSK, then polls for a newer handshake under it
+>   (`Sources/PacketTunnel/PacketTunnelProvider.swift:238-276`,
+>   `:280-289`, `:298-312`; `RekeyConfirmation.isConfirmed` at
+>   `Packages/QwaveKit/Sources/VPNKit/QuantumSessionPolicy.swift:74`), bounded
+>   by 5 × 2 s (`PacketTunnelProvider.swift:84-85`). A confirmed rekey commits
+>   and advances `lastRekey` (`:261-264`); an unconfirmed one rolls the adapter
+>   back to the previous configuration and leaves `lastRekey` untouched
+>   (`:265-271`), so it retries at the next timer tick or wake instead of going
+>   dark for 24 h. F7's closing sentence is therefore true again — but for a
+>   different reason than it was written for, and the rewrite is the owner's.
 > - **Checklist item 1 is now wrong.** "Regenerate vectors only from the
 >   independent Python oracle, never from the Swift code under test" predates
 >   the ACVP vectors and contradicts the policy this change establishes: the
@@ -155,6 +167,17 @@ with `QuantumSessionError.downgradeBlocked` (user-visible via
 rekey failures deliberately keep the *existing* PSK — the tunnel stays on
 the previous quantum-resistant key, which is a retry situation, not a
 downgrade.
+
+**Corrected after the FIPS 203 change (issue #91, now fixed):** that last
+sentence originally covered only failures that *throw*. Once the McEliece leg
+was dropped, a tampered ciphertext stopped throwing at all (see F6), so a wrong
+PSK could be installed over a working tunnel with nothing raising. The provider
+now corroborates a candidate PSK against a real WireGuard handshake before
+committing to it and rolls back if none arrives
+(`Sources/PacketTunnel/PacketTunnelProvider.swift:238-276`,
+`RekeyConfirmation.isConfirmed` at `VPNKit/QuantumSessionPolicy.swift:74`).
+"Rekey failures keep the existing PSK" now holds for both the throwing and the
+silent case.
 
 ## Review checklist for future crypto changes
 

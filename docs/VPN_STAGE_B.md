@@ -35,7 +35,39 @@ The seam is already in place and exercised:
   `WireGuardAdapter.start` and installs the returned PSK on the peer.
   Stage A's `NoopEphemeralPeerNegotiator` returns nil → classic WireGuard.
 
-## Stage B implementation sketch
+## Stage B implementation sketch (historical — superseded, do not plan from it)
+
+> **Superseded by "Stage B as shipped in v0.2.0" below. Kept as the record of
+> what was proposed, not as a plan.** Read the per-item status before acting on
+> any of it:
+>
+> - **Item 2 (KEM implementations) went a different way entirely and is the one
+>   most likely to mislead.** No C FFI to Mullvad's Rust crates and no liboqs
+>   port was built. ML-KEM-768 and the FIPS 202 Keccak/SHAKE it needs are
+>   hand-written pure Swift with zero dependencies —
+>   `Packages/QwaveKit/Sources/PostQuantum/` holds exactly `Keccak.swift`,
+>   `MLKEM768.swift` and `HybridKEM.swift` — and are conformance-tested against
+>   the official NIST ACVP vectors (see the shipped section below). Starting an
+>   FFI binding or a liboqs port today would be rebuilding what exists.
+> - **Item 3 (protocol) is partly superseded, partly still open.** The
+>   transport is *not* gRPC and the derivation is *not* HKDF/Blake2 over two
+>   secrets: it is a bespoke versioned JSON envelope to
+>   `http://10.64.0.1:1337/qwave/ephemeral-peer`
+>   (`VPNKit/QuantumTransport.swift:64-93`), with PSK =
+>   SHAKE256("qwave/pq-psk/v1" ‖ ss, 32) over ML-KEM-768's single shared secret
+>   (`PostQuantum/HybridKEM.swift:34`). Byte-level conformance with
+>   mullvadvpn-app's wire format remains the open follow-up (Stage B.5) — no
+>   Mullvad relay serves this envelope.
+> - **Item 4 (rekey cadence) is shipped.** `RekeyPolicy.interval` is 24 h
+>   (`VPNKit/QuantumSessionPolicy.swift:45`), driven by a repeating timer
+>   (`Sources/PacketTunnel/PacketTunnelProvider.swift:211-226`) and by the
+>   extension's wake hook (`:187-190`).
+> - **Item 1 (two-phase tunnel start) is still open as written.**
+>   `PacketTunnelProvider.start` negotiates *before* `adapter.start`
+>   (`Sources/PacketTunnel/PacketTunnelProvider.swift:138` then `:151`), which
+>   is the ordering this item asked to change. The two-phase
+>   negotiate-then-`adapter.update` shape does exist, but on the daily rekey
+>   path (`:238-276`), not on tunnel start.
 
 1. **Two-phase tunnel start** in `PacketTunnelProvider`: start classic (as
    today), then negotiate in-tunnel, then `adapter.update(tunnelConfiguration:)`

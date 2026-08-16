@@ -41,14 +41,17 @@ own network activity auditable.
   Network Extension; quantum-resistant PSK negotiation fails closed when enabled.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
   AI-agnostic inference providers. Stored memory **bodies** never reach a
-  remote provider: `WaveDirector` attaches recalled memories only when the
-  provider is on-device (`WaveDirector.swift:338`), and `MemoryWavePolicy.decide`
-  denies a remote request that *declares* it carries them
-  (`.deny(.cognitiveEgress)`, `MemoryWavePolicy.swift:81-82`) — a
-  declared-intent gate plus a caller-side guard, not a filter on the outgoing
-  prompt. One carve-out: a **timeline summary** with a remote provider sends the
+  remote provider, and the check that does it is caller-side: `WaveDirector`
+  composes recalled memories into the prompt only when the provider is
+  on-device (`WaveDirector.swift:354-361`), and its callers ask for stored
+  memory only for an on-device provider (`:319`, `:322`). `MemoryWavePolicy`'s
+  `.deny(.cognitiveEgress)` branch (`MemoryWavePolicy.swift:81-82`) reads like
+  the enforcement point but is unreachable in production — `WaveDirector.swift:345`
+  requires the caller to have asked for stored memory *and* the provider to be
+  remote, which cannot both hold. Neither check filters the outgoing prompt.
+  One carve-out: a **timeline summary** with a remote provider sends the
   title, time, and host of every record in the window, and no snippets
-  (`WaveDirector.swift:153-154`, `MemoryTimeline.swift:63-79`). Pages you
+  (`WaveDirector.swift:162-163`, `MemoryTimeline.swift:63-80`). Pages you
   explicitly summarise or ask about *are* sent to the provider you configured;
   see [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
@@ -220,18 +223,24 @@ request-free by a test whose reach is bounded (caveats below). See
 ```
 
 Two honest caveats remain. `EgressGuard` only reaches a client that installs
-it: a default- or shared-configuration session gets it for free from the
-process-wide `URLProtocol.registerClass` in `main.swift`, but a
-custom-configuration session (ephemeral, pinned, etc.) has to call
-`EgressGuard.install(into:)` explicitly — `URLSession.mullvadPinned()` and
+it: `URLSession.shared` gets it for free from the process-wide
+`URLProtocol.registerClass` in `main.swift`, but **any** session Qwave
+constructs — including one built from `URLSessionConfiguration.default` — has
+to call `EgressGuard.install(into:)` explicitly
+(`QwaveSupport/EgressGuard.swift:12-24`, pinned by
+`EgressGuardTests.swift:376-399`). `URLSession.mullvadPinned()` and
 `DuckDuckGoSuggestionProvider` do; a new fixed-host client that skips this
 would not be caught here, only by review. And some Category-A clients are
-deliberately **not** gated by `EgressGuard` at all, because their destination
-isn't a fixed host by design — Memory Wave's user-configurable endpoint
-(guarded instead by `EndpointRedirectPolicy` and `MemoryWavePolicy`),
-`FaviconLoader`, and remote-markdown fetches are all page- or
-user-driven. The shields launch-path assertion is the one thing here checked
-dynamically rather than by review of the wiring itself: it registers a
+deliberately **not** gated by `EgressGuard`, though for two different reasons —
+conflating them once broke a feature. Memory Wave's user-configurable endpoint
+(guarded instead by `EndpointRedirectPolicy` and `MemoryWavePolicy`) and
+`FaviconLoader` build their own sessions and never install the guard, so it
+never sees them. The remote-markdown fetch runs on `URLSession.shared`, which
+the global registration *does* reach, and is exempted by an explicit
+`EgressGuard.markPageDriven(_:)` marker at its single call site
+(`BrowserCore/NavigationCoordinator.swift:363`) — per request, not per host or
+per session. The shields launch-path assertion is the one thing here asserting
+the *absence* of a request rather than the shape of one: it registers a
 `URLProtocol` recorder over the shields launch path and asserts nothing was
 requested; the test builds its own `ShieldsDirector` rather than running the
 app's launch sequence, and WebKit's own network process (Category C) is
