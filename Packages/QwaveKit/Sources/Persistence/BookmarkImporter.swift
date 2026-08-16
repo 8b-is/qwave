@@ -29,7 +29,12 @@ public enum BookmarkImporter {
     /// (`name` + `url`) or a `folder` (`name` + `children`). Only http/https
     /// bookmarks are kept, matching what Qwave can open — bookmarklets and
     /// internal chrome:// entries are dropped.
-    public static func parseChromiumJSON(_ data: Data) throws -> [ImportedBookmark] {
+    ///
+    /// Typed throw: `BookmarkImportError.malformed` is the only error this can
+    /// produce. `JSONSerialization.jsonObject` is deliberately spelled `try?`
+    /// below — a malformed export is an expected input, not an exception worth
+    /// forwarding — and `walk` cannot throw, so the domain is closed.
+    public static func parseChromiumJSON(_ data: Data) throws(BookmarkImportError) -> [ImportedBookmark] {
         guard
             let object = try? JSONSerialization.jsonObject(with: data),
             let root = object as? [String: Any],
