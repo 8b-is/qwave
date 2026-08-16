@@ -47,6 +47,101 @@ final class MarkdownCompilerTests: XCTestCase {
         XCTAssertTrue(html.contains("<th>"))
         XCTAssertTrue(html.contains("<td>1</td>"))
     }
+
+    /// Byte-for-byte lock on the compiler's output for the document the
+    /// allocation benchmark compiles. The benchmark drove an allocation
+    /// reduction in `compile`; this fixes the HTML so any future optimisation
+    /// that changes what is rendered fails here instead of shipping.
+    func testBenchmarkDocumentCompilesByteIdentically() {
+        let source = """
+            # Module Boundaries
+
+            ## Why six packages?
+
+            The split is deliberate: build times, testability, and the
+            `QwaveTunnelKit` boundary. Each package is a *reviewable* unit.
+
+            - **BrowserCore** — tabs, hibernation, session restore.
+            - **Persistence** — SQLite-backed history and bookmarks.
+            - **Shields** — rule compile and the HTTPS-First upgrader.
+
+            | Module | Role | Alloc profile |
+            |---|---|---|
+            | BrowserCore | tabs, hibernation | measured |
+            | Persistence | history at 50k rows | gated |
+            | Shields | rule compile | budgeted |
+
+            ```swift
+            let tab = Tab(pendingURL: url)
+            tab.isPinned = index < 3
+            manager.append(tab, select: false)
+            ```
+
+            $$
+            E = mc^2
+            $$
+
+            ```mermaid
+            graph TD
+              A[WebContent] --> B[GPU process]
+              B --> C[Metal]
+            ```
+            """
+        let expected = """
+            <h1>Module Boundaries</h1>
+            <h2>Why six packages?</h2>
+            <p>The split is deliberate: build times, testability, and the<br><code>QwaveTunnelKit</code> boundary. Each package is a <em>reviewable</em> unit.</p>
+            <ul><li><strong>BrowserCore</strong> — tabs, hibernation, session restore.</li><li><strong>Persistence</strong> — SQLite-backed history and bookmarks.</li><li><strong>Shields</strong> — rule compile and the HTTPS-First upgrader.</li></ul>
+            <table><thead><tr><th>Module</th><th>Role</th><th>Alloc profile</th></tr></thead><tbody><tr><td>BrowserCore</td><td>tabs, hibernation</td><td>measured</td></tr><tr><td>Persistence</td><td>history at 50k rows</td><td>gated</td></tr><tr><td>Shields</td><td>rule compile</td><td>budgeted</td></tr></tbody></table>
+            <pre><code class="language-swift">let tab = Tab(pendingURL: url)
+            tab.isPinned = index &lt; 3
+            manager.append(tab, select: false)
+            </code></pre>
+            <div class="math-display">E = mc^2</div>
+            <pre class="mermaid">graph TD
+              A[WebContent] --&gt; B[GPU process]
+              B --&gt; C[Metal]</pre>
+            """
+        XCTAssertEqual(MarkdownCompiler.compile(source), expected)
+    }
+
+    /// Escaping proof. Every construct that escapes its content must keep
+    /// escaping it: an allocation optimisation that skips or reorders a pass
+    /// would be an injection hole, not a speedup.
+    func testHostileInputStaysEscaped() {
+        XCTAssertEqual(
+            MarkdownCompiler.compile("```html\n<script>alert(1)</script>\n```"),
+            "<pre><code class=\"language-html\">&lt;script&gt;alert(1)&lt;/script&gt;\n</code></pre>")
+
+        XCTAssertEqual(
+            MarkdownCompiler.compile("```mermaid\ngraph TD\n  A[\"<script>\"] --> B\n```"),
+            "<pre class=\"mermaid\">graph TD\n  A[&quot;&lt;script&gt;&quot;] --&gt; B</pre>")
+
+        XCTAssertEqual(
+            MarkdownCompiler.compile("$$\n<script>alert(1)</script>\n$$"),
+            "<div class=\"math-display\">&lt;script&gt;alert(1)&lt;/script&gt;</div>")
+
+        // A quote in an href must not be able to close the attribute and open
+        // an event handler.
+        let link = MarkdownCompiler.compile("[click](http://evil\"onmouseover=\"alert(1))")
+        XCTAssertEqual(link, "<p><a href=\"http://evil&quot;onmouseover=&quot;alert(1\">click</a>)</p>")
+        XCTAssertFalse(link.contains("onmouseover=\""))
+
+        // Same for an image's src and alt.
+        let image = MarkdownCompiler.compile("![\"x](y\"z)")
+        XCTAssertEqual(image, "<p><img src=\"y&quot;z\" alt=\"&quot;x\"></p>")
+
+        // Table cells and inline math escape their content too.
+        XCTAssertEqual(
+            MarkdownCompiler.compile("| a\" | b |\n|---|---|\n| \"x\" | & |"),
+            "<table><thead><tr><th>a&quot;</th><th>b</th></tr></thead>"
+                + "<tbody><tr><td>&quot;x&quot;</td><td>&amp;</td></tr></tbody></table>")
+
+        // `escape` itself, the primitive every construct above depends on.
+        XCTAssertEqual(
+            MarkdownCompiler.escape("<script>a & b\"</script>"),
+            "&lt;script&gt;a &amp; b&quot;&lt;/script&gt;")
+    }
 }
 
 final class LocalDocumentResolverTests: XCTestCase {

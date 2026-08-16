@@ -6,7 +6,11 @@ import Foundation
 /// only emits the HTML they look for. Works with JavaScript off.
 public enum MarkdownCompiler {
     public static func compile(_ source: String) -> String {
-        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        // Both replacements are no-op whole-string copies unless a CR is
+        // present, and almost no document has one.
+        let normalized = contains(source, 0x0D)
+            ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            : source
         var store: [String] = []
         func park(_ html: String) -> String {
             store.append(html)
@@ -88,15 +92,17 @@ public enum MarkdownCompiler {
         var current: [Substring] = []
 
         func flush() {
-            let text = current.joined(separator: "\n").trimmingCharacters(in: .newlines)
-            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                blocks.append(text)
-            }
+            // `current` only ever holds lines that failed the blank test, and
+            // `split(whereSeparator: \.isNewline)` guarantees no line contains a
+            // newline character. So the joined text can neither begin nor end
+            // with a newline, nor be all-whitespace: both trims the old code ran
+            // here were no-ops that allocated a whole copy each.
+            guard !current.isEmpty else { return }
+            blocks.append(current.joined(separator: "\n"))
             current = []
         }
 
-        func kind(_ line: Substring) -> String {
-            let t = line.trimmingCharacters(in: .whitespaces)
+        func kind(_ t: String) -> String {
             if t.hasPrefix("#") { return "heading" }
             if t.hasPrefix(">") { return "quote" }
             if t == "---" || t == "***" || t == "___" { return "hr" }
@@ -108,12 +114,15 @@ public enum MarkdownCompiler {
 
         var lastKind = ""
         for line in lines {
-            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+            // Trim once and hand the result to `kind`; the old code trimmed the
+            // same line twice, allocating a String each time.
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
                 flush()
                 lastKind = ""
                 continue
             }
-            let next = kind(line)
+            let next = kind(trimmed)
             if !current.isEmpty, next != lastKind, next != "p" || lastKind != "p" {
                 flush()
             }
@@ -241,56 +250,99 @@ public enum MarkdownCompiler {
     private static let emRegex = RegexBox(#"(?<!\*)\*([^*]+)\*(?!\*)"#)
     private static let delRegex = RegexBox(#"~~([^~]+)~~"#)
 
+    /// Zero-allocation UTF-8 scan for a single ASCII byte.
+    ///
+    /// Every inline pattern below needs a specific ASCII byte to match at all,
+    /// so this is a *necessary* condition: when the byte is absent the regex
+    /// provably cannot match and skipping the pass is byte-identical to running
+    /// it. Running the pass unconditionally cost ~4 allocations even with zero
+    /// matches (NSString bridge, output buffer, tail substring, bridge back),
+    /// eight times per line.
+    private static func contains(_ text: String, _ byte: UInt8) -> Bool {
+        for candidate in text.utf8 where candidate == byte { return true }
+        return false
+    }
+
     private static func inline(_ raw: String) -> String {
         var text = raw
         // Images then links.
-        text = replace(text, regex: imageRegex) { match in
-            "<img src=\"\(escape(match[2]))\" alt=\"\(escape(match[1]))\">"
+        if contains(text, 0x21), contains(text, 0x5B) {  // "!" and "["
+            text = replace(text, regex: imageRegex) { match in
+                "<img src=\"\(escape(match[2]))\" alt=\"\(escape(match[1]))\">"
+            }
         }
-        text = replace(text, regex: linkRegex) { match in
-            "<a href=\"\(escape(match[2]))\">\(escape(match[1]))</a>"
+        if contains(text, 0x5B) {  // "["
+            text = replace(text, regex: linkRegex) { match in
+                "<a href=\"\(escape(match[2]))\">\(escape(match[1]))</a>"
+            }
         }
         // Inline math $...$ (not $$)
-        text = replace(text, regex: mathRegex) { match in
-            "<span class=\"math-inline\">\(escape(match[1]))</span>"
+        if contains(text, 0x24) {  // "$"
+            text = replace(text, regex: mathRegex) { match in
+                "<span class=\"math-inline\">\(escape(match[1]))</span>"
+            }
         }
-        text = replace(text, regex: codeRegex) { match in
-            "<code>\(escape(match[1]))</code>"
+        if contains(text, 0x60) {  // "`"
+            text = replace(text, regex: codeRegex) { match in
+                "<code>\(escape(match[1]))</code>"
+            }
         }
-        text = replace(text, regex: strongStarRegex) { match in
-            "<strong>\(escape(match[1]))</strong>"
+        if contains(text, 0x2A) {  // "*"
+            text = replace(text, regex: strongStarRegex) { match in
+                "<strong>\(escape(match[1]))</strong>"
+            }
         }
-        text = replace(text, regex: strongUnderscoreRegex) { match in
-            "<strong>\(escape(match[1]))</strong>"
+        if contains(text, 0x5F) {  // "_"
+            text = replace(text, regex: strongUnderscoreRegex) { match in
+                "<strong>\(escape(match[1]))</strong>"
+            }
         }
-        text = replace(text, regex: emRegex) { match in
-            "<em>\(escape(match[1]))</em>"
+        if contains(text, 0x2A) {  // "*"
+            text = replace(text, regex: emRegex) { match in
+                "<em>\(escape(match[1]))</em>"
+            }
         }
-        text = replace(text, regex: delRegex) { match in
-            "<del>\(escape(match[1]))</del>"
+        if contains(text, 0x7E) {  // "~"
+            text = replace(text, regex: delRegex) { match in
+                "<del>\(escape(match[1]))</del>"
+            }
         }
-        // Escape leftovers that aren't already tags.
+        // Escape leftovers that aren't already tags. Unconditional: every path
+        // above either matched and escaped its own captures, or left the text
+        // untouched for this pass to escape.
         return escapeLoose(text)
     }
 
     private static func replace(_ text: String, regex: RegexBox, transform: ([String]) -> String) -> String {
         let ns = text as NSString
         let matches = regex.value.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        if matches.isEmpty { return text }
+        // Slice out of the native Swift string rather than the bridged
+        // NSString: `ns.substring(with:)` allocates an NSString and then a
+        // second buffer to bridge it back, while short native slices often fit
+        // in the inline small-string form and allocate nothing. The bridged
+        // path stays as an exact fallback for the one case native slicing
+        // cannot express: an NSRange whose edge falls inside a grapheme
+        // cluster, which `Range(_:in:)` refuses.
+        func slice(_ range: NSRange) -> String {
+            if let converted = Range(range, in: text) { return String(text[converted]) }
+            return ns.substring(with: range)
+        }
         var result = ""
         result.reserveCapacity(text.count + 16)
         var cursor = 0
         for match in matches {
-            result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            result += slice(NSRange(location: cursor, length: match.range.location - cursor))
             var groups = [String]()
             groups.reserveCapacity(match.numberOfRanges)
             for i in 0..<match.numberOfRanges {
                 let range = match.range(at: i)
-                groups.append(range.location == NSNotFound ? "" : ns.substring(with: range))
+                groups.append(range.location == NSNotFound ? "" : slice(range))
             }
             result += transform(groups)
             cursor = match.range.location + match.range.length
         }
-        result += ns.substring(from: cursor)
+        result += slice(NSRange(location: cursor, length: ns.length - cursor))
         return result
     }
 
