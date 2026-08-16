@@ -7,9 +7,14 @@ import Foundation
 /// (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that consults this
 /// allowlist and fails any request to a host not listed here, and it is
 /// wired into every fixed-host Qwave network client (`MullvadAPIClient` via
-/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, and —
-/// through `URLProtocol.registerClass` at process start — any default- or
-/// shared-configuration session). See #77.
+/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, Memory
+/// Wave's remote provider) plus, through `URLProtocol.registerClass` at
+/// process start, `URLSession.shared` — and only that session. A session
+/// Qwave constructs is never reached by that registration, not even one built
+/// from `URLSessionConfiguration.default`; see `EgressGuard`'s doc comment and
+/// `EgressGuardTests
+/// .testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`.
+/// See #77.
 ///
 /// It still is **not** a mechanical guarantee over the whole codebase: it
 /// governs Category A only, a constructed session that skips

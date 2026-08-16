@@ -132,12 +132,25 @@ via entitlements, so the two processes see the same items without a custom IPC
 channel. Credential secrets never cross into `DeviceKeyManager` or the VPN's
 key material — that separation is the point of the slim product.
 
-**Today this path is fill-only.** Nothing in `Sources/` calls
-`WebCredentialStore.save(_:)`, and `ASCredentialIdentityStore` is not referenced
-in Swift source anywhere, so no capture prompt, import flow, or QuickType
-registration exists yet ([#72](https://github.com/8b-is/qwave/issues/72), and
-`docs/AUTOFILL.md` § Deferred). Read the extension as a reader over keychain
-items placed there by other means, not as a password manager with a save flow.
+**This path is no longer fill-only — the save path shipped with
+[#72](https://github.com/8b-is/qwave/issues/72).** `PasswordCaptureBridge`
+(`Sources/QwaveApp/PasswordCaptureBridge.swift`) observes password-form
+submissions, refuses anything from a subframe (`:116-119`), takes the domain
+from `frameInfo.securityOrigin` rather than the message body (`:123`), and
+prompts to save. Confirming calls `CredentialSaver.save(_:)` (`:182`), which
+writes the login through `WebCredentialStore` and then registers its AutoFill
+identity (`WebCredentials/CredentialSaving.swift:128-135`) — the keychain write
+throws to the caller, identity sync is best-effort. That "never drift apart"
+guarantee holds for saves only: `CredentialSaver.remove` (`:138-145`) has no
+shipping caller, because there is no credential-deletion UI
+(`CredentialSaving.swift:98-104`). The identity half is
+`SystemCredentialIdentityStore` (`Sources/QwaveApp/SystemCredentialIdentityStore.swift`),
+the one place in the tree that touches `ASCredentialIdentityStore.shared`
+(`saveCredentialIdentities` at `:47`, `removeCredentialIdentities` at `:63`);
+it writes service/account metadata only and never a secret. Both are wired in
+`BrowserWindowController` (`:90-96`, `:405-412`), and the capture bridge is not
+installed at all for a private window or an ephemeral tab (`:405`). Bulk import
+and passkey *storage* remain deferred (`docs/AUTOFILL.md:347`, `:354`).
 
 ### Concurrency
 
@@ -184,19 +197,25 @@ committed allowlist, and — since [#77](https://github.com/8b-is/qwave/issues/7
 consults `EgressAllowlist.permits(host:)` at runtime and fails any request to
 a host not listed, wired into every fixed-host Qwave network client
 (`MullvadAPIClient`, the DuckDuckGo suggestion provider, Memory Wave's remote
-provider) plus, process-wide, any default- or shared-configuration session.
-Memory Wave's provider is the one whose base URL the user may point anywhere;
-that is handled per request (`EgressGuard.markUserConfiguredEndpoint(_:)`,
-resolved against the current preference at check time) rather than by
-exempting the session, which is what it did before and which meant the guard
-never saw a provider request at all. The permission is scoped to that request:
-it is not on `EgressAllowlist`, so no other client inherits the host, and
-nothing caches it, so changing the endpoint in Settings revokes the previous
-one with no inference in between. It is still not a mechanical
-guarantee over new code: a fixed-host client that skips
+provider) plus, process-wide, `URLSession.shared` — and only that session. The
+`URLProtocol.registerClass` in `main.swift` does **not** reach a session Qwave
+constructs, not even one built from `URLSessionConfiguration.default`
+(`QwaveSupport/EgressGuard.swift:12-24`, pinned by
+`EgressGuardTests.testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`,
+`EgressGuardTests.swift:614-637`); this is the same scope
+[docs/NETWORK.md](NETWORK.md) states, and reading it the looser way is what
+once broke the remote-markdown fetch. Memory Wave's provider is the one whose
+base URL the user may point anywhere; that is handled per request
+(`EgressGuard.markUserConfiguredEndpoint(_:)`, resolved against the current
+preference at check time) rather than by exempting the session, which is what
+it did before and which meant the guard never saw a provider request at all.
+The permission is scoped to that request: it is not on `EgressAllowlist`, so no
+other client inherits the host, and nothing caches it, so changing the endpoint
+in Settings revokes the previous one with no inference in between. It is still
+not a mechanical guarantee over new code: a fixed-host client that skips
 `EgressGuard.install(into:)` is not caught by anything mechanical, only by
-review, and `EgressGuardTests` still pins four known endpoints by hand and
-asserts the shields launch path makes no request. New Qwave-owned network
+review, and `EgressGuardTests` still pins four known endpoint hosts by hand
+and asserts the shields launch path makes no request. New Qwave-owned network
 code must add its host to the allowlist, wire `EgressGuard` into its session
 if the host is fixed, and document its host, trigger, opt-in state, and test
 coverage in [docs/NETWORK.md](NETWORK.md).

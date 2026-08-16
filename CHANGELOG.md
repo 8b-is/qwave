@@ -245,9 +245,11 @@ All notable changes to Qwave will be documented in this file.
   `mlkemBitFlipChangesSharedSecret` asserted exactly that); only corruption
   touching the 436-byte McEliece half threw. Against a deliberately hostile
   relay it was worth nothing, since the relay could always send a well-formed
-  McEliece half. No fix is included here — a correct one has to corroborate
-  the new PSK against a real handshake before discarding the old one, which
-  is a provider design change, not a patch. Tracked in issue #91.
+  McEliece half. No fix is included in *this* entry — a correct one has to
+  corroborate the new PSK against a real handshake before discarding the old
+  one, which is a provider design change, not a patch. Tracked in issue #91.
+  **That fix landed later in this same release — see the next entry; the
+  tunnel consequence described above is no longer live on `main`.**
 - **Issue #91 fixed: the daily rekey no longer installs an uncorroborated
   PSK.** `PacketTunnelProvider.rekeyNow` now snapshots the currently-active
   configuration and the peer's handshake timestamp before installing a
@@ -303,13 +305,25 @@ All notable changes to Qwave will be documented in this file.
 - **`WaveDirector.recall` no longer traps on duplicate `createdAt` (#110).**
   The resonance rank map was built with
   `Dictionary(uniqueKeysWithValues:)` keyed on the nanosecond `createdAt`
-  timestamp, which is not a unique key: any two records sharing a
-  caller-supplied `at:` date (an importer, sync path, or backfill) aborted
-  the process — and since the trap fired in `recall`, the poisoned container
-  crashed the app on every subsequent memory query until the row was
-  deleted. The map now keys on the full wave identity and collapses
-  duplicates to their best rank with `uniquingKeysWith: min`, keeping the
-  existing sort intent.
+  timestamp, which is not a unique key: any two records sharing one
+  `createdAt` trap the Swift runtime and abort the process — and since the
+  trap fired in `recall`, the affected container crashed the app on every
+  subsequent memory query until the row was deleted. The map now keys on the
+  full wave identity and collapses duplicates to their best rank with
+  `uniquingKeysWith: min`, keeping the existing sort intent;
+  `testRecallSurvivesDuplicateCreatedAt` pins it.
+
+  **Scope, corrected.** This entry first attributed the duplicate timestamp to
+  "a caller-supplied `at:` date (an importer, sync path, or backfill)". No such
+  caller exists in this codebase. `at:` defaults to `Date()`
+  (`MemoryStore.swift:59`, `:88`) and the only two production insert call sites
+  — `WaveDirector.swift:112` and `:115` — never pass it, so the parameter is
+  reached only from tests. What a production build could still hit is much
+  narrower: `WaveInt.nanosecondsSince1970` (`WaveInt.swift:42-48`) multiplies a
+  `Double` `timeIntervalSince1970` by 1e9, and at the current epoch that
+  product quantises to ~256 ns steps, so two inserts landing in the same
+  quantum share a `createdAt`. The trap and the fix are both real; the
+  importer/sync/backfill path described was not.
 - Memory Wave's remote OpenAI-compatible provider now applies an explicit
   request timeout (30s idle, 60s overall), so an endpoint that hangs or
   dribbles bytes can no longer stall inference indefinitely.

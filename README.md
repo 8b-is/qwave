@@ -41,16 +41,20 @@ own network activity auditable.
   Network Extension; quantum-resistant PSK negotiation fails closed when enabled.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
   AI-agnostic inference providers. Stored memory **bodies** never reach a
-  remote provider: `WaveDirector` attaches recalled memories only when the
-  provider is on-device (`WaveDirector.swift:370`), and `MemoryWavePolicy.decide`
-  denies a remote request that *declares* it carries them
-  (`.deny(.cognitiveEgress)`, `MemoryWavePolicy.swift:81-82`) — a
+  remote provider: `WaveDirector` composes recalled memories into the prompt
+  only when the provider is on-device (`WaveDirector.swift:415-421`), and
+  `MemoryWavePolicy.decide` denies a remote request that *declares* it carries
+  them (`.deny(.cognitiveEgress)`, `MemoryWavePolicy.swift:81-82`) — a
   declared-intent gate plus a caller-side guard, not a filter on the outgoing
   prompt. The caller-side guard is the one doing the work today; the policy is
   a tripwire behind it, dormant while `ask` declares stored memory only for
-  the on-device provider. One carve-out: a **timeline summary** with a remote provider sends the
+  the on-device provider (`WaveDirector.swift:364`). Recalled rows a model
+  wrote or an automatic page capture produced are carried under a separate
+  untrusted-data heading rather than beside the pins you wrote yourself
+  (`WaveDirector.recalledMemoryBlock`, `:49-70`). One carve-out: a **timeline
+  summary** with a remote provider sends the
   title, time, and host of every record in the window, and no snippets
-  (`WaveDirector.swift:153-154`, `MemoryTimeline.swift:63-79`). Pages you
+  (`WaveDirector.swift:199-200`, `MemoryTimeline.swift:63-80`). Pages you
   explicitly summarise or ask about *are* sent to the provider you configured;
   see [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
@@ -216,16 +220,21 @@ request-free by a test whose reach is bounded (caveats below). See
                         api.x.ai            default remote AI endpoint
                         duckduckgo.com      omnibox suggestions (opt-in)
       │
+      │  + on a request Memory Wave marked, and only that request:
+      │    the endpoint host you configured, read live at check time.
+      │    Not on the allowlist; no other client can reach it.
       ▼
  launch path ── EgressGuardTests URLProtocol recorder ──▶ zero requests
                 (no launch-time blocklist fetch since 0.4.4)
 ```
 
 Two honest caveats remain. `EgressGuard` only reaches a client that installs
-it: a default- or shared-configuration session gets it for free from the
-process-wide `URLProtocol.registerClass` in `main.swift`, but a
-custom-configuration session (ephemeral, pinned, etc.) has to call
-`EgressGuard.install(into:)` explicitly — `URLSession.mullvadPinned()`,
+it: `URLSession.shared` gets it for free from the process-wide
+`URLProtocol.registerClass` in `main.swift`, but **any** session Qwave
+constructs — including one built from `URLSessionConfiguration.default` — has
+to call `EgressGuard.install(into:)` explicitly
+(`QwaveSupport/EgressGuard.swift:12-24`, pinned by
+`EgressGuardTests.swift:614-637`). `URLSession.mullvadPinned()`,
 `DuckDuckGoSuggestionProvider` and Memory Wave's remote provider do; a new
 fixed-host client that skips this would not be caught here, only by review.
 Memory Wave's provider was itself the standing example of that gap: its
@@ -233,15 +242,23 @@ session is ephemeral, it never called `install(into:)`, and so `api.x.ai` sat
 on the allowlist without one provider request ever being checked against it.
 It is gated now, against the committed list plus — on its own request, and
 nobody else's — an exact match on whatever HTTPS endpoint you configured
-(`EgressGuard.markUserConfiguredEndpoint(_:)`). That match is resolved out of
-the live preference each time the guard checks, so changing the endpoint or
+(`EgressGuard.markUserConfiguredEndpoint(_:)`, stamped at
+`MemoryWave/MemoryProvider.swift:108`). The mark names no host, so it grants
+nothing by itself: the guard resolves it against
+`MemoryWavePreferences.egressPermittedHost` read live at check time
+(`EgressGuard.swift:236`). Nothing is cached, so changing the endpoint or
 switching the provider off revokes the previous host immediately, with no
 inference needed in between, and no other client in the process ever gains it.
-Some Category-A clients are still
-deliberately **not** gated at all, because their destination isn't a fixed
-host by design — `FaviconLoader` and remote-markdown fetches are page-driven.
-The shields launch-path assertion is the one thing here checked
-dynamically rather than by review of the wiring itself: it registers a
+
+Two Category-A clients are still not gated, and for two different mechanical
+reasons — conflating them once broke a feature. `FaviconLoader` builds its own
+session and never installs the guard, so the guard never sees it. The
+remote-markdown fetch is the opposite: it runs on `URLSession.shared`, which
+the global registration *does* reach, and is exempted by an explicit
+`EgressGuard.markPageDriven(_:)` marker at its single call site
+(`BrowserCore/NavigationCoordinator.swift:363`) — per request, not per host or
+per session. The shields launch-path assertion is the one thing here asserting
+the *absence* of a request rather than the shape of one: it registers a
 `URLProtocol` recorder over the shields launch path and asserts nothing was
 requested; the test builds its own `ShieldsDirector` rather than running the
 app's launch sequence, and WebKit's own network process (Category C) is
@@ -292,7 +309,11 @@ the exact graph, isolation rules, data flow, and test boundaries.
 - **VPNKit** — Mullvad API, tunnel lifecycle, PQ PSK seam. [source](Packages/QwaveKit/Sources/VPNKit/)
 - **PostQuantum** — Keccak, ML-KEM-768 (official NIST ACVP vectors), hybrid KEM.
   [source](Packages/QwaveKit/Sources/PostQuantum/) · [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md)
-- **WebExtensions** — MV3 registry and `browser.*` bridge.
+- **WebExtensions** — MV3 registry and `browser.*` bridge. **Content scripts
+  are not active in the shipping app**: `BrowserWindowController.ensureWebView`
+  installs the bridge and nothing else, so a manifest's `content_scripts` entry
+  is never injected into a tab and `ContentScriptEngine` is reached only from
+  tests (`WebExtensions/WebExtensionHost.swift:8-20`).
   [source](Packages/QwaveKit/Sources/WebExtensions/)
 - **WebCredentials** — keychain-only website logins and passkeys for AutoFill.
   Foundation + Security only; never links the crypto/VPN stack. Key types:
