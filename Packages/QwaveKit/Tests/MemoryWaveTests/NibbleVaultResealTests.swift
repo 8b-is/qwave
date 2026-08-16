@@ -29,22 +29,22 @@ final class NibbleVaultResealTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent(name)
         try """
-            ---
-            id: 5a2e9c1e-0000-4000-8000-1234567890ab
-            kind: nibble
-            source: browse
-            tags: [oncology, patient-portal]
-            url: https://very-specific-patient-portal.example/records
-            created: 2024-03-01T10:00:00Z
-            container:
-            lane: odd
-            ---
+        ---
+        id: 5a2e9c1e-0000-4000-8000-1234567890ab
+        kind: nibble
+        source: browse
+        tags: [oncology, patient-portal]
+        url: https://very-specific-patient-portal.example/records
+        created: 2024-03-01T10:00:00Z
+        container:
+        lane: odd
+        ---
 
-            # Sekrit Diagnosis Results
+        # Sekrit Diagnosis Results
 
-            A paragraph about the appointment that is long enough to keep.
+        A paragraph about the appointment that is long enough to keep.
 
-            """.write(to: url, atomically: true, encoding: .utf8)
+        """.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
