@@ -122,6 +122,11 @@ public actor NibbleVault {
     /// "forget everything" action to actually forget everything, since the
     /// vault is a separate, undeduped mirror of what the store holds.
     public func deleteAll() throws {
+        // A re-seal interrupted by a crash can leave a `.reseal-tmp` sibling
+        // holding a sealed copy of a nibble. It is not a `.md` file, so the
+        // loop below would walk right past it and "forget everything" would
+        // leave a memory behind.
+        sweepInterruptedReseals()
         for file in try markdownFiles() {
             try? FileManager.default.removeItem(at: file.url)
         }

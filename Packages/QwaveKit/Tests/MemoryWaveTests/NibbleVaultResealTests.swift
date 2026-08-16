@@ -277,6 +277,25 @@ final class NibbleVaultResealTests: XCTestCase {
         XCTAssertEqual(Set(all.map(\.title)), ["Written after the fix", "Sekrit Diagnosis Results"])
     }
 
+    /// "Forget all memories" has to forget the debris too: a temp file stranded
+    /// by an interrupted re-seal holds a sealed copy of a nibble, and it is not
+    /// a `.md` file, so the ordinary wipe walks straight past it.
+    func testDeleteAllRemovesStrandedResealTempFiles() async throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let file = try writeLegacyPlaintext()
+        let stranded = file.appendingPathExtension(NibbleVault.resealTempSuffix)
+        try "a sealed replacement a killed pass never renamed".write(
+            to: stranded, atomically: true, encoding: .utf8)
+
+        let vault = try NibbleVault(directory: directory, key: key)
+        try await vault.deleteAll()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: stranded.path),
+            "forget-all left a stranded re-seal temp file behind")
+    }
+
     /// A file sealed under a *different* key is not ours to rewrite. It must be
     /// counted and left alone, never deleted and never re-sealed from a decode
     /// that did not happen.
