@@ -18,15 +18,48 @@ public enum SQLiteValue: Sendable {
 
 /// A copied query row. SQLite statements stay inside `SQLiteDatabase` and
 /// values can safely cross its actor boundary.
+///
+/// Every row of one result set is a window onto a single shared value buffer,
+/// not an array of its own. That is one heap allocation per *query* instead of
+/// one per *row*: the 50-row history query behind the omnibox was spending 50
+/// allocations on arrays it reads once and drops, ~29% of everything
+/// `rows(_:_:)` allocated (#141). The accessors below are unchanged, so no
+/// caller can tell the difference.
 public struct SQLiteRow: Sendable {
-    private let values: [SQLiteValue]
+    /// Immutable once `rows(_:_:)` has finished building it, which is what
+    /// makes sharing one instance across every row of the result set safe.
+    fileprivate final class Storage: Sendable {
+        let values: ContiguousArray<SQLiteValue>
+        let columnCount: Int
 
-    init(values: [SQLiteValue]) {
-        self.values = values
+        init(_ values: ContiguousArray<SQLiteValue>, columnCount: Int) {
+            self.values = values
+            self.columnCount = columnCount
+        }
+    }
+
+    private let storage: Storage
+    /// Index into `storage.values` of this row's column 0.
+    private let base: Int
+
+    fileprivate init(storage: Storage, base: Int) {
+        self.storage = storage
+        self.base = base
+    }
+
+    /// The bounds check is the point, not ceremony: rows share one buffer, so
+    /// an out-of-range column on any row but the last would quietly read the
+    /// NEXT row's value instead of trapping the way a per-row array did.
+    private func value(_ column: Int32) -> SQLiteValue {
+        precondition(
+            column >= 0 && Int(column) < storage.columnCount,
+            "SQLiteRow column \(column) out of range (\(storage.columnCount) columns)"
+        )
+        return storage.values[base + Int(column)]
     }
 
     public func int(_ column: Int32) -> Int64 {
-        switch values[Int(column)] {
+        switch value(column) {
         case .integer(let value): return value
         case .real(let value): return Int64(value)
         default: return 0
@@ -34,7 +67,7 @@ public struct SQLiteRow: Sendable {
     }
 
     public func double(_ column: Int32) -> Double {
-        switch values[Int(column)] {
+        switch value(column) {
         case .integer(let value): return Double(value)
         case .real(let value): return value
         default: return 0
@@ -42,17 +75,17 @@ public struct SQLiteRow: Sendable {
     }
 
     public func text(_ column: Int32) -> String? {
-        guard case .text(let value) = values[Int(column)] else { return nil }
+        guard case .text(let value) = value(column) else { return nil }
         return value
     }
 
     public func blob(_ column: Int32) -> Data? {
-        guard case .blob(let value) = values[Int(column)] else { return nil }
+        guard case .blob(let value) = value(column) else { return nil }
         return value
     }
 
     public func isNull(_ column: Int32) -> Bool {
-        if case .null = values[Int(column)] { return true }
+        if case .null = value(column) { return true }
         return false
     }
 }
@@ -198,16 +231,27 @@ public actor SQLiteDatabase {
             }
         }
 
-        var results: [SQLiteRow] = []
+        let columnCount = Int(sqlite3_column_count(statement))
+        var values = ContiguousArray<SQLiteValue>()
+        var rowCount = 0
         while true {
             let stepCode = sqlite3_step(statement)
             if stepCode == SQLITE_ROW {
-                results.append(copyRow(from: statement))
+                appendRow(from: statement, columnCount: columnCount, into: &values)
+                rowCount += 1
             } else if stepCode == SQLITE_DONE {
                 break
             } else {
                 throw SQLiteError.stepFailed(code: stepCode, message: errorMessage())
             }
+        }
+        guard rowCount > 0 else { return [] }
+
+        let storage = SQLiteRow.Storage(values, columnCount: columnCount)
+        var results: [SQLiteRow] = []
+        results.reserveCapacity(rowCount)
+        for row in 0..<rowCount {
+            results.append(SQLiteRow(storage: storage, base: row * columnCount))
         }
         return results
     }
@@ -227,11 +271,12 @@ public actor SQLiteDatabase {
         }
     }
 
-    private func copyRow(from statement: OpaquePointer) -> SQLiteRow {
-        let columnCount = sqlite3_column_count(statement)
-        var values: [SQLiteValue] = []
-        values.reserveCapacity(Int(columnCount))
-        for column in 0..<columnCount {
+    private func appendRow(
+        from statement: OpaquePointer,
+        columnCount: Int,
+        into values: inout ContiguousArray<SQLiteValue>
+    ) {
+        for column in 0..<Int32(columnCount) {
             switch sqlite3_column_type(statement, column) {
             case SQLITE_INTEGER:
                 values.append(.integer(sqlite3_column_int64(statement, column)))
@@ -250,6 +295,5 @@ public actor SQLiteDatabase {
                 values.append(.null)
             }
         }
-        return SQLiteRow(values: values)
     }
 }

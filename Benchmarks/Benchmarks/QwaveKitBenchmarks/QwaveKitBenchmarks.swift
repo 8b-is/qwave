@@ -12,6 +12,44 @@ import Shields
 /// These do NOT cover the hibernation memory claim: that memory lives in
 /// WebKit's out-of-process content processes and is measured by
 /// `BrowserCoreTests/HibernationReclaimTests`.
+
+/// The 50k-row corpus behind `HistoryStore.entries(matching:)_@_50k_rows`.
+///
+/// Globals because `BenchmarkSetupHook` returns `Void`: there is no other way
+/// to hand state from a setup hook to the closure it precedes. `nonisolated
+/// (unsafe)` is honest rather than convenient — the benchmark harness runs the
+/// setup hook and the closure on the same runner, one after the other, and
+/// `Benchmarks/Package.swift` is deliberately held at tools 5.10 (see
+/// AGENTS.md), so nothing here is checked for us.
+nonisolated(unsafe) var historyBenchmarkStore: HistoryStore?
+nonisolated(unsafe) var historyBenchmarkDirectory: URL?
+
+@Sendable func seedHistoryBenchmarkStore() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("qwave-bench-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let database = try SQLiteDatabase(url: directory.appendingPathComponent("bench.db"))
+    let store = try await HistoryStore(database: database)
+    for index in 0..<50_000 {
+        try await store.recordVisit(
+            url: URL(string: "https://host\(index % 1_000).example/p/\(index)")!,
+            title: "Title \(index) keyword\(index % 500)",
+            containerID: nil,
+            at: Date(timeIntervalSince1970: 1_700_000_000 - Double(index))
+        )
+    }
+    historyBenchmarkDirectory = directory
+    historyBenchmarkStore = store
+}
+
+@Sendable func removeHistoryBenchmarkStore() async throws {
+    historyBenchmarkStore = nil
+    if let directory = historyBenchmarkDirectory {
+        try? FileManager.default.removeItem(at: directory)
+        historyBenchmarkDirectory = nil
+    }
+}
+
 let benchmarks: @Sendable () -> Void = {
     // mallocCountTotal only: allocation counts are near-deterministic for a
     // given code path, so they survive heterogeneous runners; wall-clock
@@ -68,25 +106,38 @@ let benchmarks: @Sendable () -> Void = {
     }
 
     // Realistic-scale history queries (50k rows, SQLite WAL on disk).
+    //
+    // The corpus is seeded in `setup`, which package-benchmark runs ONCE per
+    // benchmark, not inside the measured closure. Both halves of that matter,
+    // and #141 is what they cost when they are wrong:
+    //
+    //  * Seeding inside the closure spent ~10 s per sample to measure ~1 ms of
+    //    query, so `maxDuration: .seconds(20)` collected TWO samples and "p90"
+    //    was just the worse of the two.
+    //  * With one measured call per sample, every sample was that process's
+    //    FIRST call. `mallocCountTotal` is not a per-thread counter —
+    //    package-benchmark reads jemalloc's process-wide
+    //    `stats.arenas.<all>.{small,large}.nrequests` — so a window containing
+    //    a single `await`-crossing call also counts whatever every other
+    //    thread allocated while that call was in flight. This benchmark is the
+    //    only one here that leaves the measuring thread, and it was the only
+    //    one whose number moved with machine load: the same commit measured
+    //    537, 602, 666 and 675 on the same box. Seeded once, the same call
+    //    measures 416-418 over 339 samples.
+    //
+    // So this now records the warm per-call cost the omnibox actually pays on
+    // every keystroke, over hundreds of samples, instead of one cold call.
     Benchmark(
         "HistoryStore.entries(matching:)_@_50k_rows",
-        configuration: .init(metrics: checkedMetrics, maxDuration: .seconds(20), thresholds: tolerance)
+        configuration: .init(
+            metrics: checkedMetrics,
+            maxDuration: .seconds(20),
+            thresholds: tolerance,
+            setup: seedHistoryBenchmarkStore,
+            teardown: removeHistoryBenchmarkStore
+        )
     ) { benchmark in
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("qwave-bench-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let database = try SQLiteDatabase(url: dir.appendingPathComponent("bench.db"))
-        let store = try await HistoryStore(database: database)
-        for index in 0..<50_000 {
-            try await store.recordVisit(
-                url: URL(string: "https://host\(index % 1_000).example/p/\(index)")!,
-                title: "Title \(index) keyword\(index % 500)",
-                containerID: nil,
-                at: Date(timeIntervalSince1970: 1_700_000_000 - Double(index))
-            )
-        }
-        benchmark.startMeasurement()
+        guard let store = historyBenchmarkStore else { return }
         for _ in benchmark.scaledIterations {
             blackHole(try await store.entries(matching: "keyword42", limit: 50))
         }
