@@ -80,7 +80,7 @@ final class UBORuleListCompilerTests: XCTestCase {
             example.com
             @@||example.com/analytics^$script
             """
-        let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: text)
+        let (json, skipped, exceptions, _) = UBORuleListCompiler.compileJSON(from: text)
         let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
         // Four, not three: the bare `example.com` line is a `.plain` filter and
         // compiles to a pair of rules, because its boundary was an alternation

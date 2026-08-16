@@ -23,10 +23,11 @@ final class UBORuleCompilerSnapshotTests: XCTestCase {
         """
 
     func testCompiledJSONGolden() throws {
-        let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: Self.sampleList)
+        let (json, skipped, exceptions, inexpressible) = UBORuleListCompiler.compileJSON(from: Self.sampleList)
 
         XCTAssertEqual(skipped, 2, "comment + cosmetic line")
         XCTAssertEqual(exceptions, 1)
+        XCTAssertEqual(inexpressible, 0)
 
         // JSONSerialization dictionary key order is unspecified; re-serialize
         // with sorted keys so the golden is deterministic across runs.

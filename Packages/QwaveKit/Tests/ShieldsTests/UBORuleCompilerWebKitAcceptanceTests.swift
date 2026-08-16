@@ -93,7 +93,7 @@ final class UBORuleCompilerWebKitAcceptanceTests: XCTestCase {
             ("$first-party", "||fp.example^$first-party"),
             ("negation only", "||neg.example^$domain=~only.example"),
         ] {
-            let (json, _, _) = UBORuleListCompiler.compileJSON(from: line)
+            let (json, _, _, _) = UBORuleListCompiler.compileJSON(from: line)
             let verdict = await webKitVerdict(json, identifier: "fixed-\(UUID().uuidString)")
             XCTAssertEqual(verdict, "ok", "\(label)\n  line: \(line)\n  json: \(json)")
         }
@@ -101,41 +101,85 @@ final class UBORuleCompilerWebKitAcceptanceTests: XCTestCase {
 
     /// And the same lines together, since WebKit validates the document too.
     ///
-    /// One line of `nastyCorpus` is held back: `||üñïçøde.example^`. That is a
-    /// *fourth* limitation, unrelated to the three and not introduced or fixed
-    /// here — see `testNonASCIIURLFiltersRemainInexpressible`.
+    /// This used to hold back one line — `||üñïçøde.example^`, a *fourth*
+    /// limitation unrelated to the three. It no longer has to: the compiler now
+    /// declines a non-ASCII url-filter and counts it, instead of emitting a rule
+    /// that takes the document down (#139). The corpus goes in whole.
     @MainActor
     func testWebKitAcceptsTheWholeNastyCorpus() async throws {
         let corpus = UBORuleCompilerEquivalenceTests.nastyCorpus
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { $0.allSatisfy(\.isASCII) }
-            .joined(separator: "\n")
-        let (json, _, _) = UBORuleListCompiler.compileJSON(from: corpus)
+        XCTAssertFalse(corpus.allSatisfy(\.isASCII), "the corpus lost its non-ASCII line")
+        let (json, _, _, inexpressible) = UBORuleListCompiler.compileJSON(from: corpus)
+        XCTAssertEqual(inexpressible, 1, "the non-ASCII line was not reported")
         let verdict = await webKitVerdict(json, identifier: "nasty-\(UUID().uuidString)")
         XCTAssertEqual(verdict, "ok", "WebKit rejected the corpus: \(json)")
     }
 
-    /// The limitation the acceptance test above steps around, recorded rather
-    /// than hidden: WebKit's content-blocker regex parser takes ASCII only, so
-    /// a filter naming a host in Unicode cannot be expressed at all. Fixing it
-    /// means IDNA-encoding hosts to punycode, which changes what those rules
-    /// match and is a separate call from #134.
+    /// The fourth limitation, now **reported** rather than either hidden or
+    /// fatal: WebKit's content-blocker regex parser takes ASCII only, so a
+    /// filter naming a host in Unicode cannot be expressed at all. Fixing that
+    /// properly means IDNA-encoding hosts to punycode, which changes what those
+    /// rules match and is a separate call from #134 and #139.
+    ///
+    /// What #139 changes is the failure mode. Emitting the rule anyway made
+    /// WebKit refuse the whole document — one upstream line away from a repeat
+    /// of #134. The line is now declined like a cosmetic filter, counted in
+    /// `skipped`, and surfaced separately as `inexpressible` so the omission
+    /// leaves a trace. `RemoteBlocklistUpdater` logs that count.
     ///
     /// Cost on the real corpus: zero. Upstream EasyList writes IDN hosts in
-    /// punycode already (`xn--…`), and the delta report counts any that are
-    /// not.
+    /// punycode already (`xn--…`), and the delta report asserts that.
     @MainActor
-    func testNonASCIIURLFiltersRemainInexpressible() async throws {
-        let (json, _, _) = UBORuleListCompiler.compileJSON(from: "||üñïçøde.example^")
-        let verdict = await webKitVerdict(json, identifier: "idn-\(UUID().uuidString)")
-        XCTAssertNotEqual(
-            verdict, "ok",
-            "WebKit now takes non-ASCII url-filters; drop the exclusion in testWebKitAcceptsTheWholeNastyCorpus")
+    func testNonASCIIURLFiltersAreDeclinedAndCounted() async throws {
+        let (json, skipped, exceptions, inexpressible) = UBORuleListCompiler.compileJSON(from: "||üñïçøde.example^")
+        XCTAssertEqual(json, "[]", "a non-ASCII url-filter was emitted")
+        XCTAssertEqual(inexpressible, 1)
+        XCTAssertEqual(skipped, 1, "inexpressible filters are a subset of skipped")
+        XCTAssertEqual(exceptions, 0)
 
-        // Punycode, which is how upstream lists spell it, is fine.
-        let (ascii, _, _) = UBORuleListCompiler.compileJSON(from: "||xn--bcher-kva.example^")
+        // Declining it must leave a document WebKit takes. Checked alongside a
+        // normal filter rather than on its own, because WebKit refuses an empty
+        // rule list outright ("Empty extension") — a separate limitation, and
+        // not one a real list can reach.
+        let (mixed, _, _, mixedInexpressible) = UBORuleListCompiler.compileJSON(
+            from: "||üñïçøde.example^\n||ads.example.com^")
+        XCTAssertEqual(mixedInexpressible, 1)
+        let verdict = await webKitVerdict(mixed, identifier: "idn-\(UUID().uuidString)")
+        XCTAssertEqual(verdict, "ok", "one non-ASCII line still takes the whole document down")
+
+        // The reason it is declined, stated as a measurement rather than a
+        // belief: the pattern the compiler would have emitted, handed to WebKit
+        // directly. If this ever compiles, punycode encoding is worth doing and
+        // the drop is no longer justified.
+        let raw = "^[a-z]+:\\\\/\\\\/([^\\\\/]+\\\\.)*üñïçøde\\\\.example(:[0-9]+)?\\\\/"
+        let rawJSON = "[{\"trigger\":{\"url-filter\":\"\(raw)\"},\"action\":{\"type\":\"block\"}}]"
+        let rawVerdict = await webKitVerdict(rawJSON, identifier: "idn-raw-\(UUID().uuidString)")
+        XCTAssertNotEqual(rawVerdict, "ok", "WebKit now takes non-ASCII url-filters; stop declining them")
+
+        // Punycode, which is how upstream lists spell it, is compiled normally.
+        let (ascii, _, _, asciiInexpressible) = UBORuleListCompiler.compileJSON(from: "||xn--bcher-kva.example^")
+        XCTAssertEqual(asciiInexpressible, 0)
         let asciiVerdict = await webKitVerdict(ascii, identifier: "puny-\(UUID().uuidString)")
         XCTAssertEqual(asciiVerdict, "ok")
+    }
+
+    /// Only the `url-filter` is examined, and the whole of it. A non-ASCII
+    /// *path* is as inexpressible as a non-ASCII host.
+    func testInexpressibleCountsEveryURLFilterShape() {
+        for line in [
+            "||üñïçøde.example^", "||ok.example/pfäd^", "üñïçøde.example", "/ädvert/track.js",
+            "@@||üñïçøde.example^", "@@||ok.example/pfäd^",
+        ] {
+            let (json, skipped, _, inexpressible) = UBORuleListCompiler.compileJSON(from: line)
+            XCTAssertEqual(json, "[]", line)
+            XCTAssertEqual(inexpressible, 1, line)
+            XCTAssertEqual(skipped, 1, line)
+        }
+        // A cosmetic line is skipped but not inexpressible — the two counts
+        // must not collapse into each other.
+        let (_, skipped, _, inexpressible) = UBORuleListCompiler.compileJSON(from: "! comment\nexample.com##.ad")
+        XCTAssertEqual(skipped, 2)
+        XCTAssertEqual(inexpressible, 0)
     }
 
     /// The regression this replaces: proof the *old* shapes really were the
@@ -168,7 +212,7 @@ final class UBORuleCompilerWebKitAcceptanceTests: XCTestCase {
         for (line, expected) in [
             ("||a.example^$third-party", "third-party"), ("||b.example^$first-party", "first-party"),
         ] {
-            let (json, _, _) = UBORuleListCompiler.compileJSON(from: line)
+            let (json, _, _, _) = UBORuleListCompiler.compileJSON(from: line)
             let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
             let trigger = try XCTUnwrap(rules.first?["trigger"] as? [String: Any])
             XCTAssertEqual(trigger["load-type"] as? [String], [expected])
@@ -181,7 +225,7 @@ final class UBORuleCompilerWebKitAcceptanceTests: XCTestCase {
             ("||b.example^$domain=x.test", ["x.test"], nil),
             ("||c.example^$domain=~y.test", nil, ["y.test"]),
         ] as [(String, [String]?, [String]?)] {
-            let (json, _, _) = UBORuleListCompiler.compileJSON(from: line)
+            let (json, _, _, _) = UBORuleListCompiler.compileJSON(from: line)
             let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
             let trigger = try XCTUnwrap(rules.first?["trigger"] as? [String: Any])
             XCTAssertEqual(trigger["if-domain"] as? [String], ifDomain, line)

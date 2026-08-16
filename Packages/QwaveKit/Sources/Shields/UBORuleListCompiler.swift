@@ -137,6 +137,51 @@ public enum UBORuleListCompiler {
         ]
     }
 
+    /// Splits the tail of a `||host/path` pattern at the first `/`.
+    ///
+    /// `UBOFilterParser` performs exactly this split for blocking filters and
+    /// hands back `.anchoredPath(host:path:)`. `.exception` keeps the raw
+    /// pattern instead, so the compiler has to redo it — and not redoing it was
+    /// the whole of issue #139: passing `host/path` to `anchoredHostRegex` as
+    /// though it were a host emitted
+    /// `^[a-z]+://([^/]+\.)*host\/path(:[0-9]+)?/`, which asks for a port
+    /// *after* the path and a slash after that. No URL is spelled that way, so
+    /// every `@@||host/path^` rule compiled cleanly and matched nothing.
+    ///
+    /// Reference shape is `plainHostRegex`/`anchoredHostRegex`: the port group
+    /// belongs to the authority, so it has to be written before the path.
+    static func splitAnchoredPattern(_ rest: Substring) -> (host: Substring, path: Substring?) {
+        guard let slash = rest.firstIndex(of: "/") else { return (rest, nil) }
+        return (rest[..<slash], rest[rest.index(after: slash)...])
+    }
+
+    /// Whether a filter's `url-filter` can be written at all.
+    ///
+    /// WebKit's content-blocker regex parser takes ASCII only; a `url-filter`
+    /// carrying any other byte makes it refuse the **whole document**, which is
+    /// how the entire list went down in #134. Such a filter is therefore
+    /// declined the same way a cosmetic line is — it counts toward `skipped`,
+    /// and toward the `inexpressible` sub-count so the omission is reportable
+    /// rather than invisible (issue #139). Upstream EasyList spells IDN hosts in
+    /// punycode, so the count is 0 today; `UBOEasyListDeltaTests` asserts that.
+    ///
+    /// Only the `url-filter` is examined. `if-domain`/`unless-domain` are
+    /// separate trigger fields with their own encoding and are not this
+    /// function's business.
+    public static func urlFilterIsExpressible(_ filter: UBOFilter) -> Bool {
+        func isASCII(_ value: some StringProtocol) -> Bool { value.utf8.allSatisfy { $0 < 0x80 } }
+        switch filter {
+        case .ignore:
+            return false
+        case .hostname(let host, _), .plain(let host, _):
+            return isASCII(host)
+        case .anchoredPath(let host, let path, _):
+            return isASCII(host) && isASCII(path)
+        case .substring(let pattern, _), .exception(let pattern, _):
+            return isASCII(pattern)
+        }
+    }
+
     /// Which of a filter's rules is being emitted. Only `.plain` has two: the
     /// alternation its boundary used to carry cannot be expressed in one
     /// WebKit-acceptable regex, so it becomes two rules with the same action —
@@ -155,12 +200,13 @@ public enum UBORuleListCompiler {
     /// and `UBORuleCompilerEquivalenceTests` diffs the two paths byte for byte,
     /// so they cannot drift apart unnoticed.
     public static func variants(of filter: UBOFilter) -> [RuleVariant] {
+        guard urlFilterIsExpressible(filter) else { return [] }
         if case .plain = filter { return [.primary, .hostAtEndOfURL] }
-        if case .ignore = filter { return [] }
         return [.primary]
     }
 
     public static func filter(_ filter: UBOFilter, variant: RuleVariant = .primary) -> [String: Any]? {
+        guard urlFilterIsExpressible(filter) else { return nil }
         switch filter {
         case .ignore:
             return nil
@@ -179,7 +225,12 @@ public enum UBORuleListCompiler {
         case .exception(let pattern, let options):
             let regex: String
             if pattern.hasPrefix("||") {
-                regex = anchoredHostRegex(host: String(pattern.dropFirst(2)))
+                // Same shape as `.anchoredPath` above: authority (with its
+                // optional port) first, then the path. See `splitAnchoredPattern`.
+                let (host, path) = splitAnchoredPattern(pattern.dropFirst(2))
+                regex =
+                    anchoredHostRegex(host: String(host))
+                    + (path.map { NSRegularExpression.escapedPattern(for: String($0)) } ?? "")
             } else {
                 regex = NSRegularExpression.escapedPattern(for: pattern)
             }
@@ -188,8 +239,12 @@ public enum UBORuleListCompiler {
     }
 
     /// Compiles raw filter-list text into a content-blocker JSON document.
-    /// Returns (json, skippedCount, exceptionCount) — `skippedCount` counts
-    /// cosmetic/unsupported lines.
+    /// Returns (json, skippedCount, exceptionCount, inexpressibleCount) —
+    /// `skippedCount` counts cosmetic/unsupported lines, and `inexpressible`
+    /// is the sub-count of those that were declined for carrying a non-ASCII
+    /// `url-filter` (see `urlFilterIsExpressible`). It is broken out because
+    /// it is the one class of omission a filter-list author would want to hear
+    /// about: nothing in the line looks unsupported.
     ///
     /// The JSON is written straight into one UTF-8 byte buffer rather than
     /// built as `[[String: Any]]` and handed to `JSONSerialization`. The three
@@ -205,7 +260,9 @@ public enum UBORuleListCompiler {
     /// the content-hash rule-list cache. `UBORuleCompilerEquivalenceTests`
     /// pins the equivalence against the previous implementation, which
     /// `filter(_:)` still provides.
-    public static func compileJSON(from text: String) -> (json: String, skipped: Int, exceptions: Int) {
+    public static func compileJSON(from text: String) -> (
+        json: String, skipped: Int, exceptions: Int, inexpressible: Int
+    ) {
         var out: [UInt8] = []
         var exceptionBytes: [UInt8] = []
         out.reserveCapacity(text.utf8.count * 2 + 2)
@@ -215,6 +272,7 @@ public enum UBORuleListCompiler {
         var wroteBlocking = false
         var skipped = 0
         var exceptionCount = 0
+        var inexpressible = 0
 
         // Substrings, not `components(separatedBy:)`: `Character.isNewline`
         // covers exactly `CharacterSet.newlines`, and both the old and the new
@@ -223,9 +281,20 @@ public enum UBORuleListCompiler {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             let parsed = UBOFilterParser.parse(line)
+            if case .ignore = parsed {
+                skipped += 1
+                continue
+            }
+            // Declined, and counted as such rather than emitted: a non-ASCII
+            // url-filter makes WebKit refuse the whole document.
+            guard urlFilterIsExpressible(parsed) else {
+                skipped += 1
+                inexpressible += 1
+                continue
+            }
             switch parsed {
             case .ignore:
-                skipped += 1
+                break  // Unreachable: `continue`d above.
             case .exception:
                 if exceptionCount > 0 { exceptionBytes.append(UInt8(ascii: ",")) }
                 appendRuleJSON(parsed, variant: .primary, to: &exceptionBytes)
@@ -247,7 +316,7 @@ public enum UBORuleListCompiler {
         if wroteBlocking && exceptionCount > 0 { out.append(UInt8(ascii: ",")) }
         out.append(contentsOf: exceptionBytes)
         out.append(UInt8(ascii: "]"))
-        return (String(decoding: out, as: UTF8.self), skipped, exceptionCount)
+        return (String(decoding: out, as: UTF8.self), skipped, exceptionCount, inexpressible)
     }
 
     // MARK: - Direct JSON emission
@@ -417,7 +486,12 @@ public enum UBORuleListCompiler {
             options = opts
             isException = true
             if pattern.hasPrefix("||") {
-                appendAnchoredHostRegex(pattern.dropFirst(2), to: &out)
+                // Authority first, then the path — the `.anchoredPath` shape.
+                // Writing the path inside `appendAnchoredHostRegex`'s host
+                // argument put the port group after it (#139).
+                let (host, path) = splitAnchoredPattern(pattern.dropFirst(2))
+                appendAnchoredHostRegex(host, to: &out)
+                if let path { appendRegexEscaped(path, to: &out) }
             } else {
                 appendRegexEscaped(pattern, to: &out)
             }
