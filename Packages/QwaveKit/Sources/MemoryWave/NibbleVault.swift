@@ -331,7 +331,9 @@ public actor NibbleVault {
                 try? FileManager.default.removeItem(at: temp)
                 return false
             }
-            return renameOver(temp, url)
+            if renameOver(temp, url) { return true }
+            try? FileManager.default.removeItem(at: temp)
+            return false
         } catch {
             try? FileManager.default.removeItem(at: temp)
             return false
