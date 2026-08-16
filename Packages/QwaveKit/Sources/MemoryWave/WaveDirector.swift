@@ -336,13 +336,29 @@ public final class WaveDirector {
         salience: Double
     ) async throws -> WaveAnswer {
         let provider = try resolveProvider()
+        // `includeStoredMemory` is passed through as the caller declared it.
+        // It used to be `&& provider.kind == .openaiCompatible`, a conjunct
+        // that was exactly redundant — the policy reads `includeStoredMemory`
+        // only inside its own `provider == .openaiCompatible` branch, over the
+        // same `provider.kind` — but that read as though the caller
+        // pre-sanitises what it declares, which is the one thing it must not
+        // do. The policy has to receive the declared intent to be a tripwire
+        // at all.
+        //
+        // It stays dormant in normal operation, and that is correct: `ask`
+        // declares stored memory only for the on-device provider, so the
+        // policy never sees "memories + remote". What keeps recalled memories
+        // out of a remote prompt today is the `provider.kind == .onDevice`
+        // check below, which runs after this. The policy is defence in depth
+        // behind it, for a future caller that declares memories while a remote
+        // provider resolves.
         let decision = MemoryWavePolicy.decide(
             MemoryWaveContext(
                 isExplicit: true,
                 isEphemeral: isEphemeral,
                 inferenceAllowed: inferenceAllowed,
                 provider: provider.kind,
-                includeStoredMemory: includeStoredMemory && provider.kind == .openaiCompatible,
+                includeStoredMemory: includeStoredMemory,
                 destination: .infer,
                 remoteBaseURL: preferences.providerKind == .openaiCompatible ? preferences.remoteBaseURL : nil
             )
@@ -370,6 +386,16 @@ public final class WaveDirector {
         )
     }
 
+    /// Builds the provider for the configured preference.
+    ///
+    /// It deliberately publishes nothing to `EgressGuard`. An earlier version
+    /// of this method wrote the configured host into a process-wide slot on
+    /// `EgressAllowlist`, which was wrong twice over: Settings changes the
+    /// endpoint without ever calling this, so the previous host stayed
+    /// permitted until the next inference (or forever, if the user had just
+    /// switched the provider off), and a slot on the allowlist permitted that
+    /// host for every guarded client rather than for this provider. The guard
+    /// now reads `MemoryWavePreferences.egressPermittedHost` live, per request.
     public func resolveProvider() throws -> any MemoryProviding {
         if let providerOverride { return providerOverride }
         switch preferences.providerKind {

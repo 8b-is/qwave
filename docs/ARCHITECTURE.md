@@ -183,11 +183,19 @@ committed allowlist, and — since [#77](https://github.com/8b-is/qwave/issues/7
 `EgressGuard` (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that
 consults `EgressAllowlist.permits(host:)` at runtime and fails any request to
 a host not listed, wired into every fixed-host Qwave network client
-(`MullvadAPIClient`, the DuckDuckGo suggestion provider) plus, process-wide,
-any default- or shared-configuration session. It is still not a mechanical
+(`MullvadAPIClient`, the DuckDuckGo suggestion provider, Memory Wave's remote
+provider) plus, process-wide, any default- or shared-configuration session.
+Memory Wave's provider is the one whose base URL the user may point anywhere;
+that is handled per request (`EgressGuard.markUserConfiguredEndpoint(_:)`,
+resolved against the current preference at check time) rather than by
+exempting the session, which is what it did before and which meant the guard
+never saw a provider request at all. The permission is scoped to that request:
+it is not on `EgressAllowlist`, so no other client inherits the host, and
+nothing caches it, so changing the endpoint in Settings revokes the previous
+one with no inference in between. It is still not a mechanical
 guarantee over new code: a fixed-host client that skips
 `EgressGuard.install(into:)` is not caught by anything mechanical, only by
-review, and `EgressGuardTests` still pins three known endpoints by hand and
+review, and `EgressGuardTests` still pins four known endpoints by hand and
 asserts the shields launch path makes no request. New Qwave-owned network
 code must add its host to the allowlist, wire `EgressGuard` into its session
 if the host is fixed, and document its host, trigger, opt-in state, and test
