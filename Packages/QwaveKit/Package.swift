@@ -1,9 +1,13 @@
 // swift-tools-version:6.2
 import PackageDescription
 
+// The Swift 6 language mode turns complete concurrency checking on by itself,
+// so an explicit `-strict-concurrency=complete` adds nothing (verified: the
+// same diagnostics fire without it, and an explicit `=minimal` cannot weaken
+// them). Dropping it also drops `unsafeFlags`, which bars a package from being
+// consumed as a versioned dependency and is rejected in some build contexts.
 let swift6: [SwiftSetting] = [
-    .swiftLanguageMode(.v6),
-    .unsafeFlags(["-strict-concurrency=complete"]),
+    .swiftLanguageMode(.v6)
 ]
 
 let package = Package(
