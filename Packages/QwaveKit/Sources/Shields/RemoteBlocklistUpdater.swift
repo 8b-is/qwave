@@ -69,10 +69,18 @@ public struct RemoteBlocklistUpdater: BlocklistUpdating {
             let newETag = http.value(forHTTPHeaderField: "ETag")
             await etags.setETag(newETag, for: etagKey)
 
-            let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: text)
+            let (json, skipped, exceptions, inexpressible) = UBORuleListCompiler.compileJSON(from: text)
             QwaveLog.shields.info(
                 "Blocklist updated: \(json.count, privacy: .public) bytes JSON, \(skipped, privacy: .public) skipped, \(exceptions, privacy: .public) exceptions"
             )
+            // Broken out of `skipped` deliberately. A cosmetic line is expected
+            // to be dropped; a filter WebKit cannot spell is a coverage hole,
+            // and it used to leave no trace at all (#139).
+            if inexpressible > 0 {
+                QwaveLog.shields.warning(
+                    "Blocklist: \(inexpressible, privacy: .public) filters declined — non-ASCII url-filter, which WebKit's content-blocker engine cannot express"
+                )
+            }
             return json
         default:
             throw URLError(.init(rawValue: http.statusCode))

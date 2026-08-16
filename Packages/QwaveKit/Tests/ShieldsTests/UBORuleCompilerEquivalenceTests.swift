@@ -333,7 +333,7 @@ final class UBORuleCompilerEquivalenceTests: XCTestCase {
             @@/analytics/allowed.js
             example.com##.ad-slot
             """
-        let (json, _, _) = UBORuleListCompiler.compileJSON(from: list)
+        let (json, _, _, _) = UBORuleListCompiler.compileJSON(from: list)
         let verdict = await webKitVerdict(json, identifier: "emitted")
         XCTAssertEqual(verdict, "ok", "WebKit rejected the emitted document: \(json)")
     }

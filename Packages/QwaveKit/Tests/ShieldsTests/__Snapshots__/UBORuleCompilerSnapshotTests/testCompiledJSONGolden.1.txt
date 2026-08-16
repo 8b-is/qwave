@@ -70,7 +70,7 @@
       "type" : "ignore-previous-rules"
     },
     "trigger" : {
-      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*cdn\\.example\\.com\\\/banners\\\/allowed\\.png(:[0-9]+)?\/"
+      "url-filter" : "^[a-z]+:\/\/([^\/]+\\.)*cdn\\.example\\.com(:[0-9]+)?\/banners\\\/allowed\\.png"
     }
   }
 ]
