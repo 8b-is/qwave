@@ -141,6 +141,15 @@ the spec did not:
    unchanged rather than being guessed at. Server verdicts carry
    `reason` / `reason_en` / `reason_zh`.
 
+8. **`script-src-elem` admits `'unsafe-inline'` for Cloudflare's challenge.**
+   The vaked.dev zone runs Cloudflare's JavaScript-Detection challenge, which
+   injects an inline bootstrap script into every HTML response. A pure
+   `script-src 'self'` blocks it, the challenge never completes, and
+   Cloudflare answers follow-up requests with 403. The relaxation is scoped
+   to `<script>` *elements* only; `script-src-attr 'none'` keeps inline event
+   handlers banned, and `script-src 'self'` still rules for anything the
+   element policy does not cover.
+
 ### Not done
 
 - **The fleet-map row** (§9: "add bonfire row to the constellation-ops

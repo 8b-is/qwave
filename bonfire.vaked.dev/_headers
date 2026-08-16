@@ -2,7 +2,14 @@
 # Spec §9: CSP, X-Robots-Tag: noai, no-store, nosniff, SAMEORIGIN.
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://music.vaked.dev; frame-src https://music.vaked.dev; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+  # script-src stays 'self': no third-party code, no eval. script-src-elem
+  # admits 'unsafe-inline' for exactly one reason — the vaked.dev zone runs
+  # Cloudflare's JavaScript-Detection challenge, which injects an inline
+  # bootstrap (<script>window.__CF$cv$params…) into every HTML response.
+  # Under a pure 'self' policy that inline script is blocked, the challenge
+  # never completes, and Cloudflare answers the follow-up requests with 403.
+  # Inline event handlers stay banned via script-src-attr 'none'.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; script-src-elem 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://music.vaked.dev; frame-src https://music.vaked.dev; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
   X-Frame-Options: SAMEORIGIN
   X-Content-Type-Options: nosniff
   X-Robots-Tag: noai, noimageai
