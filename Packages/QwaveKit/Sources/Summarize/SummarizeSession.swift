@@ -47,10 +47,17 @@ public enum SummarizeSession {
     /// Summarise article text. Throws on failure; refusals are retried up to
     /// `policy.maxAttempts`. The error carries the refusal count and a log
     /// detail — neither is safe to render (see `SummarizeUI`).
+    ///
+    /// Typed throw: every escape is a `SummarizeError`. The `do` around
+    /// `session.respond` catches `any Error` exhaustively and re-throws it as
+    /// `.generationFailed`, `Task.sleep` is `try?`, and the two remaining
+    /// `throw`s are literals. Nothing from FoundationModels leaks out untyped,
+    /// which is the point: the SDK's error strings are refusal copy and must
+    /// never reach the UI.
     public static func summarize(
         _ text: String,
         policy: SummarizeRetryPolicy = SummarizeRetryPolicy()
-    ) async throws -> SummarizeResult {
+    ) async throws(SummarizeError) -> SummarizeResult {
         #if canImport(FoundationModels)
             if #available(macOS 26.0, iOS 26.0, *) {
                 let prompt = SummarizePrompt.forText(text)

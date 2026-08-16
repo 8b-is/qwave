@@ -47,7 +47,11 @@ public final class ExtensionStorageService {
     // MARK: - API
 
     /// `get(keys)`: null -> everything; String -> that key; [String] -> those keys.
-    public func get(extensionID: String, keys: Any?) throws -> [String: Any] {
+    ///
+    /// Typed throw: `load` swallows every I/O and JSON error with `try?`, so
+    /// the only thing that escapes is a caller handing us a `keys` argument the
+    /// WebExtension API does not define.
+    public func get(extensionID: String, keys: Any?) throws(StorageError) -> [String: Any] {
         let store = load(extensionID: extensionID)
         guard let keys else { return store }
         if let single = keys as? String {
@@ -73,7 +77,10 @@ public final class ExtensionStorageService {
     }
 
     /// `remove(keys)`: String or [String].
-    public func remove(extensionID: String, keys: Any?) throws {
+    ///
+    /// Typed throw: same closed domain as `get` — `load`/`save` swallow their
+    /// own failures, so `invalidKey` is the only escape.
+    public func remove(extensionID: String, keys: Any?) throws(StorageError) {
         var store = load(extensionID: extensionID)
         if let single = keys as? String {
             store.removeValue(forKey: single)
