@@ -12,6 +12,9 @@ export async function onRequestGet({ env }) {
       lattice: 'bound',
       // Surfaced so a deployment cannot quietly run on the dev salt.
       identity_salt: usingDevSalt(env) ? 'development' : 'configured',
+      // Surfaced so an operator can see which of the Custodian's rules are
+      // actually in force — rule 3 ships with no vocabulary by default.
+      harm_terms: String(env?.HARM_TERMS ?? '').trim() ? 'configured' : 'none',
     });
   } catch (err) {
     return json({ lattice: 'error', error: err.message }, { status: 503 });

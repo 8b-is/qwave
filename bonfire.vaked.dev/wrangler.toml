@@ -18,7 +18,7 @@ pages_build_output_dir = "."
 [[d1_databases]]
 binding = "LATTICE"
 database_name = "bonfire-lattice"
-database_id = "REPLACE_ME_WITH_YOUR_D1_DATABASE_ID"
+database_id = "92fcd915-386e-470b-a5b9-5f00d00207ad"
 
 # --- Secrets, set with `wrangler pages secret put`, never committed ---------
 #

@@ -13,7 +13,7 @@ export const LATTICE = 'LATTICE';
  * Responses
  * ------------------------------------------------------------------------ */
 
-const BASE_HEADERS = {
+export const BASE_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   // Spec §9: nothing here is cached, and nothing here is training data.
   'cache-control': 'no-store',

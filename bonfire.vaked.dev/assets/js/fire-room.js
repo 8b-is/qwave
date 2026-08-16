@@ -7,6 +7,10 @@
 import { mountFire } from './fire-canvas.js';
 import { composeWave, effectiveAmplitude, vadColor, vadLabel } from '../../shared/wave.js';
 import * as api from './api.js';
+import {
+  DEFAULT_LANG, RTL_LANGS, lang, relTimeT, setLang, t,
+  translateError, translateReason, translateVadLabel,
+} from '../../shared/i18n.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -27,13 +31,45 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function relTime(ts) {
-  const seconds = Math.max(Math.floor(Date.now() / 1000) - ts, 0);
-  if (seconds < 90) return 'most';
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins} perce`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} órája`;
-  return `${Math.floor(hours / 24)} napja`;
+  return relTimeT(ts);
+}
+
+/* ---------------------------------------------------------------------------
+ * Language
+ * ------------------------------------------------------------------------ */
+
+const LANG_KEY = 'bonfire.lang';
+
+function applyI18n() {
+  const l = lang();
+  const html = document.documentElement;
+  html.lang = l;
+  html.dir = RTL_LANGS.has(l) ? 'rtl' : 'ltr';
+  document.title = t('fire.title');
+  document.querySelector('meta[name="description"]')?.setAttribute('content', t('fire.desc'));
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n-html]')) node.innerHTML = t(node.dataset.i18nHtml);
+  for (const node of document.querySelectorAll('[data-i18n-ph]')) node.placeholder = t(node.dataset.i18nPh);
+  for (const node of document.querySelectorAll('[data-i18n-attr]')) {
+    for (const pair of node.dataset.i18nAttr.split(/\s+/)) {
+      const [attr, key] = pair.split(':');
+      if (attr && key) node.setAttribute(attr, t(key));
+    }
+  }
+  for (const btn of document.querySelectorAll('.lang-switch button[data-lang]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.lang === l));
+  }
+}
+
+function wireLangSwitch(onChange) {
+  for (const btn of document.querySelectorAll('.lang-switch button[data-lang]')) {
+    btn.addEventListener('click', () => {
+      setLang(btn.dataset.lang);
+      try { localStorage.setItem(LANG_KEY, btn.dataset.lang); } catch { /* fine */ }
+      applyI18n();
+      onChange?.();
+    });
+  }
 }
 
 const slug = new URLSearchParams(location.search).get('f');
@@ -49,7 +85,7 @@ function renderHead(f) {
   document.title = `${f.name} — bonfire`;
   $('#fire-head').hidden = false;
   $('#fire-name').textContent = f.name;
-  $('#fire-question').textContent = f.question ? `„${f.question}"` : '';
+  $('#fire-question').textContent = f.question ? `„${f.question}”` : '';
   $('#fire-ash').textContent = ` ${f.ash_sentence}`;
 
   const stateEl = $('#fire-state');
@@ -57,8 +93,8 @@ function renderHead(f) {
   stateEl.className = `state state-${f.state === 'PARÁZS' ? 'PARAZS' : f.state}`;
 
   $('#fire-pulse').textContent =
-    f.pulse === 'daily' ? 'napi pulzus' : f.pulse === 'weekly' ? 'heti pulzus' : 'pulzus nélkül';
-  $('#fire-age').textContent = `meggyújtva ${relTime(f.created_at)}`;
+    f.pulse === 'daily' ? t('firecard.pulse.daily') : f.pulse === 'weekly' ? t('firecard.pulse.weekly') : t('firecard.pulse.none');
+  $('#fire-age').textContent = t('fire.lit.ago', { t: relTime(f.created_at) });
   $('#fire-chairs').textContent = f.chairs ?? 0;
   $('#fire-waves').textContent = f.waves ?? 0;
 
@@ -69,8 +105,7 @@ function renderHead(f) {
     const note = $('#ember-result');
     note.hidden = false;
     note.className = 'notice';
-    note.textContent = 'Ez a tűz hamuvá égett. A hamu-mondata teljesült — a kör lezárult, '
-      + 'de a rács megtartja, ami elhangzott.';
+    note.textContent = t('fire.ashed.note');
   }
 }
 
@@ -84,9 +119,9 @@ function waveItem(wave) {
 
   const meta = el('div', { class: 'wave-meta' }, [
     el('span', {}, [el('b', { text: `${(wave.frequency ?? 0).toFixed(2)} Hz` })]),
-    el('span', { text: `${(wave.phase_deg ?? 0).toFixed(0)}° fázis` }),
+    el('span', { text: t('time.phase', { p: (wave.phase_deg ?? 0).toFixed(0) }) }),
     el('span', { text: `amp ${alive.toFixed(3)}` }),
-    el('span', { text: wave.label || vadLabel(vad) }),
+    el('span', { text: translateVadLabel(wave.label || vadLabel(vad)) }),
     el('span', { class: 'faint', text: relTime(wave.ts) }),
   ]);
 
@@ -106,13 +141,13 @@ function waveItem(wave) {
   ]);
 }
 
-function renderWaves(waves, heading = 'A parazsak') {
+function renderWaves(waves, heading = t('fire.waves.title')) {
   $('#wave-heading').textContent = heading;
   const list = $('#wave-list');
   list.replaceChildren();
 
   if (!waves.length) {
-    list.append(el('li', { class: 'empty', text: 'Még csend van. Te lehetsz az első parázs.' }));
+    list.append(el('li', { class: 'empty', text: t('fire.empty') }));
     return;
   }
   waves.forEach((w) => list.append(waveItem(w)));
@@ -139,7 +174,7 @@ async function load() {
   if (!slug) {
     const err = $('#fire-error');
     err.hidden = false;
-    err.textContent = 'Nincs megadva tűz. Menj vissza a gyűrűhöz, és válassz egyet.';
+    err.textContent = t('fire.noq');
     $('#wave-list').replaceChildren();
     return;
   }
@@ -155,8 +190,8 @@ async function load() {
     const box = $('#fire-error');
     box.hidden = false;
     box.textContent = err.status === 404
-      ? 'Nincs ilyen tűz. Lehet, hogy már hamuvá égett és elvitték a kapszuláját.'
-      : `Nem sikerült betölteni a tüzet: ${err.message}`;
+      ? t('fire.gone')
+      : t('fire.load.fail', { msg: translateError(err.message) });
     $('#wave-list').replaceChildren();
   }
 }
@@ -177,7 +212,7 @@ function initEmberForm() {
     const wave = await composeWave(text, { recentFingerprints: [] });
     if (mine !== token) return;
     preview.textContent =
-      `${wave.frequency.toFixed(2)} Hz · ${wave.phase_deg.toFixed(0)}° · ${wave.label}`;
+      `${wave.frequency.toFixed(2)} Hz · ${wave.phase_deg.toFixed(0)}° · ${translateVadLabel(wave.label)}`;
     preview.style.color = wave.color;
   });
 
@@ -198,7 +233,7 @@ function initEmberForm() {
       result.append(
         el('span', { class: `decision decision-${res.decision}`, text: res.decision }),
         ' ',
-        res.reason || '',
+        translateReason(res.reason, res.reason_en, res.reason_zh),
       );
 
       if (res.wave) {
@@ -215,7 +250,7 @@ function initEmberForm() {
     } catch (err) {
       result.hidden = false;
       result.className = 'notice notice-err';
-      result.textContent = err.message || 'A parázs nem jutott el a tűzig.';
+      result.textContent = translateError(err.message) || t('fire.ember.fail');
     } finally {
       submit.disabled = false;
     }
@@ -231,29 +266,26 @@ function initChair() {
       const res = await api.takeChair(fire.id);
       $('#fire-chairs').textContent = res.chairs ?? '—';
       canvas?.setChairs(Math.min(res.chairs ?? 1, 40));
-      status.textContent = 'Leültél. Nem kérünk nevet, és nem is fogunk.';
+      status.textContent = t('fire.sitting');
     } catch (err) {
-      status.textContent = err.message || 'A szék nem sikerült.';
+      status.textContent = translateError(err.message) || t('fire.chair.fail');
     }
   });
 
   // Custodian rule 5: an ember may always take back its own flame.
   $('#leave-fire').addEventListener('click', async () => {
     if (!fire) return;
-    const ok = confirm(
-      'Elviszed a lángod?\n\nMinden hullám, amit ehhez a tűzhöz dobtál, eltűnik a rácsból. '
-      + 'Ez a te döntésed — nem kérdezünk vissza, és nem tartunk másolatot.',
-    );
+    const ok = confirm(t('fire.leave.confirm'));
     if (!ok) return;
 
     try {
       const res = await api.leave(fire.id);
       status.textContent = res.removed
-        ? `${res.removed} hullámod visszavéve. Ott voltál.`
-        : 'Nem volt itt hullámod.';
+        ? t('fire.leave.done', { n: res.removed })
+        : t('fire.leave.none');
       await load();
     } catch (err) {
-      status.textContent = err.message || 'Nem sikerült.';
+      status.textContent = translateError(err.message) || t('fire.leave.fail');
     }
   });
 }
@@ -271,9 +303,9 @@ function initResonate() {
       try {
         const { waves } = await api.resonate(q);
         const scoped = fire ? waves.filter((w) => w.fire_id === fire.id) : waves;
-        renderWaves(scoped, `Rezonancia — „${q}"`);
+        renderWaves(scoped, t('fire.resonate.heading', { q }));
       } catch (err) {
-        renderWaves([], `Nem sikerült a felidézés: ${err.message}`);
+        renderWaves([], t('fire.resonate.fail', { msg: translateError(err.message) }));
       }
     }, 260);
   });
@@ -284,9 +316,7 @@ async function initLatticeBanner() {
   const live = await api.probe();
   banner.hidden = live;
   if (!live) {
-    banner.textContent =
-      'A rács még nincs bekötve — ez a tűz a böngésződben ég, és csak nálad marad. '
-      + 'A kapu és a hullámmotor viszont ugyanaz a kód, ami az éles rácsban fut.';
+    banner.textContent = t('banner.local.room');
   }
 }
 
@@ -295,6 +325,10 @@ async function initLatticeBanner() {
  * ------------------------------------------------------------------------ */
 
 function boot() {
+  try { setLang(localStorage.getItem(LANG_KEY) || DEFAULT_LANG); } catch { setLang(DEFAULT_LANG); }
+  applyI18n();
+  wireLangSwitch(() => load());
+
   canvas = mountFire('#room-fire', { chairs: 0, intensity: 1.15, origin: [0.5, 0.68] });
   initEmberForm();
   initChair();

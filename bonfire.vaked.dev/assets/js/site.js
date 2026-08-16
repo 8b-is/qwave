@@ -15,6 +15,48 @@ import {
   WAVE, TAU_HOURS, PHI,
 } from '../../shared/wave.js';
 import * as api from './api.js';
+import {
+  DEFAULT_LANG, RTL_LANGS, lang, relTimeT, setLang, t,
+  translateError, translateReason, translateVadLabel,
+} from '../../shared/i18n.js';
+
+/* ---------------------------------------------------------------------------
+ * Language
+ * ------------------------------------------------------------------------ */
+
+const LANG_KEY = 'bonfire.lang';
+
+function applyI18n() {
+  const l = lang();
+  const html = document.documentElement;
+  html.lang = l;
+  html.dir = RTL_LANGS.has(l) ? 'rtl' : 'ltr';
+  document.title = t('site.title');
+  document.querySelector('meta[name="description"]')?.setAttribute('content', t('site.desc'));
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n-html]')) node.innerHTML = t(node.dataset.i18nHtml);
+  for (const node of document.querySelectorAll('[data-i18n-ph]')) node.placeholder = t(node.dataset.i18nPh);
+  for (const node of document.querySelectorAll('[data-i18n-attr]')) {
+    for (const pair of node.dataset.i18nAttr.split(/\s+/)) {
+      const [attr, key] = pair.split(':');
+      if (attr && key) node.setAttribute(attr, t(key));
+    }
+  }
+  for (const btn of document.querySelectorAll('.lang-switch button[data-lang]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.lang === l));
+  }
+}
+
+function wireLangSwitch(onChange) {
+  for (const btn of document.querySelectorAll('.lang-switch button[data-lang]')) {
+    btn.addEventListener('click', () => {
+      setLang(btn.dataset.lang);
+      try { localStorage.setItem(LANG_KEY, btn.dataset.lang); } catch { /* fine */ }
+      applyI18n();
+      onChange?.();
+    });
+  }
+}
 
 /* ---------------------------------------------------------------------------
  * Ambient
@@ -54,9 +96,10 @@ async function initAmbient() {
 
   const SRC = 'https://music.vaked.dev/';
   try {
-    // no-cors tells us nothing about the response body — only whether the
-    // request completed at all, which is exactly the question being asked.
-    await fetch(SRC, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    // A standard CORS fetch lets us check res.ok (which fails if the network
+    // is blocked by an adblocker returning a synthetic 403, or if the server is down).
+    const res = await fetch(SRC, { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return;
   } catch {
     return;
   }
@@ -109,14 +152,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function relTime(ts) {
-  const seconds = Math.max(Math.floor(Date.now() / 1000) - ts, 0);
-  if (seconds < 90) return 'most';
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins} perce`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} órája`;
-  const days = Math.floor(hours / 24);
-  return `${days} napja`;
+  return relTimeT(ts);
 }
 
 /** Which 32-byte field does this offset belong to? Drives the byte-grid tints. */
@@ -176,7 +212,7 @@ function initEncoder(fire) {
     if (!essence) {
       cells.forEach((c) => { c.textContent = ''; c.style.setProperty('--v', 0); });
       if (out.decision) { out.decision.textContent = '—'; out.decision.className = 'decision'; }
-      if (out.reason) out.reason.textContent = 'Írj valamit, és nézd, ahogy hullámmá válik.';
+      if (out.reason) out.reason.textContent = t('wave.status');
       return;
     }
 
@@ -196,16 +232,16 @@ function initEncoder(fire) {
       out.decision.textContent = wave.decision;
       out.decision.className = `decision decision-${wave.decision}`;
     }
-    if (out.reason) out.reason.textContent = wave.reason;
+    if (out.reason) out.reason.textContent = translateReason(wave.reason, wave.reason_en, wave.reason_zh);
     if (out.amplitude) out.amplitude.textContent = wave.amplitude.toFixed(3);
     if (out.frequency) out.frequency.textContent = `${wave.frequency.toFixed(2)} Hz`;
     if (out.phase) out.phase.textContent = `${wave.phase_deg.toFixed(1)}°`;
     if (out.tau) {
       out.tau.textContent = wave.tau_hours >= 24
-        ? `${Math.round(wave.tau_hours / 24)} nap`
-        : `${wave.tau_hours} óra`;
+        ? t('time.tau.days', { d: Math.round(wave.tau_hours / 24) })
+        : t('time.tau.hours', { h: wave.tau_hours });
     }
-    if (out.vad) out.vad.textContent = `${wave.vad.v} · ${wave.vad.a} · ${wave.vad.d} — ${wave.label}`;
+    if (out.vad) out.vad.textContent = `${wave.vad.v} · ${wave.vad.a} · ${wave.vad.d} — ${translateVadLabel(wave.label)}`;
     if (out.swatch) out.swatch.style.background = wave.color;
     if (out.hex) out.hex.textContent = wave.wave32_hex.replace(/(.{8})/g, '$1 ').trim();
 
@@ -281,13 +317,13 @@ function initDecayCurve() {
     const halfLabel = $('#decay-half-label', svg);
     if (halfLabel) {
       halfLabel.setAttribute('x', Math.min(x + 6, W - PAD - 90));
-      halfLabel.textContent = `felezés: ${(halfLifeHours / 24).toFixed(1)} nap`;
+      halfLabel.textContent = t('time.half', { h: (halfLifeHours / 24).toFixed(1) });
       halfLabel.style.opacity = halfLifeHours / 24 <= days ? 1 : 0;
     }
 
     if (label) {
       const days_ = tauHours / 24;
-      label.textContent = days_ >= 1 ? `τ = ${days_.toFixed(0)} nap` : `τ = ${tauHours} óra`;
+      label.textContent = days_ >= 1 ? t('time.tau.days', { d: days_.toFixed(0) }) : t('time.tau.hours', { h: tauHours });
     }
   }
 
@@ -306,15 +342,15 @@ function fireCard(fire) {
       el('span', { class: `state ${stateClass}`, text: fire.state }),
     ]),
     el('h3', { text: fire.name }),
-    el('p', { class: 'fire-question', text: `„${fire.question}"` }),
+    fire.question ? el('p', { class: 'fire-question', text: `„${fire.question}”` }) : null,
     el('div', { class: 'fire-ash' }, [
       el('strong', { text: 'Hamu: ' }),
       fire.ash_sentence,
     ]),
     el('footer', {}, [
-      el('span', { text: `${fire.chairs ?? 0} szék` }),
-      el('span', { text: `${fire.waves ?? 0} hullám` }),
-      el('span', { text: fire.pulse === 'daily' ? 'napi pulzus' : fire.pulse === 'weekly' ? 'heti pulzus' : 'pulzus nélkül' }),
+      el('span', { text: t('firecard.chairs', { n: fire.chairs ?? 0 }) }),
+      el('span', { text: t('firecard.waves', { n: fire.waves ?? 0 }) }),
+      el('span', { text: fire.pulse === 'daily' ? t('firecard.pulse.daily') : fire.pulse === 'weekly' ? t('firecard.pulse.weekly') : t('firecard.pulse.none') }),
       el('span', { class: 'faint', text: relTime(fire.created_at) }),
     ]),
   ]);
@@ -328,7 +364,7 @@ async function initFireIndex() {
     const { fires } = await api.listFires();
     list.replaceChildren();
     if (!fires.length) {
-      list.append(el('div', { class: 'empty', text: 'Még egy tűz sem ég. Gyújtsd meg az elsőt.' }));
+      list.append(el('div', { class: 'empty', text: t('fires.empty') }));
       return;
     }
     fires.forEach((f) => list.append(fireCard(f)));
@@ -340,7 +376,7 @@ async function initFireIndex() {
     const chairStat = $('#stat-chairs');
     if (chairStat) chairStat.textContent = fires.reduce((sum, f) => sum + (f.chairs ?? 0), 0);
   } catch (err) {
-    list.replaceChildren(el('div', { class: 'notice notice-err', text: `A tüzek nem érhetők el: ${err.message}` }));
+    list.replaceChildren(el('div', { class: 'notice notice-err', text: t('fires.error', { msg: translateError(err.message) }) }));
   }
 }
 
@@ -352,9 +388,7 @@ async function initLatticeBanner() {
   banner.hidden = live;
   if (!live) {
     banner.className = 'notice';
-    banner.textContent =
-      'A rács még nincs bekötve ehhez a példányhoz — amit itt látsz, az a böngésződben fut, '
-      + 'és csak nálad marad. A hullámmotor viszont valódi: ugyanaz a kód, mint az éles rácsban.';
+    banner.textContent = t('banner.local.index');
   }
 }
 
@@ -389,8 +423,8 @@ async function initHamubol(fire) {
   }
 
   if (pool.length < 2) {
-    if (sourceEl) sourceEl.textContent = 'A RÁCS MÉG ÜRES';
-    if (essenceEl) essenceEl.textContent = 'Még nincs mire visszaemlékezni. Dobj be egy parazsat.';
+    if (sourceEl) sourceEl.textContent = t('hamubol.empty');
+    if (essenceEl) essenceEl.textContent = t('hamubol.nothing');
     return;
   }
 
@@ -408,7 +442,7 @@ async function initHamubol(fire) {
     const color = wave.color || '#ff7a3d';
     if (sourceEl) sourceEl.textContent = `${wave.fireName.toUpperCase()} · ${relTime(wave.ts)}`;
     if (essenceEl) {
-      essenceEl.textContent = `„${wave.essence}"`;
+      essenceEl.textContent = `„${wave.essence}”`;
       essenceEl.animate(
         [{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }],
         { duration: 700, easing: 'cubic-bezier(0.22,1,0.36,1)' },
@@ -419,8 +453,8 @@ async function initHamubol(fire) {
       // into a literal "null" rather than skipping it.
       metaEl.replaceChildren(...[
         el('span', {}, [el('b', { text: `${(wave.frequency ?? 0).toFixed(2)} Hz` })]),
-        el('span', { text: `${(wave.phase_deg ?? 0).toFixed(0)}° fázis` }),
-        wave.label ? el('span', { text: wave.label }) : null,
+        el('span', { text: t('time.phase', { p: (wave.phase_deg ?? 0).toFixed(0) }) }),
+        wave.label ? el('span', { text: translateVadLabel(wave.label) }) : null,
         wave.relation ? el('span', { class: 'faint', text: `${wave.relation} · Δ${wave.delta_deg}°` }) : null,
       ].filter(Boolean));
     }
@@ -479,7 +513,7 @@ function initLightFire() {
     if (!validate()) return;
     submit.disabled = true;
     status.className = 'notice';
-    status.textContent = 'Gyújtás…';
+    status.textContent = t('fires.form.lighting');
 
     try {
       const { fire } = await api.createFire({
@@ -488,11 +522,11 @@ function initLightFire() {
         ash_sentence: ash.value.trim(),
         pulse: form.elements.pulse.value,
       });
-      status.textContent = 'Ég. Átvisszük a tűzhöz…';
+      status.textContent = t('fires.form.going');
       window.location.href = `/fire.html?f=${encodeURIComponent(fire.slug)}`;
     } catch (err) {
       status.className = 'notice notice-err';
-      status.textContent = err.message || 'Nem sikerült meggyújtani.';
+      status.textContent = translateError(err.message) || t('fires.form.fail');
       submit.disabled = false;
     }
   });
@@ -503,6 +537,10 @@ function initLightFire() {
  * ------------------------------------------------------------------------ */
 
 function boot() {
+  try { setLang(localStorage.getItem(LANG_KEY) || DEFAULT_LANG); } catch { setLang(DEFAULT_LANG); }
+  applyI18n();
+  wireLangSwitch(() => initFireIndex());
+
   initAmbient();
   initReveal();
   initSpotlight();

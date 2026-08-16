@@ -246,6 +246,8 @@ export async function postEmber({ fire_id, essence }) {
         return {
           decision: 'REINFORCE',
           reason: 'Ez a parázs már ég itt — megerősítettük ×φ.',
+          reason_en: 'This ember already burns here — reinforced ×φ.',
+          reason_zh: '这颗火种已在这里燃烧——已 ×φ 强化。',
           wave: decorate(duplicate),
           source: 'local',
         };

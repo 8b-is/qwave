@@ -10,7 +10,7 @@
 
 import { buildCapsule } from '../../../shared/capsule.js';
 import { vadColor, vadLabel } from '../../../shared/wave.js';
-import { json, fail, noLattice, db, nowSec, id, wireWave } from '../_lib/db.js';
+import { json, fail, noLattice, db, nowSec, id, wireWave, BASE_HEADERS } from '../_lib/db.js';
 
 export async function onRequestGet({ params, request, env }) {
   const lattice = db(env);
@@ -52,10 +52,9 @@ export async function onRequestGet({ params, request, env }) {
   if (new URL(request.url).searchParams.get('format') === 'm8') {
     return new Response(m8, {
       headers: {
+        ...BASE_HEADERS,
         'content-type': 'application/octet-stream',
         'content-disposition': `attachment; filename="${slug}.m8"`,
-        'cache-control': 'no-store',
-        'x-robots-tag': 'noai, noimageai, noindex',
       },
     });
   }

@@ -111,6 +111,8 @@ export async function onRequestPost({ request, env }) {
     return withCookie(json({
       decision: 'REINFORCE',
       reason: 'Ez a parázs már ég itt — megerősítettük ×φ.',
+      reason_en: 'This ember already burns here — reinforced ×φ.',
+      reason_zh: '这颗火种已在这里燃烧——已 ×φ 强化。',
       wave: wireWave({ ...duplicate, amplitude: boosted }),
       source: 'lattice',
     }), setCookie);
@@ -126,6 +128,8 @@ export async function onRequestPost({ request, env }) {
 
   let decision = wave.decision;
   let reason = wave.reason;
+  let reason_en = wave.reason_en;
+  let reason_zh = wave.reason_zh;
   let tau = wave.tau_hours;
   let amplitude = wave.amplitude;
 
@@ -134,6 +138,9 @@ export async function onRequestPost({ request, env }) {
     tau = 18;
     reason = 'Kör alakul — rövid τ, és egy csendes újrakezdés. '
       + 'Nem baj, hogy visszatérsz rá; csak ne csak arra térj vissza.';
+    reason_en = 'A loop is forming — short τ, and a gentle reintroduction. '
+      + 'It is fine to come back to it; just do not come back only to it.';
+    reason_zh = '循环正在形成——短 τ，一次温柔的重启。回来没有错；只是别只回到这里。';
   }
 
   if (harm.harmful) {
@@ -142,6 +149,8 @@ export async function onRequestPost({ request, env }) {
     decision = decision === 'DROP' ? 'TEMPORARY' : decision;
     tau = Math.min(tau || 18, 18);
     reason = 'A hullám megmarad, de csillapítva. Emlékezés, nem törlés.';
+    reason_en = 'The wave stays, but dampened. Memory, not deletion.';
+    reason_zh = '波保留下来，但被压低了。是记忆，不是删除。';
   }
 
   if (decision === 'DROP') {
@@ -150,7 +159,7 @@ export async function onRequestPost({ request, env }) {
       reason: `marine gate ${wave.gate.score.toFixed(3)} (jitter ${wave.gate.jitter.toFixed(2)}, novelty ${wave.gate.novelty.toFixed(2)})`,
     });
     return withCookie(json({
-      decision: 'DROP', reason, wave: null, gate: wave.gate, source: 'lattice',
+      decision: 'DROP', reason, reason_en, reason_zh, wave: null, gate: wave.gate, source: 'lattice',
     }), setCookie);
   }
 
@@ -195,6 +204,8 @@ export async function onRequestPost({ request, env }) {
   return withCookie(json({
     decision,
     reason,
+    reason_en,
+    reason_zh,
     cooldown: looping || undefined,
     gate: wave.gate,
     wave: {

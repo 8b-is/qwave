@@ -35,7 +35,7 @@
 
 <header class="site-header">
   <div class="container nav">
-    <a class="brand" href="/" aria-label="bonfire — kezdőlap">
+    <a class="brand" href="/" aria-label="bonfire — kezdőlap" data-i18n-attr="aria-label:nav.home.aria">
       <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <circle cx="32" cy="32" r="30" stroke="#a59fc4" stroke-opacity="0.4" stroke-width="1.5"/>
         <ellipse cx="32" cy="48" rx="18" ry="5" stroke="#a59fc4" stroke-opacity="0.55" stroke-width="1.5"/>
@@ -43,7 +43,15 @@
       </svg>
       <span class="brand-name">bonfire</span>
     </a>
-    <a class="btn btn-ghost btn-sm" href="/#tuzek">← A gyűrűhöz</a>
+
+    <div class="lang-switch" role="group" aria-label="Nyelv / Language / 语言">
+      <button type="button" data-lang="hu" aria-pressed="false" title="magyar">HU</button>
+      <button type="button" data-lang="en" aria-pressed="false" title="English">EN</button>
+      <button type="button" data-lang="zh" aria-pressed="false" title="中文">中</button>
+      <button type="button" data-lang="rovas" class="rovas-btn" aria-pressed="false" title="rovásírás">𐲝𐲘𐲦𐲁𐲞</button>
+    </div>
+
+    <a class="btn btn-ghost btn-sm" href="/#tuzek" data-i18n="nav.back">← A gyűrűhöz</a>
   </div>
 </header>
 
@@ -57,31 +65,31 @@
     <p class="lead" id="ash-question" style="font-family:var(--font-display);font-style:italic"></p>
 
     <div class="quote" style="margin-top:2.5rem;max-width:56ch">
-      <p class="eyebrow" style="margin-bottom:0.75rem">A hamu-mondat — és teljesült</p>
+      <p class="eyebrow" style="margin-bottom:0.75rem" data-i18n="ash.sentence.label">A hamu-mondat — és teljesült</p>
       <blockquote style="font-size:var(--step-1)" id="ash-sentence"></blockquote>
       <cite id="ash-dates"></cite>
     </div>
   </section>
 
   <section class="card grad-border" id="ash-capsule" hidden style="margin-block:clamp(2rem,5vw,3.5rem)">
-    <h2 class="display h3" style="margin-bottom:0.75rem">A kapszula</h2>
-    <p class="muted" style="font-size:var(--step--1);margin-bottom:1.5rem;max-width:56ch">
+    <h2 class="display h3" style="margin-bottom:0.75rem" data-i18n="ash.capsule.title">A kapszula</h2>
+    <p class="muted" style="font-size:var(--step--1);margin-bottom:1.5rem;max-width:56ch" data-i18n-html="ash.capsule.body">
       Ez marad, amikor a beszélgetés már nem. Egy önleíró <span class="mono">.m8</span> fájl:
       magic szám, olvasható JSON fejléc, majd a hullámvektorok egymás után.
       Tíz év múlva is ki lehet bontani — a formátum a <span class="mono">shared/capsule.js</span> tetején van leírva.
     </p>
     <dl class="metrics" style="margin-bottom:1.5rem">
-      <div class="metric"><dt>méret</dt><dd id="capsule-size">—</dd></div>
-      <div class="metric"><dt>hullámok</dt><dd id="capsule-waves">—</dd></div>
-      <div class="metric"><dt>exportálva</dt><dd id="capsule-date">—</dd></div>
+      <div class="metric"><dt data-i18n="ash.metric.size">méret</dt><dd id="capsule-size">—</dd></div>
+      <div class="metric"><dt data-i18n="ash.metric.waves">hullámok</dt><dd id="capsule-waves">—</dd></div>
+      <div class="metric"><dt data-i18n="ash.metric.exported">exportálva</dt><dd id="capsule-date">—</dd></div>
     </dl>
-    <a class="btn btn-primary" id="capsule-download" href="#" download>A hamu letöltése (.m8)</a>
+    <a class="btn btn-primary" id="capsule-download" href="#" download data-i18n="ash.download">A hamu letöltése (.m8)</a>
   </section>
 
   <section>
-    <h2 class="display h3" style="margin-bottom:1.5rem">Ami elhangzott</h2>
+    <h2 class="display h3" style="margin-bottom:1.5rem" data-i18n="ash.waves.title">Ami elhangzott</h2>
     <ul class="wave-list" id="ash-waves">
-      <li class="empty">Betöltés…</li>
+      <li class="empty" data-i18n="ash.loading">Betöltés…</li>
     </ul>
   </section>
 

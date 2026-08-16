@@ -91,8 +91,13 @@ The physics are visible, not decorative:
 
 ## Notes on the spec
 
-Everything in §1–§9 is implemented. Six things are worth calling out, because
-they are places where this build made a decision the spec did not:
+§1–§9 is implemented except where **Not done** below says otherwise. Two
+omissions are structural, not cosmetic: pillar 3's pulse mechanism (§2) is
+collected, validated, persisted and displayed but never acted on, and no code
+path moves a fire to HAMU (§1, §6) — the ash capsule, the spec's central
+completion artifact, is unreachable in the running system. Six things are
+worth calling out, because they are places where this build made a decision
+the spec did not:
 
 1. **The fingerprint is SHA-256, not MD5.** The spec labels the 16-byte field
    `md5`. Web Crypto in Workers has no MD5, and the field is only ever a
@@ -125,6 +130,17 @@ they are places where this build made a decision the spec did not:
    error document — a pale full-viewport slab that washes the fire out. It now
    probes `music.vaked.dev` first and stays dark if there is no answer.
 
+7. **The UI speaks four languages** — Hungarian, English, Chinese, and
+   Rovásírás. The visitor picks from the header switch; the choice persists in
+   `localStorage`. Rovásírás is not a fourth language: it is the Hungarian
+   strings rendered in the Old Hungarian script (phonemic transliteration in
+   `shared/i18n.js`, bundled Noto Sans Old Hungarian under `assets/fonts/`,
+   right-to-left). The code stays English; every visitor-facing string lives in
+   `shared/i18n.js`, and the API's Hungarian error sentences are translated
+   client-side via a known-message map — unknown sentences pass through
+   unchanged rather than being guessed at. Server verdicts carry
+   `reason` / `reason_en` / `reason_zh`.
+
 ### Not done
 
 - **The fleet-map row** (§9: "add bonfire row to the constellation-ops
@@ -132,10 +148,17 @@ they are places where this build made a decision the spec did not:
   been added. The rest of §9 — anti-AI `robots.txt`, `_headers` with CSP and
   `X-Robots-Tag: noai`, the Lovetta Lane footer with bonfire in the sister-site
   nav — ships here.
-- **M5's founder-absence job.** `fires.state` supports HAMU and `/api/ash/:slug`
-  builds and stores the capsule, but nothing yet *watches* for "founder absent
+- **No code path writes HAMU.** `fires.state` supports HAMU and
+  `/api/ash/:slug` builds and stores the capsule, but nothing sets the state —
+  a fire cannot reach its ash by any route today, so no `.m8` has ever been
+  built by the running system. See the `H0` survey item.
+- **M5's founder-absence job.** Nothing yet *watches* for "founder absent
   30 days, fire still resonating" and flips the state. That wants a Cron
   Trigger, which is a deploy-time decision.
+- **Pillar 3's pulse mechanism.** `fires.pulse` is collected, validated,
+  persisted and displayed; nothing ever pulses. What a pulse *does* — the
+  spec (§2) calls it a daily or weekly ember-prompt, with notifications an
+  explicit non-goal — is an open product decision, tracked as `O1`.
 
 ---
 

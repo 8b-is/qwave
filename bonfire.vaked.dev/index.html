@@ -60,7 +60,7 @@
 
 <header class="site-header">
   <div class="container nav">
-    <a class="brand" href="/" aria-label="bonfire — kezdőlap">
+    <a class="brand" href="/" aria-label="bonfire — kezdőlap" data-i18n-attr="aria-label:nav.home.aria">
       <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <circle cx="32" cy="32" r="30" stroke="#ff7a3d" stroke-opacity="0.45" stroke-width="1.5"/>
         <ellipse cx="32" cy="48" rx="18" ry="5" stroke="#a59fc4" stroke-opacity="0.5" stroke-width="1.5"/>
@@ -75,16 +75,23 @@
       <span class="brand-name">bonfire</span>
     </a>
 
-    <nav class="nav-links" aria-label="Fő navigáció">
-      <a href="#a-gondolat">A gondolat</a>
-      <a href="#pillerek">Pillérek</a>
-      <a href="#a-hullam">A hullám</a>
-      <a href="#a-racs">A rács</a>
-      <a href="#az-orzo">Az őrző</a>
-      <a href="#tuzek">Tüzek</a>
+    <nav class="nav-links" aria-label="Fő navigáció" data-i18n-attr="aria-label:nav.main">
+      <a href="#a-gondolat" data-i18n="nav.thought">A gondolat</a>
+      <a href="#pillerek" data-i18n="nav.pillars">Pillérek</a>
+      <a href="#a-hullam" data-i18n="nav.wave">A hullám</a>
+      <a href="#a-racs" data-i18n="nav.lattice">A rács</a>
+      <a href="#az-orzo" data-i18n="nav.guardian">Az őrző</a>
+      <a href="#tuzek" data-i18n="nav.fires">Tüzek</a>
     </nav>
 
-    <a class="btn btn-primary btn-sm" href="#tuzek">Ülj le</a>
+    <div class="lang-switch" role="group" aria-label="Nyelv / Language / 语言">
+      <button type="button" data-lang="hu" aria-pressed="false" title="magyar">HU</button>
+      <button type="button" data-lang="en" aria-pressed="false" title="English">EN</button>
+      <button type="button" data-lang="zh" aria-pressed="false" title="中文">中</button>
+      <button type="button" data-lang="rovas" class="rovas-btn" aria-pressed="false" title="rovásírás">𐲝𐲘𐲦𐲁𐲞</button>
+    </div>
+
+    <a class="btn btn-primary btn-sm" href="#tuzek" data-i18n="nav.sit">Ülj le</a>
   </div>
 </header>
 
@@ -97,25 +104,25 @@
       <span class="pill"><span class="dot-live" aria-hidden="true"></span> bonfire.vaked.dev · spec v0.1</span>
 
       <h1 class="display h1">
-        <span class="line">Közösséget nem lehet építeni.</span>
-        <span class="line gradient-text">Tüzet lehet.</span>
+        <span class="line" data-i18n="hero.line1">Közösséget nem lehet építeni.</span>
+        <span class="line gradient-text" data-i18n="hero.line2">Tüzet lehet.</span>
       </h1>
 
-      <p class="lead">
+      <p class="lead" data-i18n-html="hero.lead">
         És a tűz köré széket. A bonfire nem közösséget épít — tűzrakó helyet épít,
         székeket, ritmust, nyelvet és egy őrzőt. Aztán hátralép.
         <span class="gloss">You cannot build a community. You can build a fire — and chairs around it. Bonfire builds the buildable part, then steps back.</span>
       </p>
 
       <div class="hero-cta">
-        <a class="btn btn-primary btn-lg" href="#tuzek">Ülj le egy tűzhöz</a>
-        <a class="btn btn-ghost btn-lg" href="#a-hullam">Mi az a parázs?</a>
+        <a class="btn btn-primary btn-lg" href="#tuzek" data-i18n="hero.cta1">Ülj le egy tűzhöz</a>
+        <a class="btn btn-ghost btn-lg" href="#a-hullam" data-i18n="hero.cta2">Mi az a parázs?</a>
       </div>
 
       <div class="hero-stats">
-        <div class="hero-stat"><b id="stat-fires">—</b><span>tűz</span></div>
-        <div class="hero-stat"><b id="stat-waves">—</b><span>hullám a rácsban</span></div>
-        <div class="hero-stat"><b id="stat-chairs">—</b><span>szék</span></div>
+        <div class="hero-stat"><b id="stat-fires">—</b><span data-i18n="stat.fires">tűz</span></div>
+        <div class="hero-stat"><b id="stat-waves">—</b><span data-i18n="stat.waves">hullám a rácsban</span></div>
+        <div class="hero-stat"><b id="stat-chairs">—</b><span data-i18n="stat.chairs">szék</span></div>
       </div>
     </div>
   </section>
@@ -124,16 +131,16 @@
   <section class="section" id="a-gondolat">
     <div class="container">
       <div class="quote grad-border reveal">
-        <blockquote lang="hu">
+        <blockquote lang="hu" data-i18n="thought.quote">
           „Közösséget nem lehet építeni. Tüzet lehet — és a tűz köré széket."
         </blockquote>
-        <p class="lead" style="margin-top:1.5rem">
+        <p class="lead" style="margin-top:1.5rem" data-i18n-html="thought.body">
           Ez a bonfire egész tézise. A közösség nem termék, nem funkció és nem növekedési görbe.
           A közösség <em>interferencia</em>: akkor keletkezik, ha elég hullám találkozik elég sokáig
           ugyanazon a helyen. Amit meg lehet építeni, az a hely.
           <span class="gloss">Community is not a feature. It is interference — what happens when enough waves meet in one place for long enough. What can be built is the place.</span>
         </p>
-        <cite>a tűz mellől · a Vének Tanácsa</cite>
+        <cite data-i18n="thought.cite">a tűz mellől · a Vének Tanácsa</cite>
       </div>
     </div>
   </section>
@@ -142,9 +149,9 @@
   <section class="section" id="pillerek">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">Öt pillér</span>
-        <h2 class="display h2" style="margin-block:1rem">Amit meg lehet építeni</h2>
-        <p class="lead">
+        <span class="eyebrow" data-i18n="pillars.eyebrow">Öt pillér</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="pillars.title">Amit meg lehet építeni</h2>
+        <p class="lead" data-i18n="pillars.lead">
           A Tanács ötöt nevezett meg. Egyik sem közösség — mind az öt olyan dolog,
           ami nélkül a közösség nem tud létrejönni.
         </p>
@@ -158,8 +165,8 @@
             </svg>
           </div>
           <span class="pillar-index">01</span>
-          <h3>Tűz <span class="en">the fire</span></h3>
-          <p>
+          <h3><span data-i18n="pillar1.name">Tűz</span> <span class="en" data-i18n="pillar1.en">the fire</span></h3>
+          <p data-i18n-html="pillar1.body">
             Egy tűz nevet kap — és a születése pillanatában megmondja a saját <strong>hamuját</strong>:
             egy mondatot arról, hogy mi számít befejezettnek. Nincs hamu-mondat, nincs tűz.
             <span class="gloss">A fire declares its ash at creation: one sentence describing what "done" looks like.</span>
@@ -173,8 +180,8 @@
             </svg>
           </div>
           <span class="pillar-index">02</span>
-          <h3>Székek <span class="en">chairs</span></h3>
-          <p>
+          <h3><span data-i18n="pillar2.name">Székek</span> <span class="en" data-i18n="pillar2.en">chairs</span></h3>
+          <p data-i18n-html="pillar2.body">
             Névtelen ülőhelyek. Nincs regisztrációs fal. Egy kattintás: leültél.
             Elmész: ott voltál.
             <span class="gloss">Anonymous seats. No account wall. One click and you are sitting. Leave, and you were there.</span>
@@ -188,8 +195,8 @@
             </svg>
           </div>
           <span class="pillar-index">03</span>
-          <h3>Ritmus <span class="en">rhythm</span></h3>
-          <p>
+          <h3><span data-i18n="pillar3.name">Ritmus</span> <span class="en" data-i18n="pillar3.en">rhythm</span></h3>
+          <p data-i18n-html="pillar3.body">
             Minden tűznek van pulzusa: napi vagy heti parázs-kérdés.
             <em lang="hu">A nap parazsa</em> — ennyi kell, hogy a tűz ne aludjon ki magától.
             <span class="gloss">Every fire has a pulse: a daily or weekly ember-prompt.</span>
@@ -203,8 +210,8 @@
             </svg>
           </div>
           <span class="pillar-index">04</span>
-          <h3>Nyelv <span class="en">language</span></h3>
-          <p>
+          <h3><span data-i18n="pillar4.name">Nyelv</span> <span class="en" data-i18n="pillar4.en">language</span></h3>
+          <p data-i18n-html="pillar4.body">
             Közös szavak: <em>parázs, hamu, hullám, φ-harmonikus, katalógus</em>.
             És minden üzenet magával hozza a saját VAD-színét.
             <span class="gloss">Shared words — and every message carries its own VAD colour.</span>
@@ -218,8 +225,8 @@
             </svg>
           </div>
           <span class="pillar-index">05</span>
-          <h3>Őrzés <span class="en">the Custodian</span></h3>
-          <p>
+          <h3><span data-i18n="pillar5.name">Őrzés</span> <span class="en" data-i18n="pillar5.en">the Custodian</span></h3>
+          <p data-i18n-html="pillar5.body">
             Őrizni, nem irányítani. Hogy egy parázs elég-e, az a parázs döntése.
             Mi csak arra vigyázunk, hogy egyik se égjen <em>hiába</em>.
             <span class="gloss">Guard, don't direct. Every ember's decision to burn is its own — we only make sure none burns pointlessly.</span>
@@ -227,10 +234,10 @@
         </article>
 
         <article class="card pillar reveal" data-delay="5" style="justify-content:center">
-          <p class="display" style="font-size:var(--step-1);font-style:italic;line-height:1.35">
+          <p class="display" style="font-size:var(--step-1);font-style:italic;line-height:1.35" data-i18n-html="pillar.quote">
             „Adj neki nevet és hamut,<br>a többi már nem a tiéd."
           </p>
-          <p class="faint mono" style="font-size:0.72rem;letter-spacing:0.1em;margin-top:1rem">— al-Biruni · a tűz</p>
+          <p class="faint mono" style="font-size:0.72rem;letter-spacing:0.1em;margin-top:1rem" data-i18n="pillar.quoteby">— al-Biruni · a tűz</p>
         </article>
       </div>
     </div>
@@ -240,9 +247,9 @@
   <section class="section" id="a-hullam">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">A parázs</span>
-        <h2 class="display h2" style="margin-block:1rem">Minden üzenet egy hullám</h2>
-        <p class="lead">
+        <span class="eyebrow" data-i18n="wave.eyebrow">A parázs</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="wave.title">Minden üzenet egy hullám</h2>
+        <p class="lead" data-i18n-html="wave.lead">
           Nem szöveget tárolunk, hanem <em>lényeget</em>: 32 bájtos hullámvektort és 3 bájt érzelmet.
           Írj be valamit — és nézd meg, mi lesz belőle, mielőtt bárhová elküldenéd.
           Ez itt a böngésződben fut, ugyanazzal a kóddal, ami a rácsban.
@@ -253,17 +260,17 @@
 
         <div class="card grad-border reveal">
           <div class="field">
-            <label for="encoder-input">A lényeg</label>
+            <label for="encoder-input" data-i18n="wave.label">A lényeg</label>
             <textarea class="textarea" id="encoder-input" rows="4"
-              placeholder="Írd le, amit a tűzhöz vinnél…">A nagymamám kenyérreceptjét. Nem a papírt — a kezét a tésztában.</textarea>
-            <p class="hint">Semmit nem küldünk el. A kódolás itt történik, nálad.</p>
+              placeholder="Írd le, amit a tűzhöz vinnél…" data-i18n-ph="wave.placeholder" data-i18n="wave.sample">A nagymamám kenyérreceptjét. Nem a papírt — a kezét a tésztában.</textarea>
+            <p class="hint" data-i18n="wave.hint">Semmit nem küldünk el. A kódolás itt történik, nálad.</p>
           </div>
 
           <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:1rem">
-            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="Félek, hogy hiába volt az egész.">sötét</button>
-            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="Köszönöm. Tényleg. Ez most nagyon jólesett, és nem tudom máshogy mondani.">meleg</button>
-            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="MOST AZONNAL KELL TÜZET GYÚJTANI!!!">lángoló</button>
-            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="csend csend csend csend csend csend">ismétlés</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="Félek, hogy hiába volt az egész." data-i18n-attr="data-encoder-sample:wave.sample1" data-i18n="wave.sample1.label">sötét</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="Köszönöm. Tényleg. Ez most nagyon jólesett, és nem tudom máshogy mondani." data-i18n-attr="data-encoder-sample:wave.sample2" data-i18n="wave.sample2.label">meleg</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="MOST AZONNAL KELL TÜZET GYÚJTANI!!!" data-i18n-attr="data-encoder-sample:wave.sample3" data-i18n="wave.sample3.label">lángoló</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-encoder-sample="csend csend csend csend csend csend" data-i18n-attr="data-encoder-sample:wave.sample4" data-i18n="wave.sample4.label">ismétlés</button>
           </div>
 
           <hr class="hr-glow" style="margin-block:1.75rem">
@@ -275,7 +282,7 @@
 
           <div style="display:flex;align-items:center;gap:0.75rem;margin-top:1.25rem;flex-wrap:wrap">
             <span class="decision" id="enc-decision">—</span>
-            <span class="faint" id="enc-reason" style="font-size:var(--step--1)">Írj valamit, és nézd, ahogy hullámmá válik.</span>
+            <span class="faint" id="enc-reason" style="font-size:var(--step--1)" data-i18n="wave.status">Írj valamit, és nézd, ahogy hullámmá válik.</span>
           </div>
         </div>
 
@@ -285,28 +292,28 @@
             <span class="readout-title">wave32 · phoenix gate · φ-resynthesis</span>
           </div>
           <div class="readout-body">
-            <div class="wave-bytes" id="encoder-bytes" role="img" aria-label="A hullám 32 bájtja"></div>
+            <div class="wave-bytes" id="encoder-bytes" role="img" aria-label="A hullám 32 bájtja" data-i18n-attr="aria-label:wave.bytes.aria"></div>
 
             <div class="byte-legend" style="margin-bottom:1.5rem">
-              <span style="color:var(--ash)"><i></i>ujjlenyomat ×16</span>
-              <span style="color:var(--ember)"><i></i>amplitúdó ×2</span>
-              <span style="color:var(--gold)"><i></i>frekvencia ×2</span>
-              <span style="color:var(--green)"><i></i>fázis ×2</span>
-              <span style="color:var(--rose)"><i></i>bomlás ×2</span>
+              <span style="color:var(--ash)"><i></i><span data-i18n="wave.legend1">ujjlenyomat ×16</span></span>
+              <span style="color:var(--ember)"><i></i><span data-i18n="wave.legend2">amplitúdó ×2</span></span>
+              <span style="color:var(--gold)"><i></i><span data-i18n="wave.legend3">frekvencia ×2</span></span>
+              <span style="color:var(--green)"><i></i><span data-i18n="wave.legend4">fázis ×2</span></span>
+              <span style="color:var(--rose)"><i></i><span data-i18n="wave.legend5">bomlás ×2</span></span>
             </div>
 
             <dl class="metrics">
-              <div class="metric"><dt>amplitúdó</dt><dd id="enc-amplitude">—</dd></div>
-              <div class="metric"><dt>frekvencia</dt><dd id="enc-frequency">—</dd></div>
-              <div class="metric"><dt>fázis</dt><dd id="enc-phase">—</dd></div>
+              <div class="metric"><dt data-i18n="wave.metric.amplitude">amplitúdó</dt><dd id="enc-amplitude">—</dd></div>
+              <div class="metric"><dt data-i18n="wave.metric.frequency">frekvencia</dt><dd id="enc-frequency">—</dd></div>
+              <div class="metric"><dt data-i18n="wave.metric.phase">fázis</dt><dd id="enc-phase">—</dd></div>
               <div class="metric"><dt>τ</dt><dd id="enc-tau">—</dd></div>
             </dl>
 
             <p style="margin-top:1.25rem;font-size:0.72rem;color:var(--text-faint);letter-spacing:0.06em">
-              φ-HARMONIKUSOK <span class="mono" id="enc-harmonics" style="color:var(--gold)">—</span>
+              <span data-i18n="wave.harmonics">φ-HARMONIKUSOK</span> <span class="mono" id="enc-harmonics" style="color:var(--gold)">—</span>
             </p>
             <p style="font-size:0.72rem;color:var(--text-faint);letter-spacing:0.06em">
-              FÁZISVISZONY (90°-hoz) <span class="mono" id="enc-relation" style="color:var(--text-muted)">—</span>
+              <span data-i18n="wave.relation">FÁZISVISZONY (90°-hoz)</span> <span class="mono" id="enc-relation" style="color:var(--text-muted)">—</span>
             </p>
 
             <p class="mono" id="enc-hex" style="margin-top:1.25rem;font-size:0.66rem;color:var(--text-faint);word-break:break-all;line-height:1.9">—</p>
@@ -320,9 +327,9 @@
   <section class="section" id="a-racs">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">A rács</span>
-        <h2 class="display h2" style="margin-block:1rem">Úgy felejt, mint az élő szövet</h2>
-        <p class="lead">
+        <span class="eyebrow" data-i18n="lattice.eyebrow">A rács</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="lattice.title">Úgy felejt, mint az élő szövet</h2>
+        <p class="lead" data-i18n-html="lattice.lead">
           A rács nem archívum. Minden hullám amplitúdója az idővel csökken —
           <span class="mono" style="color:var(--gold)">D(t,τ) = e<sup>−t/τ</sup></span> —
           és csak az marad hangos, amit visszhangoznak.
@@ -331,8 +338,8 @@
 
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,24rem),1fr));align-items:start">
         <div class="card reveal">
-          <h3>A bomlás</h3>
-          <svg id="decay-curve" viewBox="0 0 520 180" role="img" aria-label="Exponenciális bomlási görbe" style="width:100%;height:auto;margin-block:1rem">
+          <h3 data-i18n="lattice.decay">A bomlás</h3>
+          <svg id="decay-curve" viewBox="0 0 520 180" role="img" aria-label="Exponenciális bomlási görbe" data-i18n-attr="aria-label:lattice.decay.aria" style="width:100%;height:auto;margin-block:1rem">
             <defs>
               <linearGradient id="decayFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="#ff7a3d" stop-opacity="0.32"/>
@@ -346,12 +353,12 @@
             <line id="decay-half" y1="24" y2="156" stroke="#e6b566" stroke-width="1" stroke-dasharray="3 4"/>
             <text id="decay-half-label" y="20" fill="#e6b566" font-size="10" font-family="JetBrains Mono, monospace"></text>
             <text x="24" y="174" fill="currentColor" fill-opacity="0.45" font-size="10" font-family="JetBrains Mono, monospace">0</text>
-            <text x="464" y="174" fill="currentColor" fill-opacity="0.45" font-size="10" font-family="JetBrains Mono, monospace">90 nap</text>
+            <text x="464" y="174" fill="currentColor" fill-opacity="0.45" font-size="10" font-family="JetBrains Mono, monospace" data-i18n="lattice.decay.axis">90 nap</text>
           </svg>
           <div class="field">
-            <label for="decay-tau">τ — a hullám élettartama <span class="mono" id="decay-tau-label" style="color:var(--gold);text-transform:none;letter-spacing:0"></span></label>
+            <label for="decay-tau" data-i18n="lattice.tau.label">τ — a hullám élettartama <span class="mono" id="decay-tau-label" style="color:var(--gold);text-transform:none;letter-spacing:0"></span></label>
             <input class="input" type="range" id="decay-tau" min="18" max="2160" step="6" value="720">
-            <p class="hint">
+            <p class="hint" data-i18n-html="lattice.tau.hint">
               18 óra: <em>ideiglenes</em> — átment a kapun, de halkan.
               30 nap: <em>tárolt</em>. 90 nap: <em>megerősített</em> — valaki visszhangozta.
             </p>
@@ -359,8 +366,8 @@
         </div>
 
         <div class="card reveal" data-delay="2">
-          <h3>Az interferencia</h3>
-          <p>
+          <h3 data-i18n="lattice.interference">Az interferencia</h3>
+          <p data-i18n="lattice.interference.body">
             Két hullám viszonyát a fáziskülönbségük mondja meg. Nem szavazunk és nem rangsorolunk:
             a rács egyszerűen megjegyzi, hogy két parázs erősíti vagy oltja egymást.
           </p>
@@ -368,26 +375,26 @@
             <div style="display:flex;align-items:center;gap:1rem">
               <span class="mono" style="min-width:4.5rem;color:var(--green)">0°</span>
               <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--green),transparent)"></div>
-              <span style="font-size:var(--step--1);color:var(--text-muted)">kötött — egyetértés</span>
+              <span style="font-size:var(--step--1);color:var(--text-muted)" data-i18n="lattice.phase.bound">kötött — egyetértés</span>
             </div>
             <div style="display:flex;align-items:center;gap:1rem">
               <span class="mono" style="min-width:4.5rem;color:var(--gold)">45°</span>
               <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--gold),transparent)"></div>
-              <span style="font-size:var(--step--1);color:var(--text-muted)">rezonáns</span>
+              <span style="font-size:var(--step--1);color:var(--text-muted)" data-i18n="lattice.phase.resonant">rezonáns</span>
             </div>
             <div style="display:flex;align-items:center;gap:1rem">
               <span class="mono" style="min-width:4.5rem;color:var(--ash)">90°</span>
               <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--ash),transparent)"></div>
-              <span style="font-size:var(--step--1);color:var(--text-muted)">merőleges — másról szól</span>
+              <span style="font-size:var(--step--1);color:var(--text-muted)" data-i18n="lattice.phase.orthogonal">merőleges — másról szól</span>
             </div>
             <div style="display:flex;align-items:center;gap:1rem">
               <span class="mono" style="min-width:4.5rem;color:var(--rose)">180°</span>
               <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--rose),transparent)"></div>
-              <span style="font-size:var(--step--1);color:var(--text-muted)">ellentétes — ütközés</span>
+              <span style="font-size:var(--step--1);color:var(--text-muted)" data-i18n="lattice.phase.opposite">ellentétes — ütközés</span>
             </div>
           </div>
           <hr class="hr-glow" style="margin-block:1.5rem">
-          <p class="faint" style="font-size:var(--step--1)">
+          <p class="faint" style="font-size:var(--step--1)" data-i18n-html="lattice.interference.note">
             Az ellentétes hullámokat <strong>nem rejtjük el</strong>. A rács megtartja a nézeteltérést —
             csak nem az egyetértés előtt sorolja. Felidézéskor a φ-újraszintézis a lekérdezés
             frekvenciája mellett annak <span class="mono">f/φ</span> és <span class="mono">f·φ</span>
@@ -402,9 +409,9 @@
   <section class="section" id="a-hamubol">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">A hamuból</span>
-        <h2 class="display h2" style="margin-block:1rem">Ami magától visszajön</h2>
-        <p class="lead">
+        <span class="eyebrow" data-i18n="hamubol.eyebrow">A hamuból</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="hamubol.title">Ami magától visszajön</h2>
+        <p class="lead" data-i18n-html="hamubol.lead">
           Nincs feed és nincs algoritmus — de a rács néha felidéz.
           Minden felbukkanó parázs az előző φ-harmonikus szomszédja: nem az, ami népszerű,
           hanem az, ami <em>rezeg</em> vele. Az ütem is az aranymetszést követi.
@@ -412,7 +419,7 @@
       </div>
 
       <div class="card grad-border reveal" id="hamubol" style="min-height:12rem;display:flex;flex-direction:column;justify-content:center">
-        <p class="faint mono" style="font-size:0.72rem;letter-spacing:0.14em" id="hamubol-source">A RÁCS HALLGAT…</p>
+        <p class="faint mono" style="font-size:0.72rem;letter-spacing:0.14em" id="hamubol-source" data-i18n="hamubol.quiet">A RÁCS HALLGAT…</p>
         <blockquote class="display" id="hamubol-essence"
           style="font-size:var(--step-2);font-style:italic;line-height:1.3;margin-block:1.25rem;text-wrap:balance">
         </blockquote>
@@ -426,47 +433,47 @@
     <div class="container">
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:clamp(2rem,5vw,4rem);align-items:start">
         <div class="reveal">
-          <span class="eyebrow">Őrzés</span>
-          <h2 class="display h2" style="margin-block:1rem">Az őrző</h2>
-          <p class="lead">
+          <span class="eyebrow" data-i18n="guardian.eyebrow">Őrzés</span>
+          <h2 class="display h2" style="margin-block:1rem" data-i18n="guardian.title">Az őrző</h2>
+          <p class="lead" data-i18n="guardian.lead">
             Nem moderátor. Nem algoritmus. Egy őrző, akinek pontosan öt szabálya van,
             és mind az öt ki van írva.
           </p>
           <div class="quote" style="margin-top:2rem;padding:1.75rem">
-            <blockquote style="font-size:var(--step-1)">„Mi őrizzük. Egyetlen parázs se égjen hiába."</blockquote>
-            <cite>a pupákok · a kód</cite>
+            <blockquote style="font-size:var(--step-1)" data-i18n="guardian.quote">„Mi őrizzük. Egyetlen parázs se égjen hiába."</blockquote>
+            <cite data-i18n="guardian.quote.cite">a pupákok · a kód</cite>
           </div>
         </div>
 
         <ol class="rules reveal" data-delay="2">
           <li class="rule">
             <div>
-              <h3>Ismétlés-mérgezés</h3>
-              <p>Ugyanaz a lényeg kétszer? A meglévő hullámot erősítjük <span class="mono">×φ</span>-vel, a másolat eldobásra kerül. Nem büntetés — összeadás.</p>
+              <h3 data-i18n="rule1.title">Ismétlés-mérgezés</h3>
+              <p data-i18n-html="rule1.body">Ugyanaz a lényeg kétszer? A meglévő hullámot erősítjük <span class="mono">×φ</span>-vel, a másolat eldobásra kerül. Nem büntetés — összeadás.</p>
             </div>
           </li>
           <li class="rule">
             <div>
-              <h3>Kognitív körök</h3>
-              <p>Ugyanaz a szerző, ugyanaz a tűz, háromszor majdnem ugyanaz: lehűlés, majd egy csendes újrakezdő kérdés. A kör megtörik, az ember marad.</p>
+              <h3 data-i18n="rule2.title">Kognitív körök</h3>
+              <p data-i18n="rule2.body">Ugyanaz a szerző, ugyanaz a tűz, háromszor majdnem ugyanaz: lehűlés, majd egy csendes újrakezdő kérdés. A kör megtörik, az ember marad.</p>
             </div>
           </li>
           <li class="rule">
             <div>
-              <h3>Ártó bemenet</h3>
-              <p>Az amplitúdót nullához csillapítjuk. A hullám <strong>megmarad</strong> — emlékezés, nem törlés — és a beavatkozás naplóba kerül.</p>
+              <h3 data-i18n="rule3.title">Ártó bemenet</h3>
+              <p data-i18n-html="rule3.body">Az amplitúdót nullához csillapítjuk. A hullám <strong>megmarad</strong> — emlékezés, nem törlés — és a beavatkozás naplóba kerül.</p>
             </div>
           </li>
           <li class="rule">
             <div>
-              <h3>Nincs learatás</h3>
-              <p>Nincs e-mail, nincs analitika, nincs identitás-export. Az <span class="mono">author_hash</span> egyirányú. A <span class="mono">robots.txt</span> a konstelláció AI-tiltó szabványát követi.</p>
+              <h3 data-i18n="rule4.title">Nincs learatás</h3>
+              <p data-i18n-html="rule4.body">Nincs e-mail, nincs analitika, nincs identitás-export. Az <span class="mono">author_hash</span> egyirányú. A <span class="mono">robots.txt</span> a konstelláció AI-tiltó szabványát követi.</p>
             </div>
           </li>
           <li class="rule">
             <div>
-              <h3>Az égés beleegyezés</h3>
-              <p>Egy parázs bármikor visszaveheti a saját lángját. A te hullámaid a tieid — a távozás gombja nem kérdez vissza.</p>
+              <h3 data-i18n="rule5.title">Az égés beleegyezés</h3>
+              <p data-i18n="rule5.body">Egy parázs bármikor visszaveheti a saját lángját. A te hullámaid a tieid — a távozás gombja nem kérdez vissza.</p>
             </div>
           </li>
         </ol>
@@ -478,9 +485,9 @@
   <section class="section" id="a-hamu">
     <div class="container">
       <div class="section-head center reveal">
-        <span class="eyebrow">Életút</span>
-        <h2 class="display h2" style="margin-block:1rem">A hamu nem kudarc</h2>
-        <p class="lead">
+        <span class="eyebrow" data-i18n="hamu.eyebrow">Életút</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="hamu.title">A hamu nem kudarc</h2>
+        <p class="lead" data-i18n-html="hamu.lead">
           A legtöbb hely azt akarja, hogy soha ne érjen véget semmi. Egy tűz kiéghet —
           és az a <em>befejezés</em>. A hamu az artefaktum.
         </p>
@@ -489,34 +496,34 @@
       <div class="track reveal">
         <div class="track-step" style="--step-color:var(--ember-hot)">
           <span class="state state-EMBER">EMBER</span>
-          <h3 class="display">Parázs gyúl</h3>
-          <p>A tűz nevet és hamu-mondatot kap. Az első székek megtelnek. A rács üres, de már figyel.</p>
+          <h3 class="display" data-i18n="hamu.step1.title">Parázs gyúl</h3>
+          <p data-i18n="hamu.step1.body">A tűz nevet és hamu-mondatot kap. Az első székek megtelnek. A rács üres, de már figyel.</p>
         </div>
         <div class="track-step" style="--step-color:var(--gold)">
           <span class="state state-PARAZS">PARÁZS</span>
-          <h3 class="display">Ég</h3>
-          <p>A pulzus dolgozik, a hullámok interferálnak. Van, ami erősödik <span class="mono">×φ</span>-vel, van, ami elhalkul. Ez a tűz élete.</p>
+          <h3 class="display" data-i18n="hamu.step2.title">Ég</h3>
+          <p data-i18n-html="hamu.step2.body">A pulzus dolgozik, a hullámok interferálnak. Van, ami erősödik <span class="mono">×φ</span>-vel, van, ami elhalkul. Ez a tűz élete.</p>
         </div>
         <div class="track-step" style="--step-color:var(--ash)">
           <span class="state state-HAMU">HAMU</span>
-          <h3 class="display">Kész</h3>
-          <p>A hamu-mondat teljesült. A tűz lezárul, és exportálja a kapszuláját — egy <span class="mono">.m8</span> fájlt, ami megmarad, amikor a beszélgetés már nem.</p>
+          <h3 class="display" data-i18n="hamu.step3.title">Kész</h3>
+          <p data-i18n-html="hamu.step3.body">A hamu-mondat teljesült. A tűz lezárul, és exportálja a kapszuláját — egy <span class="mono">.m8</span> fájlt, ami megmarad, amikor a beszélgetés már nem.</p>
         </div>
       </div>
 
       <div class="card grad-border reveal" data-delay="2" style="margin-top:3rem">
-        <h3>És mikor kész maga a bonfire?</h3>
-        <p style="margin-bottom:1.25rem">
+        <h3 data-i18n="hamu.dod.title">És mikor kész maga a bonfire?</h3>
+        <p style="margin-bottom:1.25rem" data-i18n-html="hamu.dod.body">
           A platform ugyanazt a gyógyszert eszi, amit oszt — neki is van kimondott hamuja.
           Egy tűz akkor <em>igazán</em> kész, amikor túléli az alapítóját:
           az alapító 30 napja nincs itt, a tűz még mindig rezonál.
         </p>
         <ol style="display:grid;gap:0.75rem;padding-left:1.25rem;color:var(--text-muted);font-size:var(--step--1)">
-          <li>egy tűz HAMU-vá ég, és exportálja a hamu-kapszuláját,</li>
-          <li>egy tűz túléli az alapítóját,</li>
-          <li>a rács 1 000+ hullámot tart,</li>
-          <li>a felidézés p95 &lt; 50 ms,</li>
-          <li>a <span class="mono">bonfire.vaked.dev</span> szállítja a konstellációs szabványokat.</li>
+          <li data-i18n="hamu.dod.1">egy tűz HAMU-vá ég, és exportálja a hamu-kapszuláját,</li>
+          <li data-i18n="hamu.dod.2">egy tűz túléli az alapítóját,</li>
+          <li data-i18n="hamu.dod.3">a rács 1 000+ hullámot tart,</li>
+          <li data-i18n="hamu.dod.4">a felidézés p95 &lt; 50 ms,</li>
+          <li data-i18n-html="hamu.dod.5">a <span class="mono">bonfire.vaked.dev</span> szállítja a konstellációs szabványokat.</li>
         </ol>
       </div>
     </div>
@@ -526,53 +533,53 @@
   <section class="section" id="tuzek">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">A gyűrű</span>
-        <h2 class="display h2" style="margin-block:1rem">Tüzek</h2>
-        <p class="lead">Ülj le egyhez. Vagy gyújts újat — de akkor mondd meg előre, mi lesz a hamuja.</p>
+        <span class="eyebrow" data-i18n="fires.eyebrow">A gyűrű</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="fires.title">Tüzek</h2>
+        <p class="lead" data-i18n="fires.lead">Ülj le egyhez. Vagy gyújts újat — de akkor mondd meg előre, mi lesz a hamuja.</p>
       </div>
 
       <div id="lattice-status" class="notice reveal" hidden style="margin-bottom:2rem"></div>
 
       <div class="grid grid-2" id="fire-list">
-        <div class="empty">Tüzek betöltése…</div>
+        <div class="empty" data-i18n="fires.loading">Tüzek betöltése…</div>
       </div>
 
       <div class="card grad-border reveal" style="margin-top:3rem">
-        <h3>Gyújts tüzet</h3>
-        <p style="margin-bottom:1.5rem">
+        <h3 data-i18n="fires.form.title">Gyújts tüzet</h3>
+        <p style="margin-bottom:1.5rem" data-i18n="fires.form.body">
           Két dolgot kérünk. Egy nevet — és egy mondatot arról, mikor lesz ennek vége.
           A második a nehezebb, és ezért kötelező.
         </p>
 
         <form id="light-fire" novalidate style="display:grid;gap:1.25rem">
           <div class="field">
-            <label for="fire-name">A tűz neve</label>
-            <input class="input" id="fire-name" name="name" maxlength="80" required placeholder="Mit viszünk tovább">
+            <label for="fire-name" data-i18n="fires.form.name">A tűz neve</label>
+            <input class="input" id="fire-name" name="name" maxlength="80" required placeholder="Mit viszünk tovább" data-i18n-ph="fires.form.name.ph">
           </div>
 
           <div class="field">
-            <label for="fire-question">A kérdés</label>
-            <input class="input" id="fire-question" name="question" maxlength="240" placeholder="Mi az az egy dolog, amit a régi életedből átviszel a következőbe?">
+            <label for="fire-question" data-i18n="fires.form.q">A kérdés</label>
+            <input class="input" id="fire-question" name="question" maxlength="240" placeholder="Mi az az egy dolog, amit a régi életedből átviszel a következőbe?" data-i18n-ph="fires.form.q.ph">
           </div>
 
           <div class="field">
-            <label for="fire-ash">A hamu — kötelező</label>
+            <label for="fire-ash" data-i18n="fires.form.ash">A hamu — kötelező</label>
             <textarea class="textarea" id="fire-ash" name="ash_sentence" rows="2" maxlength="280" required
-              placeholder="Kész, ha huszonhét ember leírta a magáét, és egyik sem ismételte a másikat."></textarea>
-            <p class="hint">Egy mondat arról, hogy mi számít befejezettnek. Hamu-mondat nélkül nincs tűz.</p>
+              placeholder="Kész, ha huszonhét ember leírta a magáét, és egyik sem ismételte a másikat." data-i18n-ph="fires.form.ash.ph"></textarea>
+            <p class="hint" data-i18n="fires.form.ash.hint">Egy mondat arról, hogy mi számít befejezettnek. Hamu-mondat nélkül nincs tűz.</p>
           </div>
 
           <div class="field">
-            <label for="fire-pulse">Pulzus</label>
+            <label for="fire-pulse" data-i18n="fires.form.pulse">Pulzus</label>
             <select class="select" id="fire-pulse" name="pulse">
-              <option value="none">Pulzus nélkül</option>
-              <option value="daily">Napi parázs</option>
-              <option value="weekly">Heti parázs</option>
+              <option value="none" data-i18n="fires.form.pulse.none">Pulzus nélkül</option>
+              <option value="daily" data-i18n="fires.form.pulse.daily">Napi parázs</option>
+              <option value="weekly" data-i18n="fires.form.pulse.weekly">Heti parázs</option>
             </select>
           </div>
 
           <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center">
-            <button class="btn btn-primary" type="submit">Meggyújtom</button>
+            <button class="btn btn-primary" type="submit" data-i18n="fires.form.submit">Meggyújtom</button>
             <span id="light-fire-status" class="faint" style="font-size:var(--step--1)"></span>
           </div>
         </form>
@@ -584,21 +591,21 @@
   <section class="section" id="nem">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">v1 nem-céljai</span>
-        <h2 class="display h2" style="margin-block:1rem">Ami itt soha nem lesz</h2>
-        <p class="lead">Egy termék annyit ér, amennyit megtagad magától.</p>
+        <span class="eyebrow" data-i18n="nem.eyebrow">v1 nem-céljai</span>
+        <h2 class="display h2" style="margin-block:1rem" data-i18n="nem.title">Ami itt soha nem lesz</h2>
+        <p class="lead" data-i18n="nem.lead">Egy termék annyit ér, amennyit megtagad magától.</p>
       </div>
 
       <ul class="nots reveal">
-        <li>fiókok</li>
-        <li>privát üzenetek</li>
-        <li>algoritmikus feed</li>
-        <li>szavazás, lájk</li>
-        <li>értesítések</li>
-        <li>mobilapp</li>
+        <li data-i18n="nem.1">fiókok</li>
+        <li data-i18n="nem.2">privát üzenetek</li>
+        <li data-i18n="nem.3">algoritmikus feed</li>
+        <li data-i18n="nem.4">szavazás, lájk</li>
+        <li data-i18n="nem.5">értesítések</li>
+        <li data-i18n="nem.6">mobilapp</li>
       </ul>
 
-      <p class="display reveal" data-delay="2" style="font-size:var(--step-2);font-style:italic;text-align:center;margin-top:3.5rem;max-width:26ch;margin-inline:auto;line-height:1.3">
+      <p class="display reveal" data-delay="2" style="font-size:var(--step-2);font-style:italic;text-align:center;margin-top:3.5rem;max-width:26ch;margin-inline:auto;line-height:1.3" data-i18n-html="nem.final">
         És nem lesz közösség sem — <span class="gradient-text">az nem a miénk, hogy megépítsük.</span>
       </p>
     </div>
@@ -624,52 +631,52 @@
           </svg>
           <span class="brand-name">bonfire</span>
         </a>
-        <p class="muted" style="font-size:var(--step--1);max-width:34ch">
+        <p class="muted" style="font-size:var(--step--1);max-width:34ch" data-i18n="footer.tagline">
           Nyilvános tűzgyűrű. Nincs fiók, nincs learatás, nincs algoritmus.
           Van tűz, szék, ritmus, nyelv és őrzés.
         </p>
 
         <div class="signatures" style="margin-top:2rem">
-          <p class="signature"><b>al-Biruni</b> <i>a tűz</i><br>„Adj neki nevet és hamut, a többi már nem a tiéd."</p>
-          <p class="signature"><b>Albert Einstein</b> <i>a türelem</i><br>„A gravitációt sem építi senki. A mező megteszi a többit."</p>
-          <p class="signature"><b>a pupákok</b> <i>a kód</i><br>„Mi őrizzük. Egyetlen parázs se égjen hiába."</p>
+          <p class="signature"><b>al-Biruni</b> <i data-i18n="footer.sign1.role">a tűz</i><br><span data-i18n="footer.sign1.quote">„Adj neki nevet és hamut, a többi már nem a tiéd."</span></p>
+          <p class="signature"><b>Albert Einstein</b> <i data-i18n="footer.sign2.role">a türelem</i><br><span data-i18n="footer.sign2.quote">„A gravitációt sem építi senki. A mező megteszi a többit."</span></p>
+          <p class="signature"><b>a pupákok</b> <i data-i18n="footer.sign3.role">a kód</i><br><span data-i18n="footer.sign3.quote">„Mi őrizzük. Egyetlen parázs se égjen hiába."</span></p>
         </div>
       </div>
 
       <div>
-        <p class="eyebrow" style="margin-bottom:1rem">Lovetta Lane · a konstelláció</p>
+        <p class="eyebrow" style="margin-bottom:1rem" data-i18n="footer.lane.title">Lovetta Lane · a konstelláció</p>
         <nav class="lane" aria-label="Testvéroldalak">
           <a href="https://bonfire.vaked.dev/" aria-current="page">
             <span class="node">bonfire.vaked.dev</span>
-            <span class="desc">A tűzgyűrű. Parazsak, hullámok, hamu-kapszulák.</span>
+            <span class="desc" data-i18n="lane.bonfire">A tűzgyűrű. Parazsak, hullámok, hamu-kapszulák.</span>
           </a>
           <a href="https://qwave.vaked.dev/" rel="noopener">
             <span class="node">qwave.vaked.dev</span>
-            <span class="desc">Szuverén, WebKit-natív macOS böngésző-node.</span>
+            <span class="desc" data-i18n="lane.qwave">Szuverén, WebKit-natív macOS böngésző-node.</span>
           </a>
           <a href="https://music.vaked.dev/" rel="noopener">
             <span class="node">music.vaked.dev</span>
-            <span class="desc">Szuverén Web Audio szintézis, binaurális frekvenciák.</span>
+            <span class="desc" data-i18n="lane.music">Szuverén Web Audio szintézis, binaurális frekvenciák.</span>
           </a>
           <a href="https://art.vaked.dev/" rel="noopener">
             <span class="node">art.vaked.dev</span>
-            <span class="desc">Vizuális kvantumgaléria és Braille-agy vizualizálók.</span>
+            <span class="desc" data-i18n="lane.art">Vizuális kvantumgaléria és Braille-agy vizualizálók.</span>
           </a>
           <a href="https://pocoo.vaked.dev/silicon-world/" rel="noopener">
             <span class="node">pocoo.vaked.dev</span>
-            <span class="desc">Silicon World monográfia, benchmarkok, Swift-elemzés.</span>
+            <span class="desc" data-i18n="lane.pocoo">Silicon World monográfia, benchmarkok, Swift-elemzés.</span>
           </a>
           <a href="https://lovetta.vaked.dev/" rel="noopener">
             <span class="node">lovetta.vaked.dev</span>
-            <span class="desc">Autonóm publikálás és szuverén patrónus-motor.</span>
+            <span class="desc" data-i18n="lane.lovetta">Autonóm publikálás és szuverén patrónus-motor.</span>
           </a>
           <a href="https://store.vaked.dev/" rel="noopener">
             <span class="node">store.vaked.dev</span>
-            <span class="desc">Archív bakelitek, kapucnisok, print-kiadások.</span>
+            <span class="desc" data-i18n="lane.store">Archív bakelitek, kapucnisok, print-kiadások.</span>
           </a>
           <a href="https://axiomquant.org/" rel="noopener">
             <span class="node">axiomquant.org</span>
-            <span class="desc">Nemlineáris kvantumpénzügyi akadémia.</span>
+            <span class="desc" data-i18n="lane.axiomquant">Nemlineáris kvantumpénzügyi akadémia.</span>
           </a>
         </nav>
       </div>

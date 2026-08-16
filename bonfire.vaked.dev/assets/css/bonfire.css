@@ -809,3 +809,50 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var
 }
 .notice-err { border-color: color-mix(in oklab, var(--rose) 40%, transparent); background: color-mix(in oklab, var(--rose) 9%, transparent); }
 .empty { padding: var(--sp-7); text-align: center; color: var(--text-faint); border: 1px dashed var(--hairline-soft); border-radius: var(--r-3); }
+
+/* ---- Language switcher & i18n ------------------------------------------ */
+.lang-switch {
+  display: inline-flex; gap: 0.25rem; padding: 0.25rem;
+  border: 1px solid var(--hairline-soft); border-radius: var(--r-3);
+  background: var(--surface);
+}
+.lang-switch button {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  font-family: var(--font-mono); font-size: var(--step--1); letter-spacing: 0.06em;
+  color: var(--text-muted); padding: 0.35rem 0.7rem;
+  border-radius: calc(var(--r-3) - 0.2rem);
+  transition: color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button[aria-pressed="true"] { color: var(--coal-999); background: var(--ember); }
+.lang-switch .rovas-btn {
+  font-family: "Noto Sans Old Hungarian", serif;
+  font-size: 1rem; line-height: 1; letter-spacing: 0;
+}
+
+/* Rovásírás — Hungarian rendered in the Old Hungarian script, right-to-left.
+   The font is bundled under assets/fonts/ (CSP font-src 'self'). */
+@font-face {
+  font-family: "Noto Sans Old Hungarian";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/assets/fonts/noto-sans-old-hungarian.ttf") format("truetype");
+}
+html[lang="rovas"] body {
+  font-family: "Noto Sans Old Hungarian", "Georgia", serif;
+  font-size: 13pt; line-height: 2.05;
+}
+html[lang="rovas"] h1, html[lang="rovas"] h2, html[lang="rovas"] h3,
+html[lang="rovas"] .btn, html[lang="rovas"] .mono, html[lang="rovas"] .brand-name,
+html[lang="rovas"] .state, html[lang="rovas"] .readout-title, html[lang="rovas"] .display {
+  font-family: "Noto Sans Old Hungarian", serif;
+}
+/* Byte grids and hex data are numbers, not prose — they stay left-to-right. */
+html[lang="rovas"] .wave-bytes, html[lang="rovas"] .metrics,
+html[lang="rovas"] .byte-legend, html[lang="rovas"] #enc-hex,
+html[lang="rovas"] .readout-body { direction: ltr; text-align: left; }
+
+/* The English gloss line only makes sense under the Hungarian text. */
+html:not([lang="hu"]) .gloss { display: none; }
+/* The inline English term under a heading: hidden in rovás, where it would
+   be transliterated gibberish. */
+html[lang="rovas"] .en { display: none; }

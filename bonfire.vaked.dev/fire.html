@@ -27,7 +27,7 @@
 
 <header class="site-header">
   <div class="container nav">
-    <a class="brand" href="/" aria-label="bonfire — kezdőlap">
+    <a class="brand" href="/" aria-label="bonfire — kezdőlap" data-i18n-attr="aria-label:nav.home.aria">
       <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <circle cx="32" cy="32" r="30" stroke="#ff7a3d" stroke-opacity="0.45" stroke-width="1.5"/>
         <ellipse cx="32" cy="48" rx="18" ry="5" stroke="#a59fc4" stroke-opacity="0.5" stroke-width="1.5"/>
@@ -40,13 +40,21 @@
       </svg>
       <span class="brand-name">bonfire</span>
     </a>
-    <nav class="nav-links" aria-label="Fő navigáció">
-      <a href="/#pillerek">Pillérek</a>
-      <a href="/#a-hullam">A hullám</a>
-      <a href="/#az-orzo">Az őrző</a>
-      <a href="/#tuzek">Minden tűz</a>
+    <nav class="nav-links" aria-label="Fő navigáció" data-i18n-attr="aria-label:nav.main">
+      <a href="/#pillerek" data-i18n="nav.pillars">Pillérek</a>
+      <a href="/#a-hullam" data-i18n="nav.wave">A hullám</a>
+      <a href="/#az-orzo" data-i18n="nav.guardian">Az őrző</a>
+      <a href="/#tuzek" data-i18n="nav.fires">Minden tűz</a>
     </nav>
-    <a class="btn btn-ghost btn-sm" href="/#tuzek">← A gyűrűhöz</a>
+
+    <div class="lang-switch" role="group" aria-label="Nyelv / Language / 语言">
+      <button type="button" data-lang="hu" aria-pressed="false" title="magyar">HU</button>
+      <button type="button" data-lang="en" aria-pressed="false" title="English">EN</button>
+      <button type="button" data-lang="zh" aria-pressed="false" title="中文">中</button>
+      <button type="button" data-lang="rovas" class="rovas-btn" aria-pressed="false" title="rovásírás">𐲝𐲘𐲦𐲁𐲞</button>
+    </div>
+
+    <a class="btn btn-ghost btn-sm" href="/#tuzek" data-i18n="nav.back">← A gyűrűhöz</a>
   </div>
 </header>
 
@@ -66,7 +74,7 @@
     <p class="lead" id="fire-question" style="font-family:var(--font-display);font-style:italic;margin-top:1rem"></p>
 
     <div class="fire-ash" style="margin-top:1.5rem;max-width:60ch">
-      <strong>A hamu — mikor lesz ennek vége:</strong>
+      <strong data-i18n="fire.ash.label">A hamu — mikor lesz ennek vége:</strong>
       <span id="fire-ash"></span>
     </div>
   </section>
@@ -79,12 +87,12 @@
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;padding:1.25rem 1.5rem;border-top:1px solid var(--hairline-soft)">
         <div style="display:flex;flex-wrap:wrap;gap:1.5rem">
-          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)">SZÉKEK <b id="fire-chairs" style="color:var(--gold)">—</b></span>
-          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)">HULLÁMOK <b id="fire-waves" style="color:var(--gold)">—</b></span>
+          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)"><span data-i18n="fire.chairs">SZÉKEK</span> <b id="fire-chairs" style="color:var(--gold)">—</b></span>
+          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)"><span data-i18n="fire.waves">HULLÁMOK</span> <b id="fire-waves" style="color:var(--gold)">—</b></span>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:0.6rem">
-          <button class="btn btn-primary btn-sm" type="button" id="take-chair">Leülök</button>
-          <button class="btn btn-ghost btn-sm" type="button" id="leave-fire">Elviszem a lángom</button>
+          <button class="btn btn-primary btn-sm" type="button" id="take-chair" data-i18n="fire.sit">Leülök</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="leave-fire" data-i18n="fire.leave">Elviszem a lángom</button>
         </div>
       </div>
     </div>
@@ -95,8 +103,8 @@
 
   <!-- ---------- Parázs dobása ---------- -->
   <section class="card grad-border" style="margin-bottom:clamp(2rem,5vw,3.5rem)">
-    <h3 style="font-family:var(--font-display);font-size:var(--step-2);margin-bottom:0.5rem">Dobj parazsat</h3>
-    <p class="muted" style="font-size:var(--step--1);margin-bottom:1.5rem">
+    <h3 style="font-family:var(--font-display);font-size:var(--step-2);margin-bottom:0.5rem" data-i18n="fire.throw.title">Dobj parazsat</h3>
+    <p class="muted" style="font-size:var(--step--1);margin-bottom:1.5rem" data-i18n="fire.throw.body">
       Nem a szöveget tároljuk, hanem a lényegét — 32 bájtot és három bájt érzelmet.
       A kapu eldönti, hogy új hullám lesz belőle, vagy egy meglévőt erősít.
     </p>
@@ -105,10 +113,10 @@
       <div class="field">
         <label class="visually-hidden" for="ember-input">A parazsad</label>
         <textarea class="textarea" id="ember-input" name="essence" rows="3" maxlength="1200" required
-          placeholder="Írd le, ami idehozott…"></textarea>
+          placeholder="Írd le, ami idehozott…" data-i18n-ph="fire.throw.ph"></textarea>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center">
-        <button class="btn btn-primary" type="submit" id="ember-submit">A tűzbe</button>
+        <button class="btn btn-primary" type="submit" id="ember-submit" data-i18n="fire.throw.submit">A tűzbe</button>
         <span id="ember-preview" class="mono faint" style="font-size:0.72rem"></span>
       </div>
     </form>
@@ -119,20 +127,20 @@
   <!-- ---------- Felidézés ---------- -->
   <section style="margin-bottom:clamp(2rem,5vw,3.5rem)">
     <div class="field" style="max-width:36rem">
-      <label for="resonate-input">Felidézés — φ-újraszintézis</label>
-      <input class="input" id="resonate-input" type="search" placeholder="Mire vagy kíváncsi? pl. „csend"">
-      <p class="hint">A rács a lekérdezés frekvenciája mellett annak f/φ és f·φ harmonikusait is megkeresi.</p>
+      <label for="resonate-input" data-i18n="fire.resonate.label">Felidézés — φ-újraszintézis</label>
+      <input class="input" id="resonate-input" type="search" placeholder="Mire vagy kíváncsi? pl. „csend”" data-i18n-ph="fire.resonate.ph">
+      <p class="hint" data-i18n="fire.resonate.hint">A rács a lekérdezés frekvenciája mellett annak f/φ és f·φ harmonikusait is megkeresi.</p>
     </div>
   </section>
 
   <!-- ---------- A hullámok ---------- -->
   <section>
     <div style="display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:1.5rem">
-      <h2 class="display h3" id="wave-heading">A parazsak</h2>
-      <p class="faint mono" style="font-size:0.72rem">a fényerő = az élő amplitúdó, D(t,τ) után</p>
+      <h2 class="display h3" id="wave-heading" data-i18n="fire.waves.title">A parazsak</h2>
+      <p class="faint mono" style="font-size:0.72rem" data-i18n="fire.waves.hint">a fényerő = az élő amplitúdó, D(t,τ) után</p>
     </div>
     <ul class="wave-list" id="wave-list">
-      <li class="empty">Betöltés…</li>
+      <li class="empty" data-i18n="fire.loading">Betöltés…</li>
     </ul>
   </section>
 

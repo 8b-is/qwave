@@ -10,9 +10,12 @@
     "db:local": "wrangler d1 execute bonfire-lattice --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute bonfire-lattice --remote --file=./schema.sql",
     "deploy": "wrangler pages deploy .",
-    "test": "node --test test/"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "devDependencies": {
     "wrangler": "^3.90.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
