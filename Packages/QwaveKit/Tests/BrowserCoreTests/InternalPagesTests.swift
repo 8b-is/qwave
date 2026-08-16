@@ -1,6 +1,9 @@
 import XCTest
 @testable import BrowserCore
 
+/// These cases predate the `MarkdownTrust` split (issue #131) and describe the
+/// CommonMark path, so they all say `.rawHTMLAllowed` explicitly.
+/// `MarkdownSanitisationTests` covers the `file://` path.
 final class MarkdownCompilerTests: XCTestCase {
     func testHeadingsListsAndLinks() {
         let html = MarkdownCompiler.compile(
@@ -9,7 +12,7 @@ final class MarkdownCompilerTests: XCTestCase {
             A [link](https://example.com) and **bold**.
             - one
             - two
-            """)
+            """, trust: .rawHTMLAllowed)
         XCTAssertTrue(html.contains("<h1>"))
         XCTAssertTrue(html.contains("<a href=\"https://example.com\">link</a>"))
         XCTAssertTrue(html.contains("<strong>bold</strong>"))
@@ -27,7 +30,7 @@ final class MarkdownCompilerTests: XCTestCase {
             graph TD
               A-->B
             ```
-            """)
+            """, trust: .rawHTMLAllowed)
         XCTAssertTrue(html.contains("class=\"math-display\""))
         XCTAssertTrue(html.contains("E = mc^2"))
         XCTAssertTrue(html.contains("class=\"math-inline\""))
@@ -42,7 +45,7 @@ final class MarkdownCompilerTests: XCTestCase {
             | a | b |
             |---|---|
             | 1 | 2 |
-            """)
+            """, trust: .rawHTMLAllowed)
         XCTAssertTrue(html.contains("<table>"))
         XCTAssertTrue(html.contains("<th>"))
         XCTAssertTrue(html.contains("<td>1</td>"))
@@ -102,7 +105,7 @@ final class MarkdownCompilerTests: XCTestCase {
               A[WebContent] --&gt; B[GPU process]
               B --&gt; C[Metal]</pre>
             """
-        XCTAssertEqual(MarkdownCompiler.compile(source), expected)
+        XCTAssertEqual(MarkdownCompiler.compile(source, trust: .rawHTMLAllowed), expected)
     }
 
     /// Escaping proof. Every construct that escapes its content must keep
@@ -110,30 +113,31 @@ final class MarkdownCompilerTests: XCTestCase {
     /// would be an injection hole, not a speedup.
     func testHostileInputStaysEscaped() {
         XCTAssertEqual(
-            MarkdownCompiler.compile("```html\n<script>alert(1)</script>\n```"),
+            MarkdownCompiler.compile("```html\n<script>alert(1)</script>\n```", trust: .rawHTMLAllowed),
             "<pre><code class=\"language-html\">&lt;script&gt;alert(1)&lt;/script&gt;\n</code></pre>")
 
         XCTAssertEqual(
-            MarkdownCompiler.compile("```mermaid\ngraph TD\n  A[\"<script>\"] --> B\n```"),
+            MarkdownCompiler.compile("```mermaid\ngraph TD\n  A[\"<script>\"] --> B\n```", trust: .rawHTMLAllowed),
             "<pre class=\"mermaid\">graph TD\n  A[&quot;&lt;script&gt;&quot;] --&gt; B</pre>")
 
         XCTAssertEqual(
-            MarkdownCompiler.compile("$$\n<script>alert(1)</script>\n$$"),
+            MarkdownCompiler.compile("$$\n<script>alert(1)</script>\n$$", trust: .rawHTMLAllowed),
             "<div class=\"math-display\">&lt;script&gt;alert(1)&lt;/script&gt;</div>")
 
         // A quote in an href must not be able to close the attribute and open
         // an event handler.
-        let link = MarkdownCompiler.compile("[click](http://evil\"onmouseover=\"alert(1))")
+        let link = MarkdownCompiler.compile(
+            "[click](http://evil\"onmouseover=\"alert(1))", trust: .rawHTMLAllowed)
         XCTAssertEqual(link, "<p><a href=\"http://evil&quot;onmouseover=&quot;alert(1\">click</a>)</p>")
         XCTAssertFalse(link.contains("onmouseover=\""))
 
         // Same for an image's src and alt.
-        let image = MarkdownCompiler.compile("![\"x](y\"z)")
+        let image = MarkdownCompiler.compile("![\"x](y\"z)", trust: .rawHTMLAllowed)
         XCTAssertEqual(image, "<p><img src=\"y&quot;z\" alt=\"&quot;x\"></p>")
 
         // Table cells and inline math escape their content too.
         XCTAssertEqual(
-            MarkdownCompiler.compile("| a\" | b |\n|---|---|\n| \"x\" | & |"),
+            MarkdownCompiler.compile("| a\" | b |\n|---|---|\n| \"x\" | & |", trust: .rawHTMLAllowed),
             "<table><thead><tr><th>a&quot;</th><th>b</th></tr></thead>"
                 + "<tbody><tr><td>&quot;x&quot;</td><td>&amp;</td></tr></tbody></table>")
 

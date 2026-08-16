@@ -40,10 +40,15 @@ final class UBORuleCompilerEquivalenceTests: XCTestCase {
                     skipped += 1
                 }
             default:
-                if let rule = UBORuleListCompiler.filter(parsed) {
-                    blockingRules.append(rule)
-                } else {
+                // One rule per variant. Before #134 there was always exactly
+                // one; `.plain` now emits two because the boundary alternation
+                // WebKit rejects has to become two rules under one action.
+                let rules = UBORuleListCompiler.variants(of: parsed)
+                    .compactMap { UBORuleListCompiler.filter(parsed, variant: $0) }
+                if rules.isEmpty {
                     skipped += 1
+                } else {
+                    blockingRules.append(contentsOf: rules)
                 }
             }
         }
@@ -333,32 +338,18 @@ final class UBORuleCompilerEquivalenceTests: XCTestCase {
         XCTAssertEqual(verdict, "ok", "WebKit rejected the emitted document: \(json)")
     }
 
-    /// PRE-EXISTING, NOT INTRODUCED HERE. WebKit rejects most of what this
-    /// compiler emits, and did so before this change too — verified by
-    /// compiling the previous implementation's output side by side:
+    /// The differential's WebKit half: whatever WebKit says about the emitter's
+    /// output, it says about the dictionary path's output too.
     ///
-    /// - `||host^` and plain-host rules build regexes containing `|`, and
-    ///   WebKit's content-blocker engine reports "Disjunctions are not
-    ///   supported yet".
-    /// - `$third-party` emits `"load-type": "third-party"`, a string; WebKit
-    ///   wants an array and reports "Invalid trigger flags array".
-    /// - `$domain=a|~b` emits `if-domain` and `unless-domain` together, and
-    ///   WebKit permits only one condition per trigger.
-    ///
-    /// Severity: latent, not live. Shipped shields come from the committed
-    /// `easylist-compiled.json`, which AdGuard's converter produces and which
-    /// compiles fine; `compileJSON`'s only caller is `RemoteBlocklistUpdater`,
-    /// and `BrowserEnvironment` does not wire that up ("no launch-time fetch
-    /// … available for a future opt-in runtime path"). So nothing a user has
-    /// today is broken by this — but the runtime update path would produce a
-    /// rule list WebKit refuses, and that should be fixed before it is wired
-    /// in.
-    ///
-    /// Fixing any of those changes what users actually block, so it is not
-    /// part of an allocation change. This test pins the status quo: whatever
-    /// WebKit says about the new output, it said about the old output too.
+    /// Until #134 that agreement was on *rejection* — the three shapes the
+    /// issue lists ("Disjunctions are not supported yet", "Invalid trigger
+    /// flags array", "a trigger cannot have more than one condition") came out
+    /// of both implementations alike. Both are fixed, so the agreement is now
+    /// on acceptance, which `testBothImplementationsCompileUnderWebKit` below
+    /// states directly. This test keeps checking the *equality*, which is the
+    /// part that belongs to #133 and holds either way.
     @MainActor
-    func testWebKitRejectsTheSameRuleShapesAsBefore() async throws {
+    func testWebKitGivesTheSameVerdictForBothImplementations() async throws {
         for (index, line) in [
             "||ads.example.com^",
             "||tracker.example.com^$third-party",
@@ -372,6 +363,29 @@ final class UBORuleCompilerEquivalenceTests: XCTestCase {
             let new = await webKitVerdict(UBORuleListCompiler.compileJSON(from: line).json, identifier: "new\(index)")
             let old = await webKitVerdict(reference(from: line).json, identifier: "old\(index)")
             XCTAssertEqual(new, old, "WebKit verdict changed for: \(line)")
+        }
+    }
+
+    /// The half of the statement above that #134 changes: the shared verdict is
+    /// now "ok". Separate from the equality check so a regression names which
+    /// of the two properties broke.
+    @MainActor
+    func testBothImplementationsCompileUnderWebKit() async throws {
+        for (index, line) in [
+            "||ads.example.com^",
+            "||tracker.example.com^$third-party",
+            "||cdn.example.com/banner.js^$image,script",
+            "||metrics.example.com^$domain=news.example|~blog.news.example",
+            "beacon.example.net",
+            "/analytics/track.js",
+            "@@||allowed.example.com^",
+            "@@/analytics/allowed.js",
+        ].enumerated() {
+            let json = UBORuleListCompiler.compileJSON(from: line).json
+            let new = await webKitVerdict(json, identifier: "ok-new\(index)")
+            XCTAssertEqual(new, "ok", "emitter output rejected for: \(line)")
+            let old = await webKitVerdict(reference(from: line).json, identifier: "ok-old\(index)")
+            XCTAssertEqual(old, "ok", "dictionary-path output rejected for: \(line)")
         }
     }
 }

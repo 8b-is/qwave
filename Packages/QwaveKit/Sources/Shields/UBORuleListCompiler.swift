@@ -41,14 +41,43 @@ public enum UBORuleListCompiler {
 
     /// Regex for `||example.com^`-style rules: any scheme, any subdomains,
     /// boundary after the host (port or path separator).
+    ///
+    /// The boundary used to be `(/|$)`, which WebKit's content-blocker engine
+    /// rejects outright — "Disjunctions are not supported yet" — taking the
+    /// whole rule list down with it (issue #134). It is now just `/`, and that
+    /// costs nothing: WebKit matches against the *canonical* URL, which always
+    /// carries a path separator after the authority. Measured, not assumed —
+    /// a request to `http://127.0.0.1:8802` is blocked by a filter requiring
+    /// the slash and is NOT blocked by one requiring end-of-string, so the
+    /// alternative `$` branch could never have fired here. See
+    /// `UBORuleCompilerWebKitAcceptanceTests`.
     public static func anchoredHostRegex(host: String) -> String {
-        "^[a-z]+://([^/]+\\.)*\(escapeHost(host))(:[0-9]+)?(/|$)"
+        "^[a-z]+://([^/]+\\.)*\(escapeHost(host))(:[0-9]+)?/"
     }
 
     /// Regex for a plain `example.com` rule: host appearing anywhere, with
     /// boundary checks.
+    ///
+    /// Two disjunctions removed, by different arguments:
+    ///
+    /// - The leading `([^a-z0-9.-]|\.)*` is `[^a-z0-9-]*`. The union of "any
+    ///   character that is not a host character" and "a dot" is exactly "any
+    ///   character that is not a letter, digit or hyphen", and `(A|B)*` over
+    ///   single-character classes is `[A∪B]*`. Same language, character for
+    ///   character.
+    /// - The trailing `([^a-z0-9.-]|$)` cannot be merged, so the rule is
+    ///   emitted **twice** — once ending in the character class, once ending
+    ///   in `$` — which is what an alternation under a single action means
+    ///   anyway. See `plainHostRegexAtEndOfURL`; `appendRuleJSON` and
+    ///   `filter(_:)` both emit the pair.
     public static func plainHostRegex(host: String) -> String {
-        "([^a-z0-9.-]|\\.)*\(escapeHost(host))([^a-z0-9.-]|$)"
+        "[^a-z0-9-]*\(escapeHost(host))[^a-z0-9.-]"
+    }
+
+    /// The second half of `plainHostRegex`: the same rule for a host that ends
+    /// the URL, which the `|$` branch used to cover.
+    public static func plainHostRegexAtEndOfURL(host: String) -> String {
+        "[^a-z0-9-]*\(escapeHost(host))$"
     }
 
     public static func trigger(
@@ -66,15 +95,39 @@ public enum UBORuleListCompiler {
             }
         }
         if let loadType = options.loadType {
-            trigger["load-type"] = loadType
+            // An array, not a string. WebKit reports "Invalid trigger flags
+            // array" for the bare string and refuses the whole list (#134);
+            // the value it carries is unchanged.
+            trigger["load-type"] = [loadType]
         }
+        // At most one domain condition: WebKit rejects a trigger carrying both
+        // ("A trigger cannot have more than one condition"). `if-domain` wins
+        // when the filter has both, because it is the narrower of the two —
+        // see `domainConditionLoses` for exactly what that costs.
         if !options.domains.isEmpty {
             trigger["if-domain"] = options.domains
-        }
-        if !options.notDomains.isEmpty {
+        } else if !options.notDomains.isEmpty {
             trigger["unless-domain"] = options.notDomains
         }
         return trigger
+    }
+
+    /// The `~negation`s a `$domain=a|~b` filter loses when `if-domain` wins.
+    ///
+    /// Dropping them is normally exact rather than approximate: WebKit's
+    /// `if-domain` is an exact-match list (a leading `*` is what asks for
+    /// subdomains), so restricting the rule to `a` already excludes `b` for
+    /// every `b` that is not itself in the positive list. The one case where
+    /// something is genuinely lost is `$domain=example.com|~ads.example.com`,
+    /// where the negation was carving a hole *inside* a positive entry — and
+    /// since `if-domain` does not match subdomains anyway, that hole was never
+    /// reachable either. Returns the negations that overlap a positive entry
+    /// so the count can be reported rather than assumed to be zero.
+    public static func domainConditionLoses(_ options: UBOFilterOptions) -> [String] {
+        guard !options.domains.isEmpty, !options.notDomains.isEmpty else { return [] }
+        return options.notDomains.filter { negated in
+            options.domains.contains { negated == $0 || negated.hasSuffix(".\($0)") }
+        }
     }
 
     public static func rule(urlFilter: String, options: UBOFilterOptions, isException: Bool) -> [String: Any] {
@@ -84,14 +137,39 @@ public enum UBORuleListCompiler {
         ]
     }
 
-    public static func filter(_ filter: UBOFilter) -> [String: Any]? {
+    /// Which of a filter's rules is being emitted. Only `.plain` has two: the
+    /// alternation its boundary used to carry cannot be expressed in one
+    /// WebKit-acceptable regex, so it becomes two rules with the same action —
+    /// which is what an alternation under one action means.
+    public enum RuleVariant: Sendable {
+        case primary
+        /// `.plain` only: the pattern ending the URL, the old `|$` branch.
+        case hostAtEndOfURL
+    }
+
+    /// The variants `filter` compiles to, in emission order.
+    ///
+    /// `compileJSON` deliberately does *not* call this — returning an `Array`
+    /// per filter cost one malloc per rule, which is 1k of them on the
+    /// benchmark corpus and undoes a slice of #133. It branches inline instead
+    /// and `UBORuleCompilerEquivalenceTests` diffs the two paths byte for byte,
+    /// so they cannot drift apart unnoticed.
+    public static func variants(of filter: UBOFilter) -> [RuleVariant] {
+        if case .plain = filter { return [.primary, .hostAtEndOfURL] }
+        if case .ignore = filter { return [] }
+        return [.primary]
+    }
+
+    public static func filter(_ filter: UBOFilter, variant: RuleVariant = .primary) -> [String: Any]? {
         switch filter {
         case .ignore:
             return nil
         case .hostname(let host, let options):
             return rule(urlFilter: anchoredHostRegex(host: host), options: options, isException: false)
         case .plain(let host, let options):
-            return rule(urlFilter: plainHostRegex(host: host), options: options, isException: false)
+            let regex =
+                variant == .primary ? plainHostRegex(host: host) : plainHostRegexAtEndOfURL(host: host)
+            return rule(urlFilter: regex, options: options, isException: false)
         case .anchoredPath(let host, let path, let options):
             let regex = "\(anchoredHostRegex(host: host))\(NSRegularExpression.escapedPattern(for: path))"
             return rule(urlFilter: regex, options: options, isException: false)
@@ -150,12 +228,18 @@ public enum UBORuleListCompiler {
                 skipped += 1
             case .exception:
                 if exceptionCount > 0 { exceptionBytes.append(UInt8(ascii: ",")) }
-                appendRuleJSON(parsed, to: &exceptionBytes)
+                appendRuleJSON(parsed, variant: .primary, to: &exceptionBytes)
                 exceptionCount += 1
             default:
+                // One object per variant — `.plain` emits two (see `variants`,
+                // which this must stay in step with).
                 if wroteBlocking { out.append(UInt8(ascii: ",")) }
-                appendRuleJSON(parsed, to: &out)
+                appendRuleJSON(parsed, variant: .primary, to: &out)
                 wroteBlocking = true
+                if case .plain = parsed {
+                    out.append(UInt8(ascii: ","))
+                    appendRuleJSON(parsed, variant: .hostAtEndOfURL, to: &out)
+                }
             }
         }
 
@@ -284,19 +368,26 @@ public enum UBORuleListCompiler {
     private static func appendAnchoredHostRegex<S: StringProtocol>(_ host: S, to out: inout [UInt8]) {
         out.append(contentsOf: #"^[a-z]+:\/\/([^\/]+\\.)*"#.utf8)
         appendEscapedHost(host, to: &out)
-        out.append(contentsOf: #"(:[0-9]+)?(\/|$)"#.utf8)
+        out.append(contentsOf: #"(:[0-9]+)?\/"#.utf8)
     }
 
     /// `plainHostRegex(host:)`, JSON-escaped.
     private static func appendPlainHostRegex<S: StringProtocol>(_ host: S, to out: inout [UInt8]) {
-        out.append(contentsOf: #"([^a-z0-9.-]|\\.)*"#.utf8)
+        out.append(contentsOf: #"[^a-z0-9-]*"#.utf8)
         appendEscapedHost(host, to: &out)
-        out.append(contentsOf: #"([^a-z0-9.-]|$)"#.utf8)
+        out.append(contentsOf: #"[^a-z0-9.-]"#.utf8)
+    }
+
+    /// `plainHostRegexAtEndOfURL(host:)`, JSON-escaped.
+    private static func appendPlainHostRegexAtEndOfURL<S: StringProtocol>(_ host: S, to out: inout [UInt8]) {
+        out.append(contentsOf: #"[^a-z0-9-]*"#.utf8)
+        appendEscapedHost(host, to: &out)
+        out.append(UInt8(ascii: "$"))
     }
 
     /// Appends the JSON object for one rule. Keys are written in a fixed
     /// order; `filter(_:)` remains the reference the tests diff against.
-    private static func appendRuleJSON(_ parsed: UBOFilter, to out: inout [UInt8]) {
+    private static func appendRuleJSON(_ parsed: UBOFilter, variant: RuleVariant, to out: inout [UInt8]) {
         if case .ignore = parsed { return }
 
         out.append(contentsOf: #"{"trigger":{"url-filter":""#.utf8)
@@ -310,7 +401,11 @@ public enum UBORuleListCompiler {
             appendAnchoredHostRegex(host, to: &out)
         case .plain(let host, let opts):
             options = opts
-            appendPlainHostRegex(host, to: &out)
+            if variant == .primary {
+                appendPlainHostRegex(host, to: &out)
+            } else {
+                appendPlainHostRegexAtEndOfURL(host, to: &out)
+            }
         case .anchoredPath(let host, let path, let opts):
             options = opts
             appendAnchoredHostRegex(host, to: &out)
@@ -346,12 +441,16 @@ public enum UBORuleListCompiler {
             }
         }
         if let loadType = options.loadType {
-            out.append(contentsOf: #","load-type":""#.utf8)
+            out.append(contentsOf: #","load-type":[""#.utf8)
             appendJSONString(loadType, to: &out)
-            out.append(UInt8(ascii: "\""))
+            out.append(contentsOf: #""]"#.utf8)
         }
-        appendDomainList(options.domains, key: #","if-domain":["#, to: &out)
-        appendDomainList(options.notDomains, key: #","unless-domain":["#, to: &out)
+        // One condition only — see `trigger(urlFilter:options:)`.
+        if !options.domains.isEmpty {
+            appendDomainList(options.domains, key: #","if-domain":["#, to: &out)
+        } else {
+            appendDomainList(options.notDomains, key: #","unless-domain":["#, to: &out)
+        }
 
         out.append(contentsOf: #"},"action":{"type":""#.utf8)
         out.append(contentsOf: (isException ? "ignore-previous-rules" : "block").utf8)

@@ -152,10 +152,14 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 webView.loadFileURL(file, allowingReadAccessTo: root)
             case .markdown(let source, let file):
                 decisionHandler(.cancel, preferences)
-                presentMarkdown(source, at: file, in: webView)
+                // A downloaded `.md` rendered at its own file:// URL: sanitise.
+                presentMarkdown(source, at: file, trust: .compilerOutputOnly, in: webView)
             case .listing(let markdown, let directory):
                 decisionHandler(.cancel, preferences)
-                presentMarkdown(markdown, at: directory, in: webView)
+                // Same origin, and the markdown here is *synthesised from file
+                // names* (`LocalDocumentResolver.directoryListingMarkdown`), so
+                // the untrusted input is the directory's contents.
+                presentMarkdown(markdown, at: directory, trust: .compilerOutputOnly, in: webView)
             case .missing:
                 decisionHandler(.cancel, preferences)
                 webView.loadHTMLString(
@@ -332,9 +336,16 @@ extension NavigationCoordinator: WKNavigationDelegate {
         webView.loadHTMLString(html, baseURL: url)
     }
 
-    private func presentMarkdown(_ source: String, at url: URL, in webView: WKWebView) {
+    /// - Parameter trust: which origin the compiled page will end up in.
+    ///   `loadHTMLString(_:baseURL:)` below adopts `url`'s origin, so this is
+    ///   the caller's answer to "would script in this document be running as
+    ///   the document's own site, or as the user's `file://` origin?" — see
+    ///   `MarkdownTrust` and issue #131.
+    private func presentMarkdown(
+        _ source: String, at url: URL, trust: MarkdownTrust, in webView: WKWebView
+    ) {
         let title = url.lastPathComponent
-        let body = MarkdownCompiler.compile(source)
+        let body = MarkdownCompiler.compile(source, trust: trust)
         let html = InternalPages.markdownHTML(
             title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
         webView.loadHTMLString(html, baseURL: url)
@@ -362,7 +373,14 @@ extension NavigationCoordinator: WKNavigationDelegate {
         do {
             let (data, _) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
             let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            presentMarkdown(source, at: url, in: webView)
+            // Remote markdown renders at its own URL, so raw HTML in it runs as
+            // that site's origin and gains nothing over the site serving HTML.
+            // The `isFileURL` arm is unreachable today — file:// markdown is
+            // intercepted in `decidePolicyFor navigationAction` above — but the
+            // trust level is decided by the URL we are about to hand
+            // `loadHTMLString`, not by which caller we happen to be in.
+            presentMarkdown(
+                source, at: url, trust: url.isFileURL ? .compilerOutputOnly : .rawHTMLAllowed, in: webView)
         } catch {
             webView.loadHTMLString(
                 InternalPages.connectionLostHTML(

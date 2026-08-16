@@ -2,96 +2,15 @@ import AppKit
 import Combine
 import VPNKit
 
-/// Live tunnel throughput sampler: polls the packet tunnel provider for
-/// WireGuard runtime stats and computes bytes/second deltas.
-@MainActor
-final class TunnelStatsSampler {
-    struct Sample: Equatable {
-        var txBytes: UInt64 = 0
-        var rxBytes: UInt64 = 0
-        var txRate: Double = 0
-        var rxRate: Double = 0
-    }
-
-    private let tunnel: TunnelManager
-    private var timer: Timer?
-    private var last: (tx: UInt64, rx: UInt64, date: Date)?
-    private(set) var sample = Sample()
-
-    init(tunnel: TunnelManager) {
-        self.tunnel = tunnel
-    }
-
-    func start() {
-        guard timer == nil else { return }
-        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-        tick()
-    }
-
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-        last = nil
-    }
-
-    private func tick() {
-        guard tunnel.state.isConnected else {
-            last = nil
-            sample = Sample()
-            return
-        }
-        Task {
-            guard let stats = await tunnel.requestStats() else { return }
-            let parsed = Self.parse(stats)
-            let now = Date()
-            if let last, now.timeIntervalSince(last.date) > 0.5 {
-                let dt = now.timeIntervalSince(last.date)
-                sample = Sample(
-                    txBytes: parsed.tx,
-                    rxBytes: parsed.rx,
-                    txRate: Double(parsed.tx - last.tx) / dt,
-                    rxRate: Double(parsed.rx - last.rx) / dt
-                )
-            } else {
-                sample = Sample(txBytes: parsed.tx, rxBytes: parsed.rx)
-            }
-            last = (parsed.tx, parsed.rx, now)
-        }
-    }
-
-    /// WireGuard runtime config lines look like `tx_bytes=123 rx_bytes=456
-    /// latest_handshake=...` (the adapter's getRuntimeConfiguration output).
-    static func parse(_ runtimeConfig: String) -> (tx: UInt64, rx: UInt64) {
-        var tx: UInt64 = 0
-        var rx: UInt64 = 0
-        for line in runtimeConfig.components(separatedBy: .newlines) {
-            let parts = line.split(separator: "=", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-            switch parts[0] {
-            case "tx_bytes": tx = UInt64(parts[1]) ?? 0
-            case "rx_bytes": rx = UInt64(parts[1]) ?? 0
-            default: break
-            }
-        }
-        return (tx, rx)
-    }
-
-    static func format(_ rate: Double) -> String {
-        if rate >= 1_048_576 { return String(format: "%.1f MB/s", rate / 1_048_576) }
-        if rate >= 1_024 { return String(format: "%.0f KB/s", rate / 1_024) }
-        return String(format: "%.0f B/s", rate)
-    }
-
-    static func formatTotal(_ bytes: UInt64) -> String {
-        if bytes >= 1_048_576 { return String(format: "%.1f MB", Double(bytes) / 1_048_576) }
-        if bytes >= 1_024 { return String(format: "%.1f KB", Double(bytes) / 1_024) }
-        return "\(bytes) B"
-    }
-}
+// `TunnelStatsSampler` lived here: a 1.5-second timer that polled
+// `TunnelManager.requestStats()` and rendered "↑ x/s ↓ y/s" into the menu bar.
+// It never showed anything but zero, for two compounding reasons (issue #135):
+// the provider answered with the Zig packet filter's counters, and that filter
+// has no caller, so the counters could not be anything but zero; and the reply
+// was JSON while the parser looked for WireGuard `tx_bytes=` UAPI lines, so even
+// a real number would not have arrived. A menu-bar readout pinned at zero is
+// worse than no readout, because it looks like a measurement of an idle tunnel.
+// Removed rather than relabelled — there is no honest label for it.
 
 private extension VPNState {
     var isConnected: Bool {
@@ -100,19 +19,17 @@ private extension VPNState {
     }
 }
 
-/// Menu-bar shield: tunnel state at a glance, live throughput, and a
-/// one-click server switcher built from the relay list.
+/// Menu-bar shield: tunnel state at a glance and a one-click server switcher
+/// built from the relay list.
 @MainActor
 final class VPNStatusItem: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let vpn: MullvadVPNService
-    private let sampler: TunnelStatsSampler
     private var cancellable: AnyCancellable?
     private var relayList: RelayList?
 
     init(vpn: MullvadVPNService) {
         self.vpn = vpn
-        self.sampler = TunnelStatsSampler(tunnel: vpn.tunnel)
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -130,16 +47,10 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
 
     private func stateChanged(_ state: VPNState) {
         updateIcon(for: state)
-        updateTitle()
-        if state.isConnected {
-            sampler.start()
-            if relayList == nil {
-                Task {
-                    await vpn.loadRelays(); relayList = vpn.relayList
-                }
+        if state.isConnected, relayList == nil {
+            Task {
+                await vpn.loadRelays(); relayList = vpn.relayList
             }
-        } else {
-            sampler.stop()
         }
     }
 
@@ -162,21 +73,10 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         statusItem.button?.toolTip = description
     }
 
-    /// Live throughput as the status item title while connected.
-    private func updateTitle() {
-        guard vpn.tunnel.state.isConnected else {
-            statusItem.button?.title = ""
-            return
-        }
-        let s = sampler.sample
-        statusItem.button?.title = "↑ \(TunnelStatsSampler.format(s.txRate)) ↓ \(TunnelStatsSampler.format(s.rxRate))"
-    }
-
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        updateTitle()
 
         let statusLine: String
         switch vpn.tunnel.state {
@@ -192,13 +92,9 @@ final class VPNStatusItem: NSObject, NSMenuDelegate {
         statusMenuItem.isEnabled = false
 
         if vpn.tunnel.state.isConnected {
-            let s = sampler.sample
-            if s.txBytes > 0 || s.rxBytes > 0 {
-                let statsLine =
-                    "Sent \(TunnelStatsSampler.formatTotal(s.txBytes)) · Received \(TunnelStatsSampler.formatTotal(s.rxBytes))"
-                let statsItem = menu.addItem(withTitle: statsLine, action: nil, keyEquivalent: "")
-                statsItem.isEnabled = false
-            }
+            // A "Sent x · Received y" line stood here, fed by the same
+            // always-zero source as the title, and guarded by `> 0` — so it had
+            // never once been shown. See the note at the top of this file.
             menu.addItem(.separator())
             menu.addItem(withTitle: "Disconnect", action: #selector(disconnect(_:)), keyEquivalent: "").target = self
         } else if vpn.account.isLoggedIn {

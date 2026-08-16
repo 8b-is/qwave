@@ -11,6 +11,15 @@ import QwaveSupport
 
 // Zig packet filter (zig-core/src/packet.zig, built via preBuildScript).
 // C function declarations — the header is included as a target source.
+//
+// `qpacket_filter` itself has no caller: the data plane is WireGuardKit's, and
+// nothing here hands it a packet. The `qpacket_filter_stats_extended` readout
+// that used to be reported over `handleAppMessage` was therefore reporting
+// counters only the filter increments, so it could only ever be zero — and it
+// was withdrawn in issue #135 rather than left to read as a measurement. The
+// remaining declarations are the ones the lifecycle uses; the filter and its
+// stats entry points stay declared, and stay uncalled, until someone wires the
+// filter into the data plane. Wire that first, then the readout.
 private let QPACKET_ALLOW: Int32 = 0
 private let QPACKET_DROP: Int32 = 1
 
@@ -27,27 +36,8 @@ private func qpacket_filter_stats(
     _ dropped: UnsafeMutablePointer<UInt64>
 )
 
-@_silgen_name("qpacket_filter_stats_extended")
-private func qpacket_filter_stats_extended(
-    _ state: UnsafeMutableRawPointer?,
-    _ stats: UnsafeMutablePointer<QpacketStats>
-)
-
 @_silgen_name("qpacket_filter_deinit")
 private func qpacket_filter_deinit(_ state: UnsafeMutableRawPointer?)
-
-/// C-compatible struct mirroring the Zig PacketStats.
-private struct QpacketStats {
-    var packets_seen: UInt64
-    var packets_dropped: UInt64
-    var packets_tcp: UInt64
-    var packets_udp: UInt64
-    var packets_icmp: UInt64
-    var packets_other: UInt64
-    var packets_ipv4: UInt64
-    var packets_ipv6: UInt64
-    var bytes_seen: UInt64
-}
 
 enum PacketTunnelError: Error {
     case missingConfiguration
@@ -61,14 +51,6 @@ private final class TunnelProviderReference: @unchecked Sendable {
 
     init(value: NEPacketTunnelProvider) {
         self.value = value
-    }
-}
-
-private final class MessageCompletion: @unchecked Sendable {
-    let handler: ((Data?) -> Void)?
-
-    init(_ handler: ((Data?) -> Void)?) {
-        self.handler = handler
     }
 }
 
@@ -187,25 +169,6 @@ private actor PacketTunnelState {
     func wake() async {
         guard RekeyPolicy.shouldRekey(lastRekey: lastRekey) else { return }
         await rekeyNow()
-    }
-
-    func response(for messageData: Data) -> Data? {
-        guard String(data: messageData, encoding: .utf8) == "stats" else { return nil }
-        var stats = QpacketStats(
-            packets_seen: 0, packets_dropped: 0, packets_tcp: 0,
-            packets_udp: 0, packets_icmp: 0, packets_other: 0,
-            packets_ipv4: 0, packets_ipv6: 0, bytes_seen: 0
-        )
-        if let handle = filterHandle {
-            qpacket_filter_stats_extended(handle, &stats)
-        }
-        let json = """
-            {"packets_seen":\(stats.packets_seen),"packets_dropped":\(stats.packets_dropped),\
-            "packets_tcp":\(stats.packets_tcp),"packets_udp":\(stats.packets_udp),\
-            "packets_icmp":\(stats.packets_icmp),"packets_ipv4":\(stats.packets_ipv4),\
-            "packets_ipv6":\(stats.packets_ipv6),"bytes_seen":\(stats.bytes_seen)}
-            """
-        return Data(json.utf8)
     }
 
     private func scheduleRekeyTimer() {
@@ -382,16 +345,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    override func handleAppMessage(
-        _ messageData: Data,
-        completionHandler: ((Data?) -> Void)? = nil
-    ) {
-        let state = tunnelState
-        let completion = MessageCompletion(completionHandler)
-        Task {
-            completion.handler?(await state.response(for: messageData))
-        }
-    }
+    // No `handleAppMessage` override. The only message the app ever sent was
+    // "stats", answered with the Zig filter's counters — which nothing
+    // increments, because nothing calls the filter (issue #135). Restoring the
+    // channel is the right move *after* there is something true to put in it.
 
     // MARK: - Configuration mapping
 

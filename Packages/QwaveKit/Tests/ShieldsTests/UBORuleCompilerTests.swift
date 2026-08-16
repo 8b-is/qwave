@@ -82,13 +82,16 @@ final class UBORuleListCompilerTests: XCTestCase {
             """
         let (json, skipped, exceptions) = UBORuleListCompiler.compileJSON(from: text)
         let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
-        XCTAssertEqual(rules.count, 3)
+        // Four, not three: the bare `example.com` line is a `.plain` filter and
+        // compiles to a pair of rules, because its boundary was an alternation
+        // WebKit will not compile (#134). `exceptions` still counts filters.
+        XCTAssertEqual(rules.count, 4)
         XCTAssertEqual(exceptions, 1)
         XCTAssertEqual(skipped, 2)
 
         // Exceptions must sort after blocking rules.
         let actions = rules.compactMap { ($0["action"] as? [String: Any])?["type"] as? String }
-        XCTAssertEqual(actions, ["block", "block", "ignore-previous-rules"])
+        XCTAssertEqual(actions, ["block", "block", "block", "ignore-previous-rules"])
 
         let last = try XCTUnwrap(rules.last)
         let trigger = try XCTUnwrap(last["trigger"] as? [String: Any])
@@ -110,7 +113,11 @@ final class UBORuleListCompilerTests: XCTestCase {
     func testAnchoredHostRegex() {
         let regex = UBORuleListCompiler.anchoredHostRegex(host: "doubleclick.net")
         XCTAssertTrue(matches(regex, "https://ad.doubleclick.net/foo"))
-        XCTAssertTrue(matches(regex, "http://doubleclick.net"))
+        // Canonical form: WebKit matches `http://doubleclick.net/`, never the
+        // slash-less spelling, which is why the boundary alternation the engine
+        // rejected could be dropped rather than replaced (#134).
+        XCTAssertTrue(matches(regex, "http://doubleclick.net/"))
+        XCTAssertFalse(matches(regex, "http://doubleclick.net"))
         XCTAssertTrue(matches(regex, "https://doubleclick.net:443/x"))
         XCTAssertFalse(matches(regex, "https://doubleclick.net.evil.com/foo"))
         XCTAssertFalse(matches(regex, "https://evildoubleclick.net/foo"))
@@ -119,8 +126,13 @@ final class UBORuleListCompilerTests: XCTestCase {
     func testPlainHostRegex() {
         let regex = UBORuleListCompiler.plainHostRegex(host: "example.com")
         XCTAssertTrue(matches(regex, "https://www.example.com/path"))
-        XCTAssertTrue(matches(regex, "https://example.com"))
         XCTAssertFalse(matches(regex, "https://example.com.evil.net/path"))
+        // The host ending the URL is the second rule's job — the two together
+        // are the alternation WebKit would not take (#134).
+        let atEnd = UBORuleListCompiler.plainHostRegexAtEndOfURL(host: "example.com")
+        XCTAssertFalse(matches(regex, "https://other.test/?u=example.com"))
+        XCTAssertTrue(matches(atEnd, "https://other.test/?u=example.com"))
+        XCTAssertFalse(matches(atEnd, "https://other.test/?u=example.common"))
     }
 
     func testChunkedCompilation() {

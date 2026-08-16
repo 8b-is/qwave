@@ -70,7 +70,7 @@ let benchmarks: @Sendable () -> Void = {
         configuration: .init(metrics: checkedMetrics, scalingFactor: .kilo, thresholds: tolerance)
     ) { benchmark in
         for _ in benchmark.scaledIterations {
-            blackHole(MarkdownCompiler.compile(docMarkdown))
+            blackHole(MarkdownCompiler.compile(docMarkdown, trust: .rawHTMLAllowed))
         }
     }
 
