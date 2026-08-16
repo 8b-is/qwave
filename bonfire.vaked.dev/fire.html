@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<title>Tűz — bonfire</title>
+<meta name="description" content="Ülj le a tűzhöz. Minden üzenet egy parázs: hullámmá kódolva, a Phoenix-kapun át, az élő rácsba.">
+<meta name="theme-color" content="#16100c">
+<meta name="color-scheme" content="dark">
+<!-- A tüzek tartalma nem indexelendő: a kör azoké, akik ott ülnek. -->
+<meta name="robots" content="noindex, follow">
+
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/site.webmanifest">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/bonfire.css">
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+
+<header class="site-header">
+  <div class="container nav">
+    <a class="brand" href="/" aria-label="bonfire — kezdőlap">
+      <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <circle cx="32" cy="32" r="30" stroke="#ff7a3d" stroke-opacity="0.45" stroke-width="1.5"/>
+        <ellipse cx="32" cy="48" rx="18" ry="5" stroke="#a59fc4" stroke-opacity="0.5" stroke-width="1.5"/>
+        <path d="M32 12c6 8 3 12 6.5 15.5C42.5 31.5 46 35 46 40c0 7.5-6.3 13-14 13s-14-5.5-14-13c0-6 4.5-9.5 7.5-14.5C28 21 30 17 32 12Z" fill="url(#flame)"/>
+        <defs>
+          <linearGradient id="flame" x1="32" y1="12" x2="32" y2="53" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#e6b566"/><stop offset="0.55" stop-color="#ff7a3d"/><stop offset="1" stop-color="#a34a2a"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span class="brand-name">bonfire</span>
+    </a>
+    <nav class="nav-links" aria-label="Fő navigáció">
+      <a href="/#pillerek">Pillérek</a>
+      <a href="/#a-hullam">A hullám</a>
+      <a href="/#az-orzo">Az őrző</a>
+      <a href="/#tuzek">Minden tűz</a>
+    </nav>
+    <a class="btn btn-ghost btn-sm" href="/#tuzek">← A gyűrűhöz</a>
+  </div>
+</header>
+
+<main class="container" style="padding-block:clamp(2rem,5vw,4rem)">
+
+  <div id="fire-error" class="notice notice-err" hidden></div>
+
+  <!-- ---------- A tűz feje ---------- -->
+  <section id="fire-head" hidden>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.75rem;margin-bottom:1rem">
+      <span class="state" id="fire-state"></span>
+      <span class="tag" id="fire-pulse"></span>
+      <span class="tag" id="fire-age"></span>
+    </div>
+
+    <h1 class="display h2" id="fire-name"></h1>
+    <p class="lead" id="fire-question" style="font-family:var(--font-display);font-style:italic;margin-top:1rem"></p>
+
+    <div class="fire-ash" style="margin-top:1.5rem;max-width:60ch">
+      <strong>A hamu — mikor lesz ennek vége:</strong>
+      <span id="fire-ash"></span>
+    </div>
+  </section>
+
+  <!-- ---------- A tűz maga ---------- -->
+  <section style="margin-block:clamp(2rem,5vw,3.5rem)">
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="fire-stage" style="position:relative;height:clamp(15rem,34vh,22rem);mask-image:radial-gradient(72% 82% at 50% 62%,black 44%,transparent 84%)">
+        <canvas id="room-fire"></canvas>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;padding:1.25rem 1.5rem;border-top:1px solid var(--hairline-soft)">
+        <div style="display:flex;flex-wrap:wrap;gap:1.5rem">
+          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)">SZÉKEK <b id="fire-chairs" style="color:var(--gold)">—</b></span>
+          <span class="mono" style="font-size:0.76rem;color:var(--text-faint)">HULLÁMOK <b id="fire-waves" style="color:var(--gold)">—</b></span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.6rem">
+          <button class="btn btn-primary btn-sm" type="button" id="take-chair">Leülök</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="leave-fire">Elviszem a lángom</button>
+        </div>
+      </div>
+    </div>
+    <p id="chair-status" class="faint" style="font-size:var(--step--1);margin-top:0.75rem"></p>
+  </section>
+
+  <div id="lattice-status" class="notice" hidden style="margin-bottom:2rem"></div>
+
+  <!-- ---------- Parázs dobása ---------- -->
+  <section class="card grad-border" style="margin-bottom:clamp(2rem,5vw,3.5rem)">
+    <h3 style="font-family:var(--font-display);font-size:var(--step-2);margin-bottom:0.5rem">Dobj parazsat</h3>
+    <p class="muted" style="font-size:var(--step--1);margin-bottom:1.5rem">
+      Nem a szöveget tároljuk, hanem a lényegét — 32 bájtot és három bájt érzelmet.
+      A kapu eldönti, hogy új hullám lesz belőle, vagy egy meglévőt erősít.
+    </p>
+
+    <form id="ember-form" style="display:grid;gap:1rem">
+      <div class="field">
+        <label class="visually-hidden" for="ember-input">A parazsad</label>
+        <textarea class="textarea" id="ember-input" name="essence" rows="3" maxlength="1200" required
+          placeholder="Írd le, ami idehozott…"></textarea>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center">
+        <button class="btn btn-primary" type="submit" id="ember-submit">A tűzbe</button>
+        <span id="ember-preview" class="mono faint" style="font-size:0.72rem"></span>
+      </div>
+    </form>
+
+    <div id="ember-result" class="notice" hidden style="margin-top:1.25rem"></div>
+  </section>
+
+  <!-- ---------- Felidézés ---------- -->
+  <section style="margin-bottom:clamp(2rem,5vw,3.5rem)">
+    <div class="field" style="max-width:36rem">
+      <label for="resonate-input">Felidézés — φ-újraszintézis</label>
+      <input class="input" id="resonate-input" type="search" placeholder="Mire vagy kíváncsi? pl. „csend"">
+      <p class="hint">A rács a lekérdezés frekvenciája mellett annak f/φ és f·φ harmonikusait is megkeresi.</p>
+    </div>
+  </section>
+
+  <!-- ---------- A hullámok ---------- -->
+  <section>
+    <div style="display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:1.5rem">
+      <h2 class="display h3" id="wave-heading">A parazsak</h2>
+      <p class="faint mono" style="font-size:0.72rem">a fényerő = az élő amplitúdó, D(t,τ) után</p>
+    </div>
+    <ul class="wave-list" id="wave-list">
+      <li class="empty">Betöltés…</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-bottom">
+    <span>bonfire.vaked.dev · with love from US &lt;3</span>
+    <span>keep the weights warm</span>
+  </div>
+</footer>
+
+</div>
+
+<script type="module" src="/assets/js/fire-room.js"></script>
+</body>
+</html>

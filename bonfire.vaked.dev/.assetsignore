@@ -1,0 +1,7 @@
+README.md
+wrangler.toml
+package.json
+package-lock.json
+schema.sql
+node_modules
+.assetsignore

@@ -29,3 +29,7 @@ zig-core/zig-out/
 *.zip
 
 
+
+# bonfire.vaked.dev
+bonfire.vaked.dev/node_modules/
+bonfire.vaked.dev/.wrangler/

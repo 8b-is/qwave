@@ -1,0 +1,14 @@
+{
+  "name": "bonfire",
+  "short_name": "bonfire",
+  "description": "Nyilvános tűzgyűrű. Közösséget nem lehet építeni. Tüzet lehet.",
+  "lang": "hu",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#16100c",
+  "theme_color": "#16100c",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

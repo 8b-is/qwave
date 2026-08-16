@@ -1,0 +1,32 @@
+# bonfire.vaked.dev — Cloudflare Pages
+# Spec §4: edge-native, no servers, no accounts.
+#
+# Before the first deploy:
+#   npx wrangler d1 create bonfire-lattice
+#   # paste the returned database_id below
+#   npx wrangler d1 execute bonfire-lattice --remote --file=./schema.sql
+#   npx wrangler pages secret put IDENTITY_SALT
+#
+# See README.md for the full sequence.
+
+name = "bonfire"
+compatibility_date = "2026-08-16"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "."
+
+# The lattice (spec §5). The binding name is what functions/api/_lib/db.js reads.
+[[d1_databases]]
+binding = "LATTICE"
+database_name = "bonfire-lattice"
+database_id = "REPLACE_ME_WITH_YOUR_D1_DATABASE_ID"
+
+# --- Secrets, set with `wrangler pages secret put`, never committed ---------
+#
+#   IDENTITY_SALT   required in production. Salts the one-way author/chair
+#                   hashes (spec §7 rule 4). Without it the API falls back to a
+#                   development salt and /api/health reports
+#                   identity_salt: "development" so the gap is visible.
+#
+#   HARM_TERMS      optional, comma-separated. Custodian rule 3's operator term
+#                   list. The dampening mechanism ships; the vocabulary is the
+#                   operator's to choose.

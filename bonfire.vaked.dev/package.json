@@ -1,0 +1,18 @@
+{
+  "name": "bonfire",
+  "version": "0.1.0",
+  "private": true,
+  "description": "bonfire.vaked.dev — a public fire ring. Community is not ours to build; the fire is.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev . --d1 LATTICE=bonfire-lattice",
+    "db:create": "wrangler d1 create bonfire-lattice",
+    "db:local": "wrangler d1 execute bonfire-lattice --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute bonfire-lattice --remote --file=./schema.sql",
+    "deploy": "wrangler pages deploy .",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
