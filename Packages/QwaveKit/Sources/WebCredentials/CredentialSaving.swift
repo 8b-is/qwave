@@ -84,23 +84,24 @@ public protocol CredentialIdentitySyncing: Sendable {
     func removeIdentity(domain: String, username: String) async throws
 }
 
-/// Does nothing. Useful as a default where identity sync genuinely isn't
-/// wanted (tests, platforms without `AuthenticationServices`).
-public struct NoOpCredentialIdentitySyncing: CredentialIdentitySyncing {
-    public init() {}
-    public func registerIdentity(for credential: WebCredential) async throws {}
-    public func removeIdentity(domain: String, username: String) async throws {}
-}
-
 /// The missing write path (see issue #72): the single place that turns a
 /// captured or imported login into (1) a `WebCredentialStore` write and (2)
-/// an `ASCredentialIdentityStore` registration, so the two never drift apart.
+/// an `ASCredentialIdentityStore` registration, so the two never drift apart
+/// *on save*.
 ///
 /// Callers that only touched `WebCredentialStore.save` directly (as the
 /// keychain implementation always allowed) would persist a working login that
 /// the system's QuickType index never learns about — the extension could
 /// still fill it via the interactive list, but proactive suggestions would
-/// never appear. Routing every save/remove through here closes that gap.
+/// never appear. Routing every save through here closes that gap.
+///
+/// Deletion is the half that is *not* closed. ``remove(domain:username:)``
+/// exists and is tested, but the shipping app has no credential-deletion UI
+/// and no caller: `PasswordCaptureBridge` only ever calls ``save(_:)``. So a
+/// login deleted out of band (Keychain Access, another device's sync) leaves
+/// its AutoFill identity behind, and the "never drift apart" guarantee above
+/// holds for saves only. Wiring a delete affordance to `remove` is what would
+/// make it true in both directions.
 public struct CredentialSaver: Sendable {
     private let store: any WebCredentialStore
     private let identitySync: any CredentialIdentitySyncing

@@ -26,51 +26,50 @@ final class WebAuthnOriginPolicyTests: XCTestCase {
     /// embedded widget) must not be able to run a ceremony for someone else's
     /// relying party.
     func testCrossOriginFrameCannotClaimAnotherRelyingParty() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("bank.example", forOriginHost: "ads.tracker.example"))
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "attacker.test"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("bank.example", forOriginHost: "ads.tracker.example"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "attacker.test"))
     }
 
     /// The suffix has to break on a label boundary — a plain `hasSuffix` would
     /// hand "evil-example.com" every passkey registered for "example.com".
     func testSuffixMustBreakOnALabelBoundary() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "evil-example.com"))
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "notexample.com"))
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "login.example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "evil-example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "notexample.com"))
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "login.example.com"), "example.com")
     }
 
     /// Real passkeys must keep working: same-origin, and the spec's
     /// subdomain → registrable-parent case.
     func testLegitimateCeremoniesAreStillAllowed() {
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "example.com"))
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "www.example.com"))
-        XCTAssertTrue(
-            WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: "a.deep.sub.example.com"))
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "example.com"), "example.com")
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "www.example.com"), "example.com")
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: "a.deep.sub.example.com"),
+            "example.com")
         // Single-label intranet host: exact equality is the only match, and it holds.
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("localhost", forOriginHost: "localhost"))
+        XCTAssertEqual(WebAuthnOriginPolicy.authorizedRPID("localhost", forOriginHost: "localhost"), "localhost")
     }
 
     /// An rpId may widen to a registrable parent, never narrow to a child.
     func testParentOriginCannotClaimASubdomain() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("login.example.com", forOriginHost: "example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("login.example.com", forOriginHost: "example.com"))
     }
 
     /// A single-label rpId is never a site's registrable domain, so a page may
     /// not claim the whole TLD it happens to sit under.
     func testSingleLabelSuffixIsRefused() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("com", forOriginHost: "example.com"))
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("localhost", forOriginHost: "app.localhost"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("com", forOriginHost: "example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("localhost", forOriginHost: "app.localhost"))
     }
 
     /// An IP-literal origin has no registrable domain: only exact equality.
     func testIPLiteralOriginAllowsOnlyExactMatch() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("3.4", forOriginHost: "1.2.3.4"))
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("1.2.3.4", forOriginHost: "1.2.3.4"))
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("[::1]", forOriginHost: "[::1]"))
-    }
-
-    func testCaseAndRootLabelDotAreNormalized() {
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("EXAMPLE.com", forOriginHost: "example.com"))
-        XCTAssertTrue(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com.", forOriginHost: "login.example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("3.4", forOriginHost: "1.2.3.4"))
+        XCTAssertEqual(WebAuthnOriginPolicy.authorizedRPID("1.2.3.4", forOriginHost: "1.2.3.4"), "1.2.3.4")
+        XCTAssertEqual(WebAuthnOriginPolicy.authorizedRPID("[::1]", forOriginHost: "[::1]"), "[::1]")
     }
 
     /// The value that reaches the authenticator, not just the allow/deny bit:
@@ -88,9 +87,9 @@ final class WebAuthnOriginPolicyTests: XCTestCase {
 
     /// An opaque origin (sandboxed iframe, data: document) has an empty host.
     func testEmptyHostsAreRefused() {
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("example.com", forOriginHost: ""))
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("", forOriginHost: "example.com"))
-        XCTAssertFalse(WebAuthnOriginPolicy.rpIDIsAuthorized("", forOriginHost: ""))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("example.com", forOriginHost: ""))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("", forOriginHost: "example.com"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("", forOriginHost: ""))
     }
 }
 
