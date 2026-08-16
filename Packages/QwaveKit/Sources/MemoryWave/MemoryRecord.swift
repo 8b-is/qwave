@@ -10,6 +10,23 @@ public enum MemoryKind: String, Sendable, Equatable {
     case nibble
 }
 
+/// Who put the text of a memory there. This is a trust label, not a category:
+/// it decides whether recall may hand the text to a model in an instruction
+/// position, or must carry it as quoted, untrusted data.
+///
+/// `.derived` is the safe value and therefore the default everywhere — a
+/// record has to be *proven* authored to earn the stronger position.
+public enum MemoryProvenance: String, Sendable, Equatable, CaseIterable {
+    /// A person deliberately put this record in memory (a pin, a note, an
+    /// explicit Remember of a page they chose). The body may still be page
+    /// text, but a human made a per-record decision to keep it.
+    case authored
+    /// Text no human chose per-record: model output (`.summary`) or automatic
+    /// capture (`.browse` under Remember Everything). A hostile page can steer
+    /// this content, so it must never reach a prompt as instructions.
+    case derived
+}
+
 public struct MemoryRecord: Identifiable, Equatable, Sendable {
     public var id: Int64
     public var containerID: UUID?
@@ -21,6 +38,7 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
     public var body: String
     public var wave: WaveInt
     public var tags: [String]
+    public var provenance: MemoryProvenance
 
     public init(
         id: Int64,
@@ -32,7 +50,8 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         title: String,
         body: String,
         wave: WaveInt,
-        tags: [String] = []
+        tags: [String] = [],
+        provenance: MemoryProvenance = .derived
     ) {
         self.id = id
         self.containerID = containerID
@@ -44,6 +63,7 @@ public struct MemoryRecord: Identifiable, Equatable, Sendable {
         self.body = body
         self.wave = wave
         self.tags = tags
+        self.provenance = provenance
     }
 
     /// Recomputed on demand from `title`/`body`. This is a ~1000-step, 8-harmonic

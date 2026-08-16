@@ -830,6 +830,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 containerID: tab.containerID,
                 isEphemeral: tab.isEphemeral,
                 isExplicit: false
+                // No provenance argument: automatic capture of page text with
+                // no per-record user decision stays at the default, `.derived`.
             )
         }
     }
@@ -918,7 +920,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 url: tab.url,
                 kind: scope == "selection" ? .note : .pin,
                 containerID: tab.containerID,
-                isEphemeral: tab.isEphemeral
+                isEphemeral: tab.isEphemeral,
+                // The user picked this text and asked for it to be kept.
+                provenance: .authored
             )
             memoryPanelTitle = title
             memoryPanelBody =
@@ -1048,7 +1052,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 url: extract.href.flatMap(URL.init(string:)) ?? tab.url,
                 kind: .pin,
                 containerID: tab.containerID,
-                isEphemeral: tab.isEphemeral
+                isEphemeral: tab.isEphemeral,
+                // Explicit Remember of a page the user chose. The body is page
+                // text, but the decision to keep it was the user's.
+                provenance: .authored
             )
             memoryPanelTitle = extract.title
             memoryPanelBody = "Remembered as a Cognitive wave in this container."
