@@ -48,7 +48,15 @@ final class BrowserEnvironment {
         self.directory = directory
         settings = SettingsStore()
         secrets = KeychainSecretStore()
-        memoryPreferences = MemoryWavePreferences(secrets: secrets)
+        let memoryPreferences = MemoryWavePreferences(secrets: secrets)
+        self.memoryPreferences = memoryPreferences
+        // Tell EgressGuard where to read the Memory Wave endpoint the user has
+        // configured. A closure, not a copy: Settings writes the preference and
+        // calls nothing else, so the guard has to re-read it per request or the
+        // previous host would stay permitted after the user changed it. See
+        // EgressUserConfiguredEndpoint. Installed once, here, because this is
+        // where `memoryPreferences` is created.
+        EgressGuard.userConfiguredEndpoint.use { memoryPreferences.egressPermittedHost }
         containers = ContainerRegistry(directory: directory)
         shieldsPolicy = ShieldsPolicy(directory: directory)
         shields = ShieldsDirector(compiler: RuleListCompiler(), policy: shieldsPolicy)

@@ -1268,7 +1268,6 @@ final class WaveDirectorTests: XCTestCase {
     /// one — and they diverge: the declared intent becomes true while the
     /// provider is remote, and Ask starts failing with `.cognitiveEgress`.
     func testResolvedProviderKindMatchesTheConfiguredPreference() throws {
-        defer { EgressAllowlist.userConfiguredHost.set(nil) }
         for kind in MemoryProviderKind.allCases {
             let secrets = InMemorySecretStore()
             let prefs = MemoryWavePreferences(
@@ -1334,36 +1333,37 @@ final class WaveDirectorTests: XCTestCase {
         XCTAssertLessThan(configuration.timeoutIntervalForResource, 600)
     }
 
-    /// `resolveProvider()` is also the single writer of the guard's
-    /// user-configured host slot, and it has to agree with the base URL it
-    /// hands the provider in the same breath — a provider pointed at a host
-    /// the guard was not told about is refused at the transport, so a drift
-    /// between these two is the feature breaking.
-    func testResolveProviderPublishesTheConfiguredHostToTheEgressGuard() throws {
-        defer { EgressAllowlist.userConfiguredHost.set(nil) }
-        let secrets = InMemorySecretStore()
+    /// What `EgressGuard` reads on every provider request, and the one place
+    /// it is derived: the *current* preference, not a copy taken when a
+    /// provider was last built. It has to agree with the base URL
+    /// `resolveProvider()` hands the provider — a provider pointed at a host
+    /// the guard resolves differently is refused at the transport — so the two
+    /// are asserted against each other rather than against a literal.
+    ///
+    /// The revocation this buys is pinned end-to-end, through the guard, by
+    /// `EgressGuardTests.testChangingTheEndpointInSettingsRevokesTheOldHostImmediately`.
+    func testEgressPermittedHostTracksTheCurrentPreference() throws {
         let prefs = MemoryWavePreferences(
-            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: secrets)
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: InMemorySecretStore())
         prefs.providerKind = .openaiCompatible
         prefs.remoteBaseURL = URL(string: "https://ollama.self-hosted.example/v1")!
         try prefs.setAPIKey("test-key")
         let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
 
         let provider = try XCTUnwrap(director.resolveProvider() as? OpenAICompatibleProvider)
-        XCTAssertEqual(EgressAllowlist.userConfiguredHost.current(), provider.baseURL.host)
-        XCTAssertTrue(EgressAllowlist.permits(host: "ollama.self-hosted.example"))
+        XCTAssertEqual(prefs.egressPermittedHost, provider.baseURL.host)
 
-        // Switching provider revokes it — the host was permitted because the
-        // user was pointing Memory Wave at it, and they no longer are.
-        prefs.providerKind = .onDevice
-        _ = try director.resolveProvider()
-        XCTAssertNil(EgressAllowlist.userConfiguredHost.current())
-        XCTAssertFalse(EgressAllowlist.permits(host: "ollama.self-hosted.example"))
+        // Settings alone moves it: no provider is rebuilt in between, because
+        // Settings does not rebuild one.
+        prefs.remoteBaseURL = URL(string: "https://elsewhere.example/v1")!
+        XCTAssertEqual(prefs.egressPermittedHost, "elsewhere.example")
 
-        prefs.providerKind = .none
-        prefs.remoteBaseURL = URL(string: "https://ollama.self-hosted.example/v1")!
-        _ = try director.resolveProvider()
-        XCTAssertNil(EgressAllowlist.userConfiguredHost.current())
+        // Every non-remote kind permits nothing, whatever base URL is left
+        // lying in the preference.
+        for kind in [MemoryProviderKind.onDevice, .none] {
+            prefs.providerKind = kind
+            XCTAssertNil(prefs.egressPermittedHost, "\(kind) must permit no user-configured host")
+        }
     }
 
     /// The privacy default: nothing configured means no provider and no egress.
@@ -1380,9 +1380,11 @@ final class WaveDirectorTests: XCTestCase {
     }
 }
 
-/// The remote provider is the one deliberate step outside `EgressAllowlist`
-/// (the base URL is user-configurable). It must therefore carry an explicit
-/// deadline: a hung endpoint must not hold the summarize flow open.
+/// The remote provider is gated by `EgressGuard` like every other fixed-host
+/// client — it is not, and never should have been described as, a step outside
+/// the allowlist. What is genuinely user-configurable is its base URL, which is
+/// why it must also carry an explicit deadline: a hung endpoint must not hold
+/// the summarize flow open.
 final class RemoteProviderTimeoutTests: XCTestCase {
     func testDefaultSessionCarriesBothDeadlines() {
         let provider = OpenAICompatibleProvider(

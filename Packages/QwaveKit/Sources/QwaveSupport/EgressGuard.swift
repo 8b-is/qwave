@@ -39,9 +39,9 @@ import Foundation
 ///    and true of nothing else, so the practical effect was that the guard
 ///    never saw a single provider request. It now installs into the provider's
 ///    session like any other fixed-host client, and the user-configurable part
-///    is carried by `EgressAllowlist.userConfiguredHost`: one slot, exact
-///    match, set only from `WaveDirector.resolveProvider()` out of the same
-///    preference the base URL comes from. `MemoryWavePolicy` and
+///    is carried per request by `markUserConfiguredEndpoint(_:)` +
+///    `userConfiguredEndpoint`, which reads the live preference at check time
+///    rather than caching a host anywhere. `MemoryWavePolicy` and
 ///    `EndpointRedirectPolicy` still guard that path for what they always
 ///    guarded (declared intent, and redirects off the configured origin);
 ///    this adds the host check they never performed.
@@ -99,6 +99,43 @@ public final class EgressGuard: URLProtocol {
     /// Whether `request` carries the ``markPageDriven(_:)`` provenance flag.
     static func isPageDriven(_ request: URLRequest) -> Bool {
         URLProtocol.property(forKey: pageDrivenKey, in: request) != nil
+    }
+
+    /// Key under which ``markUserConfiguredEndpoint(_:)`` stamps its flag.
+    private static let userConfiguredEndpointKey = "is.8b.qwave.EgressGuard.userConfiguredEndpoint"
+
+    /// Where the guard reads the user's currently configured Memory Wave
+    /// endpoint. See ``EgressUserConfiguredEndpoint``.
+    public static let userConfiguredEndpoint = EgressUserConfiguredEndpoint()
+
+    /// Marks a request as Memory Wave's provider request, making it — and only
+    /// it — eligible for the host the user configured in Settings.
+    ///
+    /// **Unlike ``markPageDriven(_:)`` this grants nothing on its own.** A
+    /// marked request still has to be going to the host
+    /// ``userConfiguredEndpoint`` reports *at the moment the guard checks it*,
+    /// and that is read straight out of the live preference. So marking cannot
+    /// name a host, cannot widen the allowlist, and cannot outlive the request
+    /// it is stamped on: the two ways a caller could abuse `markPageDriven`
+    /// (pick your own destination, or exempt something permanently) are both
+    /// unavailable here.
+    ///
+    /// That is also why the permission is stamped per request rather than kept
+    /// in a slot on `EgressAllowlist`. A slot would be process-wide — the host
+    /// would be reachable by `URLSession.mullvadPinned()`, the DuckDuckGo
+    /// suggestion session, and everything on `URLSession.shared`, none of which
+    /// the user consented to when they typed an endpoint for Memory Wave.
+    public static func markUserConfiguredEndpoint(_ request: URLRequest) -> URLRequest {
+        guard let mutable = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        URLProtocol.setProperty(true, forKey: userConfiguredEndpointKey, in: mutable)
+        return mutable as URLRequest
+    }
+
+    /// Whether `request` carries the ``markUserConfiguredEndpoint(_:)`` flag.
+    static func isUserConfiguredEndpoint(_ request: URLRequest) -> Bool {
+        URLProtocol.property(forKey: userConfiguredEndpointKey, in: request) != nil
     }
 
     /// Failure surfaced to the caller when a request's host is not on
@@ -191,7 +228,13 @@ public final class EgressGuard: URLProtocol {
         // Permitted: return false so this protocol steps aside and the
         // request proceeds through the normal transport. Only a host that
         // fails the allowlist is intercepted (and then failed) below.
-        return !EgressAllowlist.permits(host: host)
+        if EgressAllowlist.permits(host: host) { return false }
+        // Memory Wave's own provider request, going to the endpoint the user
+        // has configured right now. Both halves are required, and the second
+        // is re-read here rather than remembered from when the request was
+        // built — see `markUserConfiguredEndpoint(_:)`.
+        if isUserConfiguredEndpoint(request), userConfiguredEndpoint.permits(host) { return false }
+        return true
     }
 
     public override class func canonicalRequest(for request: URLRequest) -> URLRequest {
@@ -216,6 +259,76 @@ public final class EgressGuard: URLProtocol {
     public override func stopLoading() {
         // Nothing in flight to cancel — startLoading already failed the
         // request synchronously.
+    }
+}
+
+/// Where `EgressGuard` reads the HTTPS endpoint the user configured for Memory
+/// Wave's provider — a **live** read of the preference, not a copy of it.
+///
+/// Memory Wave's base URL is user-configurable to any HTTPS endpoint (a real,
+/// documented feature: self-hosted Ollama, LM Studio, vLLM, a personal
+/// gateway). The committed `EgressAllowlist` can only name the default, so the
+/// guard needs some way to know the host the user chose, and the obvious one —
+/// a slot somebody writes when they build the provider — is wrong in a way
+/// worth spelling out, because this is the second attempt.
+///
+/// **Settings writes the preference and calls nothing else.** Changing the
+/// endpoint, or switching the provider off, goes straight to
+/// `MemoryWavePreferences` (`MemoryWavePane.swift`); nothing re-resolves a
+/// provider, and if the user has stopped using the feature there may be no
+/// next inference at all. A slot written when the provider is built would
+/// therefore keep the *previous* host permitted for the rest of the process.
+/// Reading the preference at check time removes the staleness entirely: there
+/// is no cached copy to go stale, so revocation is not an event anyone has to
+/// remember to fire.
+///
+/// Two more bounds, and they are mechanical rather than conventional:
+///  - **Per request.** Only a request stamped by
+///    `EgressGuard.markUserConfiguredEndpoint(_:)` is eligible, so the
+///    permission applies to Memory Wave's own provider request and to nothing
+///    else — not `URLSession.mullvadPinned()`, not the DuckDuckGo suggestion
+///    session, not `URLSession.shared`. It is not on `EgressAllowlist` at all;
+///    `EgressAllowlist.permits(host:)` remains purely the committed list.
+///  - **Exact match**, deliberately unlike `EgressAllowlist/hosts`. That list
+///    is reviewed source, so granting a vendor its subdomains is a decision
+///    someone made in a diff. This is one host a user typed into Settings, and
+///    typing `example.com` is not consent for `telemetry.example.com`.
+///
+/// `source` is installed once, at the app's composition root
+/// (`BrowserEnvironment`), out of the same preferences object the provider's
+/// base URL comes from — see `MemoryWavePreferences.egressPermittedHost`. It
+/// is a closure so that `QwaveSupport` learns where to look without depending
+/// on `MemoryWave`. Uninstalled, this reports `nil` and a user-configured
+/// endpoint is refused: the failure mode is closed.
+///
+/// Thread-safe by the same `NSLock` pattern as `EgressGuardObserver`: the guard
+/// reads it from `URLProtocol.canInit` on whatever queue `URLSession` runs,
+/// while the source is installed on the main actor. The closure itself is
+/// called outside the lock (it reads `UserDefaults`, and holding a lock across
+/// a caller's code invites a deadlock).
+public final class EgressUserConfiguredEndpoint: @unchecked Sendable {
+    private let lock = NSLock()
+    private var source: (() -> String?)?
+
+    /// Installs the live source of the configured host. Pass `nil` to remove
+    /// it (tests do; the app installs one and leaves it).
+    public func use(_ source: (() -> String?)?) {
+        lock.withLock { self.source = source }
+    }
+
+    /// The host the user has configured **right now**, normalized, or `nil`
+    /// when no remote endpoint is configured (or no source is installed).
+    public func current() -> String? {
+        let source = lock.withLock { self.source }
+        guard let host = source?()?.lowercased().trimmingCharacters(in: .whitespaces),
+            !host.isEmpty
+        else { return nil }
+        return host
+    }
+
+    /// Exact match only — a subdomain of the configured host is not permitted.
+    func permits(_ candidate: String) -> Bool {
+        current() == candidate.lowercased()
     }
 }
 

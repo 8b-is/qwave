@@ -43,8 +43,9 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
     /// in `main.swift` never reaches it — `EgressGuard.install(into:)` is what
     /// gates this session, and without that call the allowlist had no opinion
     /// on a single request this provider ever made. The user-configurable
-    /// endpoint keeps working because `WaveDirector.resolveProvider()` puts its
-    /// host in `EgressAllowlist.userConfiguredHost`.
+    /// endpoint keeps working because `complete` marks its request with
+    /// `EgressGuard.markUserConfiguredEndpoint(_:)`, which the guard resolves
+    /// against the endpoint currently configured in Settings.
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = defaultTimeout
@@ -98,8 +99,14 @@ public struct OpenAICompatibleProvider: MemoryProviding, Sendable {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+        // Make this one request eligible for the endpoint the user configured,
+        // for hosts the committed allowlist cannot name. The mark grants
+        // nothing by itself: `EgressGuard` still checks the host against the
+        // live preference, so a provider built with a base URL that did not
+        // come from Settings is refused exactly as any other unknown host is.
         let (data, response) = try await session.data(
-            for: request, delegate: EndpointRedirectPolicy(endpoint: endpoint))
+            for: EgressGuard.markUserConfiguredEndpoint(request),
+            delegate: EndpointRedirectPolicy(endpoint: endpoint))
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200..<300).contains(status) else {
             throw MemoryProviderError.transport("HTTP \(status)")
@@ -155,7 +162,13 @@ final class EndpointRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked
             completionHandler(nil)
             return
         }
-        completionHandler(request)
+        // Re-stamp: the redirect request is constructed by `URLSession`, and
+        // this delegate has just verified it stays on the endpoint's origin.
+        // Whether the stamped property survives that construction is not
+        // something to guess at, and a redirect that reaches `EgressGuard`
+        // unmarked would be refused for a user-configured host. Marking again
+        // is a no-op if it did survive.
+        completionHandler(EgressGuard.markUserConfiguredEndpoint(request))
     }
 }
 

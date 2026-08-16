@@ -21,7 +21,7 @@ import XCTest
 /// asserting over the allowlist's data.
 ///
 /// Five groups of checks, still narrower than they first look:
-///  1. Three known Category-A endpoints are pinned to the committed
+///  1. Four known Category-A endpoints are pinned to the committed
 ///     `EgressAllowlist` by the hand-written assertions below. Nothing
 ///     enumerates network call sites, so adding a new default endpoint
 ///     WITHOUT allowlisting it and wiring `EgressGuard` into its session does
@@ -48,11 +48,12 @@ import XCTest
 ///     non-allowlisted host must still render, the exemption must not widen
 ///     to the host or the session, and `registerClass`'s actual reach is
 ///     pinned so the prose about it cannot drift again.
-///  5. The user-configured host slot, which is what lets the provider be
-///     gated without breaking the endpoint a user typed: the committed
-///     default endpoint still reaches the transport, a host set in the slot is
-///     reached, a *subdomain* of that host is not, and replacing or clearing
-///     the slot revokes the previous host.
+///  5. The user-configured endpoint, which is what lets the provider be gated
+///     without breaking the endpoint a user typed: the committed default
+///     endpoint still reaches the transport, the configured host is reached by
+///     the provider's own request, a *subdomain* of it is not, no other
+///     guarded client may reach it, and changing the preference in Settings
+///     revokes it with nothing else called in between.
 ///
 /// Honest scope: `EgressGuard` catches Category A (Qwave's own egress) for
 /// any client that either uses `URLSession.shared` (covered by the
@@ -65,11 +66,13 @@ import XCTest
 /// warning). See docs/NETWORK.md.
 final class EgressGuardTests: XCTestCase {
 
-    /// `EgressAllowlist.userConfiguredHost` is process-lifetime state, like
-    /// `EgressGuard.onBlock`. Clear it so one case cannot permit a host for
-    /// the next one.
+    /// The endpoint source `EgressGuard` reads is installed once per process
+    /// in the app; a test that installs its own must not leave it behind for
+    /// the next case. It holds no permission of its own — it is a closure over
+    /// somebody's preferences — but pointing the guard at a dead test fixture
+    /// would still make the next case depend on run order.
     override func tearDown() {
-        EgressAllowlist.userConfiguredHost.set(nil)
+        EgressGuard.userConfiguredEndpoint.use(nil)
         super.tearDown()
     }
 
@@ -298,7 +301,7 @@ final class EgressGuardTests: XCTestCase {
         }
     }
 
-    // MARK: - The user-configured host slot
+    // MARK: - The user-configured endpoint
 
     /// A session gated the way `OpenAICompatibleProvider.defaultSession` is
     /// gated — through `EgressGuard.install(into:)`, not by assembling
@@ -336,7 +339,8 @@ final class EgressGuardTests: XCTestCase {
     func testProviderDefaultEndpointStillReachesTheTransport() async {
         EgressGuard.onBlock.reset()
         StubTransport.reset()
-        XCTAssertNil(EgressAllowlist.userConfiguredHost.current(), "the default endpoint needs no user slot")
+        XCTAssertNil(
+            EgressGuard.userConfiguredEndpoint.current(), "the default endpoint needs no user-configured host")
 
         let blocked = await askProvider(
             at: MemoryWavePreferences.defaultRemoteBaseURL.absoluteString, on: makeProviderStyleSession())
@@ -346,15 +350,28 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(EgressGuard.onBlock.hosts().isEmpty)
     }
 
-    /// The feature the slot exists for: an endpoint the user typed is reached.
-    /// And the bound on it — a *subdomain* of that host is still refused,
-    /// because the static list's subdomain matching is a decision made in a
-    /// reviewed diff and this one is a host somebody typed into Settings.
-    func testUserConfiguredHostPermitsExactlyThatHostAndNotItsSubdomains() async {
+    /// Preferences wired to the guard exactly as `BrowserEnvironment` wires
+    /// them: a closure over the same object Settings writes to, installed once.
+    private func makeRemotePreferences(_ baseURL: String) throws -> MemoryWavePreferences {
+        let prefs = MemoryWavePreferences(
+            defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: InMemorySecretStore())
+        prefs.providerKind = .openaiCompatible
+        prefs.remoteBaseURL = URL(string: baseURL)!
+        try prefs.setAPIKey("test-key")
+        EgressGuard.userConfiguredEndpoint.use { prefs.egressPermittedHost }
+        return prefs
+    }
+
+    /// The feature the exception exists for: an endpoint the user typed is
+    /// reached. And the bound on it — a *subdomain* of that host is still
+    /// refused, because the committed list's subdomain matching is a decision
+    /// made in a reviewed diff and this one is a host somebody typed into
+    /// Settings.
+    func testUserConfiguredHostPermitsExactlyThatHostAndNotItsSubdomains() async throws {
         EgressGuard.onBlock.reset()
         StubTransport.reset()
         let session = makeProviderStyleSession()
-        EgressAllowlist.userConfiguredHost.set("self-hosted.example")
+        _ = try makeRemotePreferences("https://self-hosted.example/v1")
 
         let allowed = await askProvider(at: "https://self-hosted.example/v1", on: session)
         XCTAssertNil(allowed, "the configured endpoint must be reachable")
@@ -369,49 +386,100 @@ final class EgressGuardTests: XCTestCase {
             "exactly the configured host may reach the transport")
     }
 
-    /// The slot holds one host, and both ways of leaving a host behind revoke
-    /// it: clearing (the user turned the provider off) and replacing (the user
-    /// pointed it somewhere else). Without this the guard would accumulate
-    /// every host configured during a session.
-    func testUserConfiguredHostIsRevokedByClearingAndByReplacing() async {
+    /// **The revocation claim, exercised the way Settings actually works.**
+    /// `MemoryWavePane` writes `remoteBaseURL` / `providerKind` and calls
+    /// nothing else — no provider is re-resolved, and if the user has just
+    /// switched Memory Wave off there may be no next inference at all. The
+    /// first draft of this change published the host from
+    /// `WaveDirector.resolveProvider()` into a process-wide slot, so both
+    /// mutations below left the *previous* host permitted for the rest of the
+    /// process. `resolveProvider()` is called once here, standing in for the
+    /// one inference that would have populated that slot; every assertion
+    /// after it is about what Settings alone does.
+    func testChangingTheEndpointInSettingsRevokesTheOldHostImmediately() async throws {
         EgressGuard.onBlock.reset()
         StubTransport.reset()
+        let prefs = try makeRemotePreferences("https://old.example/v1")
         let session = makeProviderStyleSession()
+        try await MainActor.run {
+            _ = try WaveDirector(store: nil, preferences: prefs, embedder: nil).resolveProvider()
+        }
+        let configured = await askProvider(at: "https://old.example/v1", on: session)
+        XCTAssertNil(configured, "the endpoint the user configured must be reachable")
 
-        EgressAllowlist.userConfiguredHost.set("first.example")
-        EgressAllowlist.userConfiguredHost.set("second.example")
-        XCTAssertEqual(EgressAllowlist.userConfiguredHost.current(), "second.example")
+        // The user types a different endpoint. Nothing else happens.
+        prefs.remoteBaseURL = URL(string: "https://new.example/v1")!
+        let revoked = await askProvider(at: "https://old.example/v1", on: session)
+        XCTAssertEqual(
+            revoked?.host, "old.example",
+            "changing the endpoint must revoke the previous host, with no inference in between")
+        let replacement = await askProvider(at: "https://new.example/v1", on: session)
+        XCTAssertNil(replacement, "the endpoint now configured must be reachable")
 
-        let replaced = await askProvider(at: "https://first.example/v1", on: session)
-        XCTAssertEqual(replaced?.host, "first.example", "replacing must revoke the previous host")
-        let current = await askProvider(at: "https://second.example/v1", on: session)
-        XCTAssertNil(current, "the host now configured must be reachable")
+        // The user switches the provider to "Off (remember only)". Nothing
+        // else happens — and now nothing ever will, which is the case a
+        // revoke-on-next-inference design cannot cover.
+        prefs.providerKind = .none
+        let switchedOff = await askProvider(at: "https://new.example/v1", on: session)
+        XCTAssertEqual(switchedOff?.host, "new.example", "switching the provider off must revoke the host")
 
-        EgressAllowlist.userConfiguredHost.set(nil)
-        let cleared = await askProvider(at: "https://second.example/v1", on: session)
-        XCTAssertEqual(cleared?.host, "second.example", "clearing must revoke the host")
-
-        XCTAssertEqual(StubTransport.receivedHosts, ["second.example"])
-        XCTAssertEqual(EgressGuard.onBlock.hosts(), ["first.example", "second.example"])
+        XCTAssertEqual(StubTransport.receivedHosts, ["old.example", "new.example"])
+        XCTAssertEqual(EgressGuard.onBlock.hosts(), ["old.example", "new.example"])
     }
 
-    /// The slot's semantics without a session in the way.
-    func testUserConfiguredHostMatchingIsExactAndCaseInsensitive() {
-        XCTAssertFalse(EgressAllowlist.permits(host: "self-hosted.example"))
+    /// **The scope claim.** The endpoint you configured for Memory Wave is
+    /// permitted for Memory Wave's own request, not for every guarded client
+    /// in the process. Same shape as
+    /// `testPageDrivenExemptionDoesNotExemptTheHostOrTheSession`, and the same
+    /// reason: a permission that lives on `EgressAllowlist` is one
+    /// `URLSession.shared` request away from being everybody's.
+    func testConfiguredEndpointIsNotPermittedForEveryOtherGuardedClient() async throws {
+        EgressGuard.onBlock.reset()
+        StubTransport.reset()
+        _ = try makeRemotePreferences("https://self-hosted.example/v1")
+        XCTAssertEqual(EgressGuard.userConfiguredEndpoint.current(), "self-hosted.example")
 
-        EgressAllowlist.userConfiguredHost.set("Self-Hosted.Example")
-        XCTAssertEqual(EgressAllowlist.userConfiguredHost.current(), "self-hosted.example")
-        XCTAssertTrue(EgressAllowlist.permits(host: "self-hosted.example"))
-        XCTAssertTrue(EgressAllowlist.permits(host: "SELF-HOSTED.EXAMPLE"))
-        XCTAssertFalse(EgressAllowlist.permits(host: "telemetry.self-hosted.example"))
-        XCTAssertFalse(EgressAllowlist.permits(host: "self-hosted.example.evil.net"))
+        XCTAssertFalse(
+            EgressAllowlist.permits(host: "self-hosted.example"),
+            "a host the user configured must never join the committed allowlist")
 
-        // The committed list is unaffected by whatever the user configured.
+        do {
+            _ = try await makeGuardedSession().data(from: URL(string: "https://self-hosted.example/probe")!)
+            XCTFail("an unmarked request must not reach the provider's configured host")
+        } catch {
+            XCTAssertEqual(
+                EgressGuard.BlockedError(recovering: error)?.host, "self-hosted.example",
+                "only Memory Wave's own marked request may reach the configured endpoint, got \(error)")
+        }
+        XCTAssertTrue(StubTransport.receivedHosts.isEmpty)
+    }
+
+    /// The matching semantics, without a session in the way: exact host,
+    /// case-insensitive, and none of the spellings that look like it.
+    func testUserConfiguredHostMatchingIsExactAndCaseInsensitive() throws {
+        _ = try makeRemotePreferences("https://Self-Hosted.Example/v1")
+        XCTAssertEqual(EgressGuard.userConfiguredEndpoint.current(), "self-hosted.example")
+
+        let marked = { (host: String) in
+            let url = URL(string: "https://\(host)/v1/chat/completions")!
+            return EgressGuard.canInit(with: EgressGuard.markUserConfiguredEndpoint(URLRequest(url: url)))
+        }
+        XCTAssertFalse(marked("self-hosted.example"), "the configured host must not be intercepted")
+        XCTAssertFalse(marked("SELF-HOSTED.EXAMPLE"))
+        XCTAssertTrue(marked("telemetry.self-hosted.example"), "a subdomain is not the configured host")
+        XCTAssertTrue(marked("self-hosted.example.evil.net"))
+        XCTAssertTrue(marked("self-hosted.example."), "a trailing dot is a different host")
+        XCTAssertTrue(marked("self-hosted.example@evil.net"), "userinfo is not the host")
+
+        // The committed list is unaffected either way.
         XCTAssertTrue(EgressAllowlist.permits(host: "codeload.github.com"))
-
-        EgressAllowlist.userConfiguredHost.set("")
-        XCTAssertNil(EgressAllowlist.userConfiguredHost.current(), "an empty host must clear, not permit \"\"")
         XCTAssertFalse(EgressAllowlist.permits(host: "self-hosted.example"))
+
+        // No source installed reports no host, and permits none: a
+        // user-configured endpoint fails closed.
+        EgressGuard.userConfiguredEndpoint.use(nil)
+        XCTAssertNil(EgressGuard.userConfiguredEndpoint.current())
+        XCTAssertTrue(marked("self-hosted.example"))
     }
 
     // MARK: - Page-driven markdown fetch
