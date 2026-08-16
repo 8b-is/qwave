@@ -250,6 +250,57 @@ public enum InternalPages {
         )
     }
 
+    // MARK: - The embedded markdown source
+
+    /// The raw markdown source, encoded as a JSON string literal for the
+    /// `<script id="qwave-source">` block.
+    ///
+    /// `script` is a **raw text** element, so the HTML parser hands
+    /// `.textContent` back with character references undecoded. HTML-escaping
+    /// the body therefore made every reader see the escaped *spelling* of the
+    /// document rather than the document, and `&` compounded (issue #138) — and
+    /// because the readers hand that string straight to Memory Wave, nothing
+    /// downstream could tell an escaped spelling from a document that genuinely
+    /// contained those entities.
+    ///
+    /// A JSON literal survives `.textContent` byte for byte, and `JSON.parse`
+    /// is its exact inverse. That makes the round trip a property of the
+    /// encoding rather than of a hand-written entity table that three separate
+    /// JavaScript readers would each have to keep in step with
+    /// `MarkdownCompiler.escape` — which is an HTML concern and has no business
+    /// governing what a memory records.
+    ///
+    /// **Containment.** `<` and `>` are re-encoded as JSON `u003c`/`u003e`
+    /// escapes afterwards, preserving exactly the invariant that made this
+    /// block safe before: no literal `<` from the source reaches the element,
+    /// so the tokenizer never finds a `</script` to leave script-data on, and
+    /// `<!--` cannot start the double-escaped state either. The substitution is
+    /// unambiguous because JSON's own syntax uses neither character — after
+    /// encoding, a `<` or `>` can only be literal text inside the string body.
+    /// `MarkdownSourceBlockTests` checks this against a real WKWebView.
+    static func markdownSourceLiteral(_ source: String) -> String {
+        // `.fragmentsAllowed` so a bare string is a legal top-level value; the
+        // `??` arm is unreachable for a `String` input and exists only because
+        // the API is throwing.
+        let data = try? JSONSerialization.data(withJSONObject: source, options: [.fragmentsAllowed])
+        let json = data.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        return
+            json
+            .replacingOccurrences(of: "<", with: "\\u003c")
+            .replacingOccurrences(of: ">", with: "\\u003e")
+    }
+
+    /// The one reader of that block, as a JavaScript expression evaluating to
+    /// the decoded source (or `''` when the page carries none).
+    ///
+    /// Shared with `BrowserWindowController.rememberCurrentSelection` so the
+    /// encoder above has exactly one decoder, and so a test in this package
+    /// exercises the very string the app target evaluates.
+    public static let markdownSourceExpression = """
+        (function () { const el = document.getElementById('qwave-source'); if (!el) { return ''; } \
+        try { return JSON.parse(el.textContent); } catch (e) { return ''; } })()
+        """
+
     public static func markdownHTML(title: String, bodyHTML: String, source: String, allowRemember: Bool) -> String {
         let toolbar =
             allowRemember
@@ -288,7 +339,7 @@ public enum InternalPages {
         let sourceBlock: String
         if let markdownSource {
             sourceBlock = """
-                <script type="text/markdown" id="qwave-source">\(MarkdownCompiler.escape(markdownSource))</script>
+                <script type="application/json" id="qwave-source">\(markdownSourceLiteral(markdownSource))</script>
                 """
         } else {
             sourceBlock = ""
@@ -486,8 +537,8 @@ public enum InternalPages {
                 text = window.getSelection() ? window.getSelection().toString() : '';
               }
               if (!text) {
-                const src = document.getElementById('qwave-source');
-                text = src ? src.textContent : (document.querySelector('.md-body') || document.body).innerText;
+                text = \(markdownSourceExpression)
+                  || (document.querySelector('.md-body') || document.body).innerText;
               }
               send({ type: 'remember', scope: scope, text: text });
             });

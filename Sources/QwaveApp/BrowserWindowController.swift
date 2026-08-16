@@ -940,12 +940,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     private func rememberCurrentSelection() async {
         guard let webView = tabManager.selectedTab?.webView else { return }
+        // The source block is a JSON literal, not escaped HTML: `script` is a
+        // raw-text element, so `.textContent` used to hand back the escaped
+        // spelling of the document and Memory Wave stored that (issue #138).
+        // `InternalPages.markdownSourceExpression` is the encoder's one decoder.
         let script = """
             (function() {
               const sel = window.getSelection() ? window.getSelection().toString() : '';
               if (sel) return sel;
-              const src = document.getElementById('qwave-source');
-              return src ? src.textContent : '';
+              return \(InternalPages.markdownSourceExpression);
             })()
             """
         let value = try? await webView.evaluateJavaScript(script)
