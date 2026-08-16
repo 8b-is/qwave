@@ -24,6 +24,24 @@ benchmark silently** — no threshold, no gate, no error. Keeping the two
 spellings identical is the only thing that makes the gate real, so the names
 here use underscores where a space would read more naturally.
 
+**`mallocCountTotal` is process-wide, not per-thread.** package-benchmark's
+jemalloc backend reads `stats.arenas.<all>.{small,large}.nrequests` and takes
+the delta across the measured window, so *every* thread's allocations during
+that window land in the number. That is invisible while a benchmark measures a
+tight synchronous loop, and it dominates as soon as one does not: a benchmark
+whose measured window is a single `await`-crossing call (an actor hop, disk
+I/O) also counts whatever the rest of the process did while that call was in
+flight, and the count then moves with machine load rather than with the code.
+`HistoryStore.entries(matching:)` measured 537, 602, 666 and 675 at one commit
+for exactly this reason (#141). Two rules follow, and both are load-bearing:
+
+- **Seed corpora in `setup:`, never inside the measured closure.** Setup inside
+  the closure runs per sample, so an expensive corpus starves the run of
+  samples — 50k rows seeded in-closure left this benchmark with two, and a p90
+  over two samples is just the worse one.
+- **Measure many iterations per window, or many windows, or both.** The signal
+  has to dominate whatever else the process is doing.
+
 CI checks **`mallocCountTotal` only**, against the committed thresholds in
 `Thresholds/` with a 25% p90 tolerance: allocation counts are
 near-deterministic for a given code path, so they survive heterogeneous
