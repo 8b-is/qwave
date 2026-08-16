@@ -79,6 +79,27 @@ public enum UBOFilterParser {
             pattern.removeLast()
         }
 
+        // Options-only filters (`$popup,domain=…`, `@@$generichide,domain=…`,
+        // `$csp=…`) carry no URL pattern: uBO reads them as "every URL, subject
+        // to these options". WebKit cannot express `popup`, `generichide` or
+        // `csp` at all, and `parseOptions` drops what it does not know — so
+        // emitting a rule here would compile "block popups on these 130 sites"
+        // into a url-filter that matches every URL, i.e. *block everything on
+        // these 130 sites*. Upstream EasyList has 7 such lines and they were
+        // harmless only because the rest of the document never compiled
+        // (#134); making the document compile makes them live.
+        //
+        // Skipping them is a deliberate under-block. Two of the seven carry
+        // only options WebKit *can* express (`$third-party,xmlhttprequest,…`
+        // and `$websocket,…`) and could be emitted with a match-everything
+        // url-filter once `parseOptions` reports which options it dropped;
+        // that is a separate change. `UBOEasyListDeltaTests` counts them.
+        // Substring, not String: materialising the tail here cost one malloc
+        // per filter, which is 1,000 of them on the benchmark corpus.
+        var bare = pattern[...]
+        while bare.hasPrefix("|") { bare = bare.dropFirst() }
+        if bare.isEmpty { return .ignore }
+
         let prefix: UBOFilter
         if pattern.hasPrefix("||") {
             let rest = String(pattern.dropFirst(2))
