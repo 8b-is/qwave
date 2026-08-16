@@ -38,8 +38,16 @@ let benchmarks: @Sendable () -> Void = {
     }
 
     // History-backed suggestions rank on every keystroke too.
+    //
+    // No space in the name, deliberately: `thresholds update` writes the
+    // threshold file through a shell-safety filter that turns spaces into
+    // underscores, while the threshold *reader* looks the file up under the
+    // benchmark's raw name. A name containing a space therefore writes
+    // `...(500_entries).p90.json` and then silently fails to find it, and the
+    // benchmark is skipped rather than checked. Keeping the two spellings
+    // identical is what makes this gate real.
     Benchmark(
-        "OmniboxSuggester.suggestions(500 entries)",
+        "OmniboxSuggester.suggestions(500_entries)",
         configuration: .init(metrics: checkedMetrics, scalingFactor: .kilo, thresholds: tolerance)
     ) { benchmark in
         let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -61,7 +69,7 @@ let benchmarks: @Sendable () -> Void = {
 
     // Realistic-scale history queries (50k rows, SQLite WAL on disk).
     Benchmark(
-        "HistoryStore.entries(matching:) @ 50k rows",
+        "HistoryStore.entries(matching:)_@_50k_rows",
         configuration: .init(metrics: checkedMetrics, maxDuration: .seconds(20), thresholds: tolerance)
     ) { benchmark in
         let dir = FileManager.default.temporaryDirectory
@@ -88,7 +96,7 @@ let benchmarks: @Sendable () -> Void = {
     // pipeline; the WKContentRuleListStore half is budgeted in
     // ShieldsTests/BlocklistPerformanceTests).
     Benchmark(
-        "UBORuleListCompiler.compileJSON(1k rules)",
+        "UBORuleListCompiler.compileJSON(1k_rules)",
         configuration: .init(metrics: checkedMetrics, maxDuration: .seconds(20), thresholds: tolerance)
     ) { benchmark in
         let lines = (0..<1_000).map { index -> String in
@@ -108,7 +116,7 @@ let benchmarks: @Sendable () -> Void = {
     // Session snapshot round-trip (launch/quit path). TabManager is
     // MainActor-isolated; the benchmark hops once per iteration set.
     Benchmark(
-        "SessionRestorer round-trip (40 tabs)",
+        "SessionRestorer_round-trip_(40_tabs)",
         configuration: .init(metrics: checkedMetrics, maxDuration: .seconds(20), thresholds: tolerance)
     ) { benchmark in
         await MainActor.run {

@@ -14,6 +14,16 @@ swift package --allow-writing-to-package-directory \
   benchmark thresholds update                 # re-record after intended changes
 ```
 
+**Benchmark names must not contain spaces.** `thresholds update` writes each
+file through a shell-safety filter that rewrites spaces to underscores, but
+the threshold *reader* looks the file up under the benchmark's raw name. Name
+a benchmark `Foo.bar (baz)` and the update step writes
+`Thresholds/Target.Foo.bar_(baz).p90.json`, the check step then looks for
+`Thresholds/Target.Foo.bar (baz).p90.json`, finds nothing, and **skips that
+benchmark silently** — no threshold, no gate, no error. Keeping the two
+spellings identical is the only thing that makes the gate real, so the names
+here use underscores where a space would read more naturally.
+
 CI checks **`mallocCountTotal` only**, against the committed thresholds in
 `Thresholds/` with a 25% p90 tolerance: allocation counts are
 near-deterministic for a given code path, so they survive heterogeneous
