@@ -345,6 +345,15 @@ final class UBORuleCompilerEquivalenceTests: XCTestCase {
     /// - `$domain=a|~b` emits `if-domain` and `unless-domain` together, and
     ///   WebKit permits only one condition per trigger.
     ///
+    /// Severity: latent, not live. Shipped shields come from the committed
+    /// `easylist-compiled.json`, which AdGuard's converter produces and which
+    /// compiles fine; `compileJSON`'s only caller is `RemoteBlocklistUpdater`,
+    /// and `BrowserEnvironment` does not wire that up ("no launch-time fetch
+    /// … available for a future opt-in runtime path"). So nothing a user has
+    /// today is broken by this — but the runtime update path would produce a
+    /// rule list WebKit refuses, and that should be fixed before it is wired
+    /// in.
+    ///
     /// Fixing any of those changes what users actually block, so it is not
     /// part of an allocation change. This test pins the status quo: whatever
     /// WebKit says about the new output, it said about the old output too.
