@@ -4,7 +4,56 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- **Dead code sweep: `NoOpCredentialIdentitySyncing`,
+  `WebAuthnOriginPolicy.rpIDIsAuthorized`, `WebExtensionHost.uninstallBridge`
+  and `WebExtensionHost.installContentScripts`.** Each had zero shipping
+  callers, verified by grep over the whole tree.
+  `NoOpCredentialIdentitySyncing` had zero references of any kind.
+  `rpIDIsAuthorized` was a bool wrapper whose own doc warned it was the wrong
+  API to call — its only callers were `WebCredentialsTests`, which now assert
+  against `authorizedRPID` directly and so pin the normalized rpID that
+  actually reaches the authenticator, not just the allow/deny bit.
+  `uninstallBridge` had no caller outside its own two tests: every web view is
+  built with a fresh `WKWebViewConfiguration` in `WebViewFactory.makeWebView`,
+  so its `WKUserContentController` dies with the view and nothing ever tore a
+  bridge down. Its `installedUserScripts` bookkeeping (added by #103) was
+  therefore not merely unused but actively harmful — a dictionary keyed on
+  `ObjectIdentifier` of controllers that are never removed, retaining a
+  `WKUserScript` per tab for the life of the process. The scoped-removal rule
+  #76 established is preserved as a comment on
+  `ContentScriptEngine.installContentScripts`, which still returns the scripts
+  it added so a future teardown can be scoped correctly.
+
+### Changed
+- **The issue #86 performance regression test now derives its bound instead of
+  asserting a magic wall clock.** It asserted that 256 rows x5 decode in under
+  5 seconds — a constant with no relationship to the cost it was guarding.
+  It now measures what 256 `WaveSignature` reconstructions cost on the machine
+  running it and requires one 256-row read to come in under that. Failure
+  becomes arithmetic rather than tuning: an eager per-row signature would cost
+  the calibration *plus* SQLite and four AES-GCM opens per row, so it cannot
+  land below it. On this Mac the healthy path measures 0.16s against a 2.8s
+  calibration (an 18x margin), and a mutation that restores the eager
+  computation fails the assertion at 3.14s vs 2.79s.
+
 ### Documentation
+- **`WebExtensions` content scripts are not active in the shipping app.**
+  `BrowserWindowController.ensureWebView` installs the `browser.*` bridge and
+  nothing else, so `ContentScriptEngine` — match-pattern resolution and the
+  `ExtensionContentWorld.isolated` world separation alike — is reached only
+  from tests. An installed extension's `content_scripts` manifest entries are
+  never injected into a tab. This was previously implied by nothing at all; it
+  is now stated on the `WebExtensionHost` type, along with what wiring it up
+  would require (per-navigation injection keyed on the committed URL, plus
+  scoped removal against a controller shared with the WebAuthn shim, the
+  password-capture shim and the content blockers).
+- **`CredentialSaver`'s "never drift apart" guarantee holds for saves only.**
+  The type doc claimed routing every save/remove through it kept the keychain
+  and the `ASCredentialIdentityStore` index in step. `remove(domain:username:)`
+  has no shipping caller — there is no credential-deletion UI, and
+  `PasswordCaptureBridge` only ever calls `save` — so a login deleted out of
+  band leaves its AutoFill identity behind. The doc now says so.
 - **`duckduckgo.com` omnibox suggestion egress added to `EgressAllowlist` and
   `docs/NETWORK.md`.** `DuckDuckGoSuggestionProvider` has hardcoded
   `https://duckduckgo.com/ac/` as its suggestion endpoint since the omnibox

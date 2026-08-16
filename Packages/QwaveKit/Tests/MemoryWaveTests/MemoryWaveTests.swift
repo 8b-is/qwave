@@ -379,12 +379,20 @@ final class MemoryCipherTests: XCTestCase {
     /// Issue #86: `decode` used to recompute a `WaveSignature` (a ~1000-step,
     /// 8-harmonic trig reconstruction — ~16,000 trig calls) for every row even
     /// though nothing read the result. `MemoryRecord.signature` is now computed
-    /// on demand instead of eagerly in `decode`, so reading back a full
-    /// container should stay fast even at the 256-row ceiling `gridWithRecords`
-    /// requests. This bound is generous (a regression here would be a 10-100x
-    /// slowdown, not a marginal one) so it should not be flaky in CI, while
-    /// still catching the eager-signature computation coming back.
-    func testDecodingManyRecordsStaysFastWithoutEagerSignatureComputation() async throws {
+    /// on demand instead of eagerly in `decode`.
+    ///
+    /// The bound here is derived, not guessed. The previous version of this
+    /// test asserted a flat 5-second wall clock for 256 rows x5, which the
+    /// eager path also met comfortably — it read as coverage while gating
+    /// nothing. Instead, measure what 256 signature reconstructions cost on
+    /// this machine and require one full 256-row read to come in under that.
+    ///
+    /// Failure then follows from arithmetic rather than from tuning: if
+    /// `decode` recomputed a signature per row, its cost would be exactly
+    /// those 256 reconstructions *plus* SQLite and four AES-GCM opens per row,
+    /// so it could not land below the calibration. Self-calibrating also means
+    /// a slow or loaded CI box scales both sides of the comparison together.
+    func testDecodingManyRecordsCostsLessThanRecomputingItsSignatures() async throws {
         let secrets = InMemorySecretStore()
         let store = try MemoryStore(database: SQLiteDatabase(), secrets: secrets)
         for index in 0..<256 {
@@ -392,15 +400,33 @@ final class MemoryCipherTests: XCTestCase {
                 title: "Title \(index)", body: "Body content for record \(index)",
                 url: nil, kind: .note, containerID: nil)
         }
-        let started = Date()
-        for _ in 0..<5 {
-            let records = try await store.records(containerID: nil, limit: 256)
-            XCTAssertEqual(records.count, 256)
+
+        // Calibration: exactly the work the eager path did, on exactly the
+        // content it hashed. The hashes are accumulated so the release-mode
+        // optimiser cannot discard the loop as dead code.
+        var checksum: UInt64 = 0
+        let calibrationStart = Date()
+        for index in 0..<256 {
+            let signature = WaveSignature.fromContent(
+                Data("Title \(index)\nBody content for record \(index)".utf8),
+                identityFrequency: MemoryWaveConstants.consciousness.doubleValue
+                    * MemoryWaveConstants.goldenRatio.doubleValue
+            )
+            checksum &+= UInt64(signature.interferenceHash.reduce(0) { UInt64($0) &+ UInt64($1) })
         }
+        let eagerSignatureCost = Date().timeIntervalSince(calibrationStart)
+        XCTAssertNotEqual(checksum, 0, "calibration loop must actually run")
+
+        let decodeStart = Date()
+        let records = try await store.records(containerID: nil, limit: 256)
+        let decodeCost = Date().timeIntervalSince(decodeStart)
+        XCTAssertEqual(records.count, 256)
+
         XCTAssertLessThan(
-            Date().timeIntervalSince(started), 5,
-            "decoding 256 rows x5 should be dominated by AES-GCM/SQLite work, "
-                + "not a re-triggered ~16,000-trig-op signature per row")
+            decodeCost, eagerSignatureCost,
+            "reading 256 rows took \(decodeCost)s, no less than the "
+                + "\(eagerSignatureCost)s it costs to recompute their signatures — "
+                + "decode is computing a WaveSignature per row again (issue #86)")
     }
 
     /// Regression: a stored key of the wrong length used to fall through to the
