@@ -225,6 +225,27 @@ targets:
         keychain-access-groups:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
 
+  # Read-only MCP server over Qwave's persisted state, spoken over stdio.
+  #
+  # Deliberately NOT a dependency of the Qwave app and NOT embedded in its
+  # bundle. Shipping the binary inside every install would put a
+  # history-reading executable on disk for users who never asked for the
+  # surface; the feature is opt-in (SettingsStore.mcpServerEnabled, default
+  # OFF), and so is having the tool at all. Build it explicitly, or with
+  # `swift build --package-path Packages/QwaveKit --product qwave-mcp`.
+  QwaveMCP:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Packages/QwaveKit/Sources/QwaveMCP
+    dependencies:
+      - package: QwaveKit
+        product: MCPSurface
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.mcp
+        PRODUCT_NAME: qwave-mcp
+
   CredentialProvider:
     type: app-extension
     platform: macOS
@@ -274,6 +295,14 @@ schemes:
     run:
       config: Debug
     test:
+      config: Debug
+    archive:
+      config: Release
+  QwaveMCP:
+    build:
+      targets:
+        QwaveMCP: all
+    run:
       config: Debug
     archive:
       config: Release
