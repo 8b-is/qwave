@@ -830,8 +830,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 containerID: tab.containerID,
                 isEphemeral: tab.isEphemeral,
                 isExplicit: false
-                // No provenance argument: automatic capture of page text with
-                // no per-record user decision stays at the default, `.derived`.
+                    // No provenance argument: automatic capture of page text with
+                    // no per-record user decision stays at the default, `.derived`.
             )
         }
     }
