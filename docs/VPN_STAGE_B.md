@@ -90,9 +90,13 @@ The seam is already in place and exercised:
 
 - Unit-test the PSK derivation against test vectors extracted from
   mullvadvpn-app.
-- Integration: connect with `quantumResistant` on, then check
-  `wg`-style runtime config (`TunnelManager.requestStats()`) reports a
-  `preshared_key` line (the adapter's `getRuntimeConfiguration` exposes it).
+- Integration: connect with `quantumResistant` on, then check the `wg`-style
+  runtime config reports a `preshared_key` line. That config comes from
+  `WireGuardAdapter.getRuntimeConfiguration`, which only the extension can
+  call (`PacketTunnelState.lastHandshakeTime()` uses it for rekey
+  confirmation); there is no app-side accessor. `TunnelManager.requestStats()`
+  was never one — it returned the Zig packet filter's counters, not UAPI text,
+  and was withdrawn in issue #135.
 - Mullvad's own "Am I using quantum-resistant tunnels?" indicator on
   mullvad.net/check reflects the relay-side view.
 

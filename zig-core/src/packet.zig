@@ -71,6 +71,19 @@ export fn qpacket_filter_init() callconv(.c) ?*anyopaque {
 
 /// Filter a single raw IP packet. Returns 0 (allow) or 1 (drop).
 ///
+/// NO CALLER TODAY. Nothing in Swift hands this function a packet: the VPN data
+/// plane is WireGuardKit's, and `PacketTunnelProvider` only calls `_init` and
+/// `_deinit`. Every counter below is therefore stuck at zero for the lifetime
+/// of a tunnel, which is why issue #135 withdrew the extended-stats readout
+/// from the app rather than keep publishing a number that could only ever be
+/// zero and read as "no packets were dropped".
+///
+/// So: if you are here to re-connect the stats, wire THIS function into the
+/// data plane first. Counters exposed by `qpacket_filter_stats_extended` are
+/// only a measurement once something calls `qpacket_filter`. The code is kept
+/// (rather than deleted) because a filtering data plane is a plausible future,
+/// and the tests below still pin its behaviour for that day.
+///
 /// Validation:
 ///  - Minimum packet length: 20 bytes (IPv4 min) / 40 bytes (IPv6 min).
 ///  - IP version field must be 4 or 6.
@@ -127,7 +140,9 @@ export fn qpacket_filter(state: ?*anyopaque, packet: [*]const u8, len: usize) ca
     return @intFromEnum(Verdict.allow);
 }
 
-/// Extended statistics.
+/// Statistics. Both entry points read counters that only `qpacket_filter`
+/// increments, and it has no caller — see the note there before exposing
+/// either of these to a user again (#135).
 export fn qpacket_filter_stats(state: ?*anyopaque, seen: *u64, dropped: *u64) callconv(.c) void {
     const s: *FilterState = @ptrCast(@alignCast(state orelse return));
     seen.* = s.packets_seen;

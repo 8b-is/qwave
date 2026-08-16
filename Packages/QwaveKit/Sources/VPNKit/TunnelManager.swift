@@ -157,21 +157,15 @@ public final class TunnelManager: ObservableObject {
         manager?.connection.stopVPNTunnel()
     }
 
-    /// Session stats via provider messages ("stats" → tx/rx/handshake text).
-    public func requestStats() async -> String? {
-        guard let session = manager?.connection as? NETunnelProviderSession,
-            manager?.connection.status == .connected
-        else { return nil }
-        return await withCheckedContinuation { continuation in
-            do {
-                try session.sendProviderMessage(Data("stats".utf8)) { response in
-                    continuation.resume(returning: response.flatMap { String(data: $0, encoding: .utf8) })
-                }
-            } catch {
-                continuation.resume(returning: nil)
-            }
-        }
-    }
+    // No `requestStats()`. It sent "stats" to the packet-tunnel provider, whose
+    // answer was the Zig packet filter's counters — a filter with no caller, so
+    // every counter was structurally zero (issue #135). Worse, the one consumer
+    // parsed the reply as WireGuard `tx_bytes=`/`rx_bytes=` UAPI text, which the
+    // JSON reply never contained, so the menu bar had been reporting a hard-coded
+    // "↑ 0 B/s ↓ 0 B/s" for its whole life. Both ends are withdrawn rather than
+    // patched: `WireGuardAdapter.getRuntimeConfiguration` (already used inside the
+    // provider for handshake confirmation) is where a real throughput readout
+    // would come from, and wiring that up is a product change, not a bug fix.
 
     private static func describe(_ error: Error) -> String {
         let nsError = error as NSError
