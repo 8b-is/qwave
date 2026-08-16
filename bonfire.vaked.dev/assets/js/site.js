@@ -306,7 +306,7 @@ function fireCard(fire) {
       el('span', { class: `state ${stateClass}`, text: fire.state }),
     ]),
     el('h3', { text: fire.name }),
-    el('p', { class: 'fire-question', text: `„${fire.question}"` }),
+    fire.question ? el('p', { class: 'fire-question', text: `„${fire.question}"` }) : null,
     el('div', { class: 'fire-ash' }, [
       el('strong', { text: 'Hamu: ' }),
       fire.ash_sentence,
