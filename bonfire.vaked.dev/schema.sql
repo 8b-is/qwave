@@ -1,7 +1,7 @@
 -- ===========================================================================
 -- bonfire — the lattice (D1)
 -- Spec §5. Table and column names follow the spec exactly; indexes and the
--- two CHECK constraints are added because the rules they encode are the
+-- four CHECK constraints are added because the rules they encode are the
 -- product, and a rule that lives only in application code is a rule that
 -- eventually stops being true.
 -- ===========================================================================
@@ -50,13 +50,20 @@ CREATE TABLE IF NOT EXISTS waves (
   ts          INTEGER NOT NULL,
   -- Denormalised hex of wave32[0..16]. Duplicate detection is the hottest
   -- path the Custodian walks (§7 rule 1); it should not have to decode blobs.
-  fingerprint TEXT NOT NULL
+  fingerprint TEXT NOT NULL,
+  -- Custodian rule 3 leaves a durable mark: once a wave is dampened, no
+  -- number of reposts may reinforce it back to voice (see functions/api/ember.js).
+  -- Not in the spec — the spec names the mechanism, not the bookkeeping.
+  dampened    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_waves_fire        ON waves (fire_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_waves_fingerprint ON waves (fire_id, fingerprint);
 CREATE INDEX IF NOT EXISTS idx_waves_author      ON waves (fire_id, author_hash);
 CREATE INDEX IF NOT EXISTS idx_waves_frequency   ON waves (frequency);
+-- The global recall path ranks by recency as a last resort; without this
+-- index the scan sorts in a temp B-tree on every query.
+CREATE INDEX IF NOT EXISTS idx_waves_ts          ON waves (ts DESC);
 
 -- --- chairs ----------------------------------------------------------------
 -- Anonymous seats. `name_hash` is one-way and salted per deployment: there is
@@ -95,3 +102,19 @@ CREATE TABLE IF NOT EXISTS capsules (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_capsules_fire ON capsules (fire_id);
+
+-- --- quotas ----------------------------------------------------------------
+-- Per-IP write quotas. "No accounts" does not mean "no quota": the key is a
+-- salted hash of the visitor IP (never the address itself, §7 rule 4), the
+-- counter is a fixed window, and the writes it guards are fire/ember/chair/leave.
+CREATE TABLE IF NOT EXISTS quotas (
+  key    TEXT PRIMARY KEY,
+  window INTEGER NOT NULL,
+  count  INTEGER NOT NULL
+);
+
+-- === Migration for lattices created before the `dampened` column ------------
+-- Existing databases re-running this file need the column added by hand:
+--   ALTER TABLE waves ADD COLUMN dampened INTEGER NOT NULL DEFAULT 0;
+-- Fresh lattices get it from the CREATE TABLE above.
+-- =============================================================================

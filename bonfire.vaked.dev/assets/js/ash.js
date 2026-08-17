@@ -95,6 +95,7 @@ async function render() {
   error.hidden = true;
   $('#ash-head').hidden = true;
   $('#ash-capsule').hidden = true;
+  $('#ash-capsule-note').hidden = true;
 
   if (!slug) {
     error.hidden = false;
@@ -102,7 +103,6 @@ async function render() {
     $('#ash-waves').replaceChildren();
     return;
   }
-
   try {
     const { fire, waves, capsule } = await api.getAsh(slug);
 
@@ -121,6 +121,11 @@ async function render() {
       $('#capsule-date').textContent = fmtDate(capsule.exported_at);
       $('#capsule-download').href = capsule.download;
       $('#capsule-download').setAttribute('download', `${slug}.m8`);
+    } else {
+      // The capsule is an artifact of the real lattice; the local demo ring
+      // has no ash to give, and it should say why instead of hiding the block.
+      $('#ash-capsule-note').hidden = false;
+      $('#ash-capsule-note').textContent = t('ash.capsule.local');
     }
 
     const list = $('#ash-waves');

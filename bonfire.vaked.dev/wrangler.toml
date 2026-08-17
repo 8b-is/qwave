@@ -12,6 +12,9 @@
 name = "bonfire"
 compatibility_date = "2026-08-16"
 compatibility_flags = ["nodejs_compat"]
+# The git-integration build (production branch) deploys this directory with
+# .assetsignore exclusions. The CLI deploy path stages a clean set into
+# dist/ first — see scripts/deploy.js, which passes the directory explicitly.
 pages_build_output_dir = "."
 
 # The lattice (spec §5). The binding name is what functions/api/_lib/db.js reads.
@@ -30,3 +33,11 @@ database_id = "92fcd915-386e-470b-a5b9-5f00d00207ad"
 #   HARM_TERMS      optional, comma-separated. Custodian rule 3's operator term
 #                   list. The dampening mechanism ships; the vocabulary is the
 #                   operator's to choose.
+
+# --- The founder-absence keeper (spec §3, M5) --------------------------------
+# Pages Functions have no scheduled handler and no [triggers] key (verified
+# against the Pages wrangler config reference), so `functions/api/keep.js`
+# runs over HTTP. The cron is wired: a tiny Workers script (`keeper/`,
+# deployed as `bonfire-keeper`) POSTs it hourly at :37. The keeper is
+# idempotent and safe to call early: every transition it makes is already
+# true in the lattice.

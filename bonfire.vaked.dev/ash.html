@@ -57,7 +57,7 @@
 
 <main class="container" style="padding-block:clamp(2rem,5vw,4rem)">
 
-  <div id="ash-error" class="notice notice-err" hidden></div>
+  <div id="ash-error" class="notice notice-err" role="alert" hidden></div>
 
   <section id="ash-head" hidden>
     <span class="state state-HAMU">HAMU</span>
@@ -85,6 +85,8 @@
     </dl>
     <a class="btn btn-primary" id="capsule-download" href="#" download data-i18n="ash.download">A hamu letöltése (.m8)</a>
   </section>
+
+  <div id="ash-capsule-note" class="notice" role="status" hidden style="margin-block:clamp(2rem,5vw,3.5rem)"></div>
 
   <section>
     <h2 class="display h3" style="margin-bottom:1.5rem" data-i18n="ash.waves.title">Ami elhangzott</h2>

@@ -60,7 +60,7 @@
 
 <main class="container" style="padding-block:clamp(2rem,5vw,4rem)">
 
-  <div id="fire-error" class="notice notice-err" hidden></div>
+  <div id="fire-error" class="notice notice-err" role="alert" hidden></div>
 
   <!-- ---------- A tűz feje ---------- -->
   <section id="fire-head" hidden>
@@ -76,6 +76,11 @@
     <div class="fire-ash" style="margin-top:1.5rem;max-width:60ch">
       <strong data-i18n="fire.ash.label">A hamu — mikor lesz ennek vége:</strong>
       <span id="fire-ash"></span>
+    </div>
+
+    <div class="quote" id="fire-pulse-prompt" hidden style="margin-top:2rem;max-width:56ch">
+      <p class="eyebrow" id="fire-pulse-eyebrow" style="margin-bottom:0.75rem">A nap parazsa</p>
+      <p id="fire-pulse-text" style="font-size:var(--step-1)"></p>
     </div>
   </section>
 
@@ -93,13 +98,14 @@
         <div style="display:flex;flex-wrap:wrap;gap:0.6rem">
           <button class="btn btn-primary btn-sm" type="button" id="take-chair" data-i18n="fire.sit">Leülök</button>
           <button class="btn btn-ghost btn-sm" type="button" id="leave-fire" data-i18n="fire.leave">Elviszem a lángom</button>
+          <button class="btn btn-sm btn-rose" type="button" id="ash-fire" hidden data-i18n="fire.ash.cta">Hamuva égetem</button>
         </div>
       </div>
     </div>
-    <p id="chair-status" class="faint" style="font-size:var(--step--1);margin-top:0.75rem"></p>
+    <p id="chair-status" class="faint" role="status" style="font-size:var(--step--1);margin-top:0.75rem"></p>
   </section>
 
-  <div id="lattice-status" class="notice" hidden style="margin-bottom:2rem"></div>
+  <div id="lattice-status" class="notice" role="status" hidden style="margin-bottom:2rem"></div>
 
   <!-- ---------- Parázs dobása ---------- -->
   <section class="card grad-border" style="margin-bottom:clamp(2rem,5vw,3.5rem)">
@@ -121,7 +127,7 @@
       </div>
     </form>
 
-    <div id="ember-result" class="notice" hidden style="margin-top:1.25rem"></div>
+    <div id="ember-result" class="notice" role="status" hidden style="margin-top:1.25rem"></div>
   </section>
 
   <!-- ---------- Felidézés ---------- -->
@@ -139,9 +145,11 @@
       <h2 class="display h3" id="wave-heading" data-i18n="fire.waves.title">A parazsak</h2>
       <p class="faint mono" style="font-size:0.72rem" data-i18n="fire.waves.hint">a fényerő = az élő amplitúdó, D(t,τ) után</p>
     </div>
-    <ul class="wave-list" id="wave-list">
+    <p class="visually-hidden" role="status" id="wave-announce"></p>
+    <ul class="wave-list" id="wave-list" aria-labelledby="wave-heading">
       <li class="empty" data-i18n="fire.loading">Betöltés…</li>
     </ul>
+    <div id="older-waves" style="margin-top:1.25rem"></div>
   </section>
 
 </main>

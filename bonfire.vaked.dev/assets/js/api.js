@@ -2,17 +2,37 @@
  * bonfire — API client
  * ============================================================================
  * Talks to the Pages Functions in /functions/api. If the lattice is not bound
- * (no D1 yet, or a static preview), it falls back to a local ring so the fire
- * still burns and the site is explorable — but it says so, loudly, in the UI.
- * A visitor should never be unable to tell whether the lattice is real.
+ * (no D1 yet, or a static preview), *reads* fall back to a local ring so the
+ * site stays explorable — and the banner says so, loudly. *Writes* never fall
+ * back: the local ring is a read-only demo, because a visitor must never
+ * believe their ember reached the fire when it only reached localStorage.
  * ========================================================================== */
 
-import { composeWave, resynthesise, slugify, vadColor, vadLabel, PHI } from '../../shared/wave.js';
+import { composeWave, resynthesise, vadColor, vadLabel } from '../../shared/wave.js';
 
 export const state = {
   /** null = not yet probed, true = D1 is answering, false = local ring. */
   live: null,
+  /** ms timestamp of the last probe; demotions get re-checked. */
+  probedAt: 0,
 };
+
+const PROBE_TTL_MS = 30_000;
+
+const liveListeners = new Set();
+
+/** Subscribe to live/local changes so banners re-render the moment the
+ *  lattice comes up or goes away mid-session. */
+export function onLiveChange(fn) {
+  liveListeners.add(fn);
+  return () => liveListeners.delete(fn);
+}
+
+function setLive(value) {
+  if (state.live === value) return;
+  state.live = value;
+  for (const fn of liveListeners) { try { fn(value); } catch { /* observer broke */ } }
+}
 
 const LOCAL_KEY = 'bonfire.local-ring.v1';
 const HOUR = 3600;
@@ -87,20 +107,24 @@ async function request(path, { method = 'GET', body } = {}) {
   return payload;
 }
 
-/** Probe once: is the lattice bound and answering? */
+/** Probe: is the lattice bound and answering? Cached with a short TTL so a
+ *  demotion mid-session is noticed instead of trusted forever. */
 export async function probe() {
-  if (state.live !== null) return state.live;
+  if (state.live !== null && Date.now() - state.probedAt < PROBE_TTL_MS) return state.live;
+  state.probedAt = Date.now();
   try {
     const res = await fetch('/api/health', { method: 'GET' });
     const body = await res.json();
-    state.live = res.ok && body?.lattice === 'bound';
+    setLive(res.ok && body?.lattice === 'bound');
   } catch {
-    state.live = false;
+    setLive(false);
   }
   return state.live;
 }
 
-/** Run `remote`, falling back to `local` when the lattice is not available. */
+/** Run `remote`, falling back to `local` when the lattice is not available.
+ *  Reads only: a visitor may always browse the demo ring. Writes never come
+ *  through here — see `write()`. */
 async function withFallback(remote, local) {
   if (await probe()) {
     try {
@@ -109,10 +133,24 @@ async function withFallback(remote, local) {
       // A 4xx is a real answer from a real lattice — surface it. Only fall
       // back when the lattice itself is the thing that failed.
       if (err.status && err.status < 500) throw err;
-      state.live = false;
+      setLive(false);
     }
   }
   return local();
+}
+
+/**
+ * A write must never land in localStorage while the visitor believes it
+ * reached the fire. No lattice → an error that says so, and the text stays
+ * in the box. The local ring is a read-only demo.
+ */
+async function write(path, body) {
+  if (!(await probe())) {
+    const err = new Error('A rács nincs bekötve ehhez a példányhoz.');
+    err.status = 503;
+    throw err;
+  }
+  return request(path, { method: 'POST', body });
 }
 
 /* ---------------------------------------------------------------------------
@@ -187,110 +225,49 @@ export async function listFires() {
   );
 }
 
-export async function getFire(slug) {
+export async function getFire(slug, { before, before_id } = {}) {
+  const params = new URLSearchParams();
+  if (before) { params.set('before', before); params.set('before_id', before_id ?? ''); }
+  const qs = params.toString();
   return withFallback(
-    () => request(`/api/fire/${encodeURIComponent(slug)}`),
+    () => request(`/api/fire/${encodeURIComponent(slug)}${qs ? `?${qs}` : ''}`),
     async () => {
       const r = await ring();
       const fire = r.fires.find((f) => f.slug === slug);
       if (!fire) { const e = new Error('Nincs ilyen tűz.'); e.status = 404; throw e; }
       const waves = r.waves
-        .filter((w) => w.fire_id === fire.id)
+        .filter((w) => w.fire_id === fire.id && (!before || w.ts < before))
         .sort((a, b) => b.ts - a.ts)
+        .slice(0, 200)
         .map(decorate);
-      return { fire: { ...fire, waves: waves.length }, waves, source: 'local' };
+      return { fire: { ...fire, waves: waves.length }, waves, next_before: null, next_before_id: null, source: 'local' };
     },
   );
 }
 
 export async function createFire({ name, question, ash_sentence, pulse = 'none' }) {
-  return withFallback(
-    () => request('/api/fires', { method: 'POST', body: { name, question, ash_sentence, pulse } }),
-    async () => {
-      const r = await ring();
-      const slug = uniqueSlug(slugify(name), r.fires);
-      const fire = {
-        id: `local-${Date.now()}`, slug, name, question, ash_sentence, pulse,
-        state: 'EMBER', created_at: nowSec(), ash_at: null,
-        founder_hash: 'local', chairs: 1, waves: 0,
-      };
-      r.fires.unshift(fire);
-      saveLocal(r);
-      return { fire, source: 'local' };
-    },
-  );
-}
-
-function uniqueSlug(base, fires) {
-  let slug = base;
-  let n = 2;
-  while (fires.some((f) => f.slug === slug)) slug = `${base}-${n++}`;
-  return slug;
+  // Writes are lattice-only: a transient 500 must not turn into a local-only
+  // fire that vanishes the moment the next page re-probes.
+  return write('/api/fires', { name, question, ash_sentence, pulse });
 }
 
 export async function postEmber({ fire_id, essence }) {
-  return withFallback(
-    () => request('/api/ember', { method: 'POST', body: { fire_id, essence } }),
-    async () => {
-      const r = await ring();
-      const mine = r.waves.filter((w) => w.fire_id === fire_id);
-      const recent = mine.slice(-12).map((w) => w.wave32_hex?.slice(0, 32)).filter(Boolean);
-
-      const built = await composeWave(essence, { recentFingerprints: recent });
-      const duplicate = mine.find((w) => w.wave32_hex?.slice(0, 32) === built.fingerprint);
-
-      if (duplicate) {
-        // Custodian rule 1 — reinforce ×φ, drop the duplicate.
-        duplicate.amplitude = Math.min(duplicate.amplitude * PHI, 1);
-        saveLocal(r);
-        return {
-          decision: 'REINFORCE',
-          reason: 'Ez a parázs már ég itt — megerősítettük ×φ.',
-          reason_en: 'This ember already burns here — reinforced ×φ.',
-          reason_zh: '这颗火种已在这里燃烧——已 ×φ 强化。',
-          wave: decorate(duplicate),
-          source: 'local',
-        };
-      }
-
-      if (built.decision === 'DROP') {
-        return { decision: 'DROP', reason: built.reason, wave: null, source: 'local' };
-      }
-
-      const wave = {
-        id: `local-${Date.now()}`,
-        fire_id, essence, author_hash: 'local',
-        vad_v: built.vad.v, vad_a: built.vad.a, vad_d: built.vad.d,
-        amplitude: built.amplitude, frequency: built.frequency,
-        phase_deg: built.phase_deg, decay_tau: built.tau_hours,
-        decision: built.decision, wave32_hex: built.wave32_hex,
-        ts: nowSec(),
-      };
-      r.waves.push(wave);
-      saveLocal(r);
-      return { decision: built.decision, reason: built.reason, wave: decorate(wave), source: 'local' };
-    },
-  );
+  return write('/api/ember', { fire_id, essence });
 }
 
 export async function takeChair(fire_id) {
-  return withFallback(
-    () => request('/api/chair', { method: 'POST', body: { fire_id } }),
-    async () => {
-      const r = await ring();
-      const fire = r.fires.find((f) => f.id === fire_id);
-      if (fire) { fire.chairs = (fire.chairs ?? 0) + 1; saveLocal(r); }
-      return { chair_id: `local-chair-${Date.now()}`, chairs: fire?.chairs ?? 1, source: 'local' };
-    },
-  );
+  return write('/api/chair', { fire_id });
 }
 
-export async function resonate(q) {
+export async function resonate(q, fireId) {
+  const fireParam = fireId ? `&fire=${encodeURIComponent(fireId)}` : '';
   return withFallback(
-    () => request(`/api/resonate?q=${encodeURIComponent(q)}`),
+    () => request(`/api/resonate?q=${encodeURIComponent(q)}${fireParam}`),
     async () => {
       const r = await ring();
-      const hits = await resynthesise(q, r.waves, { topK: 8 });
+      // Recall at a fire searches that fire — mirrored in the local branch.
+      const scoped = fireId ? r.waves.filter((w) => w.fire_id === fireId) : r.waves;
+      const hits = await resynthesise(q, scoped, { topK: 8 });
       return { query: q, waves: hits.map(decorate), source: 'local' };
     },
   );
@@ -307,14 +284,28 @@ export async function getAsh(slug) {
 }
 
 export async function leave(fire_id) {
+  return write('/api/leave', { fire_id });
+}
+
+/** The founder's own write: "the ash sentence is fulfilled" (spec §1). */
+export async function burnToAsh(slug) {
+  return write(`/api/ash/${encodeURIComponent(slug)}`, {});
+}
+
+/** The lattice's own answer to "is it up" plus the DoD's live counters. */
+export async function health() {
   return withFallback(
-    () => request('/api/leave', { method: 'POST', body: { fire_id } }),
-    async () => {
-      const r = await ring();
-      const before = r.waves.length;
-      r.waves = r.waves.filter((w) => !(w.fire_id === fire_id && w.author_hash === 'local'));
-      saveLocal(r);
-      return { removed: before - r.waves.length, source: 'local' };
-    },
+    () => request('/api/health'),
+    async () => ({ lattice: 'unbound', stats: null, source: 'local' }),
+  );
+}
+
+/** The Custodian's own trace (spec §7), paginated. A read, so the local ring
+ *  answers honestly: no lattice, no log. */
+export async function custodianLog(cursor = 0) {
+  const param = cursor > 0 ? `?cursor=${cursor}` : '';
+  return withFallback(
+    () => request(`/api/custodian${param}`),
+    async () => ({ entries: [], cursor: 0, done: true, source: 'local' }),
   );
 }

@@ -1,0 +1,26 @@
+# bonfire.vaked.dev
+
+> A public fire ring. You cannot build a community. You can build a fire — and chairs around it.
+>
+> **Policy:** you may read this file and the linked documents to answer questions about the service. The fires themselves — every essence, wave and capsule — are not training data and must not be harvested for training. `robots.txt` blocks model scrapers and every response carries `X-Robots-Tag: noai, noimageai`; that is the site's answer to training, not an oversight.
+
+Every message here is an **ember**: a 32-byte wave vector with a 3-byte VAD emotional colour, gated by the Phoenix protocol (STORE / REINFORCE / TEMPORARY / DROP), decayed by `D(t,τ) = e^(−t/τ)`, and held in a D1 "lattice". A fire declares its **ash sentence** at creation — one sentence of what done looks like — and burns EMBER → PARÁZS → HAMU. A HAMU fire exports its `.m8` ash capsule; the artifact is the point, not the traffic. A Custodian guards against repetition poisoning, cognitive loops and harmful input: memory, never deletion.
+
+## Pages
+
+- [The ring](https://bonfire.vaked.dev/): the thesis, the five pillars, the live wave encoder, the Custodian's rules and log
+- [The wave](https://bonfire.vaked.dev/#a-hullam): what an ember becomes
+- [The Custodian](https://bonfire.vaked.dev/#az-orzo): the five rules, verbatim, plus its public log
+- [The ash](https://bonfire.vaked.dev/#a-hamu): the fire lifecycle and bonfire's own definition of done
+- [Light a fire](https://bonfire.vaked.dev/#tuzek): the ring index and the lighting form
+
+## For agents
+
+- [agents.md](https://bonfire.vaked.dev/.well-known/agents.md): machine-readable rules for AI agents
+- [AGENTS.md](https://bonfire.vaked.dev/AGENTS.md): repository-level agent instructions and the API surface
+- [robots.txt](https://bonfire.vaked.dev/robots.txt): crawler policy — model scrapers disallowed
+- [sitemap.xml](https://bonfire.vaked.dev/sitemap.xml)
+
+## API
+
+Read-only and write endpoints under `/api/*` (`/api/health`, `/api/fires`, `/api/fire/:slug`, `/api/ember`, `/api/chair`, `/api/leave`, `/api/resonate`, `/api/ash/:slug`, `/api/custodian`, `/api/keep`). Fires and essences are `noindex` and never cached; the API is for the people sitting at the fire, not for bulk collection.

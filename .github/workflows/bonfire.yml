@@ -1,0 +1,44 @@
+name: bonfire-ci
+
+# bonfire.vaked.dev — a Cloudflare Pages fire ring living inside this repo.
+# The qwave-ci workflow is Swift/macOS; this one owns the web project's
+# contract: 73 tests, 17 of them booting `wrangler pages dev` end to end
+# against a local D1 (light a fire, throw embers, burn to ash, read the .m8).
+
+on:
+  push:
+    branches: [main, "claude/**", "v*"]
+    paths:
+      - "bonfire.vaked.dev/**"
+  pull_request:
+    paths:
+      - "bonfire.vaked.dev/**"
+  workflow_dispatch:
+
+concurrency:
+  group: bonfire-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: bonfire tests (wave engine + lattice E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bonfire.vaked.dev
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Node ≥ 24 — the dev/test/bench tooling uses node:sqlite.
+      - uses: actions/setup-node@1a4442cacd436585916779262731d5b162bc6ec7 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bonfire.vaked.dev/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test

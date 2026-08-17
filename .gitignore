@@ -33,3 +33,8 @@ zig-core/zig-out/
 # bonfire.vaked.dev
 bonfire.vaked.dev/node_modules/
 bonfire.vaked.dev/.wrangler/
+bonfire.vaked.dev/test/artifacts/
+bonfire.vaked.dev/dist/
+
+# wrangler local state (repo root)
+/.wrangler/

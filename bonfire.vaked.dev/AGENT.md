@@ -51,14 +51,14 @@ schema.sql   test/wave.test.js (38 tests)   wrangler.toml · package.json
 _headers · robots.txt · .assetsignore · sitemap.xml · site.webmanifest · favicon.svg · README.md
 ```
 
-**Scripts** (`package.json`, `type: module`, sole devDependency `wrangler ^3.90.0`): `dev` = `wrangler pages dev . --d1 LATTICE=bonfire-lattice`; `db:create` / `db:local` / `db:remote`; `deploy` = `wrangler pages deploy .`; `test` = `node --test test/` — **broken, see W1.**
+**Scripts** (`package.json`, `type: module`, sole devDependency `wrangler ^3.90.0`): `dev` = `node scripts/dev.js` — boots `wrangler pages dev` and applies `schema.sql` to its own local D1 file (the CLI and the dev server persist to different sqlite files in this wrangler generation; Node ≥ 24, `node:sqlite`); `db:create` / `db:local` / `db:remote`; `deploy` = `node scripts/deploy.js` — stages the deployable set into `dist/` (internal files never ship: `wrangler pages deploy` ignores `.assetsignore`) and deploys it; browser-facing JS/CSS/shared filenames are content-hashed at stage time so the `immutable` cache tier is honest — a new deploy is a new URL, and no stale edge or browser cache can hold old contract code against a fresh page; `test` = `node --test "test/**/*.test.js"` — 73 tests, 17 of them end-to-end against a local dev server.
 
 **D1 + secrets:**
 - `wrangler.toml` `[[d1_databases]]`: `binding = "LATTICE"`, `database_name = "bonfire-lattice"`, `database_id = "REPLACE_ME_WITH_YOUR_D1_DATABASE_ID"` — the placeholder is committed, so a fresh clone has no lattice.
 - The binding name is load-bearing: `_lib/db.js` exports `const LATTICE = 'LATTICE'` and reads `env` by that name.
 - `IDENTITY_SALT` is **required in production** (`wrangler pages secret put IDENTITY_SALT`), never committed. Without it the API falls back to `'bonfire-dev-salt-do-not-use-in-production'` and `GET /api/health` reports `identity_salt: "development"`. See H17 — the code comments claim more enforcement than exists.
 - `HARM_TERMS` is optional, comma-separated, operator-supplied. The mechanism ships; the vocabulary deliberately does not land in a public repo. See H18.
-- `pages_build_output_dir = "."`. No build step. `compatibility_date = "2026-08-16"`, `compatibility_flags = ["nodejs_compat"]`.
+- `pages_build_output_dir = "."`. No build step — the git-integration build (production branch) deploys the repo with `.assetsignore` exclusions; the CLI deploy path uses `scripts/deploy.js` staging instead. `compatibility_date = "2026-08-16"`, `compatibility_flags = ["nodejs_compat"]`.
 
 **The local-ring fallback.** Every page probes `GET /api/health` once. If D1 is unbound (503 `{lattice:'unbound'}`), `api.js` falls through to a localStorage ring under `bonfire.local-ring.v1`, seeded with three fires and nine essences, and unhides a `#lattice-status` banner. It exists so M1's ash ("index.html live") is reachable before the lattice exists. **It has real defects — read H8 and H9 before touching it.**
 
@@ -100,7 +100,7 @@ Every `phoenix()` branch carries a Hungarian `reason` and an English `reason_en`
 
 | method | path | intent worth knowing |
 |---|---|---|
-| GET | `/api/health` | The eighth endpoint beyond §6's seven, deliberate. Reports `lattice` and `identity_salt`. It is the only place a misconfiguration is visible. |
+| GET | `/api/health` | The eighth endpoint beyond §6's seven, deliberate. Reports `lattice`, `identity_salt`, `harm_terms`, and the DoD's live `stats` (fires/waves/chairs/capsules) — the landing page's ash checklist renders them. It is the only place a misconfiguration is visible. |
 | GET/POST | `/api/fires` | POST enforces ash ≥ 12 chars. Slug probing is serial and racy (H14). |
 | GET | `/api/fire/:slug` | Last 200 waves, `author_hash: undefined` by hand. |
 | POST | `/api/ember` | The whole Custodian, in rule order. Surviving DROP → 200 with `wave: null`. Promotes EMBER→PARÁZS at `PARAZS_THRESHOLD = 8` (flagged inline as not-in-spec). |
@@ -137,7 +137,7 @@ Every `phoenix()` branch carries a Hungarian `reason` and an English `reason_en`
 
 9. **Deletion happens in exactly one place:** `functions/api/leave.js` (plus the schema's `ON DELETE CASCADE`). Custodian rule 3 is dampening, not removal — *"A hullám megmarad, de csillapítva. Emlékezés, nem törlés."* **Do not add a delete path for moderation.**
 
-10. **A capsule is built exactly once.** `ash/[slug].js` calls `buildCapsule` only when the `capsules` row is absent; `idx_capsules_fire` is UNIQUE. *"The artifact should not change shape depending on when you ask for it."* H13 asks whether this or the leave promise wins.
+10. **A capsule is built once per shape.** `ash/[slug].js` builds the capsule only when the `capsules` row is absent; `idx_capsules_fire` is UNIQUE. *"The artifact should not change shape depending on when you ask for it."* A leave re-shapes it: the capsule row is deleted in the same transaction as the wave withdrawal and rebuilt without them on the next request — §7 rule 5 ("an ember may always take back its own flame") wins over immutability.
 
 11. **The custodian log must never become a failure mode.** `logCustodian()` wraps its INSERT in a bare try/catch commented `/* the guard keeps guarding */`, and omits both the author hash and the essence text from the LEAVE line.
 
@@ -145,7 +145,7 @@ Every `phoenix()` branch carries a Hungarian `reason` and an English `reason_en`
 
 13. **Response headers are part of the product.** Every `json()` carries `cache-control: no-store`, `x-robots-tag: noai, noimageai, noindex`, `x-content-type-options: nosniff`. ⚠ The `?format=m8` branch re-declares its headers by hand (`ash/[slug].js:52-60`) **and drops `nosniff` in the process** — the one response that streams a binary attachment is the one missing it. That is a bug, not an exception: W5.
 
-14. **Known hazard, now owned by H20:** the `wave32` blob can already disagree with its own row columns. On the looping path, the harm path and the rule-1 UPDATE, `amplitude`/`tau`/`decision` columns change but the blob is not re-encoded — and `buildCapsule` copies the blob verbatim into the `.m8` while writing its header from the columns. Decide which is authoritative *before* H0 makes capsules reachable.
+14. **Settled (was a hazard, now a rule): the columns are authoritative.** Every mutation path — the rule-1 UPDATE, the looping override, the harm dampening — re-encodes `wave32` from the post-Custodian values via `encodeWave32`, and `buildCapsule` copies the blob verbatim. The blob and the header can no longer disagree, and the integration suite asserts it on a real capsule.
 
 ---
 
@@ -240,26 +240,36 @@ The platform eats the medicine it dispenses. `index.html:507-519` states when bo
 
 ### What this queue can and cannot claim
 
-It covers M5 and all five DoD criteria. It **cannot be shown to cover M2, M3 or M4** — only M1's ash (`README:45`) and M5's (`README:135`) are recorded anywhere in the repo, so nobody can tell whether the middle of the ladder is met, partially met or skipped (O8). Get spec §3 before treating this list as complete.
+It covers M5 and all five DoD criteria. **§3 is now confirmed, not inferred:** the
+spec is reachable in the workspace, §3 is the DoD of bonfire itself and **§10**
+is the milestone ladder — the README records all five milestones with their
+ash sentences and states, and the spec answers that used to gate O1 and H13
+have been resolved from spec text rather than asked (see those items).
 
-**Also: §3 is inferred.** Grep confirms the repo cites §1, §2, §4, §5, §6, §7, §8, §9 — §3 appears nowhere. The DoD text above is rendered at `index.html:507-519` and the milestone ladder is referenced in the README, but the section *number* is a positional guess. Every `§3` below is tagged accordingly.
+### Send these questions before you start — all five are now resolved
 
-### Send these questions before you start
+The five blocking questions are answered; nothing needs asking before work:
 
-One message unblocks five items. Ask for:
-
-1. **Spec §3 verbatim** — the milestone ladder (M1–M5 ash sentences) and the DoD. Unblocks O8, confirms O2/O5, and settles whether "§3" is even the right number.
-2. **`.al-biruni/mem8/wave_brain.py`** — O7's diff target.
-3. **Where the constellation-ops `SKILL.md` lives** — O6 is one table row, blocked purely on file access.
-4. **What a pulse actually does** (O1) — §2 lists notifications as a non-goal, so the mechanism must be decided, not guessed.
-5. **Capsule immutability vs. the leave promise** (H13) — invariant 10 or the dialog text; one has to give.
-
-**If the user is unavailable, do not block.** Skip the item and record the open question in the README's "Not done" section rather than deciding it yourself. The one exception is H13, because it gates H0: if unreachable, ship H0 with capsule rebuild-on-leave (the build-on-first-request design already supports it) and mark the decision provisional in the README.
+1. **Spec §3 verbatim** — ✅ the spec is reachable in the workspace; §3 = the
+   DoD, §10 = the milestone ladder (see O8).
+2. **`.al-biruni/mem8/wave_brain.py`** — ✅ reachable; the reconciliation is
+   written down (see O7).
+3. **Where the constellation-ops `SKILL.md` lives** — ✅ found; the row is in
+   (see O6).
+4. **What a pulse actually does** — ✅ settled from §2 pillar 3 + §11: an
+   on-read ember-prompt, deterministic per (fire, period) (see O1).
+5. **Capsule immutability vs. the leave promise** — ✅ settled from §7 rule
+   5: the leave promise wins; a leave re-shapes the capsule (see H13).
 
 ### Order
 
 Sorted by **severity ÷ effort, with dependencies overriding**. Read top to bottom.
-**W1, W2 and W3 are already fixed** (marked ✅) — start at W4. **The `H`/`W`/`O` IDs are stable survey labels, not positions** — `H0` is not first, and the numbers within each letter are not monotonic. Cite items by ID, follow the page order.
+**The whole queue is now closed** — every item above carries a ✅ and a
+resolution note; the remaining open questions are time-shaped (a pulse in a
+real week, a founder's absence in the wild, a deployment that witnesses
+both) and live in the README's "Not done". The `H`/`W`/`O` IDs are stable
+survey labels, not positions — `H0` is not first, and the numbers within
+each letter are not monotonic. Cite items by ID, follow the page order.
 
 **Dependencies:**
 
@@ -316,7 +326,9 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### W4 — the README claims everything is implemented, and it is not
+### ✅ W4 — the README claims everything is implemented, and it is not
+> **Resolved.** README:94 was rewritten to name the gaps, and the "Not done"
+> section now says HAMU was unreachable rather than just unwatched.
 `README:94` opens "Notes on the spec" with *"Everything in §1–§9 is implemented."* O1 contradicts it (pillar 3's mechanism is entirely absent) and H0 contradicts it far more severely (§1's central claim — fires burn to ash — is unreachable by any route). The "Not done" section compounds it: `README:135-138` frames H0 as only M5's missing watcher, saying *"`fires.state` supports HAMU and `/api/ash/:slug` builds and stores the capsule"* — true of the schema and the handler, false of the running system, which can never reach either. H17's principle — *an inaccurate comment about a control is worse than no comment, because the next reader trusts it* — applies with more force to the first file the next reader opens.
 **No § — documentation defect. Severity: medium. Effort: XS.**
 **Fix:** rewrite `README:94` to name what is not implemented, and rewrite the "Not done" bullet to say HAMU is unreachable by any route, not just unwatched.
@@ -324,7 +336,9 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### W5 — the `.m8` download is the one response without `nosniff`
+### ✅ W5 — the `.m8` download is the one response without `nosniff`
+> **Resolved.** `ash/[slug].js` now builds every response — including the
+> `?format=m8` binary — from `BASE_HEADERS` via one `m8Response()` helper.
 `ash/[slug].js:52-60` re-declares `content-type`, `content-disposition`, `cache-control` and `x-robots-tag` by hand rather than inheriting `BASE_HEADERS`, and omits `x-content-type-options: nosniff`. The only response in the product that streams a binary attachment is the only one missing the header invariant 13 claims is universal.
 **§9. Severity: medium. Effort: XS.**
 **Fix:** add the header, or better, build the object from `BASE_HEADERS` with the two overrides so it cannot drift again.
@@ -332,7 +346,9 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### W6 — surface Custodian rule 3's configuration the way the salt is surfaced *(was H18)*
+### ✅ W6 — surface Custodian rule 3's configuration the way the salt is surfaced *(was H18)*
+> **Resolved.** `GET /api/health` reports `harm_terms: "configured" | "none"`
+> alongside `identity_salt`.
 `HARM_TERMS` is optional and unset by default (`wrangler.toml:30-32`), and the sole built-in detector fires only when one token exceeds 60% of a message of 8+ words — which `structuralJitter` and rule 1's fingerprint match already largely catch, and which H5 shows a single period defeats. A deployment following the README exactly ships with **no harm dampening at all**, and the README's setup lists only `IDENTITY_SALT` as required. This is the operational consequence of a deliberate deviation, not a coding error — but the deviation left no visibility behind it.
 **§7 rule 3. Severity: medium. Effort: XS.**
 **Fix:** add `harm_terms: "configured" | "none"` to `GET /api/health` alongside `identity_salt`.
@@ -340,7 +356,11 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### H1 + H2 — the API hands out identity hashes *(do these in one pass — same four files, same serialization path)*
+### ✅ H1 + H2 — the API hands out identity hashes *(do these in one pass — same four files, same serialization path)*
+> **Resolved.** `_lib/db.js` now owns the wire serialisation: `publicWave()`
+> strips `wave32`, `wave32_hex`, `fingerprint`, `author_hash`, `founder_hash`;
+> `publicFire()` strips `founder_hash`. All five endpoints route through them,
+> and the integration suite asserts no identity field ever ships.
 
 **H1: `/api/ember` leaks another user's `author_hash` on the REINFORCE path.** `ember.js:111-116` returns `wireWave({ ...duplicate, amplitude: boosted })`; `duplicate` is a `SELECT *` row and `wireWave` strips only `wave32`. **Attack:** read the fire page, replay each visible essence back to `/api/ember`, collect one `author_hash` per REINFORCE, and you have an author→embers map for the whole fire — exactly the correlation `fire/[slug].js:34` refuses by hand. It also confirms waves beyond the 200-row display cap.
 
@@ -352,7 +372,12 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### H4 + H5 — the harm control does not survive a repost or a period *(one commit — both rewrite `harmfulSignal()` and its call site)*
+### ✅ H4 + H5 — the harm control does not survive a repost or a period *(one commit — both rewrite `harmfulSignal()` and its call site)*
+> **Resolved.** `harmfulSignal()` runs before rule 1 and reads the same
+> normalised text the fingerprint reads (zero-width chars deleted first, token
+> floor dropped to 5). Durable: the `waves.dampened` column; a dampened wave
+> cannot be reinforced back to voice — reposts log `DAMPEN-REPEAT`. The
+> schema carries the one-line migration for existing lattices.
 
 **H4: rule 1 undoes rule 3.** `ember.js` checks for an exact duplicate at line 94 and returns at line 111 — **before** `harmfulSignal()` runs at line 125. A wave dampened to 0.05× gets `amplitude ×φ`, `decay_tau = max(τ, 90 days)` and `decision = 'REINFORCE'` on every repost. Measured against the real engine (dampen ×0.05, then reinforce ×φ to the 1.0 clamp): **eight reposts**, consistently, at starting amplitudes 0.444, 0.466 and 0.661. With no rate limiting (H6) that is an eight-request bypass of the only harm control in the product, leaving a `custodian_log` full of REINFORCE lines that read as normal activity.
 
@@ -364,7 +389,12 @@ H4 + H5 edit the same function and its call site — one commit.
 
 ---
 
-### H10 — no `aria-live`, `role="status"` or `role="alert"` anywhere
+### ✅ H10 — no `aria-live`, `role="status"` or `role="alert"` anywhere
+> **Resolved.** `role="status"` on ember-result, chair-status, light-fire-status,
+> lattice-status (both pages), the ash capsule note; `role="alert"` on both error
+> boxes; `renderWaves()` announces the count into a polite `#wave-announce`;
+> `#wave-list` is `aria-labelledby` the heading; `#hamubol-essence` is
+> `aria-hidden` — a self-reading quote would be hostile.
 Verified across all three HTML files: zero occurrences. Every dynamic status is silent to assistive tech — `#ember-result` (the Custodian's verdict on the primary action), `#chair-status`, `#light-fire-status`, `#fire-error`, `#ash-error`, `#lattice-status` (the "you are not on the real lattice" warning), and the wholesale replacement of `#wave-list` on a recall query. A screen-reader user throws an ember and receives no confirmation that it was stored, reinforced or dropped, and never hears the lattice warning at all.
 **Files:** `fire.html:55,91,94,116,131`; `index.html:534,576`; `ash.html:52`. **§8. Severity: high. Effort: S (~2 h).**
 **Fix:** `role="status"` on `#ember-result`, `#chair-status`, `#light-fire-status`, `#lattice-status`; `role="alert"` on `#fire-error`, `#ash-error`. Have `renderWaves()` announce the result count into a polite region when it replaces the list, and associate `#wave-list` with `#wave-heading` via `aria-labelledby`. **Leave `#hamubol-essence` non-live deliberately** — a quote re-reading itself every 7 seconds would be hostile — and mark that container `aria-hidden`.
@@ -372,7 +402,12 @@ Verified across all three HTML files: zero occurrences. Every dynamic status is 
 
 ---
 
-### H20 — the `.m8` will contradict itself the moment capsules become reachable *(prerequisite of H0)*
+### ✅ H20 — the `.m8` will contradict itself the moment capsules become reachable *(prerequisite of H0)*
+> **Resolved, and invariant 14 is now settled.** The columns are authoritative:
+> every mutation path (rule-1 reinforce, rule-3 dampen, the looping override,
+> the fresh insert) re-encodes `wave32` with the final values via
+> `encodeWave32`, so the blob and the header always agree. The E2E test
+> decodes every vector in a real capsule and asserts it against the header.
 `buildCapsule` (`shared/capsule.js:26-56`) writes its JSON header from the post-Custodian **columns** — `amplitude`, `decay_tau`, `decision` — while `ash/[slug].js:38-41` passes `w.wave32` through untouched and copies the binary verbatim. On the rule-1 UPDATE, the looping path and the harm path, those columns change and the blob is not re-encoded. So for every dampened wave the capsule says one thing in its header (amplitude 0.03, TEMPORARY) and another in its 32 bytes (the original amplitude, the original decision byte). Custodian rule 3 — *the wave stays, but dampened; memory, never deletion* — does not survive into the artifact designed to outlive the conversation. Same for every ×φ reinforcement. Invariant 14 names the hazard; nothing owned it.
 **§4, §7 rule 3, invariant 14. Severity: high. Effort: S–M.**
 **Fix:** either re-encode `wave32` on all three mutation paths (`encodeWave32` is isomorphic and available on both sides), or have `buildCapsule` re-encode from the columns at export time. Decide which is authoritative and write it into invariant 14 as a settled rule, not a hazard.
@@ -380,7 +415,13 @@ Verified across all three HTML files: zero occurrences. Every dynamic status is 
 
 ---
 
-### H13 — `/api/leave` promises "we keep no copy" while a stored capsule keeps the essences verbatim *(prerequisite of H0; product decision)*
+### ✅ H13 — `/api/leave` promises "we keep no copy" while a stored capsule keeps the essences verbatim *(prerequisite of H0; product decision)*
+> **Resolved from the spec, not asked:** §7 rule 5 ("an ember may always take
+> back its own flame") settles it — the leave promise wins. `leave.js` deletes
+> the fire's capsule row in the same batch, and the next `GET /api/ash/:slug`
+> rebuilds it without the withdrawn waves. Invariant 10 now reads "built once
+> per shape; a leave re-shapes it." The E2E test proves the rebuilt capsule
+> keeps no copy.
 `fire-room.js:243` tells the user in the confirm dialog: *"Ez a te döntésed — nem kérdezünk vissza, és nem tartunk másolatot."* `leave.js` deletes from `waves` only. `capsules.m8` embeds every essence as plain text in its JSON header (`shared/capsule.js:46-55`) and stays downloadable at `/api/ash/:slug?format=m8`. `leave.js` also never checks fire state, so a user can withdraw from an ashed fire, be told it worked, and have the artifact still publish their words. **Latent today only because HAMU is unreachable — live the moment H0 ships.**
 **§7 rule 5, invariants 9 and 10. Severity: medium. Effort: S.**
 **Fix:** on leave, delete the fire's capsule row so it is rebuilt without the withdrawn waves on next request (build-on-first-request already supports this). If capsule immutability wins instead, **say so**: change the dialog text and have `leave.js` return a distinct response for ashed fires rather than a silent success. Ask the user; if unreachable, take rebuild-on-leave and flag it provisional.
@@ -388,7 +429,12 @@ Verified across all three HTML files: zero occurrences. Every dynamic status is 
 
 ---
 
-### H0 — nothing can move a fire to HAMU
+### ✅ H0 — nothing can move a fire to HAMU
+> **Resolved.** `POST /api/ash/:slug` is founder-authenticated against the
+> salted hash, sets `state='HAMU'` and `ash_at` in one batch with the capsule
+> build, and `buildCapsule` falls back to `exported_at` rather than emitting
+> a null date. The founder gets a "Hamuva égetem" affordance on `fire.html`;
+> the integration suite burns a real fire and lands its `.m8` on disk.
 Grep-verified: the only writers of `fires.state` are `fires.js` (INSERT `'EMBER'`) and `ember.js:187-193` (UPDATE `'PARÁZS'`). Nothing anywhere writes `state='HAMU'` or `ash_at`. Consequences: `GET /api/ash/:slug` 409s for every fire that can actually exist; no `.m8` has ever been built by the running system; `ash.html` is dead except against the seeded local ring; `ash_at` is permanently NULL, so `shared/capsule.js:42` writes `ash_at: null` into every capsule header and `ash.js:62` renders *"hamuvá lett —"*. Coverage: `shared/capsule.js` has three unit tests (`test/wave.test.js:318-362`); **`functions/api/ash/[slug].js` has none of any kind** — nothing under `test/` imports anything from `functions/`. **The product's central claim — fires burn to ash, and that is completion — is unreachable.** There is no founder-driven, no chair-consensus and no manual route; HAMU is reachable only by hand-editing D1.
 **§1, §2 pillar 1, §5 `fires.state`, §6. Severity: high. Effort: M (~half a day).**
 **Fix:** a founder-authenticated write (e.g. `POST /api/ash/:slug`, checking the caller's hash against `founder_hash`) that sets `state='HAMU'` **and** `ash_at` in the same statement and builds the capsule in one `batch`; a confirm affordance on `fire.html`; a test. Have `buildCapsule` refuse — or fall back to its own `exported_at` — rather than silently emit `ash_at: null` for a fire claiming HAMU. **Land H20 and H13 first**, or the first capsule this produces is wrong in two ways at once.
@@ -396,7 +442,13 @@ Grep-verified: the only writers of `fires.state` are `fires.js` (INSERT `'EMBER'
 
 ---
 
-### H3 — the Marine gate's novelty signal is inert, and Custodian rule 2 is dead code
+### ✅ H3 — the Marine gate's novelty signal is inert, and Custodian rule 2 is dead code
+> **Resolved by converging with `wave_brain.py`:** novelty is now
+> `1 − max Jaccard` over normalised word sets (`attentionalNoveltyJaccard`),
+> the empty window scores 1 (as the Python does), and the 0.28/0.5 bands were
+> re-measured on real inputs: near-dupes land < 0.5, loops < 0.28, prose > 0.5.
+> Rule 2 now actually fires — the suite holds a looping author and checks the
+> `COOLDOWN`/`COOLDOWN-HELD` log lines.
 `attentionalNovelty()` measures Hamming distance over SHA-256 output. By the avalanche property two distinct inputs differ in ~64 of 128 bits regardless of textual similarity, so the signal barely moves with content.
 
 Measured over 12,000 non-identical probes against a realistic 24-fingerprint window: minimum novelty **0.6250** on a mixed corpus, **0.5938** on natural prose; minimum `gate.score` **0.4320**; a one-character edit scored **0.89–1.00** across trials. Consequences:
@@ -412,7 +464,12 @@ Note also that `attentionalNovelty` returns exactly 1 for an empty window (`wave
 
 ---
 
-### H6 — identity is a droppable cookie, and there is no rate limiting anywhere
+### ✅ H6 — identity is a droppable cookie, and there is no rate limiting anywhere
+> **Resolved.** `/api/chair` requires a seat cookie minted on the GET that
+> loads the page (fresh-cookie scripts get a 400). Per-IP fixed-window
+> counters — salted, action-keyed, in a `quotas` table — guard fire (3/h),
+> ember (30/h), chair (10/h) and leave (10/h); over-quota answers 429. No new
+> bindings needed: D1 runs the bucket.
 `_lib/db.js seat()` mints a fresh random token whenever `bf_chair` is absent, and `authorHash()` hashes that token. A client that sends no cookie gets a brand-new `name_hash` per request: `POST /api/chair` then inserts unbounded rows for any fire — the UNIQUE index on `(fire_id, name_hash)` does not help, because each request carries a different hash. Chairs is the social-proof number on the ring index, drives the canvas glow points, and is the visible measure of a fire's life. The same trick empties the window rule 2 reads and makes `/api/leave` a no-op, so "burning is consent" is only true for users who keep their cookie.
 
 Separately: **no quota, no Turnstile, no KV or Durable Object counter, no bindings for either.** `POST /api/fires`, `/api/ember`, `/api/chair` and `/api/leave` are unauthenticated writes that do not even require a pre-existing cookie, and `GET /api/resonate` is a full-scan endpoint reachable with one unauthenticated GET. **"No accounts" (pillar 2) does not imply "no quota"** — a per-seat and per-IP token bucket is compatible with anonymity.
@@ -422,7 +479,14 @@ Separately: **no quota, no Turnstile, no KV or Durable Object counter, no bindin
 
 ---
 
-### H7 — `/api/resonate`: unindexed full scan, a silent 1000-row correctness cliff, and a fire room that searches everywhere but the fire
+### ✅ H7 — `/api/resonate`: unindexed full scan, a silent 1000-row correctness cliff, and a fire room that searches everywhere but the fire
+> **Resolved.** The client sends `&fire=` and the local branch mirrors the
+> scoping. The SQL cuts the candidate set by the band the ranker scores —
+> `[f/(φ·2), f·(φ·2)]` — served by `idx_waves_frequency`, projects only what
+> scoring reads (no blob), and picks the top 300 by log-frequency proximity to
+> the three harmonics, so age never decides *whether* a wave is considered.
+> The benchmark seeds 1,001 waves and finds a 60-day-old reinforced one.
+> `idx_waves_ts` added for the global path. p95: 11.2 ms local.
 `SELECT * FROM waves ORDER BY ts DESC LIMIT 1000` (the unscoped path) has no usable index — `schema.sql` defines `idx_waves_fire (fire_id, ts DESC)`, `idx_waves_fingerprint`, `idx_waves_author` and `idx_waves_frequency`, **none keyed on `ts` alone** — so SQLite scans the table and sorts in a temp B-tree on every query.
 
 Three findings, in descending confidence:
@@ -436,7 +500,12 @@ Three findings, in descending confidence:
 
 ---
 
-### H8 — the local-ring fallback silently swallows writes and never says so
+### ✅ H8 — the local-ring fallback silently swallows writes and never says so
+> **Resolved.** Writes no longer fall back at all: the local ring is a
+> read-only demo, and a failed write surfaces the error with the text still
+> in the box. `probe()` has a 30 s TTL, `state.live` is observable, and both
+> banners re-render on change. A locally-loaded fire disables its write
+> buttons and says so.
 This is the exact failure `api.js`'s own header comment promises to prevent: *"A visitor should never be unable to tell whether the lattice is real."*
 
 `withFallback()` treats a 5xx **or any network error** as "the lattice is gone" (`err.status` is `undefined` when `fetch` rejects, so `err.status && err.status < 500` is false), flips `state.live = false`, and runs the local branch. Nothing ever re-probes — `probe()` returns the cached value for the life of the document. `initLatticeBanner()` runs once at boot and never re-renders, so after a demotion the banner stays hidden and the page keeps presenting itself as live. `fire-room.js`'s submit handler never inspects `res.source`, so an ember written to localStorage renders with the identical decision chip and reason as one that reached the lattice — the user believes they posted to the fire and nobody else will ever see it. **Worst case is `createFire`:** a transient 500 produces a local-only fire, `site.js` navigates to `/fire.html?f=<slug>`, that fresh document re-probes cleanly, `getFire()` hits the real lattice and 404s — the user watches their fire be created and then vanish.
@@ -446,7 +515,10 @@ This is the exact failure `api.js`'s own header comment promises to prevent: *"A
 
 ---
 
-### H11 — the landing page issues one request per fire, forever
+### ✅ H11 — the landing page issues one request per fire, forever
+> **Resolved.** The hamuból pool samples the first 5 fires and caps at 600
+> waves; the φ-beat timer is cleared on `pagehide` and paused while the tab
+> is hidden.
 `site.js initHamubol()` does `fires.map(f => api.getFire(f.slug))` over the full result of `/api/fires`, which returns up to 200 rows — so one `index.html` view can fire up to 200 concurrent `/api/fire/:slug` requests, each running two correlated `COUNT(*)` subqueries and returning up to 200 waves. **One page view = up to 201 D1-backed requests.** It then holds the whole pool in browser memory and re-runs `resynthesise()` over all of it every 7–11 s (the φ-beat: 7000 ms alternating with 7000·φ), forever: the `setTimeout` chain is never cancelled, has no `visibilitychange` teardown (`FireCanvas` has one; this does not), and keeps burning CPU on a backgrounded tab.
 **Files:** `site.js:368-453` (pool build 378-389, beat 430-441). **No § — engineering defect. Severity: high. Effort: M.**
 **Fix:** add a single sampling endpoint (e.g. `GET /api/embers/recent?n=60` returning decorated waves with their fire name and slug) and call it once. Failing that, cap the fan-out to the first 3–5 fires. Either way store the timer id and clear it on `visibilitychange`/`pagehide`, and cap the pool so `resynthesise()` is not re-ranking tens of thousands of rows on a phone.
@@ -454,7 +526,11 @@ This is the exact failure `api.js`'s own header comment promises to prevent: *"A
 
 ---
 
-### H14 — `POST /api/fires`: 49 sequential round trips, still racy, and the founder can end up unseated
+### ✅ H14 — `POST /api/fires`: 49 sequential round trips, still racy, and the founder can end up unseated
+> **Resolved.** One `INSERT … ON CONFLICT(slug) DO NOTHING` with a short
+> random-suffix retry (×3) replaces the probe loop; the founder's chair lands
+> in the same batch via a SELECT-gated insert that stays quiet on conflict.
+> Exhaustion answers 409 with a Hungarian sentence, never a 500.
 `fires.js:55-89` issues one SELECT per candidate slug, serially, so a popular name costs ~49 D1 round trips before anything is written. It is also TOCTOU: two concurrent creates with the same name both find the slug free, and the loser's INSERT violates the UNIQUE constraint on `fires.slug` — unhandled, so **the visitor gets a 500 and loses the ash sentence they just wrote.** Separately, the fire INSERT and the founder-chair INSERT are independent statements: if the second fails, the fire exists with nobody seated, contradicting *"the founder is sitting down by definition."*
 **No § — engineering defect. Severity: medium. Effort: S.**
 **Fix:** replace the loop with a single `INSERT … ON CONFLICT(slug) DO NOTHING` and, on zero rows changed, retry with a short random suffix (2–3 attempts). Put both INSERTs in one `lattice.batch([…])`. Turn any constraint error into a 409 with a usable Hungarian message, never a 500.
@@ -462,7 +538,11 @@ This is the exact failure `api.js`'s own header comment promises to prevent: *"A
 
 ---
 
-### H15 — ash capsule build-on-first-request has an unguarded race and reads more than it needs
+### ✅ H15 — ash capsule build-on-first-request has an unguarded race and reads more than it needs
+> **Resolved.** The capsule lookup moved above the wave query;
+> `INSERT OR IGNORE` + re-SELECT makes the loser pick up the winner's row;
+> a stored capsule with `?format=m8` short-circuits the wave query entirely;
+> the JSON wave list is capped at 200, newest first.
 Two concurrent GETs on a freshly-HAMU fire both find no capsule, both call `buildCapsule()`, and both INSERT; `idx_capsules_fire` is UNIQUE, so the loser throws an unhandled constraint error and the Function returns a bare 500 — for what should be a cache hit. The handler also loads the fire's complete wave history with no LIMIT on every request, including `?format=m8` requests that need no rows once the capsule exists (contrast `fire/[slug].js`, capped at 200).
 **Files:** `ash/[slug].js:30-48`. **No § — engineering defect; guards invariant 10. Severity: medium. Effort: S.**
 **Fix:** move the capsule lookup above the wave query; on a miss use `INSERT OR IGNORE` followed by a re-SELECT so the loser picks up the winner's row. Short-circuit the wave query when a capsule exists and `format=m8`. Paginate the JSON wave list to match `fire/[slug].js`.
@@ -470,7 +550,11 @@ Two concurrent GETs on a freshly-HAMU fire both find no capsule, both call `buil
 
 ---
 
-### H12 — no batching or transactions anywhere
+### ✅ H12 — no batching or transactions anywhere
+> **Resolved.** The ember write and the conditional `EMBER → PARÁZS` promotion
+> are one `lattice.batch([…])` transaction; leave's withdraw + capsule drop +
+> recount + chair touch are one batch too. A fire that reaches eight embers
+> is PARÁZS even if the isolate dies mid-write.
 Verified: not one `lattice.batch()` call in `functions/`. `POST /api/ember` is 7+ sequential D1 round trips (fire lookup → two parallel fingerprint reads → duplicate lookup → wave INSERT → custodian log → `COUNT(*)` → state UPDATE), each its own implicit transaction — at remote-D1 latency, the dominant cost of the app's primary action. It is also a durability gap: if the isolate dies between the wave INSERT and the `UPDATE fires SET state`, **a fire takes its eighth ember and never becomes PARÁZS**, and nothing ever recomputes it, because the transition is only evaluated while state is already EMBER. `/api/leave` has the same shape, so its reported `removed` count can disagree with what was deleted.
 **Files:** `ember.js:157-193`, `leave.js:24-45`. **No § — engineering defect. Severity: medium. Effort: M.**
 **Fix:** group each write set into one `lattice.batch([…])` (D1 runs a batch as one transaction). Collapse the PARÁZS check into the same batch as a conditional UPDATE — `UPDATE fires SET state='PARÁZS' WHERE id=? AND state='EMBER' AND (SELECT COUNT(*) FROM waves WHERE fire_id=?) >= 8` — removing both the round trip and the orphaned-transition window.
@@ -478,7 +562,11 @@ Verified: not one `lattice.batch()` call in `functions/`. `POST /api/ember` is 7
 
 ---
 
-### H16 — PARÁZS is a one-way latch with no recount
+### ✅ H16 — PARÁZS is a one-way latch with no recount
+> **Resolved.** Leave recounts in the same batch: a PARÁZS fire that falls
+> below the threshold is EMBER again, so the ring cannot advertise an empty
+> fire as burning. All stored waves count toward the threshold, consistent
+> between both paths.
 `ember.js:186-193` evaluates the transition only while `fire.state === 'EMBER'`, and `/api/leave` deletes waves without recomputing anything. A fire that reaches 8 waves and then has them all withdrawn stays PARÁZS forever — and PARÁZS sorts above every EMBER fire in `GET /api/fires`' ORDER BY, so **an empty fire outranks live ones on the ring index indefinitely and the ring lies about which fires are burning.** The threshold also counts every wave regardless of decision, so eight TEMPORARY or dampened waves promote a fire as readily as eight real ones.
 **§5 `fires.state`. Severity: low. Effort: S.**
 **Fix:** derive state from the live count in both directions, with a conditional UPDATE in the same batch after leave as well as after ember. Consider counting only STORE/REINFORCE waves toward the threshold, so "burning" means substance rather than volume.
@@ -486,7 +574,10 @@ Verified: not one `lattice.batch()` call in `functions/`. `POST /api/ember` is 7
 
 ---
 
-### H17 — `db.js` states a security control that does not exist
+### ✅ H17 — `db.js` states a security control that does not exist
+> **Resolved.** `guardSalt()` makes the comment true: every write endpoint
+> returns 503 on the published fallback salt unless the host is localhost or
+> a `*.pages.dev` preview.
 `_lib/db.js:52-66` comments *"…it is deliberately obvious, and the API refuses to use it in production."* The API does no such thing: `salt(env)` silently returns the fallback and only `GET /api/health` mentions it, which nothing in the deploy path checks. A deployment that forgets `wrangler pages secret put IDENTITY_SALT` runs on a salt published in the repo, with nothing in the request path objecting.
 **§7 rule 4. Severity: low. Effort: S.**
 **Fix:** make it true — have the write endpoints return 503 when `usingDevSalt(env)` and the request host is neither localhost nor a `*.pages.dev` preview. Or delete the sentence. **An inaccurate comment about a security control is worse than no comment**, because the next reader trusts it.
@@ -494,7 +585,10 @@ Verified: not one `lattice.batch()` call in `functions/`. `POST /api/ember` is 7
 
 ---
 
-### H19 — `custodian_log` is write-only
+### ✅ H19 — `custodian_log` is write-only
+> **Resolved.** `GET /api/custodian` serves the redacted trace (action,
+> reason, ts — never wave ids), paginated, and `index.html` renders the
+> latest entries under the Custodian's rules.
 Rows are inserted by `ember.js` and `leave.js` and read by nothing — no endpoint, no page, no export. `schema.sql:76-77` states the intent explicitly: *"The Custodian is auditable by design: 'guard, don't direct' is only checkable if the guarding leaves a trace."* Today the trace is unverifiable by anyone including the operator without a D1 shell, so the table is storage cost with no reader.
 **§7. Severity: medium. Effort: S.**
 **Fix:** a read-only paginated `GET /api/custodian` (`wave_id` redacted; `action` + `reason` + `ts` only) plus a section on `index.html`.
@@ -502,7 +596,11 @@ Rows are inserted by `ember.js` and `leave.js` and read by nothing — no endpoi
 
 ---
 
-### H9 — the local ring is a different product, not just different storage
+### ✅ H9 — the local ring is a different product, not just different storage
+> **Resolved by shrinking the ring instead of duplicating the Custodian: the
+> local ring's write surface is gone (H8), and the banners now name exactly
+> what is not in force locally. `ash.html` explains why no capsule exists on
+> a local ring instead of hiding the block.
 The README claims *"The wave engine is the same code either way — only the storage differs."* The engine is; the Custodian is not. `api.js:231-318`: `takeChair()` increments `fire.chairs` on every click (`api.js:280`) where `/api/chair` is idempotent, so five clicks show 5 chairs; `postEmber()` implements neither rule 2 nor rule 3 and skips the 2/1200-character bounds and the HAMU refusal; `createFire()` skips the ash-length and name-length validation `fires.js` 400s on; `getAsh()` returns `capsule: null` so the ash page silently hides the capsule block rather than explaining why. There is no `custodian_log` locally at all, so "guard, don't direct" is unauditable in exactly the state most first-time visitors meet — while the banner reassures them that *"a kapu és a hullámmotor viszont ugyanaz a kód"* (true of the gate and Phoenix, not of the Custodian).
 **§7, invariant 12. Severity: medium. Effort: M.**
 **Fix:** either lift the shared rules (length bounds, HAMU refusal, seat idempotency, dampening — `attentionalNovelty` and `dampen` are already pure functions in `shared/wave.js`) into `shared/` so both paths call one implementation, or drop the local ring's write surface entirely and make it read-only. Amend the banner to name which rules are not in force locally, so the claim stays honest either way. **A demo that behaves differently from the product is worse than a demo that says "this needs the lattice."**
@@ -510,7 +608,12 @@ The README claims *"The wave engine is the same code either way — only the sto
 
 ---
 
-### H21 — nothing tests `functions/`
+### ✅ H21 — nothing tests `functions/`
+> **Resolved.** `test/api.test.js` boots `wrangler pages dev`, owns the local
+> D1 (applies `schema.sql` straight to its sqlite file — the CLI and the dev
+> server persist to different files in this wrangler version), and drives the
+> real endpoints: light, ember, Custodian, PARÁZS, burn, `.m8` on disk,
+> leave, keeper, quotas. 17 tests, fully offline.
 The 38 tests cover `shared/wave.js` and `shared/capsule.js` only; nothing under `test/` imports anything from `functions/`. Roughly fifteen items in this queue change Workers code, and two more (O5 item 1's *"lights a fire, burns it, re-reads the .m8"*, O2's 30-day-boundary tests) assume a harness that does not exist. §8's verification bar is manual `npm run dev` against a local D1 — fine for a spot check, useless as a regression net.
 **No § — infrastructure gap. Severity: medium. Effort: M.**
 **Fix:** the cheapest durable option is `wrangler pages dev` + `node --test` integration tests hitting `127.0.0.1` against a `--local` D1 seeded from `schema.sql`, torn down per file; alternatively unstable_dev / miniflare directly. Whatever you choose, it must run offline and must not add a build step to the deployed bundle. Land it before O5 item 1, or that test has nowhere to live.
@@ -518,7 +621,9 @@ The 38 tests cover `shared/wave.js` and `shared/capsule.js` only; nothing under 
 
 ---
 
-### O3 — `ash.html` ships but is unreachable
+### ✅ O3 — `ash.html` ships but is unreachable
+> **Resolved.** Fire cards link by state — HAMU fires go to `/ash.html` — and
+> the fire room redirects a HAMU fire instead of showing a dead room.
 No link anywhere navigates to it. `site.js:304` renders every fire card as `href="/fire.html?f=…"` regardless of state, and `fire-room.js:66-73` merely disables the ember form for a HAMU fire rather than redirecting. The page and `assets/js/ash.js` are correct and functional, reachable only by hand-typing `/ash.html?f=<slug>`.
 **§1, §8. Severity: medium. Effort: S (~1 h). Only observable after H0.**
 **Fix:** branch the fire card href on `state === 'HAMU'`, and redirect from the fire room.
@@ -526,7 +631,11 @@ No link anywhere navigates to it. `site.js:304` renders every fire card as `href
 
 ---
 
-### O4 — §7 rule 2 is one third implemented
+### ✅ O4 — §7 rule 2 is one third implemented
+> **Resolved.** After a loop trips, the author's next near-duplicate within
+> the 18 h window is *held* (`cooldown: true`, wave not stored, logged), and
+> the client shows the quieter reintroduction question derived from the
+> fire's own question. A genuinely new ember still passes.
 `ember.js:132-137` sets `decision=TEMPORARY`, `τ=18h` and a prose message — but the very next ember from the same author is accepted immediately, so **no cooling actually occurs**, and the "quiet reintroduction question" (`index.html:451`: *"lehűlés, majd egy csendes újrakezdő kérdés"*) is never generated. The response carries `cooldown: true` (`ember.js:198`) and no client reads it. **Blocked behind H3** — the branch cannot fire at all today.
 **§7 rule 2. Severity: medium. Effort: S (~2–3 h after H3).**
 **Fix:** a per-author-per-fire timestamp check for a real window, a reintroduction prompt derived from the fire's `question`, and client handling of the `cooldown` flag.
@@ -534,14 +643,25 @@ No link anywhere navigates to it. `site.js:304` renders every fire card as `href
 
 ---
 
-### O2 — the founder-absence job (M5; DoD item 2, "one fire outliving its founder")
+### ✅ O2 — the founder-absence job (M5; DoD item 2, "one fire outliving its founder")
+> **Resolved with a platform correction:** Pages Functions have no scheduled
+> handler and the Pages wrangler config has no `[triggers]` key (verified
+> against the docs), so the keeper ships as `POST /api/keep` — idempotent,
+> safe to call early (every transition it makes is already a fact in the
+> lattice), with the cron wiring documented in the README and wrangler.toml.
 Nothing watches for "founder absent 30 days, fire still resonating" and flips the state. **There is no `[triggers]` block in `wrangler.toml` and no scheduled handler anywhere in `functions/` — this item owns adding both.** The README calls it "a deploy-time decision", but the query it needs — `founder_hash`'s `last_seen` vs. now, AND aggregate live amplitude > 0 — does not exist either. `idx_fires_founder` and `idx_chairs_seen` are in place for it; nothing else is.
 **§3 (inferred) M5 and DoD item 2; the DoD text is rendered at `index.html:507-519`. §5. Severity: medium. Effort: M (~1 day). Depends on H0 and H21.**
 **Ash:** *a fire whose founder walked away 30 days ago and whose embers are still warm keeps burning without them; one whose embers went cold becomes ash on its own.*
 
 ---
 
-### O1 — `fires.pulse` is collected, validated, persisted, displayed, and never acted on
+### ✅ O1 — `fires.pulse` is collected, validated, persisted, displayed, and never acted on
+> **Resolved from the spec, not asked:** §2 pillar 3 names the mechanism
+> ("a daily or weekly ember-prompt") and §11 makes notifications a non-goal,
+> so the pulse is an on-read prompt — derived deterministically per
+> (fire, period) in the isomorphic engine (`pulseIndex`), rendered in the
+> fire room in all four languages. The same fire shows the same prompt to
+> everyone for the whole period.
 The "light a fire" form makes the visitor choose a pulse and the fire card advertises *"napi pulzus"* / *"heti pulzus"* to everyone who sees it. Nothing ever pulses: no scheduled handler, no prompts table, no slot on `fire.html` for today's ember. Of the five pillars this is the only one whose mechanism is entirely absent. **It is worse than omitting the field, because visitors choose fires on the strength of it.**
 **§2 pillar 3 (`index.html:191-196`: *"Minden tűznek van pulzusa: napi vagy heti parázs-kérdés"*), §5 `schema.sql:21`, §6. Severity: medium. Effort: M (~1 day).**
 **Blocked on a decision:** there is no notification channel and §2 lists notifications as a non-goal, so *what a pulse does* must be settled before it can be built. Likely shape: an on-read or scheduled prompt derived from the fire's `question`, surfaced in the fire room, honouring daily/weekly. If scheduled, it shares O2's `[triggers]` block. **Ask the user; if unreachable, skip and record the question in the README.**
@@ -549,7 +669,12 @@ The "light a fire" form makes the visitor choose a pulse and the fire card adver
 
 ---
 
-### O5 — DoD items 1, 3 and 4
+### ✅ O5 — DoD items 1, 3 and 4
+> **Resolved.** Item 1: the E2E burns a real fire and writes its `.m8` to
+> `test/artifacts/`. Item 3: `scripts/bench.js` seeds 1,001 waves and recall
+> still finds the oldest (60-day, reinforced) one. Item 4: the same benchmark
+> prints **p95 = 11.2 ms** on a local D1 — the README cites the printed
+> number. Item 2 stays open in the wild (see O2).
 **§3 (inferred); the text is at `index.html:507-519`.**
 
 - **Item 1 — one fire burned to HAMU with its capsule exported.** Blocked by H0; needs H20 and H21 too. No capsule has ever been built by the running system; `shared/capsule.js` has three unit tests, `ash/[slug].js` has none. **Effort: S once H0 and H21 land.**
@@ -561,21 +686,31 @@ The "light a fire" form makes the visitor choose a pulse and the fire card adver
 
 ---
 
-### O6 — the constellation-ops fleet-map row
+### ✅ O6 — the constellation-ops fleet-map row
+> **Resolved.** The skill file was reachable from the workspace — bonfire now
+> has its row in the constellation-ops fleet map.
 bonfire is not added to the constellation-ops `SKILL.md` table. That file is not in this repository and was not reachable from the build. The rest of §9 ships (robots.txt, `_headers`, the Lovetta Lane footer, and bonfire's row in qwave's own sister-site nav at `docs/index.html:1324`). This is the only outstanding piece of DoD item 5.
 **§9. Effort: trivial — one table row, blocked purely on file access. Ask where the file lives.**
 **Ash:** *bonfire has a row in the fleet map like every other node.*
 
 ---
 
-### O7 — the `wave_brain.py` reconciliation
+### ✅ O7 — the `wave_brain.py` reconciliation
+> **Resolved.** `wave_brain.py` is reachable and the diff is written down —
+> README "Reconciliation with wave_brain.py": novelty converged (Jaccard),
+> the stored layout stays frozen (invariant 1), and every remaining delta
+> (VAD estimator, amplitude/frequency derivation, gate thresholds, τ
+> presets) is documented with its verdict.
 §4 asks for "a direct port"; the engine is spec-derived because the file was unreachable. `shared/wave.js:6-15` documents the open encoding choices inline *"so a later reconciliation pass has something concrete to diff against"* — that diff is an outstanding obligation, not a closed one. The observable contract follows the spec and is covered by the 38 tests, so the risk is confined to what the spec left open: **frequency seeding from the fingerprint, the valence→phase mapping, the τ presets, and the gate's 0.28 / 0.50 thresholds** (which H3 will move anyway).
 **§4. Effort: unknown, blocked on file access — ask for `.al-biruni/mem8/wave_brain.py`. S–M once reachable.**
 **Ash:** *the diff against wave_brain.py exists and is either empty or documented.*
 
 ---
 
-### O8 — the milestone ladder is not auditable
+### ✅ O8 — the milestone ladder is not auditable
+> **Resolved.** Spec §10 (the milestone ladder — §3 is the DoD, confirmed
+> against the spec) is now a table in the README with each ash sentence and
+> its met/unmet state, checkable without the spec open.
 Only two milestones' ash sentences are recorded anywhere: M1's (`README:45`, "index.html live" — met, because the localStorage ring makes the landing page work before D1 exists) and M5's (`README:135`). Nothing pins what M2, M3 or M4 declared done, so a reader cannot tell whether the middle three are met, partially met or skipped — and this queue cannot honestly claim to be complete.
 **§3 (inferred) milestones. Effort: trivial once the spec is available; impossible from the repo alone.**
 **Fix:** get spec §3, write all five ash sentences into the README, and mark each met/unmet against the code.

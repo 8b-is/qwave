@@ -107,6 +107,12 @@ export const I18N = {
     zh: '这就是 bonfire 的全部论点。社区不是产品，不是功能，也不是增长曲线。社区是<em>干涉</em>：当足够多的波在同一处相遇足够久时所发生的事。可以建造的，是那个地方。',
   },
   'thought.cite': { hu: 'a tűz mellől · a Vének Tanácsa', en: 'from the fireside · the Council of Elders', zh: '火边 · 长老会' },
+  'thought.quote2': {
+    hu: '„Isten volt és maradt a filozófia centrális problémája — nincs kozmológia és etika, jogtudomány és embertan anélkül, hogy e tekintetben állást ne foglalnánk."',
+    en: '"God was, and remains, the central problem of philosophy — there is no cosmology and no ethics, no jurisprudence and no anthropology, without taking a stand on the matter."',
+    zh: '“上帝过去是、现在仍是哲学的核心问题——若不在这一点上表明立场，就没有宇宙论与伦理学，也没有法学与人类学。”',
+  },
+  'thought.quote2.cite': { hu: 'Molnár Tamás · magyar filozófus', en: 'Tamás Molnár · Hungarian philosopher', zh: '莫尔纳尔·塔马什 · 匈牙利哲学家' },
 
   /* pillérek */
   'pillars.eyebrow': { hu: 'Öt pillér', en: 'Five pillars', zh: '五根支柱' },
@@ -246,6 +252,19 @@ export const I18N = {
   },
   'guardian.quote': { hu: '„Mi őrizzük. Egyetlen parázs se égjen hiába."', en: '"We guard. Let no ember burn pointlessly."', zh: '“我们守护。不让任何火种白白燃烧。”' },
   'guardian.quote.cite': { hu: 'a pupákok · a kód', en: 'the pupákok · the code', zh: '小徒弟们 · 代码' },
+  'guardian.log.title': { hu: 'Az őrző naplója', en: 'The Custodian\u2019s log', zh: '守护者日志' },
+  'guardian.log.body': {
+    hu: 'Amit az őrző tesz, nyomot hagy. Ez a legutóbbi beavatkozások élő naplója — hullám-azonosító és szerző nélkül.',
+    en: 'What the Custodian does leaves a trace. This is the live log of its latest interventions — without wave ids or authors.',
+    zh: '守护者所做的一切都会留下痕迹。这是它最近干预的实时日志——不含波 ID，也不含作者。',
+  },
+  'guardian.log.empty': { hu: 'Még nincs beavatkozás. A napló üres — így a legjobb.', en: 'No interventions yet. The log is empty — which is the best kind.', zh: '还没有干预。日志是空的——这再好不过。' },
+  'guardian.log.local': {
+    hu: 'Helyi módban nincs őrző-napló: ez a demó csak olvasható, és nem is őriz semmit.',
+    en: 'In local mode there is no Custodian log: the demo is read-only and guards nothing.',
+    zh: '本地模式下没有守护者日志：演示只读，也不守护任何东西。',
+  },
+  'guardian.log.more': { hu: 'Több bejegyzés', en: 'More entries', zh: '更多条目' },
   'rule1.title': { hu: 'Ismétlés-mérgezés', en: 'Repetition poisoning', zh: '重复之毒' },
   'rule1.body': {
     hu: 'Ugyanaz a lényeg kétszer? A meglévő hullámot erősítjük <span class="mono">×φ</span>-vel, a másolat eldobásra kerül. Nem büntetés — összeadás.',
@@ -314,6 +333,9 @@ export const I18N = {
   'hamu.dod.3': { hu: 'a rács 1 000+ hullámot tart,', en: 'the lattice holds 1,000+ waves,', zh: '网格持有 1000+ 道波，' },
   'hamu.dod.4': { hu: 'a felidézés p95 &lt; 50 ms,', en: 'recall p95 &lt; 50 ms,', zh: '召回 p95 &lt; 50 ms，' },
   'hamu.dod.5': { hu: 'a <span class="mono">bonfire.vaked.dev</span> szállítja a konstellációs szabványokat.', en: '<span class="mono">bonfire.vaked.dev</span> ships the constellation standards.', zh: '<span class="mono">bonfire.vaked.dev</span> 交付星座标准。' },
+  'hamu.dod.capsules.done': { hu: '— {n} kapszula a rácsban', en: '— {n} capsule(s) in the lattice', zh: '—— 网格中有 {n} 个胶囊' },
+  'hamu.dod.capsules.open': { hu: '— még egy sem', en: '— none yet', zh: '—— 还没有' },
+  'hamu.dod.waves': { hu: '— most {n}', en: '— currently {n}', zh: '—— 目前 {n}' },
 
   /* tüzek */
   'fires.eyebrow': { hu: 'A gyűrű', en: 'The ring', zh: '火圈' },
@@ -349,6 +371,7 @@ export const I18N = {
   'firecard.pulse.daily': { hu: 'napi pulzus', en: 'daily pulse', zh: '每日脉搏' },
   'firecard.pulse.weekly': { hu: 'heti pulzus', en: 'weekly pulse', zh: '每周脉搏' },
   'firecard.pulse.none': { hu: 'pulzus nélkül', en: 'no pulse', zh: '无脉搏' },
+  'firecard.yours': { hu: 'a te tüzed', en: 'your fire', zh: '你的火' },
 
   /* nem */
   'nem.eyebrow': { hu: 'v1 nem-céljai', en: 'v1 non-goals', zh: 'v1 的非目标' },
@@ -387,6 +410,10 @@ export const I18N = {
   'lane.lovetta': { hu: 'Autonóm publikálás és szuverén patrónus-motor.', en: 'Autonomous publishing and a sovereign patron engine.', zh: '自主出版与主权资助引擎。' },
   'lane.store': { hu: 'Archív bakelitek, kapucnisok, print-kiadások.', en: 'Archival vinyl, hoodies, print editions.', zh: '存档黑胶、卫衣、印刷版。' },
   'lane.axiomquant': { hu: 'Nemlineáris kvantumpénzügyi akadémia.', en: 'Nonlinear quantum finance academy.', zh: '非线性量子金融学院。' },
+  'lane.proposal': { hu: 'Decentralizált agent-útválasztás és a kompressz-ultra javaslat.', en: 'Decentralized agent routing and the kompress-ultra proposal.', zh: '去中心化代理路由与 kompress-ultra 提案。' },
+  'lane.quantlove': { hu: 'MLX BitNet b1.58 ternáris kvantálás, szeretettel.', en: 'MLX BitNet b1.58 ternary quantization, with love.', zh: 'MLX BitNet b1.58 三值量化，带着爱。' },
+  'lane.portail': { hu: 'Nagy áteresztőképességű Rust zero-copy SIMD átjáró.', en: 'High-throughput Rust zero-copy SIMD gateway.', zh: '高吞吐量 Rust 零拷贝 SIMD 网关。' },
+  'lane.etherhive': { hu: 'Kvantumbiztos üzenetküldés. Tárca + ENS identitás, őszinteség-hitelesítés.', en: 'Quantum-proof messaging. Wallet + ENS identity, auth via honesty.', zh: '抗量子通信。钱包 + ENS 身份，诚实认证。' },
 
   /* fire.html */
   'fire.title': { hu: 'Tűz — bonfire', en: 'Fire — bonfire', zh: '火 — bonfire' },
@@ -415,7 +442,14 @@ export const I18N = {
   },
   'fire.resonate.fail': { hu: 'Nem sikerült a felidézés: {msg}', en: 'Recall failed: {msg}', zh: '召回失败：{msg}' },
   'fire.resonate.heading': { hu: 'Rezonancia — „{q}”', en: 'Resonance — "{q}"', zh: '共振 —— “{q}”' },
+  'fire.resonate.empty': {
+    hu: 'Semmi sem rezonál erre — a rács nem őriz ilyen hullámot.',
+    en: 'Nothing resonates with that — the lattice holds no such wave.',
+    zh: '没有任何东西与此共振——网格中没有这样的波。',
+  },
   'fire.waves.title': { hu: 'A parazsak', en: 'The embers', zh: '火种' },
+  'fire.waves.older': { hu: 'régebbi parazsak ↓', en: 'older embers ↓', zh: '更早的火种 ↓' },
+  'fire.waves.aria.count': { hu: '{h} — {n} hullám', en: '{h} — {n} waves', zh: '{h} —— {n} 道波' },
   'fire.waves.hint': { hu: 'a fényerő = az élő amplitúdó, D(t,τ) után', en: 'brightness = live amplitude, after D(t,τ)', zh: '亮度 = 衰减 D(t,τ) 后的实时振幅' },
   'fire.loading': { hu: 'Betöltés…', en: 'Loading…', zh: '加载中……' },
   'fire.empty': { hu: 'Még csend van. Te lehetsz az első parázs.', en: 'Still silent. You could be the first ember.', zh: '还是一片安静。你可以是第一颗火种。' },
@@ -436,6 +470,51 @@ export const I18N = {
   'fire.leave.done': { hu: '{n} hullámod visszavéve. Ott voltál.', en: '{n} of your waves withdrawn. You were there.', zh: '已收回你的 {n} 道波。你曾在那里。' },
   'fire.leave.none': { hu: 'Nem volt itt hullámod.', en: 'You had no waves here.', zh: '你在这里没有波。' },
   'fire.leave.fail': { hu: 'Nem sikerült.', en: 'It did not work.', zh: '没有成功。' },
+  'fire.ash.cta': { hu: 'Hamuva égetem', en: 'Burn it to ash', zh: '把它烧成灰烬' },
+  'fire.ash.confirm': {
+    hu: 'A hamu-mondat teljesült?\n\n„{ash}"\n\nHa igen, a tűz hamuvá ég, és megszületik a kapszula. Ez visszafordíthatatlan.',
+    en: 'Has the ash sentence been fulfilled?\n\n"{ash}"\n\nIf so, the fire burns to ash and the capsule is born. This cannot be undone.',
+    zh: '灰烬之句已经应验了吗？\n\n“{ash}”\n\n如果是，火将烧成灰烬，胶囊就此诞生。这无法逆转。',
+  },
+  'fire.ash.fail': { hu: 'Nem sikerült hamuba vinni a tüzet.', en: 'Could not burn the fire to ash.', zh: '无法把这堆火烧成灰烬。' },
+  'fire.cooldown.prompt': {
+    hu: 'A tűz kérdez valamit: „{q}” — talán erre válaszolj.',
+    en: 'The fire is asking something: "{q}" — perhaps answer that.',
+    zh: '火在问一个问题：“{q}”——也许去回答它。',
+  },
+  'fire.pulse.eyebrow': { hu: 'A nap parazsa', en: 'The ember of the day', zh: '今日火种' },
+  'fire.pulse.eyebrow.daily': { hu: 'A nap parazsa', en: 'The ember of the day', zh: '今日火种' },
+  'fire.pulse.eyebrow.weekly': { hu: 'A hét parazsa', en: 'The ember of the week', zh: '本周火种' },
+  'fire.pulse.prompt.0': {
+    hu: '„{q}” — mi a mai válaszod?',
+    en: '"{q}" — what is your answer today?',
+    zh: '“{q}”——你今天的回答是什么？',
+  },
+  'fire.pulse.prompt.1': {
+    hu: '„{q}” — és te hogyan látod ma?',
+    en: '"{q}" — how do you see it today?',
+    zh: '“{q}”——你今天怎么看它？',
+  },
+  'fire.pulse.prompt.2': {
+    hu: 'Ha ma csak egyet mondhatnál erre — „{q}” — mi lenne az?',
+    en: 'If you could say only one thing today about "{q}", what would it be?',
+    zh: '如果今天关于“{q}”你只能说一句话，会是什么？',
+  },
+  'fire.pulse.prompt.3': {
+    hu: 'Mi változott tegnap óta a kérdésben — „{q}”?',
+    en: 'What changed since yesterday about "{q}"?',
+    zh: '关于“{q}”，从昨天到现在改变了什么？',
+  },
+  'fire.pulse.prompt.4': {
+    hu: 'Kérdezd meg magadtól — „{q}” — és dobd be az első választ.',
+    en: 'Ask yourself "{q}" and throw in the first answer.',
+    zh: '问问自己“{q}”，然后把第一个答案投进来。',
+  },
+  'fire.local.readonly': {
+    hu: 'Ez a tűz a böngésződben ég — csak olvasható. Új parázs ide nem érkezik.',
+    en: 'This fire burns in your browser — it is read-only. New embers cannot reach it.',
+    zh: '这堆火在你的浏览器中燃烧——只读。新火种无法抵达。',
+  },
 
   /* ash.html */
   'ash.title': { hu: 'Hamu — bonfire', en: 'Ash — bonfire', zh: '灰烬 — bonfire' },
@@ -458,17 +537,22 @@ export const I18N = {
   'ash.noq': { hu: 'Nincs megadva tűz.', en: 'No fire given.', zh: '没有指定火。' },
   'ash.burning': { hu: 'Ez a tűz még ég. Hamu csak akkor van, ha a hamu-mondat teljesült.', en: 'This fire still burns. There is ash only once the ash sentence is fulfilled.', zh: '这堆火还在燃烧。只有灰烬之句应验后，才有灰烬。' },
   'ash.load.fail': { hu: 'Nem sikerült betölteni a hamut: {msg}', en: 'Could not load the ash: {msg}', zh: '无法加载灰烬：{msg}' },
+  'ash.capsule.local': {
+    hu: 'A kapszula a rácsból jön. Ez a példány nincs bekötve a rácshoz, így hamu-kapszula sem készül itt.',
+    en: 'The capsule comes from the lattice. This instance is not bound to one, so no ash capsule can be made here.',
+    zh: '胶囊来自网格。此实例未接入网格，因此这里无法生成灰烬胶囊。',
+  },
 
   /* banner */
   'banner.local.index': {
-    hu: 'A rács még nincs bekötve ehhez a példányhoz — amit itt látsz, az a böngésződben fut, és csak nálad marad. A hullámmotor viszont valódi: ugyanaz a kód, mint az éles rácsban.',
-    en: 'The lattice is not bound to this instance yet — what you see runs in your browser and stays with you alone. The wave engine, however, is real: the same code that runs in the live lattice.',
-    zh: '网格尚未接入此实例——你看到的一切在你的浏览器中运行，只留在你这里。但波引擎是真的：与线上网格运行的是同一份代码。',
+    hu: 'A rács még nincs bekötve ehhez a példányhoz — amit itt látsz, az a böngésződben fut, csak nálad marad, és csak olvasható: itt nem lehet tüzet gyújtani, széket foglalni vagy parazsat dobni. A hullámmotor viszont valódi: ugyanaz a kód, mint az éles rácsban.',
+    en: 'The lattice is not bound to this instance yet — what you see runs in your browser, stays with you alone, and is read-only: you cannot light fires, take chairs or throw embers here. The wave engine, however, is real: the same code that runs in the live lattice.',
+    zh: '网格尚未接入此实例——你看到的一切在你的浏览器中运行，只留在你这里，并且只读：这里不能点火、入座或投掷火种。但波引擎是真的：与线上网格运行的是同一份代码。',
   },
   'banner.local.room': {
-    hu: 'A rács még nincs bekötve — ez a tűz a böngészsőmben ég, és csak nálad marad. A kapu és a hullámmotor viszont ugyanaz a kód, ami az éles rácsban fut.',
-    en: 'The lattice is not bound yet — this fire burns in your browser and stays with you alone. The gate and the wave engine, however, are the same code that runs in the live lattice.',
-    zh: '网格尚未接入——这堆火在你的浏览器中燃烧，只留在你这里。但门与波引擎与线上网格运行的是同一份代码。',
+    hu: 'A rács még nincs bekötve — ez a tűz a böngésződben ég, csak nálad marad, és nem fogad új parazsat. A kapu és a hullámmotor viszont ugyanaz a kód, ami az éles rácsban fut.',
+    en: 'The lattice is not bound yet — this fire burns in your browser, stays with you alone, and takes no new embers. The gate and the wave engine, however, are the same code that runs in the live lattice.',
+    zh: '网格尚未接入——这堆火在你的浏览器中燃烧，只留在你这里，不再接收新火种。但门与波引擎与线上网格运行的是同一份代码。',
   },
 
   /* time */
@@ -509,6 +593,12 @@ export const SERVER_ERRORS = {
   'Mire vagy kíváncsi? Adj meg egy lekérdezést.': 'err.query',
   'Ez a tűz még ég. A hamu csak akkor van, ha a hamu-mondat teljesült.': 'err.still-burning',
   'A rács nincs bekötve ehhez a példányhoz.': 'err.no-lattice',
+  'Ezt a nevet már elvitte egy másik tűz. Adj neki egy sajátot.': 'err.slug-taken',
+  'A telepítés nem állított be egyedi sót. A székek azonosítása fejlesztői módban futna.': 'err.dev-salt',
+  'Még nincs széked. Töltsd újra az oldalt, aztán ülj le.': 'err.no-seat',
+  'Túl gyorsan. A tűz nem siet, te se.': 'err.quota',
+  'Ezt a tüzet az alapítója viheti hamuba.': 'err.not-founder',
+  'Ez a tűz már hamuvá égett.': 'err.already-ashed',
 };
 
 Object.assign(I18N, {
@@ -524,6 +614,12 @@ Object.assign(I18N, {
   'err.query': { hu: 'Mire vagy kíváncsi? Adj meg egy lekérdezést.', en: 'What are you curious about? Give a query.', zh: '你好奇什么？给一个查询。' },
   'err.still-burning': { hu: 'Ez a tűz még ég. A hamu csak akkor van, ha a hamu-mondat teljesült.', en: 'This fire still burns. There is ash only once the ash sentence is fulfilled.', zh: '这堆火还在燃烧。只有灰烬之句应验后，才有灰烬。' },
   'err.no-lattice': { hu: 'A rács nincs bekötve ehhez a példányhoz.', en: 'The lattice is not bound to this instance.', zh: '网格尚未接入此实例。' },
+  'err.slug-taken': { hu: 'Ezt a nevet már elvitte egy másik tűz. Adj neki egy sajátot.', en: 'This name is already taken by another fire. Give it one of its own.', zh: '这个名字已被另一堆火占用。给它一个自己的名字。' },
+  'err.dev-salt': { hu: 'A telepítés nem állított be egyedi sót. A székek azonosítása fejlesztői módban futna.', en: 'This deployment has no unique identity salt set. Seats would be identified with the development salt.', zh: '此部署未设置唯一身份盐。座位将以开发盐标识。' },
+  'err.no-seat': { hu: 'Még nincs széked. Töltsd újra az oldalt, aztán ülj le.', en: 'You have no seat yet. Reload the page, then sit down.', zh: '你还没有座位。请刷新页面，然后再坐下。' },
+  'err.quota': { hu: 'Túl gyorsan. A tűz nem siet, te se.', en: 'Too fast. The fire is in no hurry, and neither are you.', zh: '太快了。火不着急，你也不必。' },
+  'err.not-founder': { hu: 'Ezt a tüzet az alapítója viheti hamuba.', en: 'Only this fire\'s founder may carry it to ash.', zh: '只有这堆火的创始人才能把它化为灰烬。' },
+  'err.already-ashed': { hu: 'Ez a tűz már hamuvá égett.', en: 'This fire has already burned to ash.', zh: '这堆火已经烧成了灰烬。' },
 });
 
 /* -- state and lookup ------------------------------------------------------- */

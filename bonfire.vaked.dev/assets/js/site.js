@@ -337,9 +337,15 @@ function initDecayCurve() {
 
 function fireCard(fire) {
   const stateClass = `state-${fire.state === 'PARÁZS' ? 'PARAZS' : fire.state}`;
-  return el('a', { class: 'card fire-card', href: `/fire.html?f=${encodeURIComponent(fire.slug)}` }, [
+  // A fire that has burnt out takes you to its ash, not to a room you
+  // cannot speak in.
+  const href = fire.state === 'HAMU'
+    ? `/ash.html?f=${encodeURIComponent(fire.slug)}`
+    : `/fire.html?f=${encodeURIComponent(fire.slug)}`;
+  return el('a', { class: 'card fire-card', href }, [
     el('div', { class: 'fire-card-head' }, [
       el('span', { class: `state ${stateClass}`, text: fire.state }),
+      fire.is_founder ? el('span', { class: 'tag', text: t('firecard.yours') }) : null,
     ]),
     el('h3', { text: fire.name }),
     fire.question ? el('p', { class: 'fire-question', text: `„${fire.question}”` }) : null,
@@ -351,7 +357,7 @@ function fireCard(fire) {
       el('span', { text: t('firecard.chairs', { n: fire.chairs ?? 0 }) }),
       el('span', { text: t('firecard.waves', { n: fire.waves ?? 0 }) }),
       el('span', { text: fire.pulse === 'daily' ? t('firecard.pulse.daily') : fire.pulse === 'weekly' ? t('firecard.pulse.weekly') : t('firecard.pulse.none') }),
-      el('span', { class: 'faint', text: relTime(fire.created_at) }),
+      el('span', { class: 'faint', 'data-ts': fire.created_at, text: relTime(fire.created_at) }),
     ]),
   ]);
 }
@@ -380,16 +386,21 @@ async function initFireIndex() {
   }
 }
 
-/** Tell the visitor plainly whether the lattice is real right now. */
+/** Tell the visitor plainly whether the lattice is real right now — and
+ *  re-render if that changes mid-session (a demotion is re-checked, a
+ *  promotion is shown). */
 async function initLatticeBanner() {
   const banner = $('#lattice-status');
   if (!banner) return;
-  const live = await api.probe();
-  banner.hidden = live;
-  if (!live) {
-    banner.className = 'notice';
-    banner.textContent = t('banner.local.index');
-  }
+  const render = (live) => {
+    banner.hidden = live;
+    if (!live) {
+      banner.className = 'notice';
+      banner.textContent = t('banner.local.index');
+    }
+  };
+  api.onLiveChange(render);
+  render(await api.probe());
 }
 
 /* ---------------------------------------------------------------------------
@@ -407,17 +418,21 @@ async function initHamubol(fire) {
   const essenceEl = $('#hamubol-essence');
   const metaEl = $('#hamubol-meta');
 
-  // Gather the ring's waves once.
+  // Gather a sample of the ring's waves once — one page view must not fan out
+  // into one request per fire, and the pool must stay small enough that
+  // re-ranking it on the φ-beat is cheap on a phone.
+  const SAMPLE_FIRES = 5;
+  const POOL_CAP = 600;
   let pool = [];
   try {
     const { fires } = await api.listFires();
     const loaded = await Promise.all(
-      fires.map((f) => api.getFire(f.slug).then(
+      fires.slice(0, SAMPLE_FIRES).map((f) => api.getFire(f.slug).then(
         (r) => r.waves.map((w) => ({ ...w, fireName: f.name, fireSlug: f.slug })),
         () => [],
       )),
     );
-    pool = loaded.flat();
+    pool = loaded.flat().slice(0, POOL_CAP);
   } catch {
     /* nothing to recall */
   }
@@ -433,6 +448,24 @@ async function initHamubol(fire) {
   // The beat alternates between t and t·φ — the interval itself is golden.
   const BASE = 7000;
   let beat = 0;
+  let timer = null;
+
+  function scheduleStep(delay) {
+    timer = setTimeout(step, delay);
+  }
+
+  // The beat costs CPU for as long as it runs: it stops when the tab is not
+  // looked at and dies with the page.
+  function pause() {
+    clearTimeout(timer);
+    beat = 0;
+  }
+
+  document.addEventListener('pagehide', pause);
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(timer);
+    if (!document.hidden) scheduleStep(BASE);
+  });
 
   function surface(wave) {
     if (!wave) return;
@@ -440,7 +473,17 @@ async function initHamubol(fire) {
     current = wave;
 
     const color = wave.color || '#ff7a3d';
-    if (sourceEl) sourceEl.textContent = `${wave.fireName.toUpperCase()} · ${relTime(wave.ts)}`;
+    if (sourceEl) {
+      // The memory's provenance is a door: click the fire name and sit there.
+      sourceEl.replaceChildren(
+        el('a', {
+          class: 'hamubol-fire',
+          href: `/fire.html?f=${encodeURIComponent(wave.fireSlug)}`,
+          text: wave.fireName.toUpperCase(),
+        }),
+        el('span', { class: 'faint', text: ` · ${relTime(wave.ts)}` }),
+      );
+    }
     if (essenceEl) {
       essenceEl.textContent = `„${wave.essence}”`;
       essenceEl.animate(
@@ -471,7 +514,7 @@ async function initHamubol(fire) {
 
     // The beat itself is golden: t, then t·φ, then t again.
     beat++;
-    setTimeout(step, beat % 2 ? BASE * PHI : BASE);
+    scheduleStep(beat % 2 ? BASE * PHI : BASE);
   }
 
   /** Rank `candidates` by resonance against `seed`, using the seed's own
@@ -483,7 +526,7 @@ async function initHamubol(fire) {
   }
 
   surface(current);
-  setTimeout(step, BASE);
+  scheduleStep(BASE);
 }
 
 /* ---------------------------------------------------------------------------
@@ -532,6 +575,109 @@ function initLightFire() {
   });
 }
 
+/** The Custodian's own trace (spec §7): a visitor can check "guard, don't
+ *  direct" against the log instead of taking it on faith. Paginated on a
+ *  "more" button — the whole trace is never forced on anyone at once. */
+async function initCustodianLog() {
+  const list = $('#custodian-log');
+  if (!list) return;
+
+  let cursor = 0;
+  let done = false;
+  let busy = false;
+
+  const more = el('button', {
+    class: 'btn btn-ghost btn-sm',
+    type: 'button',
+    text: t('guardian.log.more'),
+    'data-i18n': 'guardian.log.more',
+    style: { marginTop: '1rem' },
+    onclick: loadMore,
+  });
+  more.hidden = true;
+  list.after(more);
+
+  function entryNode(entry) {
+    return el('li', { class: 'custodian-entry' }, [
+      el('span', { class: 'tag', text: entry.action }),
+      el('span', { class: 'faint mono', text: entry.reason }),
+      el('span', { class: 'faint', 'data-ts': entry.ts, text: relTime(entry.ts) }),
+    ]);
+  }
+
+  async function loadMore() {
+    if (busy) return;
+    busy = true;
+    try {
+      const res = await api.custodianLog(cursor);
+      if (res.source !== 'lattice') {
+        list.append(el('li', { class: 'empty', text: t('guardian.log.local') }));
+        more.hidden = true;
+        return;
+      }
+      if (!res.entries.length) {
+        list.append(el('li', { class: 'empty', text: t('guardian.log.empty') }));
+        more.hidden = true;
+        return;
+      }
+      for (const entry of res.entries) list.append(entryNode(entry));
+      cursor = res.cursor;
+      done = res.done;
+      more.hidden = done;
+    } catch {
+      list.append(el('li', { class: 'empty', text: t('guardian.log.empty') }));
+      more.hidden = true;
+    } finally {
+      busy = false;
+    }
+  }
+
+  loadMore();
+
+  // Rebuilt on language switch so relative times re-render in the new tongue.
+  return () => {
+    cursor = 0;
+    done = false;
+    list.replaceChildren();
+    more.hidden = true;
+    loadMore();
+  };
+}
+
+/** The DoD's live counters (spec §3): the platform eats its own medicine, so
+ *  the checklist shows the numbers it talks about. The p95 is the committed
+ *  benchmark figure (scripts/bench.js) — update it when the benchmark moves. */
+async function initDoD() {
+  const capsules = $('#dod-capsules');
+  const waves = $('#dod-waves');
+  const p95 = $('#dod-p95');
+  if (!capsules && !waves && !p95) return () => {};
+
+  const BENCH_P95 = '12.8 ms p95';
+  if (p95) p95.textContent = `· ${BENCH_P95}`;
+
+  let stats = null;
+
+  function render() {
+    if (!stats) return;
+    if (capsules) {
+      capsules.textContent = Number(stats.capsules) > 0
+        ? t('hamu.dod.capsules.done', { n: stats.capsules })
+        : t('hamu.dod.capsules.open');
+    }
+    if (waves) waves.textContent = t('hamu.dod.waves', { n: stats.waves });
+  }
+
+  try {
+    stats = (await api.health()).stats ?? null;
+    render();
+  } catch {
+    /* the checklist stays silent rather than lying */
+  }
+
+  return render;
+}
+
 /* ---------------------------------------------------------------------------
  * Boot
  * ------------------------------------------------------------------------ */
@@ -539,7 +685,13 @@ function initLightFire() {
 function boot() {
   try { setLang(localStorage.getItem(LANG_KEY) || DEFAULT_LANG); } catch { setLang(DEFAULT_LANG); }
   applyI18n();
-  wireLangSwitch(() => initFireIndex());
+  let resetCustodianLog = null;
+  let renderDoD = null;
+  wireLangSwitch(() => {
+    initFireIndex();
+    resetCustodianLog?.();
+    renderDoD?.();
+  });
 
   initAmbient();
   initReveal();
@@ -564,6 +716,15 @@ function boot() {
   initLatticeBanner();
   initFireIndex().then(() => initHamubol(fire));
   initLightFire();
+  resetCustodianLog = initCustodianLog();
+  initDoD().then((render) => { renderDoD = render; });
+
+  // Relative times age honestly: refresh them once a minute, quietly.
+  setInterval(() => {
+    document.querySelectorAll('[data-ts]').forEach((node) => {
+      node.textContent = relTime(Number(node.dataset.ts));
+    });
+  }, 60_000);
 }
 
 if (document.readyState === 'loading') {

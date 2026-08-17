@@ -5,17 +5,17 @@
   "description": "bonfire.vaked.dev — a public fire ring. Community is not ours to build; the fire is.",
   "type": "module",
   "scripts": {
-    "dev": "wrangler pages dev . --d1 LATTICE=bonfire-lattice",
+    "dev": "node scripts/dev.js",
     "db:create": "wrangler d1 create bonfire-lattice",
     "db:local": "wrangler d1 execute bonfire-lattice --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute bonfire-lattice --remote --file=./schema.sql",
-    "deploy": "wrangler pages deploy .",
+    "deploy": "node scripts/deploy.js",
     "test": "node --test \"test/**/*.test.js\""
   },
   "devDependencies": {
     "wrangler": "^3.90.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

@@ -5,7 +5,9 @@
  * ========================================================================== */
 
 import { mountFire } from './fire-canvas.js';
-import { composeWave, effectiveAmplitude, vadColor, vadLabel } from '../../shared/wave.js';
+import {
+  composeWave, effectiveAmplitude, vadColor, vadLabel, pulseIndex,
+} from '../../shared/wave.js';
 import * as api from './api.js';
 import {
   DEFAULT_LANG, RTL_LANGS, lang, relTimeT, setLang, t,
@@ -76,6 +78,9 @@ const slug = new URLSearchParams(location.search).get('f');
 
 let fire = null;
 let canvas = null;
+let allWaves = [];
+let nextBefore = null;
+let nextBeforeId = null;
 
 /* ---------------------------------------------------------------------------
  * Rendering
@@ -98,6 +103,26 @@ function renderHead(f) {
   $('#fire-chairs').textContent = f.chairs ?? 0;
   $('#fire-waves').textContent = f.waves ?? 0;
 
+  // Only the founder sees the way to end the fire, and only while it burns.
+  const ashBtn = $('#ash-fire');
+  if (ashBtn) ashBtn.hidden = !(f.is_founder && f.state !== 'HAMU');
+
+  // The pulse (spec §2 pillar 3): a daily or weekly ember-prompt, derived
+  // deterministically from the fire's question — the same prompt for everyone
+  // who sits here today. A fire with no pulse shows nothing.
+  const prompt = $('#fire-pulse-prompt');
+  if (prompt) {
+    const idx = pulseIndex(f.question ?? '', f.pulse, Math.floor(Date.now() / 1000));
+    prompt.hidden = idx === null;
+    if (idx !== null) {
+      $('#fire-pulse-eyebrow').textContent =
+        f.pulse === 'weekly' ? t('fire.pulse.eyebrow.weekly') : t('fire.pulse.eyebrow.daily');
+      const key = `fire.pulse.prompt.${idx}`;
+      const text = t(key, { q: f.question || f.name });
+      $('#fire-pulse-text').textContent = text === key ? t('fire.pulse.prompt.0', { q: f.question || f.name }) : text;
+    }
+  }
+
   // A fire that has burned to ash does not accept new embers.
   if (f.state === 'HAMU') {
     const form = $('#ember-form');
@@ -109,7 +134,7 @@ function renderHead(f) {
   }
 }
 
-function waveItem(wave) {
+function waveItem(wave, index) {
   const vad = { v: wave.vad_v, a: wave.vad_a, d: wave.vad_d };
   const color = wave.color || vadColor(vad);
   const alive = effectiveAmplitude(
@@ -122,16 +147,21 @@ function waveItem(wave) {
     el('span', { text: t('time.phase', { p: (wave.phase_deg ?? 0).toFixed(0) }) }),
     el('span', { text: `amp ${alive.toFixed(3)}` }),
     el('span', { text: translateVadLabel(wave.label || vadLabel(vad)) }),
-    el('span', { class: 'faint', text: relTime(wave.ts) }),
+    el('span', { class: 'faint', 'data-ts': wave.ts, text: relTime(wave.ts) }),
   ]);
 
   if (wave.relation) {
-    meta.append(el('span', { class: 'faint', text: `${wave.relation} · Δ${wave.delta_deg}°` }));
+    // Recall results carry their own explanation: relation, phase gap, and
+    // the resonance score that surfaced them.
+    meta.append(el('span', {
+      class: 'faint',
+      text: `${wave.relation} · Δ${wave.delta_deg}° · rez ${Number(wave.resonance ?? 0).toFixed(3)}`,
+    }));
   }
 
   return el('li', {
     class: 'wave-item',
-    style: { '--wave-color': color, '--alive': String(alive.toFixed(3)) },
+    style: { '--wave-color': color, '--alive': String(alive.toFixed(3)), '--i': String(Math.min(index, 30)) },
   }, [
     el('div', { class: 'wave-bar' }),
     el('div', {}, [
@@ -141,16 +171,53 @@ function waveItem(wave) {
   ]);
 }
 
-function renderWaves(waves, heading = t('fire.waves.title')) {
+function renderWaves(waves, heading = t('fire.waves.title'), emptyText = t('fire.empty')) {
   $('#wave-heading').textContent = heading;
   const list = $('#wave-list');
   list.replaceChildren();
 
+  // A wholesale list replacement is silent to assistive tech; say how many
+  // waves arrived so a screen-reader user knows the recall answered.
+  const announce = $('#wave-announce');
+  if (announce) announce.textContent = t('fire.waves.aria.count', { h: heading, n: waves.length });
+
   if (!waves.length) {
-    list.append(el('li', { class: 'empty', text: t('fire.empty') }));
+    list.append(el('li', { class: 'empty', text: emptyText }));
     return;
   }
-  waves.forEach((w) => list.append(waveItem(w)));
+  waves.forEach((w, i) => list.append(waveItem(w, i)));
+}
+
+/** The room walks the lattice backwards: each page appends the 200 before it. */
+function renderOlderButton() {
+  const holder = $('#older-waves');
+  if (!holder) return;
+  holder.replaceChildren();
+  if (nextBefore == null) return;
+  holder.append(el('button', {
+    class: 'btn btn-ghost btn-sm',
+    type: 'button',
+    text: t('fire.waves.older'),
+    'data-i18n': 'fire.waves.older',
+    onclick: loadOlder,
+  }));
+}
+
+async function loadOlder() {
+  if (!fire || nextBefore == null) return;
+  try {
+    const { waves, next_before, next_before_id } = await api.getFire(fire.slug, {
+      before: nextBefore,
+      before_id: nextBeforeId ?? '',
+    });
+    allWaves = [...allWaves, ...waves];
+    nextBefore = next_before ?? null;
+    nextBeforeId = next_before_id ?? null;
+    renderWaves(allWaves);
+    renderOlderButton();
+  } catch (err) {
+    renderOlderButton();
+  }
 }
 
 /** Send each visible wave out across the canvas, staggered, on first paint. */
@@ -180,12 +247,34 @@ async function load() {
   }
 
   try {
-    const { fire: f, waves } = await api.getFire(slug);
+    const { fire: f, waves, source, next_before, next_before_id } = await api.getFire(slug);
     fire = f;
+
+    // A HAMU fire is an artifact now, not a room — go to the ash page.
+    if (f.state === 'HAMU') {
+      window.location.replace(`/ash.html?f=${encodeURIComponent(f.slug)}`);
+      return;
+    }
+
+    allWaves = waves;
+    nextBefore = next_before ?? null;
+    nextBeforeId = next_before_id ?? null;
     renderHead(f);
     canvas?.setChairs(Math.min(f.chairs ?? 0, 40));
     renderWaves(waves);
+    renderOlderButton();
     rippleAll(waves);
+
+    // A local-ring fire is a read-only demo: no write button may look alive.
+    if (source === 'local') {
+      $('#ember-form').querySelectorAll('textarea, button').forEach((n) => { n.disabled = true; });
+      $('#take-chair').disabled = true;
+      $('#leave-fire').disabled = true;
+      const note = $('#ember-result');
+      note.hidden = false;
+      note.className = 'notice';
+      note.textContent = t('fire.local.readonly');
+    }
   } catch (err) {
     const box = $('#fire-error');
     box.hidden = false;
@@ -235,6 +324,13 @@ function initEmberForm() {
         ' ',
         translateReason(res.reason, res.reason_en, res.reason_zh),
       );
+
+      // Rule 2's hold: the wave was not stored — keep the text in the box
+      // and show the fire's quieter question instead.
+      if (res.cooldown && !res.wave) {
+        result.append(el('div', { class: 'faint', style: { marginTop: '0.6rem' } },
+          t('fire.cooldown.prompt', { q: fire.question || fire.name })));
+      }
 
       if (res.wave) {
         canvas?.ripple({
@@ -301,9 +397,10 @@ function initResonate() {
     timer = setTimeout(async () => {
       if (!q) { await load(); return; }
       try {
-        const { waves } = await api.resonate(q);
-        const scoped = fire ? waves.filter((w) => w.fire_id === fire.id) : waves;
-        renderWaves(scoped, t('fire.resonate.heading', { q }));
+        // Recall at a fire searches that fire — the scoping happens in the
+        // lattice, not by filtering a global top-k down client-side.
+        const { waves } = await api.resonate(q, fire?.id);
+        renderWaves(waves, t('fire.resonate.heading', { q }), t('fire.resonate.empty'));
       } catch (err) {
         renderWaves([], t('fire.resonate.fail', { msg: translateError(err.message) }));
       }
@@ -311,13 +408,35 @@ function initResonate() {
   });
 }
 
+function initAsh() {
+  const btn = $('#ash-fire');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    if (!fire) return;
+    const ok = confirm(t('fire.ash.confirm', { ash: fire.ash_sentence }));
+    if (!ok) return;
+
+    try {
+      await api.burnToAsh(fire.slug);
+      window.location.href = `/ash.html?f=${encodeURIComponent(fire.slug)}`;
+    } catch (err) {
+      const status = $('#chair-status');
+      status.textContent = translateError(err.message) || t('fire.ash.fail');
+    }
+  });
+}
+
 async function initLatticeBanner() {
   const banner = $('#lattice-status');
-  const live = await api.probe();
-  banner.hidden = live;
-  if (!live) {
-    banner.textContent = t('banner.local.room');
-  }
+  const render = (live) => {
+    banner.hidden = live;
+    if (!live) {
+      banner.textContent = t('banner.local.room');
+    }
+  };
+  api.onLiveChange(render);
+  render(await api.probe());
 }
 
 /* ---------------------------------------------------------------------------
@@ -332,9 +451,20 @@ function boot() {
   canvas = mountFire('#room-fire', { chairs: 0, intensity: 1.15, origin: [0.5, 0.68] });
   initEmberForm();
   initChair();
+  initAsh();
   initResonate();
   initLatticeBanner();
+  initRelTimeTicker();
   load();
+
+  // Relative times age honestly: refresh them once a minute, quietly.
+  function initRelTimeTicker() {
+    setInterval(() => {
+      document.querySelectorAll('[data-ts]').forEach((node) => {
+        node.textContent = relTime(Number(node.dataset.ts));
+      });
+    }, 60_000);
+  }
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

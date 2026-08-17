@@ -1,0 +1,5 @@
+Contact: https://github.com/peterlodri-sec
+Expires: 2027-08-16T00:00:00.000Z
+Preferred-Languages: en, hu
+Canonical: https://bonfire.vaked.dev/.well-known/security.txt
+Policy: https://bonfire.vaked.dev/.well-known/agents.md

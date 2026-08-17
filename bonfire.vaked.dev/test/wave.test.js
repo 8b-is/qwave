@@ -13,6 +13,7 @@ import {
   PHI, WAVE, DECISION, TAU_HOURS,
   normaliseEssence, fingerprint, estimateVAD, vadColor,
   structuralJitter, attentionalNovelty, marineGate, phoenix,
+  essenceJaccard, attentionalNoveltyJaccard, marineGateJaccard,
   encodeWave32, decodeWave32, composeWave,
   decayFactor, effectiveAmplitude, phaseRelation, phiHarmonics,
   resonanceScore, resynthesise, reinforce, dampen, slugify, identityHash,
@@ -100,6 +101,28 @@ test('the gate scores in [0,1]', async () => {
   const fp = await fingerprint('valami');
   const gate = marineGate('valami értelmes mondat a tűz mellől', fp, []);
   assert.ok(gate.score >= 0 && gate.score <= 1);
+});
+
+/* -- the Jaccard gate (production novelty path) ---------------------------- */
+
+test('jaccard novelty is 1 against an empty window, like wave_brain.py', () => {
+  assert.equal(attentionalNoveltyJaccard('bármi', []), 1);
+});
+
+test('jaccard similarity is 1 for the same essence and near 0 for unrelated ones', () => {
+  assert.equal(essenceJaccard('A csend helye', 'a CSEND, helye!'), 1);
+  assert.ok(essenceJaccard('A csend helye', 'Huszonhét ember ül a tűz körül') < 0.2);
+});
+
+test('a near-duplicate scores below 0.5 and a loop scores below 0.28', () => {
+  const original = 'A nagymamám kenyérreceptjét viszem tovább, nem a papírt.';
+  const reworded = 'A nagymamám kenyérreceptjét viszem tovább, és nem a papírt.';
+  const near = marineGateJaccard(reworded, [original, 'Ma reggel hallottam, hogy fáradt vagyok.']);
+  assert.ok(near.novelty < 0.5, `near-duplicate novelty ${near.novelty} should be < 0.5`);
+  assert.ok(near.score < 0.5, `near-duplicate score ${near.score} should be < 0.5`);
+
+  const loop = marineGateJaccard('blah blah blah blah blah', ['blah blah blah blah blah blah', 'blah blah blah blah']);
+  assert.ok(loop.score < 0.28, `loop score ${loop.score} should drop`);
 });
 
 /* -- Phoenix -------------------------------------------------------------- */

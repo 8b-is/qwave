@@ -6,11 +6,19 @@
 import { slugify } from '../../shared/wave.js';
 import {
   json, fail, noLattice, db, nowSec, id, body, authorHash, withCookie,
+  publicFire, guardSalt,
 } from './_lib/db.js';
+import { QUOTAS, checkQuota, clientKey } from './_lib/rate.js';
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ request, env }) {
   const lattice = db(env);
   if (!lattice) return noLattice();
+
+  // The ring index also establishes the anonymous seat — a visitor can read
+  // the ring and then sit down without ever reloading. The founder's own
+  // fires get an is_founder badge: the hash itself never ships, only the
+  // server-computed boolean.
+  const { hash, setCookie } = await authorHash(request, env);
 
   const { results } = await lattice.prepare(`
     SELECT f.*,
@@ -24,12 +32,21 @@ export async function onRequestGet({ env }) {
     LIMIT 200
   `).all();
 
-  return json({ fires: results ?? [], source: 'lattice' });
+  return withCookie(
+    json({
+      fires: (results ?? []).map((f) => ({ ...publicFire(f), is_founder: f.founder_hash === hash })),
+      source: 'lattice',
+    }),
+    setCookie,
+  );
 }
 
 export async function onRequestPost({ request, env }) {
   const lattice = db(env);
   if (!lattice) return noLattice();
+
+  const noSalt = guardSalt(env, request);
+  if (noSalt) return noSalt;
 
   const payload = await body(request);
   if (!payload) return fail(400, 'Hibás kérés.');
@@ -50,46 +67,56 @@ export async function onRequestPost({ request, env }) {
     return fail(400, 'Túl hosszú. A hamu egy mondat, nem egy terv.');
   }
 
-  const { hash, setCookie } = await authorHash(request, env);
-
-  // Slugs collide; fires do not get to steal each other's addresses.
-  const base = slugify(name);
-  let slug = base;
-  for (let n = 2; n <= 50; n++) {
-    const taken = await lattice.prepare('SELECT 1 FROM fires WHERE slug = ?').bind(slug).first();
-    if (!taken) break;
-    slug = `${base}-${n}`;
+  // A global cap on fires-per-hour: the ring is not a factory.
+  if (!(await checkQuota(lattice, await clientKey(request, env, 'fire'), QUOTAS.fire))) {
+    return fail(429, 'Túl gyorsan. A tűz nem siet, te se.');
   }
 
-  const fire = {
-    id: id(),
-    slug,
-    name,
-    question: question || null,
-    ash_sentence: ash,
-    founder_hash: hash,
-    pulse,
-    state: 'EMBER',
-    created_at: nowSec(),
-    ash_at: null,
-  };
+  const { hash, setCookie } = await authorHash(request, env);
 
-  await lattice.prepare(`
-    INSERT INTO fires (id, slug, name, question, ash_sentence, founder_hash, pulse, state, created_at, ash_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-  `).bind(
-    fire.id, fire.slug, fire.name, fire.question, fire.ash_sentence,
-    fire.founder_hash, fire.pulse, fire.state, fire.created_at,
-  ).run();
+  // Slugs collide; fires do not get to steal each other's addresses. One
+  // `ON CONFLICT DO NOTHING` replaces the old serial probe loop: the unique
+  // index on slug is the arbiter, so two concurrent creates cannot both win —
+  // the loser simply retries under a suffixed slug instead of crashing into
+  // an unhandled constraint error.
+  const base = slugify(name);
+  const fireId = id();
+  const createdAt = nowSec();
+  let slug = base;
+  let inserted = false;
 
-  // The founder is sitting down by definition.
-  await lattice.prepare(`
-    INSERT OR IGNORE INTO chairs (id, fire_id, name_hash, joined_at, last_seen)
-    VALUES (?, ?, ?, ?, ?)
-  `).bind(id(), fire.id, hash, fire.created_at, fire.created_at).run();
+  for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+    if (attempt > 0) slug = `${base}-${Math.floor(Math.random() * 900) + 100}`;
+
+    // One transaction: the fire and its founder's seat land together, so a
+    // fire can never exist with its founder standing outside it. The chair
+    // INSERT is a SELECT-gated no-op when the fire INSERT conflicted, which
+    // keeps the foreign key quiet while the batch retries.
+    const outcome = await lattice.batch([
+      lattice.prepare(`
+        INSERT INTO fires (id, slug, name, question, ash_sentence, founder_hash, pulse, state, created_at, ash_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'EMBER', ?, NULL)
+        ON CONFLICT(slug) DO NOTHING
+      `).bind(fireId, slug, name, question || null, ash, hash, pulse, createdAt),
+      lattice.prepare(`
+        INSERT INTO chairs (id, fire_id, name_hash, joined_at, last_seen)
+        SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM fires WHERE id = ?)
+      `).bind(id(), fireId, hash, createdAt, createdAt, fireId),
+    ]);
+
+    inserted = (outcome[0]?.meta?.changes ?? 0) > 0;
+  }
+
+  if (!inserted) {
+    // A constraint is never a 500: the visitor keeps their ash sentence.
+    return fail(409, 'Ezt a nevet már elvitte egy másik tűz. Adj neki egy sajátot.');
+  }
 
   return withCookie(
-    json({ fire: { ...fire, waves: 0, chairs: 1 }, source: 'lattice' }, { status: 201 }),
+    json({
+      fire: { ...publicFire({ id: fireId, slug, name, question: question || null, ash_sentence: ash, pulse, state: 'EMBER', created_at: createdAt, ash_at: null }), waves: 0, chairs: 1 },
+      source: 'lattice',
+    }, { status: 201 }),
     setCookie,
   );
 }

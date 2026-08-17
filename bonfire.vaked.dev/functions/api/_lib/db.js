@@ -65,6 +65,22 @@ export function usingDevSalt(env) {
   return !env?.IDENTITY_SALT;
 }
 
+/**
+ * The promise in the comment above, made true: write endpoints refuse to run
+ * on the published fallback salt outside of local development or a
+ * `*.pages.dev` preview. Returns a 503 when the salt is the dev fallback and
+ * the request host is not exempt; null when the request may proceed. An
+ * inaccurate comment about a security control is worse than no comment —
+ * here the comment and the behaviour agree.
+ */
+export function guardSalt(env, request) {
+  if (!usingDevSalt(env)) return null;
+  const host = new URL(request.url).hostname;
+  const exempt = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.pages.dev');
+  if (exempt) return null;
+  return fail(503, 'A telepítés nem állított be egyedi sót. A székek azonosítása fejlesztői módban futna.');
+}
+
 function readCookie(request, name) {
   const header = request.headers.get('cookie') || '';
   for (const part of header.split(';')) {
@@ -72,6 +88,14 @@ function readCookie(request, name) {
     if (k === name) return rest.join('=');
   }
   return null;
+}
+
+/** True when the request already carries a seat cookie. Taking a chair is the
+ *  social-proof write: minting a fresh identity on the POST would let a script
+ *  manufacture unbounded seats, so the seat must exist before the visitor
+ *  arrives at the write — the GET that loads the fire page mints it. */
+export function hasSeat(request) {
+  return readCookie(request, COOKIE) !== null;
 }
 
 /**
@@ -122,6 +146,11 @@ export function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
+/** Waves needed before a fire is properly burning (EMBER → PARÁZS).
+ *  Not in the spec — chosen so that EMBER means "just lit" rather than
+ *  "empty forever". Shared by the ember and leave paths, which must agree. */
+export const PARAZS_THRESHOLD = 8;
+
 export function id() {
   return crypto.randomUUID();
 }
@@ -148,13 +177,36 @@ export async function logCustodian(lattice, { wave_id = null, action, reason }) 
   }
 }
 
-/** Normalise a D1 wave row for the wire: blob → hex, plus VAD colour. */
+/** Convert a D1 wave row's blob to hex for the wire. Callers that need VAD
+ *  colour/label add them separately. Prefer `publicWave` for client responses. */
 export function wireWave(row) {
   const { wave32, ...rest } = row;
   return {
     ...rest,
     wave32_hex: wave32 ? bytesToHex(new Uint8Array(wave32)) : null,
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * Wire redaction (§7 rule 4) — the client-facing serialisation of rows
+ * ------------------------------------------------------------------------ */
+
+/** A wave row as the client is allowed to see it. Strips the blob, its hex
+ *  (which embeds the fingerprint), the content fingerprint, and the author's
+ *  one-way hash. Every endpoint serialises through this so no future handler
+ *  can leak them by forgetting. */
+export function publicWave(row) {
+  const {
+    wave32, wave32_hex, fingerprint, author_hash, founder_hash, ...rest
+  } = row;
+  return rest;
+}
+
+/** A fire row as the client is allowed to see it. Strips the founder's
+ *  one-way hash — the same value that identifies that person's embers. */
+export function publicFire(row) {
+  const { founder_hash, ...rest } = row;
+  return rest;
 }
 
 function bytesToHex(bytes) {

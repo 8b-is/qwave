@@ -1,0 +1,11 @@
+# Pages evaluates redirects before assets and headers. These keep every path
+# this repo once shipped (and anything a stale edge cache still holds) pointed
+# somewhere safe instead of leaking internal files.
+/AGENT.md             /AGENTS.md   301
+/README.md            /             301
+/wrangler.toml        /             301
+/package.json         /             301
+/package-lock.json    /             301
+/schema.sql           /             301
+/test/*               /             301
+/scripts/*            /             301

@@ -1,7 +1,12 @@
 README.md
+AGENT.md
 wrangler.toml
 package.json
 package-lock.json
 schema.sql
 node_modules
 .assetsignore
+.wrangler
+test
+scripts
+keeper

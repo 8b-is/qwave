@@ -295,6 +295,18 @@ code, pre, kbd { font-family: var(--font-mono); }
 .btn-ghost { background: color-mix(in oklab, white 4%, transparent); }
 .btn-ghost:hover { border-color: var(--border-strong); background: color-mix(in oklab, white 8%, transparent); }
 
+/* The one irreversible action on the site wears the ash palette. */
+.btn-rose {
+  background: color-mix(in oklab, var(--rose) 10%, transparent);
+  border-color: color-mix(in oklab, var(--rose) 40%, transparent);
+  color: color-mix(in oklab, var(--rose) 85%, white);
+}
+.btn-rose:hover:not(:disabled) {
+  border-color: var(--rose);
+  background: color-mix(in oklab, var(--rose) 18%, transparent);
+  box-shadow: 0 0 1.5em color-mix(in oklab, var(--rose) 22%, transparent);
+}
+
 .btn-lg { padding: 1em 1.9em; font-size: var(--step-1); }
 .btn-sm { padding: 0.55em 1.05em; font-size: var(--step--1); }
 
@@ -452,6 +464,15 @@ code, pre, kbd { font-family: var(--font-mono); }
   font-family: var(--font-mono); font-style: normal;
   font-size: var(--step--1); letter-spacing: 0.1em;
   color: var(--text-faint);
+}
+
+/* A second voice by the fire — calmer than the thesis above it. */
+.quote-fireside { padding: 1.5rem 1.75rem; border-color: var(--hairline-soft); }
+.quote-fireside blockquote {
+  font-size: var(--step-1);
+  font-style: normal;
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
 /* ---- Terminal / lattice readout ---------------------------------------- */
@@ -681,6 +702,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var
   /* Decayed waves literally dim — D(t,τ) made visible. JS sets --alive. */
   opacity: calc(0.34 + var(--alive, 1) * 0.66);
   transition: opacity var(--dur-3) var(--ease-out), border-color var(--dur-2) var(--ease-out);
+  /* Embers settle into the room one after another — JS sets --i, capped. */
+  animation: wave-settle 0.45s var(--ease-out) both;
+  animation-delay: calc(min(var(--i, 0), 30) * 40ms);
+}
+@keyframes wave-settle {
+  from { opacity: 0; transform: translateY(8px); }
 }
 .wave-item:hover { border-color: var(--hairline); }
 .wave-item .wave-bar {
@@ -698,6 +725,22 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var
 
 /* ---- Custodian rules ---------------------------------------------------- */
 .rules { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); counter-reset: rule; }
+
+/* ---- Custodian log ------------------------------------------------------- */
+.custodian-log { list-style: none; padding: 0; display: grid; gap: 0.6rem; }
+.custodian-entry {
+  display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: baseline;
+  font-size: var(--step--1); padding-block: 0.5rem;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.custodian-entry .faint { min-width: 0; overflow-wrap: anywhere; }
+
+/* The memory's provenance in "a hamuból": a door back to its fire. */
+.hamubol-fire {
+  color: var(--ember);
+  font-weight: 600;
+}
+.hamubol-fire:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 .rule {
   display: grid; grid-template-columns: 2.4rem 1fr; gap: var(--sp-4);
   padding-bottom: var(--sp-4);

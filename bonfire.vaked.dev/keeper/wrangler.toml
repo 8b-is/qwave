@@ -1,0 +1,11 @@
+# bonfire-keeper — the cron that keeps the 30-day rule honest (spec §3, M5).
+# Pages Functions cannot self-schedule, so this tiny Worker POSTs the keeper
+# endpoint hourly. Hourly is plenty: the rule only changes once a day.
+name = "bonfire-keeper"
+main = "index.js"
+compatibility_date = "2026-08-16"
+
+# A deliberately un-round minute, so the keeper never piles onto the
+# top-of-hour stampede with every other cron on the platform.
+[triggers]
+crons = ["37 * * * *"]
