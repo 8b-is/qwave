@@ -13,7 +13,7 @@
 > exact reflection pattern `FeatureFlagService` already uses — and a
 > secure-context page, `navigator.gpu` is a live object. So for Qwave the
 > correct claim is: WebGPU is one FeatureFlags toggle away, not inherited.
-> (CI caveat: Blacksmith runners are macOS 15 / Safari 18-era WebKit — no
+> (CI caveat: GitHub-hosted macos-15 runners are Safari 18-era WebKit — no
 > WebGPU there; any test asserting it must stay local-only or
 > availability-guarded.)
 >

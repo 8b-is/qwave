@@ -4,6 +4,17 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Zig packet filter is on the WireGuard data plane.** The Go backend owns
+  the utun, so Swift could never hand it a packet. A Qwave overlay
+  (`qwave_filter_tun.go`) wraps the tun `Device` and calls `qpacket_filter`
+  on every Read/Write: malformed IPv4/IPv6 is dropped, valid traffic
+  passes. `PacketTunnelProvider` installs the handle with
+  `wgSetPacketFilter` before `adapter.start` and restores
+  `handleAppMessage` so the counters are a real measurement. Throughput
+  still belongs on WireGuard UAPI, not these sanity-check counters
+  (issue #135).
+
 ### Removed
 - **Dead code sweep: `NoOpCredentialIdentitySyncing`,
   `WebAuthnOriginPolicy.rpIDIsAuthorized`, `WebExtensionHost.uninstallBridge`
@@ -26,6 +37,11 @@ All notable changes to Qwave will be documented in this file.
   it added so a future teardown can be scoped correctly.
 
 ### Changed
+- **CI no longer uses Blacksmith runners.** `ci.yml` and `release.yml` now
+  use GitHub-hosted `macos-15`. The Xcode 26.3 / Swift 6.2 pin is unchanged.
+- **Local signing is Automatic** with team `7CFQYBX575`, so a Debug run
+  can pick up the Network Extension entitlement from the App ID. CI stays
+  unsigned; the release job still forces Manual + Developer ID.
 - **The issue #86 performance regression test now derives its bound instead of
   asserting a magic wall clock.** It asserted that 256 rows x5 decode in under
   5 seconds — a constant with no relationship to the cost it was guarding.

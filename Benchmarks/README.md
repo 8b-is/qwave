@@ -45,7 +45,7 @@ for exactly this reason (#141). Two rules follow, and both are load-bearing:
 CI checks **`mallocCountTotal` only**, against the committed thresholds in
 `Thresholds/` with a 25% p90 tolerance: allocation counts are
 near-deterministic for a given code path, so they survive heterogeneous
-runners (the job is pinned to one Blacksmith runner class regardless);
+runners (the job is pinned to GitHub-hosted `macos-15`);
 wall-clock is collected locally but never checked. Threshold updates are
 reviewed like code — a jump in allocations is a diff someone must own.
 

@@ -30,7 +30,7 @@ XcodeGen preBuildScript → links into PacketTunnel.systemextension via -lqpacke
 
 **When:** 7bc039c
 
-**Problem:** The preBuildScript originally compiled a single `aarch64-macos` slice. On Apple Silicon Macs, Xcode's `ARCHS` is `arm64` — this works. But CI runs on Blacksmith macos-15 which reports `ARCHS = "x86_64 arm64"`, so `zig build-lib ... -target aarch64-macos` produces a single-arch `.a` that the linker rejects at the universal-binary stage.
+**Problem:** The preBuildScript originally compiled a single `aarch64-macos` slice. On Apple Silicon Macs, Xcode's `ARCHS` is `arm64` — this works. But CI on GitHub-hosted macos-15 can report `ARCHS = "x86_64 arm64"`, so `zig build-lib ... -target aarch64-macos` produces a single-arch `.a` that the linker rejects at the universal-binary stage.
 
 **Fix:** Iterate over `$ARCHS` and build one slice per architecture, then `lipo -create` them into a single universal `.a`:
 

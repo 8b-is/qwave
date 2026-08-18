@@ -157,15 +157,11 @@ public final class TunnelManager: ObservableObject {
         manager?.connection.stopVPNTunnel()
     }
 
-    // No `requestStats()`. It sent "stats" to the packet-tunnel provider, whose
-    // answer was the Zig packet filter's counters — a filter with no caller, so
-    // every counter was structurally zero (issue #135). Worse, the one consumer
-    // parsed the reply as WireGuard `tx_bytes=`/`rx_bytes=` UAPI text, which the
-    // JSON reply never contained, so the menu bar had been reporting a hard-coded
-    // "↑ 0 B/s ↓ 0 B/s" for its whole life. Both ends are withdrawn rather than
-    // patched: `WireGuardAdapter.getRuntimeConfiguration` (already used inside the
-    // provider for handshake confirmation) is where a real throughput readout
-    // would come from, and wiring that up is a product change, not a bug fix.
+    // No `requestStats()`. The provider's `handleAppMessage` now returns the
+    // Zig filter's sanity-check counters (seen/dropped/by-protocol), which
+    // increment on the tun path. Throughput (`tx_bytes`/`rx_bytes`) still
+    // lives on `WireGuardAdapter.getRuntimeConfiguration`; mixing the two
+    // is what made the old menu-bar sampler lie (issue #135).
 
     private static func describe(_ error: Error) -> String {
         let nsError = error as NSError

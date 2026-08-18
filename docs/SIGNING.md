@@ -32,10 +32,10 @@ your Apple Developer account.
    open Qwave.xcodeproj
    ```
 
-2. In both targets' Signing & Capabilities:
-   - Set your **Team**.
-   - Switch signing to **Automatic** (the checked-in project defaults to
-     Manual so CI stays quiet).
+2. In both targets' Signing & Capabilities, confirm **Team** is
+   `7CFQYBX575` and signing is **Automatic** (`project.yml` defaults).
+   CI still builds unsigned (`CODE_SIGNING_ALLOWED=NO`); the release
+   workflow forces Manual + Developer ID.
 
 3. The entitlements files are generated from `project.yml` and already contain:
    - `com.apple.developer.networking.networkextension` → `packet-tunnel-provider-systemextension`

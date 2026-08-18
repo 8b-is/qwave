@@ -14,16 +14,16 @@ concurrency:
 jobs:
   format:
     name: swift-format lint (--strict)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
             sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
@@ -54,16 +54,16 @@ jobs:
 
   unit-tests:
     name: QwaveKit unit tests (swift test)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
             sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
@@ -94,7 +94,7 @@ jobs:
 
   build-app:
     name: Build Qwave.app (unsigned)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 45
     needs: unit-tests
     steps:
@@ -102,9 +102,9 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
             sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
@@ -122,9 +122,8 @@ jobs:
           }
 
       - name: Install tools
-        # go: the WireGuardKitGo bridge builds libwg-go.a at compile time
-        # (present on GitHub-hosted images, absent on Blacksmith's).
-        # zig: the app's "Build Zig packet filter" preBuildScript compiles
+        # go: WireGuardKitGo builds libwg-go.a at compile time.
+        # zig: the "Build Zig packet filter" preBuildScript compiles
         # libqpacket.a and hard-errors if zig is absent.
         run: brew install xcodegen xcbeautify go zig
 
@@ -194,7 +193,7 @@ jobs:
   # the tuned config + triage record live in Packages/QwaveKit/.periphery.yml.
   dead-code-report:
     name: Periphery dead-code report (non-blocking)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     needs: unit-tests
     continue-on-error: true
@@ -203,9 +202,9 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
             sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
@@ -225,7 +224,7 @@ jobs:
 
   benchmarks:
     name: Benchmark thresholds (mallocCountTotal)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     needs: unit-tests
     steps:
@@ -233,9 +232,9 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 26.3 as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
             sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
@@ -246,7 +245,7 @@ jobs:
           }
 
       # package-benchmark's mallocCountTotal metric is backed by jemalloc,
-      # which the Blacksmith image does not ship. package-jemalloc is a
+      # which the runner image does not ship. package-jemalloc is a
       # pkgConfig system target, so install jemalloc and point PKG_CONFIG_PATH
       # at its .pc file, otherwise the build fails with
       # "'jemalloc/jemalloc.h' file not found".
@@ -263,7 +262,7 @@ jobs:
 
   zig-validation:
     name: Zig blocklist validation
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -301,7 +300,7 @@ jobs:
   # ---------------------------------------------------------------------------
   unit-tests-next:
     name: unit tests (next toolchain · non-blocking)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     continue-on-error: true
     steps:
@@ -332,7 +331,7 @@ jobs:
   # ---------------------------------------------------------------------------
   perf-anchor:
     name: Speedometer anchor + parser (non-blocking)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 5
     continue-on-error: true
     steps:

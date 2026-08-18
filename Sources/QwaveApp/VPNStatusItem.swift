@@ -4,13 +4,10 @@ import VPNKit
 
 // `TunnelStatsSampler` lived here: a 1.5-second timer that polled
 // `TunnelManager.requestStats()` and rendered "↑ x/s ↓ y/s" into the menu bar.
-// It never showed anything but zero, for two compounding reasons (issue #135):
-// the provider answered with the Zig packet filter's counters, and that filter
-// has no caller, so the counters could not be anything but zero; and the reply
-// was JSON while the parser looked for WireGuard `tx_bytes=` UAPI lines, so even
-// a real number would not have arrived. A menu-bar readout pinned at zero is
-// worse than no readout, because it looks like a measurement of an idle tunnel.
-// Removed rather than relabelled — there is no honest label for it.
+// Removed in issue #135: it parsed WireGuard UAPI `tx_bytes=` while the
+// provider answered with Zig filter JSON. The filter now sits on the tun
+// path, but those counters are sanity-check drops, not throughput — a
+// menu-bar rate still has to come from UAPI.
 
 private extension VPNState {
     var isConnected: Bool {

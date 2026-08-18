@@ -144,7 +144,7 @@ qwave/
 
 ### CI/CD
 
-- **Runner**: Blacksmith `macos-15` (6 vcpu). Xcode 16.4 pinned explicitly.
+- **Runner**: GitHub-hosted `macos-15`. CI pins Xcode 26.3 / Swift 6.2; the release job pins Xcode 16.4.
 - **Jobs**: format lint → unit tests → build app → dead-code report (non-blocking) → benchmarks.
 - **Release**: Tag `v*` triggers signed/notarized build + DMG + Sparkle appcast. Falls back to unsigned when Developer ID secrets absent.
 - **Versioning**: `CFBundleShortVersionString` = `MAJOR.MINOR.PATCH`; `CFBundleVersion` = `MAJOR*10000 + MINOR*100 + PATCH`. CI enforces tag matches both.

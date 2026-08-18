@@ -106,6 +106,9 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		unix.Close(dupTunFd)
 		return -1
 	}
+	// Qwave overlay: sit the Zig packet filter on the tun Device. See
+	// qwave_filter_tun.go. A no-op when wgSetPacketFilter has not been called.
+	tun = wrapQwavePacketFilter(tun)
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 

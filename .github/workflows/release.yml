@@ -12,7 +12,7 @@ env:
 jobs:
   publish-release:
     name: Build, sign & publish GitHub Release
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 90
     permissions:
       contents: write
@@ -21,7 +21,7 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # The Blacksmith macos-15 image ships Xcode 16.4 (16F6) as default.
+          # GitHub-hosted macos-15 ships Xcode 16.4 (16F6) as default.
           # Assert the pin instead of globbing "latest" so an image update
           # cannot change build behaviour without a commit.
           if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
@@ -34,9 +34,8 @@ jobs:
           }
 
       - name: Install tools
-        # go: the WireGuardKitGo bridge builds libwg-go.a at compile time
-        # (present on GitHub-hosted images, absent on Blacksmith's).
-        # zig: the app's "Build Zig packet filter" preBuildScript compiles
+        # go: WireGuardKitGo builds libwg-go.a at compile time.
+        # zig: the "Build Zig packet filter" preBuildScript compiles
         # libqpacket.a and hard-errors if zig is absent.
         run: brew install xcodegen xcbeautify create-dmg go zig
 
