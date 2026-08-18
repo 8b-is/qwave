@@ -43,7 +43,7 @@ not add an Archive action unless Qwave adopts Mac App Store / TestFlight.
 
 ## One-time setup (Xcode / App Store Connect — needs the Apple ID)
 
-These steps require signing in with the Apple Developer team (`7CFQYBX575`) and
+These steps require signing in with the Apple Developer team (`CKQ9Q43ANM`) and
 accepting the Xcode Cloud terms; they cannot be scripted from the repo.
 
 1. **App Store Connect record.** Ensure an app record exists for bundle id

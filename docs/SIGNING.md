@@ -33,7 +33,7 @@ your Apple Developer account.
    ```
 
 2. In both targets' Signing & Capabilities, confirm **Team** is
-   `7CFQYBX575` and signing is **Automatic** (`project.yml` defaults).
+   `CKQ9Q43ANM` and signing is **Automatic** (`project.yml` defaults).
    CI still builds unsigned (`CODE_SIGNING_ALLOWED=NO`); the release
    workflow forces Manual + Developer ID.
 
@@ -90,7 +90,7 @@ depends on which repository secrets exist:
 |---|---|
 | `MACOS_CERTIFICATE_P12` | base64 of a `.p12` containing the **Developer ID Application** certificate + private key (`base64 -i cert.p12 \| pbcopy`) |
 | `MACOS_CERTIFICATE_PASSWORD` | password of that `.p12` |
-| `APPLE_TEAM_ID` | 10-char team id (e.g. `7CFQYBX575`) |
+| `APPLE_TEAM_ID` | 10-char team id (e.g. `CKQ9Q43ANM`) |
 | `NOTARY_KEY_B64` | base64 App Store Connect API key `.p8` for `notarytool` |
 | `NOTARY_KEY_ID` | the ASC API key's Key ID |
 | `NOTARY_ISSUER_ID` | the ASC Issuer ID |

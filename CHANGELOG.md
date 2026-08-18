@@ -39,7 +39,7 @@ All notable changes to Qwave will be documented in this file.
 ### Changed
 - **CI no longer uses Blacksmith runners.** `ci.yml` and `release.yml` now
   use GitHub-hosted `macos-15`. The Xcode 26.3 / Swift 6.2 pin is unchanged.
-- **Local signing is Automatic** with team `7CFQYBX575`, so a Debug run
+- **Local signing is Automatic** with team `CKQ9Q43ANM`, so a Debug run
   can pick up the Network Extension entitlement from the App ID. CI stays
   unsigned; the release job still forces Manual + Developer ID.
 - **The issue #86 performance regression test now derives its bound instead of

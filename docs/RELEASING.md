@@ -50,7 +50,7 @@ Behavior by configuration:
 
 ```sh
 QWAVE_SIGN_IDENTITY="Developer ID Application" \
-QWAVE_TEAM_ID=7CFQYBX575 \
+QWAVE_TEAM_ID=CKQ9Q43ANM \
 QWAVE_NOTARY_PROFILE=qwave-notary \
 QWAVE_SPARKLE_KEY=~/.qwave-secrets/sparkle_ed25519_seed.b64 \
 scripts/release.sh v0.3.0
