@@ -50,6 +50,18 @@ hands the aggregated histogram to `st` for tree rendering, and the memory
 tree in the wave panel uses the same MEM8 concepts smart-tree compresses.
 The heavy CLI stays out of the browser process; the concepts stay in.
 
+## 8b-kit — the foundation blocks
+
+[`8b-is/8b-kit`](https://github.com/8b-is/8b-kit) is where the WebKit layer
+evolves into: **Rust** decision core (the qwave-proven egress/mem8/Phoenix/
+telemetry surface, renamed `kit_*`, one `kit_abi.h`), **Chez Scheme**
+(Apache-2.0) for configuration and scripting, an **engine facade** with
+WebKit as its first backend, a **GPU ML lane** (Metal raw / CUDA / ROCm
+behind cargo features), and the **host glue** (Swift on Apple hosts, Rust
+± C ± asm elsewhere). qwave consumes it; QwaveKit shrinks to the Apple
+backend as the facade lands. Design brief: `8b-kit/docs/DESIGN.md`; ABI
+rules: `8b-kit/docs/ADR-001-abi-contract.md`.
+
 ## The 8b-is map (wip-catalog rows)
 
 | qwave piece | catalog row / constellation home |
@@ -57,6 +69,7 @@ The heavy CLI stays out of the browser process; the concepts stay in.
 | MemoryWave + Phoenix | `8b-is/alexiai` MEM8 family; `wip-catalog-100.md` A. Cognitive |
 | egress allowlist | "prove what it sends" — docs/NETWORK.md, Category A |
 | Rust core | the sovereign lane: zero-dep, tested, C ABI for any language |
+| 8b-kit | `8b-is/8b-kit` — foundation blocks: kit-core, engine facade, Chez runtime, GPU ML lane, host glue |
 | iPhone lane | same core force-loaded — mem8 / Phoenix / egress on the phone, battery policy on top |
 | telemetry | `8b-is/qwave-telemetry` (private) — scrubbed JSONL + histograms |
 
