@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import BrowserCore
 import SwiftUI
 
@@ -65,8 +67,7 @@ private struct DownloadRowView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(nsImage: iconImage)
-                .resizable()
+            iconView
                 .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.filename)
@@ -82,23 +83,44 @@ private struct DownloadRowView: View {
             actions
         }
         .padding(8)
+#if canImport(AppKit)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+#else
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(uiColor: .secondarySystemBackground)))
+#endif
     }
 
     /// Resolved file icons keyed by path — a file's icon is stable, so this
     /// avoids a disk stat + NSWorkspace icon fetch on every SwiftUI render
     /// (which re-runs on each progress publish while a download is active).
-    @MainActor private static var iconCache: [String: NSImage] = [:]
+    @MainActor private static var iconCache: [String: PlatformImage] = [:]
 
-    @MainActor private var iconImage: NSImage {
+    private var iconView: some View {
+        #if canImport(AppKit)
+        Image(nsImage: iconImage).resizable()
+        #else
+        Image(uiImage: iconImage).resizable()
+        #endif
+    }
+
+    @MainActor private var iconImage: PlatformImage {
         if let destination = item.destination, FileManager.default.fileExists(atPath: destination.path) {
             let path = destination.path
             if let cached = Self.iconCache[path] { return cached }
+#if canImport(AppKit)
             let icon = NSWorkspace.shared.icon(forFile: path)
+#else
+            // iOS has no per-file icon service; the document glyph is the honest stand-in.
+            let icon = PlatformImage(systemName: "arrow.down.doc", withConfiguration: nil) ?? PlatformImage()
+#endif
             Self.iconCache[path] = icon
             return icon
         }
+#if canImport(AppKit)
         return NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil) ?? NSImage()
+#else
+        return PlatformImage(systemName: "arrow.down.doc", withConfiguration: nil) ?? PlatformImage()
+#endif
     }
 
     @ViewBuilder private var subtitle: some View {
@@ -182,11 +204,19 @@ private struct DownloadRowView: View {
 
     private func open() {
         guard let destination = item.destination else { return }
+#if canImport(AppKit)
         NSWorkspace.shared.open(destination)
+#else
+        // iOS: downloads live in the app's sandbox; nothing to hand off yet.
+#endif
     }
 
     private func reveal() {
         guard let destination = item.destination else { return }
+#if canImport(AppKit)
         NSWorkspace.shared.activateFileViewerSelecting([destination])
+#else
+        // iOS: no Finder to reveal in; the Files picker wiring is a follow-up.
+#endif
     }
 }

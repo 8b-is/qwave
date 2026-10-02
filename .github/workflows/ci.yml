@@ -188,6 +188,45 @@ jobs:
           path: Qwave-v${{ steps.locate.outputs.version }}-unsigned.zip
           retention-days: 14
 
+  # The iPhone lane: the same sovereign core, iOS 15 floor (iPhone 13).
+  # Builds unsigned for the iOS Simulator — the device archive needs a
+  # signing team, which lives in the release lane, not CI.
+  ios-build:
+    name: Build QwaveIOS.app (unsigned, iOS Simulator)
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 30
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Pin Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.4.app
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Cache SPM checkouts
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4
+        with:
+          path: Packages/QwaveKit/.build
+          key: ${{ runner.os }}-spm-qwavekit-ios-${{ hashFiles('Packages/QwaveKit/Package.resolved') }}
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build (unsigned, iOS Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Qwave.xcodeproj \
+            -scheme QwaveIOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY= \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            build | xcbeautify
+
   # Report-only by design: a dead-code scanner that fails the build on day
   # one gets disabled on day two. Findings land in the job log for triage;
   # the tuned config + triage record live in Packages/QwaveKit/.periphery.yml.

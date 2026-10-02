@@ -54,7 +54,9 @@ public enum ArticleExtractor {
         // a slow first layout).
         let deadline = Date().addingTimeInterval(15)
         while receiver.message == nil && Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(50))
+            // Nanoseconds, not Duration-based sleep: the Duration form needs
+            // iOS 16, and the floor is iPhone 13 (iOS 15).
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
         // readyState race: if the page was still loading, the script may have
         // run against a partial DOM. Wait for complete, then re-evaluate.
@@ -64,7 +66,7 @@ public enum ArticleExtractor {
             while !complete && Date() < loadDeadline {
                 let result: Any? = try? await webView.evaluateJavaScript("document.readyState")
                 complete = result as? String == "complete"
-                if !complete { try? await Task.sleep(for: .milliseconds(100)) }
+                if !complete { try? await Task.sleep(nanoseconds: 100_000_000) }
             }
             guard complete else { return nil }
             let result: Any? = try? await webView.evaluateJavaScript(source)

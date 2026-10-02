@@ -287,6 +287,39 @@ targets:
         keychain-access-groups:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
 
+  # The iPhone lane: the same sovereign core (WebKit + QwaveKit shields,
+  # containers, feature flags) in a SwiftUI shell. Minimum device: iPhone 13
+  # (iOS 15). No AppKit, no VPN system extension, no Sparkle — those are the
+  # desktop lanes; the VPN/autofill iOS extensions are follow-ups.
+  QwaveIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Sources/QwaveIOS
+    dependencies:
+      - package: QwaveKit
+        product: QwaveKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.ios
+        PRODUCT_NAME: Qwave
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_KEY_CFBundleDisplayName: Qwave
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    info:
+      path: Resources/QwaveIOS/Info.plist
+      properties:
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "10000"
+        LSRequiresIPhoneOS: true
+
 schemes:
   Qwave:
     build:
@@ -302,6 +335,14 @@ schemes:
     build:
       targets:
         QwaveMCP: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  QwaveIOS:
+    build:
+      targets:
+        QwaveIOS: all
     run:
       config: Debug
     archive:

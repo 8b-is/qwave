@@ -78,14 +78,20 @@ public final class ContainerRegistry: ObservableObject {
     public func deleteProfile(id: UUID) async {
         profiles.removeAll { $0.id == id }
         save()
-        do {
-            try await WKWebsiteDataStore.remove(forIdentifier: id)
-            QwaveLog.browser.info("Removed data store for container \(id, privacy: .public)")
-        } catch {
-            // A store that was never instantiated has nothing on disk; that
-            // surfaces as an error here and is fine to ignore.
-            QwaveLog.browser.info(
-                "Data store removal for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        if #available(iOS 17.0, macOS 14.0, *) {
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: id)
+                QwaveLog.browser.info("Removed data store for container \(id, privacy: .public)")
+            } catch {
+                // A store that was never instantiated has nothing on disk; that
+                // surfaces as an error here and is fine to ignore.
+                QwaveLog.browser.info(
+                    "Data store removal for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        } else {
+            // Identifier-backed stores do not exist on iOS 15/16: there is
+            // nothing on disk to remove.
+            QwaveLog.browser.info("Data store removal for \(id, privacy: .public): not supported below iOS 17")
         }
     }
 
@@ -93,7 +99,9 @@ public final class ContainerRegistry: ObservableObject {
     /// - nil profile → the shared default store.
     /// - ephemeral profile (or `isEphemeral` flag) → a fresh non-persistent
     ///   store per call, so every burner tab is its own universe.
-    /// - persistent profile → the identifier-backed isolated store.
+    /// - persistent profile → the identifier-backed isolated store, where the
+    ///   OS provides it (iOS 17+); below that, the default store, with the
+    ///   degradation logged rather than hidden.
     public func dataStore(for profileID: UUID?) -> WKWebsiteDataStore {
         guard let profileID else { return .default() }
         if profileID == Self.ephemeralProfileID {
@@ -103,7 +111,11 @@ public final class ContainerRegistry: ObservableObject {
         if profile.isEphemeral {
             return .nonPersistent()
         }
-        return WKWebsiteDataStore(forIdentifier: profile.id)
+        if #available(iOS 17.0, macOS 14.0, *) {
+            return WKWebsiteDataStore(forIdentifier: profile.id)
+        }
+        QwaveLog.browser.info("Identifier-backed stores need iOS 17; profile \(profileID, privacy: .public) shares the default store")
+        return .default()
     }
 
     private func save() {

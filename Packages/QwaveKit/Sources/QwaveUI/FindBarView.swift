@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import AppKit
 
 /// In-page find bar: search field + previous/next/done. Toggled by Cmd-F.
@@ -90,3 +91,5 @@ public final class FindBarView: NSView {
         onClose?()
     }
 }
+
+#endif

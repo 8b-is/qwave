@@ -10,8 +10,10 @@
 
 ![Qwave hero](docs/assets/hero-v2.jpg)
 
-Qwave is an open-source, WebKit-native macOS browser for people who want
+Qwave is an open-source, WebKit-native browser for people who want
 stronger boundaries around browsing data without giving up the system engine.
+It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
+sharing one sovereign core between the two lanes.
 Part of the **[8b.IS Ecosystem](https://8b.is)** and documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
 It combines per-container storage universes, native content shields, tab
 hibernation, an optional Mullvad WireGuard tunnel, a post-quantum negotiation
@@ -331,10 +333,11 @@ the exact graph, isolation rules, data flow, and test boundaries.
 
 ### Requirements
 
-- macOS 14 or newer
+- macOS 14 or newer (desktop lane)
+- iPhone with iOS 15 or newer (iPhone 13 minimum; phone lane)
 - Xcode 16+ (the package uses Swift 6 language mode)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- Go and Zig for the packet-tunnel pre-build steps
+- Go and Zig for the packet-tunnel pre-build steps (macOS lane only)
 
 ### Package tests
 
@@ -354,12 +357,24 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGN_IDENTITY= \
   build
+
+# the iPhone lane (iOS 15 floor, iPhone 13 minimum):
+xcodebuild \
+  -project Qwave.xcodeproj \
+  -scheme QwaveIOS \
+  -configuration Release \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY= \
+  build
 ```
 
 `project.yml` is the source of truth. Never hand-edit the generated
 `Qwave.xcodeproj`. VPN activation requires the signing and entitlement setup in
 [docs/SIGNING.md](docs/SIGNING.md). Toolchain pinning lives in
-[docs/PINNING.md](docs/PINNING.md).
+[docs/PINNING.md](docs/PINNING.md). The iPhone lane ships the same WebKit +
+shields core in a SwiftUI shell (`Sources/QwaveIOS`); the VPN and autofill
+extensions are macOS lanes for now.
 
 ## Swift 6 engineering rules
 

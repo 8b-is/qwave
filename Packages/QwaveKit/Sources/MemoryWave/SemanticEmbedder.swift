@@ -79,13 +79,17 @@ public actor SemanticEmbedder {
 
     private var cache: [Data: SemanticVector] = [:]
     private var state: State = .untried
+    #if canImport(NaturalLanguage)
+        // Type-erased: NLContextualEmbedding is iOS 17+, so it cannot be a
+        // stored property's declared type on the iOS 15 deployment target.
+        // The cast back happens inside the @available model() accessor.
+        private var embedding: Any?
+    #endif
 
     private enum State {
         case untried
         case unavailable
-        #if canImport(NaturalLanguage)
-            case ready(NLContextualEmbedding)
-        #endif
+        case ready
     }
 
     /// A normalised embedding for `text`, or `nil` when the on-device model is
@@ -95,7 +99,11 @@ public actor SemanticEmbedder {
         guard !trimmed.isEmpty else { return nil }
         let key = Data(SHA256.hash(data: Data(trimmed.utf8)))
         if let cached = cache[key] { return cached }
-        guard let vector = compute(trimmed) else { return nil }
+        #if canImport(NaturalLanguage)
+            guard #available(iOS 17.0, macOS 14.0, *), let vector = compute(trimmed) else { return nil }
+        #else
+            guard let vector = compute(trimmed) else { return nil }
+        #endif
         cache[key] = vector
         return vector
     }
@@ -104,38 +112,44 @@ public actor SemanticEmbedder {
     /// this lazily loads the model on first call.
     public var isAvailable: Bool {
         #if canImport(NaturalLanguage)
-            return model() != nil
+            if #available(iOS 17.0, macOS 14.0, *) {
+                return model() != nil
+            }
+            return false
         #else
             return false
         #endif
     }
 
     #if canImport(NaturalLanguage)
+        @available(iOS 17.0, macOS 14.0, *)
         private func model() -> NLContextualEmbedding? {
             switch state {
-            case .ready(let embedding):
-                return embedding
+            case .ready:
+                return embedding as? NLContextualEmbedding
             case .unavailable:
                 return nil
             case .untried:
                 guard
-                    let embedding = NLContextualEmbedding(language: .english),
-                    embedding.hasAvailableAssets
+                    let model = NLContextualEmbedding(language: .english),
+                    model.hasAvailableAssets
                 else {
                     state = .unavailable
                     return nil
                 }
                 do {
-                    try embedding.load()
+                    try model.load()
                 } catch {
                     state = .unavailable
                     return nil
                 }
-                state = .ready(embedding)
-                return embedding
+                state = .ready
+                embedding = model
+                return model
             }
         }
 
+        @available(iOS 17.0, macOS 14.0, *)
         private func compute(_ text: String) -> SemanticVector? {
             guard let embedding = model() else { return nil }
             guard let result = try? embedding.embeddingResult(for: text, language: nil) else {

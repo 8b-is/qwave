@@ -49,7 +49,9 @@ public final class WebViewFactory {
         configuration.setURLSchemeHandler(QwaveSchemeHandler(), forURLScheme: QwaveSchemeHandler.scheme)
 
         let preferences = configuration.preferences
-        preferences.isElementFullscreenEnabled = true
+        if #available(iOS 15.4, macOS 12.3, *) {
+            preferences.isElementFullscreenEnabled = true
+        }
         preferences.isFraudulentWebsiteWarningEnabled = true
         #if os(macOS)
             preferences.tabFocusesLinks = false
@@ -66,7 +68,9 @@ public final class WebViewFactory {
             webView.allowsMagnification = true
         #endif
         webView.allowsBackForwardNavigationGestures = true
-        webView.isInspectable = true
+        if #available(iOS 16.4, macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         webView.translatesAutoresizingMaskIntoConstraints = false
 
         tab.attach(webView: webView)
