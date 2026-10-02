@@ -119,6 +119,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         window.tabbingMode = .disallowed
+        // HTML5 fullscreen (YouTube etc.) rides WebKit's fullscreen window;
+        // without .fullScreenPrimary the video element can never enter the
+        // fullscreen space and pages fall back to a black overlay.
+        window.collectionBehavior.insert(.fullScreenPrimary)
         window.center()
         if isPrivate {
             // No frame autosave: private geometry must not resurrect into
