@@ -1,12 +1,15 @@
 import Foundation
 
+/// The search engines Qwave offers.
+///
+/// Deliberately short: Ecosia (the default — trees, privacy, green hosting)
+/// and DuckDuckGo are the only engines with a vetted, keyless autocomplete
+/// endpoint, and Qwave will not ship an engine whose remote suggestions it
+/// cannot fetch honestly. Adding an engine means vetting its suggestion
+/// endpoint, allowlisting it in both Category-A lists, and wiring a provider.
 public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable {
     case ecosia
     case duckduckgo
-    case brave
-    case startpage
-    case google
-    case kagi
 
     public var id: String { rawValue }
 
@@ -14,10 +17,6 @@ public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable 
         switch self {
         case .ecosia: return "Ecosia"
         case .duckduckgo: return "DuckDuckGo"
-        case .brave: return "Brave Search"
-        case .startpage: return "Startpage"
-        case .google: return "Google"
-        case .kagi: return "Kagi"
         }
     }
 
@@ -28,10 +27,6 @@ public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable 
         switch self {
         case .ecosia: return URL(string: "https://www.ecosia.org/search?q=\(escaped)")
         case .duckduckgo: return URL(string: "https://duckduckgo.com/?q=\(escaped)")
-        case .brave: return URL(string: "https://search.brave.com/search?q=\(escaped)")
-        case .startpage: return URL(string: "https://www.startpage.com/sp/search?query=\(escaped)")
-        case .google: return URL(string: "https://www.google.com/search?q=\(escaped)")
-        case .kagi: return URL(string: "https://kagi.com/search?q=\(escaped)")
         }
     }
 }

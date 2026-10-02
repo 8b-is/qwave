@@ -3,6 +3,7 @@ import AppKit
 import WebKit
 import BrowserCore
 import Persistence
+import SovereignCore
 import QwaveSupport
 import Shields
 import WebExtensions

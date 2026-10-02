@@ -10,7 +10,9 @@ import Persistence
 @MainActor
 final class ThemeController {
     private let settings: SettingsStore
-    private var observer: NSObjectProtocol?
+    /// NotificationCenter token; only touched on the main actor except the
+    /// teardown in `deinit`, which cannot be isolated.
+    nonisolated(unsafe) private var observer: NSObjectProtocol?
 
     init(settings: SettingsStore) {
         self.settings = settings

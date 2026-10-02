@@ -56,9 +56,9 @@ private struct GeneralPane: View {
                 "When off (the default), omnibox suggestions come only from your "
                     + "on-device history, bookmarks, and open tabs \u{2014} nothing is sent "
                     + "anywhere. When on, each keystroke is sent to your search engine to "
-                    + "fetch autocomplete results. Ecosia and DuckDuckGo are the only "
-                    + "engines with a vetted autocomplete endpoint; for the others, "
-                    + "remote suggestions stay unavailable."
+                    + "fetch autocomplete results. Both engines — Ecosia and DuckDuckGo — "
+                    + "have a vetted autocomplete endpoint; they are the only engines Qwave "
+                    + "ships, for exactly that reason."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

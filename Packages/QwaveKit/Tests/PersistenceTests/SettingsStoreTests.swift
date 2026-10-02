@@ -11,7 +11,7 @@ final class SettingsStoreTests: XCTestCase {
 
         let homepage = URL(string: "https://example.com/")!
         let store = SettingsStore(defaults: defaults)
-        store.searchEngine = .kagi
+        store.searchEngine = .duckduckgo
         store.httpsFirstEnabled = false
         store.shieldsEnabledByDefault = false
         store.hibernationTimeout = 90
@@ -19,7 +19,7 @@ final class SettingsStoreTests: XCTestCase {
         store.restoreSessionOnLaunch = false
 
         let reloaded = SettingsStore(defaults: defaults)
-        XCTAssertEqual(reloaded.searchEngine, .kagi)
+        XCTAssertEqual(reloaded.searchEngine, .duckduckgo)
         XCTAssertFalse(reloaded.httpsFirstEnabled)
         XCTAssertFalse(reloaded.shieldsEnabledByDefault)
         XCTAssertEqual(reloaded.hibernationTimeout, 90)

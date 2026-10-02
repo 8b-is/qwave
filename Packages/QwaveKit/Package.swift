@@ -23,7 +23,7 @@ let package = Package(
             name: "QwaveKit",
             targets: [
                 "BrowserCore", "Shields", "FeatureFlags", "Persistence", "QwaveSupport", "WebExtensions",
-                "URLIdentity", "MemoryWave", "Summarize", "QwaveUI",
+                "URLIdentity", "MemoryWave", "Summarize", "QwaveUI", "SovereignCore",
             ]
         ),
         // Slim product linked by BOTH the app and the AutoFill Credential
@@ -97,6 +97,23 @@ let package = Package(
             swiftSettings: swift6
         ),
         .target(name: "FeatureFlags", dependencies: ["QwaveSupport"], swiftSettings: swift6),
+        // The sovereign core's C ABI: the header (symlinked from core/include)
+        // plus weak stub definitions. App targets link the real Rust
+        // staticlib, whose strong symbols always win; standalone package
+        // builds (swift test, qwave-mcp) link the stubs instead of failing.
+        .target(
+            name: "RustCoreABI",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include")
+            ]
+        ),
+        // The Swift face over the ABI — shared by the macOS and iPhone lanes.
+        .target(
+            name: "SovereignCore",
+            dependencies: ["RustCoreABI"],
+            swiftSettings: swift6
+        ),
         // Website-login + passkey value types and keychain store. No crypto, no
         // VPN, no other QwaveKit module — see Sources/WebCredentials.
         .target(name: "WebCredentials", swiftSettings: swift6),
@@ -165,6 +182,7 @@ let package = Package(
             name: "QwaveSupportTests",
             dependencies: [
                 "QwaveSupport",
+                "SovereignCore",
                 .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: swift6

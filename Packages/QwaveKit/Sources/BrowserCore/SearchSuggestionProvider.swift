@@ -151,27 +151,24 @@ public final class EcosiaSuggestionProvider: SearchSuggestionProviding, @uncheck
 /// Maps the user's chosen search engine onto a suggestion provider and the
 /// host its requests leave the machine for.
 ///
-/// Only Ecosia and DuckDuckGo have a vetted, keyless autocomplete endpoint;
-/// the other engines return nil, and remote suggestions are simply absent
-/// for them (on-device suggestions keep working). No engine gets a
-/// "just use DuckDuckGo anyway" fallback: sending keystrokes to a *different*
-/// engine than the one the user picked would be its own kind of privacy lie.
+/// Both engines Qwave ships — Ecosia and DuckDuckGo — have a vetted, keyless
+/// autocomplete endpoint, so the factory always returns a provider. The
+/// optional return survives as the honest API shape: a future engine without
+/// an endpoint must be able to say "no remote suggestions", never "use
+/// another engine's endpoint instead".
 public enum SearchSuggestionProviderFactory {
     public static func provider(for engine: SearchEngine) -> (any SearchSuggestionProviding)? {
         switch engine {
         case .ecosia: return EcosiaSuggestionProvider()
         case .duckduckgo: return DuckDuckGoSuggestionProvider()
-        case .brave, .startpage, .google, .kagi: return nil
         }
     }
 
-    /// The Category-A host remote suggestions for this engine use, or nil
-    /// when the engine has no suggestion endpoint.
+    /// The Category-A host remote suggestions for this engine use.
     public static func egressHost(for engine: SearchEngine) -> String? {
         switch engine {
         case .ecosia: return EcosiaSuggestionProvider.egressHost
         case .duckduckgo: return DuckDuckGoSuggestionProvider.egressHost
-        case .brave, .startpage, .google, .kagi: return nil
         }
     }
 }

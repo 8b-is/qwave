@@ -5,6 +5,37 @@ All notable changes to Qwave will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **The iPhone lane is now a real browser lane, with the sovereign core in
+  it.** `QwaveIOS` links the same Rust staticlib the desktop app links —
+  force-loaded, so mem8 wave validation, the Phoenix protocol, the egress
+  allowlist, and the telemetry scrubber are all present in the iOS binary,
+  spoken through one shared `SovereignCore` module in QwaveKit (the
+  `RustCoreABI` C target carries the header plus weak safe-fail stubs for
+  standalone package builds). The concrete iOS decision path: engine-driven
+  search suggestions are gated by `RustCore.egressPermits` exactly like the
+  desktop omnibox.
+- **iOS battery policy.** Low Power Mode and thermal state collapse into
+  normal / conserve / critical tiers: autoplay requires a gesture when
+  conserving, playing media is paused on critical, and background tabs
+  beyond a tier-dependent cap (12/8/5) are evicted.
+- **iOS UX, native-first.** Pull-to-refresh, hardware keyboard shortcuts,
+  the share sheet, haptics on tab open/close, VoiceOver labels, live tab
+  titles via KVO, an on-device + opt-in remote suggestion list, and a
+  settings sheet (engine, suggestions, theme, zoom, reduce motion).
+- **The theme now reaches the phone**: the iOS lane honors the same
+  ThemeMode (system/light/dark) through the SwiftUI color scheme.
+- **The shared core build script** (`core/build-apple.sh`) maps Xcode's
+  ARCHS onto cargo targets per platform, lipos the slices, and compiles
+  safe-fail C stubs for the one slice rustc dropped
+  (x86_64-apple-ios-sim since rustc 1.99), so the fat staticlib still
+  carries every architecture Xcode links.
+
+### Changed
+- **Only Ecosia and DuckDuckGo.** Brave, Startpage, Google, and Kagi are
+  gone from the engine list: they had no vetted keyless autocomplete
+  endpoint, and Qwave does not ship an engine whose suggestions it cannot
+  fetch honestly. Both remaining engines have providers, so the factory is
+  exhaustive over the enum.
 - **Zig packet filter is on the WireGuard data plane.** The Go backend owns
   the utun, so Swift could never hand it a packet. A Qwave overlay
   (`qwave_filter_tun.go`) wraps the tun `Device` and calls `qpacket_filter`

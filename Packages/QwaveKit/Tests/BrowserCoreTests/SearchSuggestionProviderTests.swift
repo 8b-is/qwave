@@ -107,14 +107,14 @@ final class SearchSuggestionProviderTests: XCTestCase {
         XCTAssertTrue(queryItems.contains(URLQueryItem(name: "type", value: "list")))
     }
 
-    /// Only engines with a vetted keyless endpoint get a provider; the rest
-    /// get nil, and no engine is silently mapped onto another engine's
-    /// endpoint.
+    /// Every engine Qwave ships has a provider — the factory is exhaustive
+    /// over the enum, so a newly added engine fails to compile here until
+    /// its provider (or an honest nil) is wired.
     func testFactoryMapsEnginesToProviders() {
         XCTAssertTrue(SearchSuggestionProviderFactory.provider(for: .ecosia) is EcosiaSuggestionProvider)
         XCTAssertTrue(SearchSuggestionProviderFactory.provider(for: .duckduckgo) is DuckDuckGoSuggestionProvider)
-        for engine in [SearchEngine.brave, .startpage, .google, .kagi] {
-            XCTAssertNil(SearchSuggestionProviderFactory.provider(for: engine), "\(engine) has no vetted endpoint")
+        for engine in SearchEngine.allCases {
+            XCTAssertNotNil(SearchSuggestionProviderFactory.provider(for: engine), "\(engine) has no provider")
         }
     }
 
@@ -122,8 +122,8 @@ final class SearchSuggestionProviderTests: XCTestCase {
     func testFactoryMapsEnginesToEgressHosts() {
         XCTAssertEqual(SearchSuggestionProviderFactory.egressHost(for: .ecosia), "ac.ecosia.org")
         XCTAssertEqual(SearchSuggestionProviderFactory.egressHost(for: .duckduckgo), "duckduckgo.com")
-        for engine in [SearchEngine.brave, .startpage, .google, .kagi] {
-            XCTAssertNil(SearchSuggestionProviderFactory.egressHost(for: engine))
+        for engine in SearchEngine.allCases {
+            XCTAssertNotNil(SearchSuggestionProviderFactory.egressHost(for: engine))
         }
     }
 

@@ -103,6 +103,14 @@ own network activity auditable.
   post-quantum / `DeviceKeyManager` stack.
 - **Spaces** — the container universes surface as first-class Spaces with a vertical
   tab sidebar; a system Focus filter can switch the active Space and tighten shields.
+- **The iPhone lane runs the same sovereign core** — `QwaveIOS` links the same
+  Rust staticlib (mem8 waves, Phoenix, egress, telemetry) through the shared
+  `SovereignCore` module, with a battery policy that reacts to Low Power Mode
+  and thermal pressure, and native iOS UX (pull-to-refresh, keyboard
+  shortcuts, share sheet, haptics).
+- **Two search engines, both honest** — Ecosia (the default) and DuckDuckGo:
+  the only engines with a vetted keyless autocomplete endpoint. Qwave will
+  not ship an engine whose suggestions it cannot fetch without a key.
 
 ## 🔬 How it works — concept diagrams
 
@@ -205,11 +213,13 @@ Explicit command only: extract, generate, render inert text. See
 
 The sovereign decisions — which hosts Qwave's own code may contact, and
 whether a MEM8 wave frame is intact — live in `core/`, a zero-dependency Rust
-crate. It compiles to a staticlib, is linked into the app, and is spoken
-through a small C ABI (`core/include/qwave_core.h`) from the Swift
-bridge in `Sources/QwaveApp/RustCoreBridge.swift`. The egress decision the
-omnibox makes before sending a suggestion query is the Rust core's, not
-Swift's.
+crate. It compiles to a staticlib per Apple platform (`core/build-apple.sh`
+maps Xcode's ARCHS onto cargo targets and lipos the slices), is force-loaded
+into both app targets so every decision surface is present in every binary,
+and is spoken through a small C ABI (`core/include/qwave_core.h`) from the
+shared `SovereignCore` module in QwaveKit (`Packages/QwaveKit/Sources/SovereignCore`).
+The egress decision the omnibox makes before sending a suggestion query is
+the Rust core's, not Swift's — on the iPhone exactly as on the Mac.
 
 ```text
  core/  (Rust, zero deps)
@@ -325,12 +335,18 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
 │   ├── WebCredentials              keychain-only passwords + passkeys (AutoFill)
+│   ├── SovereignCore               the Swift face over the core's C ABI
 │   └── QwaveSupport                logging, keychain, egress guard
 └── core/                          the Rust sovereign core (staticlib, C ABI)
     ├── egress.rs                   the Category-A allowlist
     ├── wave.rs                     the 79-byte MEM8 WaveInt frame
     ├── phoenix.rs                  the Phoenix protocol (marine gate…verdict)
-    └── telemetry.rs                the privacy scrubber + histogram aggregator
+    ├── telemetry.rs                the privacy scrubber + histogram aggregator
+    └── build-apple.sh              ARCHS → cargo targets → lipo (both lanes)
+QwaveIOS.app                      SwiftUI shell, iOS 15+ (iPhone 13 minimum)
+├── the same QwaveKit + core        one SovereignCore, one decision surface
+├── battery policy                  Low Power / thermal → conserve / critical
+└── native UX                       refresh, shortcuts, share sheet, haptics
 ```
 
 Dependency direction is one-way (app → QwaveKit; feature modules never reach
@@ -577,8 +593,9 @@ import with Spotlight entities, container-bound Focus filters with a Spaces
 sidebar, keychain-only AutoFill (passwords + passkeys), a zero-egress Safe
 Browsing host-set (shipped as a sample list — see
 [docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a real feed),
-and the iPhone lane (the shared QwaveKit package compiles for iOS; the
-SwiftUI shell ships in `Sources/QwaveIOS`).
+and the iPhone lane — now a full lane: the same WebKit + shields + Rust core
+(mem8/Phoenix/egress/telemetry), a Low Power / thermal battery policy, and
+native iOS UX, at the iOS 15 floor on an iPhone 13.
 
 ## ⚖ License
 

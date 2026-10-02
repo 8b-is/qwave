@@ -48,77 +48,20 @@ targets:
         # scheme sets this to nightly (every experimental feature ON).
         QWAVE_CHANNEL: stable
         # The sovereign core: a zero-dependency Rust staticlib, built by the
-        # pre-build script below and linked here. The Swift bridge speaks its
-        # C ABI (core/include/qwave_core.h → RustCoreBridge.swift).
-        SWIFT_OBJC_BRIDGING_HEADER: core/include/qwave_core.h
-        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/release"
-        OTHER_LDFLAGS: "$(inherited) -lqwave_core"
+        # pre-build script below and force-loaded so EVERY decision surface —
+        # egress, mem8 waves, Phoenix, telemetry — is present in the binary,
+        # not just the members some call site happened to reference. The
+        # Swift bridge speaks its C ABI through QwaveKit's SovereignCore
+        # module (RustCoreABI carries the header + weak stubs).
+        OTHER_LDFLAGS: "$(inherited) -force_load $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a"
     preBuildScripts:
       - name: Build the Rust core (cargo)
         shell: /bin/bash
         script: |
           set -euo pipefail
-          if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
-            echo "error: cargo not found — the sovereign core needs Rust (rustup.rs)" >&2
-            exit 1
-          fi
-          # rustup's shim first when present (its std targets are what
-          # cross-arch builds resolve against); Homebrew cargo is the fallback.
-          export PATH="$HOME/.cargo/bin:$PATH"
-          export MACOSX_DEPLOYMENT_TARGET=14.0
-          # Nightly links the mem|16-10 sovereign library (AGPL-3.0-only);
-          # stable must not — that keeps the shipped binary's MIT posture.
-          # A plain string, not an array: this script runs under macOS bash
-          # 3.2, where expanding an empty array trips `set -u`.
-          FEATURE_ARGS=""
-          if [ "${QWAVE_CHANNEL:-stable}" = "nightly" ]; then
-            FEATURE_ARGS="--features nightly"
-          fi
-          # Map the architectures Xcode wants (ARCHS) onto cargo targets and
-          # merge the slices with lipo. A Release build for
-          # `-destination platform=macOS` is universal, and a single-arch
-          # staticlib fails the other slice's link (the install-nightly.sh
-          # failure this guards against).
-          CARGO_TARGETS=()
-          for arch in ${ARCHS}; do
-            case "$arch" in
-              arm64) CARGO_TARGETS+=(aarch64-apple-darwin) ;;
-              x86_64) CARGO_TARGETS+=(x86_64-apple-darwin) ;;
-            esac
-          done
-          if [ "${#CARGO_TARGETS[@]}" -eq 0 ]; then
-            echo "error: no supported architecture in ARCHS='${ARCHS}'" >&2
-            exit 1
-          fi
-          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
-          for target in "${CARGO_TARGETS[@]}"; do
-            if [ "$target" = "$HOST_TRIPLE" ]; then
-              continue # the host std is always present
-            fi
-            if ! rustup target list --installed 2>/dev/null | grep -qx "$target"; then
-              echo "error: rust target $target is not installed — run: rustup target add $target" >&2
-              exit 1
-            fi
-          done
-          echo "building qwave-core for ${CARGO_TARGETS[*]} (${QWAVE_CHANNEL:-stable} channel)"
-          for target in "${CARGO_TARGETS[@]}"; do
-            cargo build --release $FEATURE_ARGS \
-              --target "$target" \
-              --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
-          done
-          LIPO_IN=()
-          for target in "${CARGO_TARGETS[@]}"; do
-            LIPO_IN+=("${PROJECT_DIR}/core/target/${target}/release/libqwave_core.a")
-          done
-          mkdir -p "${PROJECT_DIR}/core/target/release"
-          if [ "${#LIPO_IN[@]}" -eq 1 ]; then
-            cp "${LIPO_IN[0]}" "${PROJECT_DIR}/core/target/release/libqwave_core.a"
-          else
-            xcrun lipo -create "${LIPO_IN[@]}" \
-              -output "${PROJECT_DIR}/core/target/release/libqwave_core.a"
-          fi
+          bash "${PROJECT_DIR}/core/build-apple.sh"
         outputFiles:
-          - $(SRCROOT)/core/target/release/libqwave_core.a
+          - $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a
     info:
       path: Resources/Qwave/Info.plist
       properties:
@@ -251,9 +194,9 @@ targets:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
 
   # The iPhone lane: the same sovereign core (WebKit + QwaveKit shields,
-  # containers, feature flags) in a SwiftUI shell. Minimum device: iPhone 13
-  # (iOS 15). No AppKit, no VPN system extension, no Sparkle — those are the
-  # desktop lanes; the VPN/autofill iOS extensions are follow-ups.
+  # containers, feature flags, AND the Rust core — mem8, Phoenix, egress,
+  # telemetry) in a SwiftUI shell. Minimum device: iPhone 13 (iOS 15).
+  # No AppKit, no Sparkle — those are desktop lanes.
   QwaveIOS:
     type: application
     platform: iOS
@@ -263,10 +206,25 @@ targets:
     dependencies:
       - package: QwaveKit
         product: QwaveKit
+    preBuildScripts:
+      - name: Build the Rust core for iOS (cargo)
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          bash "${PROJECT_DIR}/core/build-apple.sh"
+        outputFiles:
+          - $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.ios
         PRODUCT_NAME: Qwave
+        QWAVE_CHANNEL: stable
+        # The same sovereign core the desktop app links, force-loaded: every
+        # decision surface (egress, mem8, Phoenix, telemetry) is present in
+        # the binary. The strong Rust definitions replace the RustCoreABI
+        # weak stubs at link time.
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)"
+        OTHER_LDFLAGS: "$(inherited) -force_load $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a"
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"

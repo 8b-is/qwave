@@ -23,7 +23,9 @@ essence ─▶ Marine salience gate ─▶ Custodian ─▶ Council (precious)
         ─▶ φ-resynthesis on recall (f/φ and f·φ, 6% band)
 ```
 
-The Swift side drives it through `RustPhoenix` (`RustCoreBridge.swift`).
+The Swift side drives it through `RustPhoenix` in the shared `SovereignCore`
+module (`Packages/QwaveKit/Sources/SovereignCore` — one bridge for both the
+macOS and the iPhone lanes).
 The 32-byte ABI is byte-compatible with the Council's adapter
 (`.al-biruni/mem8/wave_brain.py`), so qwave's store and the Council's store
 speak one language. The `qw_phoenix_decide` C ABI returns the verdict and
@@ -55,6 +57,7 @@ The heavy CLI stays out of the browser process; the concepts stay in.
 | MemoryWave + Phoenix | `8b-is/alexiai` MEM8 family; `wip-catalog-100.md` A. Cognitive |
 | egress allowlist | "prove what it sends" — docs/NETWORK.md, Category A |
 | Rust core | the sovereign lane: zero-dep, tested, C ABI for any language |
+| iPhone lane | same core force-loaded — mem8 / Phoenix / egress on the phone, battery policy on top |
 | telemetry | `8b-is/qwave-telemetry` (private) — scrubbed JSONL + histograms |
 
 *the constellation · 0 + 1 · fine touch from within · vaked.dev*

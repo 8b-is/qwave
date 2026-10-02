@@ -8,7 +8,7 @@ boundaries, and optional network services.
 ## Runtime shape
 
 ```text
-Qwave.app
+Qwave.app (macOS)
 ├── AppKit shell + SwiftUI settings
 ├── BrowserEnvironment (@MainActor service graph)
 ├── QwaveKit (local Swift package)
@@ -18,16 +18,21 @@ Qwave.app
 │   ├── MemoryWave        encrypted memory substrate and providers
 │   ├── Summarize         on-device page summarisation (FoundationModels, availability-gated)
 │   ├── WebCredentials    login/passkey value types, keychain store, WebAuthn RP-ID policy
-│   ├── VPNKit            Mullvad API, relays, tunnel lifecycle
-│   ├── PostQuantum        Keccak, ML-KEM-768, hybrid (PQ+classical) KEM
 │   ├── WebExtensions      Manifest V3 registry and browser.* bridge
 │   ├── URLIdentity        WHATWG-compatible host identity
 │   ├── FeatureFlags       guarded WebKit SPI access
+│   ├── SovereignCore      the Swift face over the Rust core's C ABI
 │   └── QwaveSupport       logging, keychain, egress allowlist
-├── PacketTunnel.systemextension
-│   └── WireGuardKit + NetworkExtension provider
-└── CredentialProvider.appex
-    └── ASCredentialProviderViewController (AutoFill UI) + WebCredentials
+└── core/ (Rust, zero deps)  egress, mem8 waves, Phoenix, telemetry
+    └── build-apple.sh     ARCHS → cargo targets → lipo (per platform)
+
+QwaveIOS.app (iPhone, iOS 15+)
+├── SwiftUI shell: BrowserView, BrowserViewModel, IOSEnergyPolicy, settings
+├── the same QwaveKit + the same core — one decision surface, two lanes
+└── battery: Low Power / thermal tiers, tab eviction, media suspension
+
+CredentialProvider.appex
+└── ASCredentialProviderViewController (AutoFill UI) + WebCredentials
 ```
 
 `Packages/QwaveKit/Package.swift` and `project.yml` are the source of truth.
@@ -42,8 +47,7 @@ QwaveApp
    ├── BrowserCore ──┬── Shields ── Persistence ── QwaveSupport
    │                 ├── FeatureFlags
    │                 └── URLIdentity
-   ├── VPNKit ───────┬── PostQuantum
-   │                 └── QwaveSupport
+   ├── SovereignCore ─── RustCoreABI (C header + weak safe-fail stubs)
    ├── MemoryWave ───┬── Persistence
    │                 └── QwaveSupport
    ├── Summarize ────┬── BrowserCore
@@ -51,7 +55,8 @@ QwaveApp
    ├── WebCredentials    (no QwaveKit dependencies — Foundation + Security only)
    └── WebExtensions ─── QwaveSupport
 
-PacketTunnel ─── QwaveTunnelKit (VPNKit + QwaveSupport) ─── WireGuardKit
+QwaveIOS ──┬── BrowserCore, Shields, FeatureFlags, Persistence
+           └── SovereignCore (same C ABI, same staticlib, force-loaded)
 
 CredentialProvider ─── WebCredentials
 ```
@@ -59,6 +64,16 @@ CredentialProvider ─── WebCredentials
 `BrowserCore` is the convergence point for browser behavior: it wires tabs,
 WebKit factories, navigation, shields, and hibernation. Feature modules do not
 reach into the AppKit shell. The app supplies adapters and owns presentation.
+
+The Rust core (`core/`) is the decision layer. Both app targets force-load
+the same staticlib, so every decision surface — egress, mem8 wave validation,
+Phoenix, telemetry — is present in both binaries. `RustCoreABI` (in QwaveKit)
+carries the ABI header plus weak safe-fail stubs for standalone package
+builds (`swift test`, `qwave-mcp`), where the strong Rust definitions are
+absent; in the apps the strong symbols always win. `core/build-apple.sh` maps
+Xcode's ARCHS onto cargo targets per platform, lipos the slices, and compiles
+safe-fail C stubs (`core/stubs`) for the one slice rustc dropped
+(x86_64-apple-ios-sim since rustc 1.99).
 
 ## Isolation and data flow
 
@@ -118,8 +133,10 @@ cross-origin frame cannot drive a ceremony for an arbitrary relying party.
 `WebAuthnOriginPolicy` itself is pure (no WebKit, no URL parser, no keychain —
 unlike its module-mate `KeychainWebCredentialStore`) and returns the
 *normalized* rpID rather than a bool, so a caller cannot run the ceremony with
-a string other than the one authorised. The absent public-suffix list is a
-documented limitation in the source, not a silent gap.
+a string other than the one authorised. The ICANN section of the Mozilla
+Public Suffix List is vendored (`PublicSuffixData.swift`) so a public suffix
+itself (`co.uk` from `evil.co.uk`, `*.ck` wildcards) can never be claimed as
+an rpId.
 
 `CredentialProvider` is a macOS `app-extension` target
 (`Sources/CredentialProvider`, extension point
@@ -170,23 +187,37 @@ compatibility annotations are deliberately confined to
 `Sources/PacketTunnel/PacketTunnelProvider.swift`; they are not a license to
 weaken QwaveKit's actor contracts.
 
+## The iPhone lane
+
+The iOS lane (`Sources/QwaveIOS`) is a SwiftUI shell over the same QwaveKit
+modules and the same Rust core, at the iOS 15 floor (iPhone 13 minimum).
+
+- **One decision surface.** `SovereignCore` is shared: the engine-driven
+  suggestion gate calls `RustCore.egressPermits` on the phone exactly as the
+  desktop omnibox does. mem8 wave validation, Phoenix, and the telemetry
+  scrubber are in the binary, not just compiled in the package.
+- **Battery.** `IOSEnergyPolicy` collapses Low Power Mode + thermal state
+  into normal / conserve / critical: autoplay requires a gesture when
+  conserving, media is paused on critical, and background tabs beyond a
+  tier-dependent cap (12/8/5) are evicted, releasing their web views.
+  WebKit suspends off-screen WKWebViews itself; the policy is the part the
+  browser must decide.
+- **UX.** Native iOS mechanics: pull-to-refresh (UIRefreshControl on the web
+  view's scroll view), hardware keyboard shortcuts, the share sheet,
+  haptics, VoiceOver labels, live tab titles via KVO, and the same
+  on-device + opt-in remote suggestions the desktop shows.
+- **Settings.** A settings sheet carries the same SettingsStore: engine
+  (Ecosia default / DuckDuckGo), suggestions opt-in, ThemeMode (applied via
+  the SwiftUI color scheme), default page zoom, and reduce motion — all read
+  by the shared WebViewFactory, so a forced theme or zoom behaves the same
+  on both lanes.
+
 ## VPN and post-quantum path
 
-The app stores the Curve25519 device private key in the shared Keychain group.
-Only `TunnelSessionConfig` crosses into `providerConfiguration`; tests assert
-that it contains no key material. `TunnelManager` owns the
-`NETunnelProviderManager` lifecycle and status stream. The provider starts
-WireGuard through WireGuardKit and, when enabled, negotiates a hybrid PSK:
-
-```text
-Qwave / PacketTunnel ── ML-KEM-768 ──── PSK ──┐
-                                              ├── hybrid session ── relay
-Qwave / PacketTunnel ── Curve25519 handshake ─┘
-```
-
-If the quantum-resistant negotiation fails while enabled, the tunnel start
-fails closed instead of silently falling back to a classical-only session.
-See [docs/VPN_STAGE_B.md](VPN_STAGE_B.md) and [docs/CRYPTO_REVIEW.md](CRYPTO_REVIEW.md).
+Removed. The WireGuard/VPN layer (PacketTunnel, WireGuardKit + Go bridge,
+Zig packet filter, VPNKit, PostQuantum) left the tree — a tunnel is a
+different layer, not the browser's requirement. If it returns, it returns as
+a separate package.
 
 ## Network ownership
 
@@ -196,8 +227,9 @@ committed allowlist, and — since [#77](https://github.com/8b-is/qwave/issues/7
 `EgressGuard` (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that
 consults `EgressAllowlist.permits(host:)` at runtime and fails any request to
 a host not listed, wired into every fixed-host Qwave network client
-(`MullvadAPIClient`, the DuckDuckGo suggestion provider, Memory Wave's remote
-provider) plus, process-wide, `URLSession.shared` — and only that session. The
+(the search suggestion providers — Ecosia and DuckDuckGo — Memory Wave's
+remote provider) plus, process-wide, `URLSession.shared` — and only that
+session. The
 `URLProtocol.registerClass` in `main.swift` does **not** reach a session Qwave
 constructs, not even one built from `URLSessionConfiguration.default`
 (`QwaveSupport/EgressGuard.swift:12-24`, pinned by
