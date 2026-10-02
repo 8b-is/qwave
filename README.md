@@ -58,7 +58,7 @@ own network activity auditable.
 - [🏷 Versioning & releases](#-versioning--releases)
 - [📚 Documentation](#-documentation)
 - [🚦 Status](#-status)
-- [⚖ License](#-license)
+- [⚖ License & legal](#-license--legal)
 
 ## 🧭 What makes it different
 
@@ -533,14 +533,14 @@ project.yml              XcodeGen source of truth
 `project.yml` is the **single source of truth** for the version. Every target
 (`Qwave`, `CredentialProvider`, `QwaveIOS`) declares the same two numbers:
 
-- `CFBundleShortVersionString` — the semver, currently `2.0.1`.
+- `CFBundleShortVersionString` — the semver, currently `2.0.2`.
 - `CFBundleVersion` — `major*10000 + minor*100 + patch` (2.0.0 → `20000`).
   Sparkle compares this number, and the release workflow **fails the tag** if
   any target disagrees.
 
 The `v2.0.0` major covers the Rust-core rewrite: VPN layer removal, the
 sovereign core (`core/`), the stable/nightly channel split, and the removal
-of Go/Zig from the build. **v2.0.1 is the current release** (2026-10-03):
+of Go/Zig from the build. **v2.0.2 is the current release** (2026-10-03):
 signed, notarised, stapled, with the Sparkle appcast attached — existing
 installs update in place.
 
@@ -609,7 +609,11 @@ and the iPhone lane — now a full lane: the same WebKit + shields + Rust core
 (mem8/Phoenix/egress/telemetry), a Low Power / thermal battery policy, and
 native iOS UX, at the iOS 15 floor on an iPhone 13.
 
-## ⚖ License
+## ⚖ License & legal
 
 Qwave is released under the [MIT License](LICENSE). Copyright © 2026 8b.is /
 Peter Lodri.
+
+- [Privacy policy](PRIVACY.md) — what is stored, what leaves the device, and when
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — licenses for the vendored PSL
+  data, Sparkle, mem|16-10 (nightly only, AGPL-3.0), and the SwiftPM dependencies

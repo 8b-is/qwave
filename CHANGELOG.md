@@ -4,6 +4,24 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-10-03
+
+### Added
+- **App icons, at last.** Both lanes ship real app icons — the MEM|8 wave
+  ribbon on a deep-space gradient, rendered from one master by
+  `scripts/generate-app-icons.py` (macOS 16–512 @1x/@2x, the full iOS set,
+  plus the 1024 marketing icon). The hero image got the same mark and the
+  wordmark at 2400×1200.
+- **Legal.** `PRIVACY.md` (what is stored, what leaves the device, when) and
+  `THIRD_PARTY_NOTICES.md` (vendored PSL data MPL-2.0, Sparkle MIT,
+  mem|16-10 AGPL-3.0 nightly-only, all SwiftPM dependency licenses). The
+  README links both under License & legal.
+
+### Fixed
+- `scripts/release-nightly.sh` printed a tag-push command that could never
+  work (`git push origin nightly -f` with no local tag); it now prints
+  `git push origin HEAD:refs/tags/nightly -f` (caveman review).
+
 ## [2.0.1] — 2026-10-03
 
 ### Fixed

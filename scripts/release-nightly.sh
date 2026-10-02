@@ -62,6 +62,7 @@ SHA="$(git rev-parse --short HEAD)"
 ls -la "$out_dir" | grep -v "^total"
 echo
 echo "==> nightly $STAMP @ $SHA — publish with:"
-echo "    gh release delete nightly -y 2>/dev/null; git push origin nightly -f"
+echo "    git push origin HEAD:refs/tags/nightly -f"
+echo "    gh release delete nightly -y 2>/dev/null"
 echo "    gh release create nightly $out_dir/Qwave-nightly-${STAMP}.zip $out_dir/Qwave-nightly-${STAMP}.dmg \\"
 echo "      --prerelease --title 'Qwave nightly' --target main --notes 'rolling build of main @ $SHA ($STAMP)'"
