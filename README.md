@@ -338,7 +338,7 @@ the exact graph, isolation rules, data flow, and test boundaries.
 - iPhone with iOS 15 or newer (iPhone 13 minimum; phone lane)
 - Xcode 16+ (the package uses Swift 6 language mode)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- Go and Zig for the packet-tunnel pre-build steps (macOS lane only)
+- Rust (rustup) — the sovereign core builds a staticlib at compile time
 
 ### Package tests
 
@@ -368,14 +368,47 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGN_IDENTITY= \
   build
+### Install & update on this Mac (bleeding edge)
+
+```sh
+git clone https://github.com/8b-is/qwave.git && cd qwave
+
+# stable build into /Applications
+xcodegen generate --spec project.yml
+xcodebuild -project Qwave.xcodeproj -scheme Qwave -configuration Release   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+ditto "$(find ~/Library/Developer/Xcode/DerivedData -path '*Release/Qwave.app' -type d | head -1)" /Applications/Qwave.app
+
+# bleeding edge (nightly: every experimental WebKit feature ON) — one command:
+tools/install-nightly.sh
+
+# update to the latest main and stay bleeding edge:
+git pull && tools/install-nightly.sh
 ```
 
+The nightly channel flips all experimental WebKit features ON and links the
+mem|16-10 sovereign library; stable keeps WebKit's defaults and Qwave's MIT
+posture.
+
+### Remove a previous version
+
+```sh
+osascript -e 'tell application "Qwave" to quit'
+rm -rf /Applications/Qwave.app
+# your profile, memory, and history (delete only if you want a clean slate):
+rm -rf ~/Library/Application\ Support/Qwave
+rm -rf ~/Library/Caches/is.8b.qwave
+defaults delete is.8b.qwave 2>/dev/null || true
+```
+
+Qwave has no system extension in the current tree (the VPN layer was
+removed); nothing else lingers.
+
 `project.yml` is the source of truth. Never hand-edit the generated
-`Qwave.xcodeproj`. VPN activation requires the signing and entitlement setup in
-[docs/SIGNING.md](docs/SIGNING.md). Toolchain pinning lives in
+`Qwave.xcodeproj`. Distribution signing follows
+[docs/SIGNING.md](docs/SIGNING.md); toolchain pinning lives in
 [docs/PINNING.md](docs/PINNING.md). The iPhone lane ships the same WebKit +
-shields core in a SwiftUI shell (`Sources/QwaveIOS`); the VPN and autofill
-extensions are macOS lanes for now.
+shields core in a SwiftUI shell (`Sources/QwaveIOS`); the VPN layer was
+removed — a tunnel is a different layer, not the browser's requirement.
 
 ## Swift 6 engineering rules
 
