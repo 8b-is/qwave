@@ -396,16 +396,18 @@ the exact graph, isolation rules, data flow, and test boundaries.
 brew tap 8b-is/tap
 brew install 8b-is/tap/qwave
 
-# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked):
-brew install 8b-is/tap/qwave-nightly
+# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked).
+# qwave-nightly is a HEAD-only formula — it always builds the latest main:
+brew install --HEAD 8b-is/tap/qwave-nightly
 
-# update to the latest — same commands as any Homebrew package:
-brew upgrade qwave           # stable: next tagged release
-brew upgrade qwave-nightly   # nightly: latest main
+# update to the latest:
+brew upgrade 8b-is/tap/qwave                    # stable: next tagged release
+brew upgrade --fetch-HEAD 8b-is/tap/qwave-nightly  # nightly: re-pull latest main
 ```
 
 `qwave` builds from the tagged release (v2.0.0); `qwave-nightly` is
-head-only. Both build the same way `tools/install-nightly.sh` does, and
+head-only, so every install is the current `main` and `--fetch-HEAD` is what
+re-pulls it. Both build the same way `tools/install-nightly.sh` does, and
 land `Qwave.app` under Homebrew's prefix:
 
 ```sh
