@@ -4,6 +4,26 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-03
+
+### Fixed
+- **Homebrew installs now build.** Xcode's sandboxed package resolution
+  cannot nest inside Homebrew's build sandbox (`sandbox-exec:
+  sandbox_apply: Operation not permitted`); the tap formulae pre-resolve the
+  SPM packages with the system scm provider (`-resolvePackageDependencies
+  -scmProvider system`) before the build, so the build has nothing left to
+  re-resolve. Also: `qwave-nightly` is HEAD-only, and the install docs now
+  say so (`brew install --HEAD`, `brew upgrade --fetch-HEAD`).
+
+### Changed
+- **The release lane gained a nightly packaging script.**
+  `scripts/release-nightly.sh` builds the QwaveNightly universal Release
+  configuration (unsigned, no appcast — nightly never enters the stable
+  update feed) for the rolling `nightly` prerelease; both packaging scripts
+  fall back to plain hdiutil when create-dmg is absent, and
+  `scripts/release.sh` submits to notarytool with the direct ASC API key
+  (the CI flags), with the keychain profile as fallback.
+
 ## [2.0.0] — 2026-10-03
 
 ### Added
