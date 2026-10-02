@@ -42,7 +42,7 @@ public final class SessionAutosaver {
     /// How long `flushForTermination` waits for the write before letting the
     /// app quit regardless. Quit has to stay bounded: a stalled volume or a
     /// busy store must delay termination, never wedge it.
-    public static let terminationBudget: Duration = .seconds(5)
+    public static let terminationBudget: TimeInterval = 5.0
 
     private let store: SessionStore
     private let debounce: TimeInterval
@@ -91,7 +91,7 @@ public final class SessionAutosaver {
     /// cheap and rare, and this way the last state on screen is the last state
     /// on disk even if some change never routed through `requestSave`.
     public func flushForTermination(
-        timeout: Duration = SessionAutosaver.terminationBudget
+        timeout: TimeInterval = SessionAutosaver.terminationBudget
     ) async -> SessionFlushOutcome {
         // Drop the pending debounce so it cannot fire a second, *unawaited*
         // write behind this one while termination is being held.
@@ -143,7 +143,7 @@ public final class SessionAutosaver {
     /// the timeout said, which is exactly the quit-time hang this budget exists
     /// to prevent.
     static func withTerminationBudget(
-        _ timeout: Duration,
+        _ timeout: TimeInterval,
         _ work: @escaping @Sendable () async -> SessionFlushOutcome
     ) async -> SessionFlushOutcome {
         let (stream, continuation) = AsyncStream<SessionFlushOutcome>.makeStream()
@@ -151,7 +151,9 @@ public final class SessionAutosaver {
             continuation.yield(await work())
         }
         let timer = Task.detached(priority: .userInitiated) {
-            try? await Task.sleep(for: timeout)
+            // TimeInterval (seconds) + nanoseconds: the Duration overloads
+            // need iOS 16 and the floor is iPhone 13 (iOS 15).
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
             continuation.yield(.timedOut)
         }
         defer { timer.cancel() }

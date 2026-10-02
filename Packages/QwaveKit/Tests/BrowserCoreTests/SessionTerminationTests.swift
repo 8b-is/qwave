@@ -132,7 +132,7 @@ final class SessionTerminationTests: XCTestCase {
     /// finishes in time.
     func testTerminationBudgetReleasesTheCallerWhenTheStoreStalls() async {
         let start = ContinuousClock.now
-        let outcome = await SessionAutosaver.withTerminationBudget(.milliseconds(200)) {
+        let outcome = await SessionAutosaver.withTerminationBudget(0.2) {
             try? await Task.sleep(for: .seconds(30))
             return .written
         }
@@ -146,7 +146,7 @@ final class SessionTerminationTests: XCTestCase {
     /// The budget must not cost anything when the store is healthy.
     func testTerminationBudgetReturnsImmediatelyWhenTheWriteIsFast() async {
         let start = ContinuousClock.now
-        let outcome = await SessionAutosaver.withTerminationBudget(.seconds(30)) { .written }
+        let outcome = await SessionAutosaver.withTerminationBudget(30.0) { .written }
         let elapsed = ContinuousClock.now - start
 
         XCTAssertEqual(outcome, .written)
