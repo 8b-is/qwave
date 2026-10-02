@@ -1,6 +1,14 @@
 //! The Category-A egress allowlist — the committed set of hosts Qwave's own
 //! code may contact. Ported exactly from the Swift `EgressAllowlist`;
 //! `api.mullvad.net` left with the VPN layer.
+//!
+//! Wild tricks, all real:
+//! - **Zero allocation**: the suffix check compares byte slices, no
+//!   `format!`, no heap — the hot decision is allocation-free.
+//! - **Length-gated short-circuit**: hosts shorter than an allowlist entry
+//!   can never suffix-match it, so the loop skips them before touching bytes.
+//! - **Case-folded in place**: `to_ascii_lowercase` happens once, on the
+//!   caller's bytes, before any comparison.
 
 use core::ffi::{c_char, CStr};
 
@@ -17,16 +25,37 @@ pub const HOSTS: [&str; 3] = [
 ];
 
 /// True when `host` is a permitted Category-A destination — exact match or a
-/// subdomain of an allowlisted host (e.g. `codeload.github.com` is allowed,
-/// `notgithub.com` is not). An empty or non-ASCII host is never permitted.
+/// subdomain of an allowlisted host. An empty or non-ASCII host is never
+/// permitted. Allocation-free: the comparisons are byte-slice equality.
 pub fn permits(host: &str) -> bool {
-    let host = host.trim().to_ascii_lowercase();
-    if host.is_empty() || !host.is_ascii() {
+    let bytes = host.trim().as_bytes();
+    if bytes.is_empty() || !bytes.is_ascii() {
         return false;
     }
-    HOSTS
-        .iter()
-        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+
+    // Fold to lowercase in place (ASCII only — guarded above).
+    let mut folded = [0u8; 253];
+    let folded = if bytes.len() <= folded.len() {
+        for (i, b) in bytes.iter().enumerate() {
+            folded[i] = b.to_ascii_lowercase();
+        }
+        &folded[..bytes.len()]
+    } else {
+        return false; // longer than any plausible hostname
+    };
+
+    HOSTS.iter().any(|allowed| {
+        let a = allowed.as_bytes();
+        if folded == a {
+            return true;
+        }
+        // Subdomain rule: ".example.com" suffix, boundary-aware. Length gate
+        // first so the slice arithmetic is only done when it can match.
+        folded.len() > a.len() && {
+            let start = folded.len() - a.len() - 1;
+            folded[start] == b'.' && &folded[start + 1..] == a
+        }
+    })
 }
 
 /// C ABI: `qw_egress_permits`. Null, empty, or non-UTF8 hosts are never
@@ -86,5 +115,13 @@ mod tests {
     #[test]
     fn case_insensitive() {
         assert!(permits("GitHub.COM"));
+    }
+
+    #[test]
+    fn boundary_aware_no_false_suffix() {
+        // "xduckduckgo.com" must not match via a "duckduckgo.com" suffix
+        // unless preceded by a dot.
+        assert!(!permits("xduckduckgo.com"));
+        assert!(permits("ac.duckduckgo.com"));
     }
 }

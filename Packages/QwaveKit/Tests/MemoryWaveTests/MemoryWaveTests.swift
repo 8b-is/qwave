@@ -1392,17 +1392,21 @@ final class WaveDirectorTests: XCTestCase {
         }
     }
 
-    /// The privacy default: nothing configured means no provider and no egress.
+    /// The local-first default: nothing configured means the on-device
+    /// (Apple) provider — memory works offline out of the box, and no
+    /// user-configured host is permitted.
     func testResolveProviderStaysOfflineByDefault() throws {
         let prefs = MemoryWavePreferences(
             defaults: UserDefaults(suiteName: UUID().uuidString)!, secrets: InMemorySecretStore())
-        XCTAssertEqual(prefs.providerKind, .none)
+        XCTAssertEqual(prefs.providerKind, .onDevice)
+        XCTAssertNil(prefs.egressPermittedHost)
         let director = WaveDirector(store: nil, preferences: prefs, embedder: nil)
 
         let provider = try director.resolveProvider()
-        XCTAssertTrue(provider is NullMemoryProvider)
-        XCTAssertEqual(provider.kind, .none)
-        XCTAssertFalse(provider.isAvailable)
+        XCTAssertEqual(provider.kind, .onDevice)
+        // Availability depends on whether the local model assets exist; the
+        // contract is that the default never touches the network.
+        XCTAssertNil(prefs.egressPermittedHost)
     }
 }
 

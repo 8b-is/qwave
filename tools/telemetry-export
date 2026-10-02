@@ -1,0 +1,20 @@
+#!/bin/sh
+# telemetry-export — scrub, aggregate, and render the debug lane.
+#
+#   tools/telemetry-export <day.jsonl>   → day.histogram.json (+ smart-tree)
+#
+# The scrubber and the aggregator live in the Rust core (core/src/telemetry.rs,
+# core/src/bin/qwave-agg.rs); smart-tree renders the tree when installed.
+set -euo pipefail
+
+CORE="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}/core"
+INPUT="${1:?usage: telemetry-export <scrubbed.jsonl>}"
+OUT="${INPUT%.jsonl}.histogram.json"
+
+cargo build --release --manifest-path "$CORE/Cargo.toml" --bin qwave-agg
+"$CORE/target/release/qwave-agg" < "$INPUT" > "$OUT"
+echo "histogram: $OUT"
+
+if command -v st >/dev/null 2>&1; then
+    st "$OUT" --depth 2 || true
+fi

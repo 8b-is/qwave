@@ -6,7 +6,10 @@
 //! decisions live here, behind a small C ABI that any language can call.
 
 pub mod egress;
+pub mod mem16;
+pub mod phoenix;
 pub mod rational;
+pub mod telemetry;
 pub mod wave;
 
 pub use rational::Rational;

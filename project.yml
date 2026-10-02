@@ -44,6 +44,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave
         PRODUCT_NAME: Qwave
         PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_APP_PROVISIONING_PROFILE)"
+        # Feature channel: stable leaves WebKit defaults; the QwaveNightly
+        # scheme sets this to nightly (every experimental feature ON).
+        QWAVE_CHANNEL: stable
         # The sovereign core: a zero-dependency Rust staticlib, built by the
         # pre-build script below and linked here. The Swift bridge speaks its
         # C ABI (core/include/qwave_core.h → RustCoreBridge.swift).
@@ -60,6 +63,7 @@ targets:
             exit 1
           fi
           export PATH="$PATH:$HOME/.cargo/bin"
+          export MACOSX_DEPLOYMENT_TARGET=14.0
           cargo build --release --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
         outputFiles:
           - $(SRCROOT)/core/target/release/libqwave_core.a
@@ -68,6 +72,7 @@ targets:
       properties:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
+        QWAVE_CHANNEL: $(QWAVE_CHANNEL)
         CFBundleShortVersionString: "1.0.0"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
@@ -231,6 +236,19 @@ schemes:
     build:
       targets:
         Qwave: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release
+  QwaveNightly:
+    build:
+      targets:
+        Qwave: all
+    settings:
+      base:
+        QWAVE_CHANNEL: nightly
     run:
       config: Debug
     test:

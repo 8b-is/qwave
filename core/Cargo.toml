@@ -10,7 +10,18 @@ repository = "https://github.com/8b-is/qwave"
 name = "qwave_core"
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+# Everything ON: the nightly channel links the mem|16-10 sovereign library
+# (AGPL-3.0-only — see the note in Cargo.toml comments and core/LICENSE.md).
+nightly = ["mem16"]
+# The mem|16-10 sovereign library, wired from its home repo. Optional on
+# purpose: it is AGPL-3.0-only, so the default (stable) build ships without
+# it and keeps qwave's MIT posture. Nightly links it, "all features ON".
+mem16 = ["dep:mem16-10"]
+
 [dependencies]
+mem16-10 = { git = "https://github.com/peterlodri-sec/mem-16-10.git", optional = true, default-features = false }
 
 [profile.release]
 lto = true

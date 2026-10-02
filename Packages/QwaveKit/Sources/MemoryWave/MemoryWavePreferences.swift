@@ -32,7 +32,7 @@ public final class MemoryWavePreferences: @unchecked Sendable {
 
     public var providerKind: MemoryProviderKind {
         get {
-            defaults.string(forKey: Key.provider).flatMap(MemoryProviderKind.init(rawValue:)) ?? .none
+            defaults.string(forKey: Key.provider).flatMap(MemoryProviderKind.init(rawValue:)) ?? .onDevice
         }
         set { defaults.set(newValue.rawValue, forKey: Key.provider) }
     }

@@ -1,6 +1,7 @@
 import Foundation
 
 public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable {
+    case ecosia
     case duckduckgo
     case brave
     case startpage
@@ -11,6 +12,7 @@ public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable 
 
     public var displayName: String {
         switch self {
+        case .ecosia: return "Ecosia"
         case .duckduckgo: return "DuckDuckGo"
         case .brave: return "Brave Search"
         case .startpage: return "Startpage"
@@ -24,6 +26,7 @@ public enum SearchEngine: String, CaseIterable, Codable, Identifiable, Sendable 
             return nil
         }
         switch self {
+        case .ecosia: return URL(string: "https://www.ecosia.org/search?q=\(escaped)")
         case .duckduckgo: return URL(string: "https://duckduckgo.com/?q=\(escaped)")
         case .brave: return URL(string: "https://search.brave.com/search?q=\(escaped)")
         case .startpage: return URL(string: "https://www.startpage.com/sp/search?query=\(escaped)")
@@ -55,7 +58,7 @@ public final class SettingsStore {
 
     public var searchEngine: SearchEngine {
         get {
-            defaults.string(forKey: Key.searchEngine).flatMap(SearchEngine.init(rawValue:)) ?? .duckduckgo
+            defaults.string(forKey: Key.searchEngine).flatMap(SearchEngine.init(rawValue:)) ?? .ecosia
         }
         set { defaults.set(newValue.rawValue, forKey: Key.searchEngine) }
     }

@@ -3,6 +3,25 @@ import WebKit
 import Combine
 import QwaveSupport
 
+/// The build's feature channel.
+///
+/// **stable** leaves WebKit's defaults alone; **nightly** flips every
+/// experimental WebKit feature ON (except the safety-denied set). Read from
+/// the bundle key `QWAVE_CHANNEL` — the nightly scheme sets it to
+/// `nightly`; everything else is stable.
+public enum FeatureChannel: String, Sendable, Equatable {
+    case stable
+    case nightly
+
+    /// The channel this process was built as.
+    public static var current: FeatureChannel {
+        if Bundle.main.object(forInfoDictionaryKey: "QWAVE_CHANNEL") as? String == "nightly" {
+            return .nightly
+        }
+        return .stable
+    }
+}
+
 /// The state of WebKit's feature-toggle surface on this build.
 ///
 /// Three states, deliberately: "selector absent", "selector present but
@@ -182,10 +201,13 @@ public final class FeatureFlagService: ObservableObject {
 
     public var overriddenCount: Int { overrides.count }
 
-    /// Applies the user's overrides to a fresh `WKPreferences` — called by
-    /// `WebViewFactory` for every new configuration.
+    /// Applies the channel's defaults and the user's overrides to a fresh
+    /// `WKPreferences` — called by `WebViewFactory` for every new
+    /// configuration. Nightly enables every experimental feature not denied
+    /// by the safety list; stable applies only explicit overrides.
     public func apply(to preferences: WKPreferences) {
-        guard isSPIAvailable, !overrides.isEmpty else { return }
+        let nightly = FeatureChannel.current == .nightly
+        guard isSPIAvailable, nightly || !overrides.isEmpty else { return }
         let rawFeatures = rawFeatureObjects
         guard !rawFeatures.isEmpty else { return }
         guard preferences.responds(to: Self.setEnabledSelector) else { return }
@@ -198,9 +220,18 @@ public final class FeatureFlagService: ObservableObject {
 
         for raw in rawFeatures {
             guard let key = Self.string(from: raw, key: "key"),
-                let value = overrides[key],
                 !safety.isDenied(key: key)
             else { continue }
+            // An explicit user override always wins; otherwise nightly
+            // enables the feature and stable leaves WebKit's default.
+            let value: Bool
+            if let override = overrides[key] {
+                value = override
+            } else if nightly {
+                value = true
+            } else {
+                continue
+            }
             setEnabled(preferences, Self.setEnabledSelector, ObjCBool(value), raw)
         }
     }

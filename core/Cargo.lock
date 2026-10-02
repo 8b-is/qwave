@@ -3,5 +3,13 @@
 version = 4
 
 [[package]]
+name = "mem16-10"
+version = "0.1.42"
+source = "git+https://github.com/peterlodri-sec/mem-16-10.git#c1e0baef36d822306469a591d3c28728890be8a2"
+
+[[package]]
 name = "qwave-core"
 version = "0.1.0"
+dependencies = [
+ "mem16-10",
+]
