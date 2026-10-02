@@ -43,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         startEnergyObservers()
         Task {
             environment = await BrowserEnvironment.bootstrap()
+            // The theme applies to the chrome before the first window exists
+            // so no window ever flashes the system appearance.
+            environment.theme.apply()
             // Start the rule-list compile now, but do NOT block
             // the first window on them: the window + local start page paint
             // immediately (that is where the perceived-launch win lives), and the

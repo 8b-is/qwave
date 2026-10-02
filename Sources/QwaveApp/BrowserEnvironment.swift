@@ -30,6 +30,8 @@ final class BrowserEnvironment {
     let memoryWave: WaveDirector
     let memoryPreferences: MemoryWavePreferences
     let secrets: SecretStore
+    /// Applies the stored theme to the chrome; also re-applies on change.
+    let theme: ThemeController
 
     private let directory: URL
     private var startPageMemories: [StartMemoryChip] = []
@@ -45,6 +47,7 @@ final class BrowserEnvironment {
     private init(directory: URL) async {
         self.directory = directory
         settings = SettingsStore()
+        theme = ThemeController(settings: settings)
         secrets = KeychainSecretStore()
         let memoryPreferences = MemoryWavePreferences(secrets: secrets)
         self.memoryPreferences = memoryPreferences

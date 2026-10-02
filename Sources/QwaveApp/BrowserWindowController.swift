@@ -2,6 +2,7 @@ import Summarize
 import AppKit
 import WebKit
 import BrowserCore
+import Persistence
 import QwaveSupport
 import Shields
 import WebExtensions
@@ -710,12 +711,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func zoomIn(_ sender: Any?) {
         guard let webView = tabManager.selectedTab?.webView else { return }
-        webView.pageZoom = min(webView.pageZoom + 0.1, 3.0)
+        webView.pageZoom = min(webView.pageZoom + 0.1, SettingsStore.zoomBounds.upperBound)
     }
 
     @objc func zoomOut(_ sender: Any?) {
         guard let webView = tabManager.selectedTab?.webView else { return }
-        webView.pageZoom = max(webView.pageZoom - 0.1, 0.4)
+        webView.pageZoom = max(webView.pageZoom - 0.1, SettingsStore.zoomBounds.lowerBound)
     }
 
     @objc func actualSize(_ sender: Any?) {
@@ -1483,13 +1484,19 @@ extension BrowserWindowController: NSTextFieldDelegate {
             let entries = (try? await self.environment.history?.entries(matching: query, limit: 50)) ?? []
             let bookmarks = await self.environment.cachedBookmarks()
             // Network suggestions are strictly opt-in (default OFF). Only when
-            // the user has enabled them do we send the query to a third party.
-            // The destination itself is checked by the Rust core's Category-A
-            // allowlist — the same decision the Swift-side guard commits to.
+            // the user has enabled them do we send the query to the engine
+            // they configured — and only engines with a vetted autocomplete
+            // endpoint have a provider at all. The destination itself is
+            // checked by the Rust core's Category-A allowlist — the same
+            // decision the Swift-side guard commits to.
+            let engine = self.environment.settings.searchEngine
             let remote: [RemoteSearchSuggestion]
             if self.environment.settings.networkSuggestionsEnabled,
-                RustCore.egressPermits("duckduckgo.com") {
-                remote = (try? await DuckDuckGoSuggestionProvider().fetchSuggestions(for: query)) ?? []
+                let provider = SearchSuggestionProviderFactory.provider(for: engine),
+                let egressHost = SearchSuggestionProviderFactory.egressHost(for: engine),
+                RustCore.egressPermits(egressHost)
+            {
+                remote = (try? await provider.fetchSuggestions(for: query)) ?? []
             } else {
                 remote = []
             }
@@ -1499,7 +1506,8 @@ extension BrowserWindowController: NSTextFieldDelegate {
                 bookmarks: bookmarks,
                 openTabs: openTabs,
                 actions: OmniboxAction.defaults,
-                remoteSuggestions: remote
+                remoteSuggestions: remote,
+                searchURLBuilder: { engine.searchURL(for: $0) }
             )
             guard self.omnibox.stringValue == query else { return }
             if ranked.isEmpty {

@@ -104,6 +104,38 @@ final class EgressGuardTests: XCTestCase {
         )
     }
 
+    /// Ecosia is the default engine, so its autocomplete host must be on the
+    /// allowlist with the same guarantee the DuckDuckGo entry has.
+    func testEcosiaSuggestionEndpointIsAllowlisted() {
+        let url = URL(string: "https://ac.ecosia.org/autocomplete?q=swift&type=list")
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: url?.host),
+            "Ecosia suggestion host \(url?.host ?? "nil") must be on the egress allowlist"
+        )
+        XCTAssertFalse(
+            EgressAllowlist.permits(host: "www.ecosia.org"),
+            "only the autocomplete subdomain is Category A; the search site itself is page-driven"
+        )
+    }
+
+    /// The Ecosia provider's real request must leave the machine for an
+    /// allowlisted host — the same capture-based assertion as the DuckDuckGo
+    /// case, against the provider's actual call site.
+    func testEcosiaSuggestionEndpointHostIsAllowlisted() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SuggestionCapture.self]
+        let provider = EcosiaSuggestionProvider(session: URLSession(configuration: config))
+
+        _ = try await provider.fetchSuggestions(for: "qwave")
+
+        let host = SuggestionCapture.captured.url()?.host
+        XCTAssertNotNil(host, "the suggestion provider must have issued a request to capture")
+        XCTAssertTrue(
+            EgressAllowlist.permits(host: host),
+            "omnibox suggestion host \(host ?? "nil") must be on the egress allowlist"
+        )
+    }
+
     /// The omnibox suggestion endpoint is Category A: its host is fixed in
     /// Qwave's source, not derived from a page you navigated to. It stayed
     /// invisible to this suite for an entire release because the test target
@@ -229,6 +261,16 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(
             provider.session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
             "DuckDuckGoSuggestionProvider's default session must install EgressGuard"
+        )
+    }
+
+    /// Same guarantee for the Ecosia provider — it shares the transport
+    /// plumbing, and this pins that the sharing keeps the guard installed.
+    func testEcosiaSuggestionProviderInstallsEgressGuard() {
+        let provider = EcosiaSuggestionProvider()
+        XCTAssertTrue(
+            provider.session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
+            "EcosiaSuggestionProvider's default session must install EgressGuard"
         )
     }
 

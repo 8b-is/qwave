@@ -10,6 +10,8 @@ struct SettingsRootView: View {
         TabView {
             GeneralPane(environment: environment, updater: updater)
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AppearancePane(environment: environment)
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             ContainersPane(containers: environment.containers, history: environment.history)
                 .tabItem { Label("Containers", systemImage: "square.stack.3d.up") }
             ShieldsPane(policy: environment.shieldsPolicy, settings: environment.settings)
@@ -27,7 +29,7 @@ struct SettingsRootView: View {
 private struct GeneralPane: View {
     let environment: BrowserEnvironment
     let updater: SPUUpdater?
-    @State private var searchEngine: SearchEngine = .duckduckgo
+    @State private var searchEngine: SearchEngine = .ecosia
     @State private var networkSuggestions = false
     @State private var restoreSession = true
     @State private var hibernationMinutes: Double = 15
@@ -54,7 +56,9 @@ private struct GeneralPane: View {
                 "When off (the default), omnibox suggestions come only from your "
                     + "on-device history, bookmarks, and open tabs \u{2014} nothing is sent "
                     + "anywhere. When on, each keystroke is sent to your search engine to "
-                    + "fetch autocomplete results."
+                    + "fetch autocomplete results. Ecosia and DuckDuckGo are the only "
+                    + "engines with a vetted autocomplete endpoint; for the others, "
+                    + "remote suggestions stay unavailable."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

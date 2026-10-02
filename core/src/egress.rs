@@ -15,13 +15,16 @@ use core::ffi::{c_char, CStr};
 /// Permitted Category-A hosts. Favicon and remote-markdown fetches are
 /// deliberately absent: their host is whatever page you navigated to, so
 /// they are page-driven and cannot be allowlisted to a fixed set.
-pub const HOSTS: [&str; 3] = [
+pub const HOSTS: [&str; 4] = [
     // Auto-update feed (Sparkle). User-consented.
     "github.com",
     // Memory Wave remote AI provider, default endpoint (off by default).
     "api.x.ai",
-    // Omnibox autocomplete suggestions (off by default).
+    // Omnibox autocomplete suggestions (off by default). DuckDuckGo and
+    // Ecosia are the only engines with a vetted keyless autocomplete
+    // endpoint.
     "duckduckgo.com",
+    "ac.ecosia.org",
 ];
 
 /// True when `host` is a permitted Category-A destination — exact match or a
@@ -110,6 +113,13 @@ mod tests {
     #[test]
     fn the_vpn_host_left_with_the_layer() {
         assert!(!permits("api.mullvad.net"));
+    }
+
+    #[test]
+    fn ecosia_autocomplete_is_permitted() {
+        assert!(permits("ac.ecosia.org"));
+        assert!(!permits("ecosia.org"));
+        assert!(!permits("evil-ac.ecosia.org.evil.net"));
     }
 
     #[test]

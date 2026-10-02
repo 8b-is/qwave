@@ -1,4 +1,5 @@
 import Foundation
+import Persistence
 import QwaveSupport
 
 /// A suggestion returned from a remote search engine provider.
@@ -45,36 +46,33 @@ public enum SearchSuggestionParser {
     }
 }
 
-/// Privacy-first DuckDuckGo suggestion provider using ephemeral, cookieless transport.
-public final class DuckDuckGoSuggestionProvider: SearchSuggestionProviding, @unchecked Sendable {
-    /// Internal (not `private`) so `@testable import BrowserCore` can assert
-    /// the default session is wired with `EgressGuard` (see
-    /// `EgressGuardTests`), without exposing it as public API.
-    let session: URLSession
-
-    public init(session: URLSession? = nil) {
-        if let session {
-            self.session = session
-        } else {
-            let config = URLSessionConfiguration.ephemeral
-            config.httpCookieStorage = nil
-            config.httpShouldSetCookies = false
-            config.timeoutIntervalForRequest = 3.0
-            // Custom configuration, so the process-wide EgressGuard
-            // registration at launch does not reach this session (see
-            // EgressGuard's doc comment) — install it explicitly so a
-            // request here is checked against EgressAllowlist too, not
-            // just pinned to `duckduckgo.com` by convention. See #77.
-            EgressGuard.install(into: config)
-            self.session = URLSession(configuration: config)
-        }
+/// Shared plumbing for the per-engine suggestion providers: a cookieless
+/// ephemeral session with the egress guard installed, and the shared
+/// query → fetch → parse flow.
+enum SuggestionTransport {
+    static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.timeoutIntervalForRequest = 3.0
+        // Custom configuration, so the process-wide EgressGuard registration
+        // at launch does not reach this session (see EgressGuard's doc
+        // comment) — install it explicitly so a request here is checked
+        // against EgressAllowlist too, not just pinned by convention. See #77.
+        EgressGuard.install(into: config)
+        return URLSession(configuration: config)
     }
 
-    public func fetchSuggestions(for query: String) async throws -> [RemoteSearchSuggestion] {
+    static func fetch(
+        session: URLSession,
+        urlForEncodedQuery: (String) -> URL?,
+        query: String,
+        provider: String
+    ) async throws -> [RemoteSearchSuggestion] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
             let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-            let url = URL(string: "https://duckduckgo.com/ac/?q=\(encoded)&type=list")
+            let url = urlForEncodedQuery(encoded)
         else {
             return []
         }
@@ -84,6 +82,96 @@ public final class DuckDuckGoSuggestionProvider: SearchSuggestionProviding, @unc
             return []
         }
 
-        return SearchSuggestionParser.parseJSON(data, provider: "DuckDuckGo")
+        return SearchSuggestionParser.parseJSON(data, provider: provider)
+    }
+}
+
+/// Privacy-first DuckDuckGo suggestion provider using ephemeral, cookieless transport.
+public final class DuckDuckGoSuggestionProvider: SearchSuggestionProviding, @unchecked Sendable {
+    /// Internal (not `private`) so `@testable import BrowserCore` can assert
+    /// the default session is wired with `EgressGuard` (see
+    /// `EgressGuardTests`), without exposing it as public API.
+    let session: URLSession
+
+    /// The host this provider's requests leave the machine for — the
+    /// Category-A allowlist check key.
+    public static let egressHost = "duckduckgo.com"
+
+    public init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            self.session = SuggestionTransport.makeSession()
+        }
+    }
+
+    public func fetchSuggestions(for query: String) async throws -> [RemoteSearchSuggestion] {
+        try await SuggestionTransport.fetch(
+            session: session,
+            urlForEncodedQuery: { encoded in
+                URL(string: "https://duckduckgo.com/ac/?q=\(encoded)&type=list")
+            },
+            query: query,
+            provider: "DuckDuckGo"
+        )
+    }
+}
+
+/// Ecosia's autocomplete endpoint (`ac.ecosia.org`), which answers the same
+/// OpenSearch JSON shape DuckDuckGo does. Cookieless, ephemeral, opt-in —
+/// the same transport posture as the DuckDuckGo provider.
+public final class EcosiaSuggestionProvider: SearchSuggestionProviding, @unchecked Sendable {
+    /// Internal for the same reason as `DuckDuckGoSuggestionProvider.session`.
+    let session: URLSession
+
+    /// The host this provider's requests leave the machine for — the
+    /// Category-A allowlist check key.
+    public static let egressHost = "ac.ecosia.org"
+
+    public init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            self.session = SuggestionTransport.makeSession()
+        }
+    }
+
+    public func fetchSuggestions(for query: String) async throws -> [RemoteSearchSuggestion] {
+        try await SuggestionTransport.fetch(
+            session: session,
+            urlForEncodedQuery: { encoded in
+                URL(string: "https://ac.ecosia.org/autocomplete?q=\(encoded)&type=list")
+            },
+            query: query,
+            provider: "Ecosia"
+        )
+    }
+}
+
+/// Maps the user's chosen search engine onto a suggestion provider and the
+/// host its requests leave the machine for.
+///
+/// Only Ecosia and DuckDuckGo have a vetted, keyless autocomplete endpoint;
+/// the other engines return nil, and remote suggestions are simply absent
+/// for them (on-device suggestions keep working). No engine gets a
+/// "just use DuckDuckGo anyway" fallback: sending keystrokes to a *different*
+/// engine than the one the user picked would be its own kind of privacy lie.
+public enum SearchSuggestionProviderFactory {
+    public static func provider(for engine: SearchEngine) -> (any SearchSuggestionProviding)? {
+        switch engine {
+        case .ecosia: return EcosiaSuggestionProvider()
+        case .duckduckgo: return DuckDuckGoSuggestionProvider()
+        case .brave, .startpage, .google, .kagi: return nil
+        }
+    }
+
+    /// The Category-A host remote suggestions for this engine use, or nil
+    /// when the engine has no suggestion endpoint.
+    public static func egressHost(for engine: SearchEngine) -> String? {
+        switch engine {
+        case .ecosia: return EcosiaSuggestionProvider.egressHost
+        case .duckduckgo: return DuckDuckGoSuggestionProvider.egressHost
+        case .brave, .startpage, .google, .kagi: return nil
+        }
     }
 }

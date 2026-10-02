@@ -59,9 +59,12 @@ public enum EgressAllowlist {
         "api.x.ai",
         // Omnibox autocomplete suggestions (off by default,
         // `networkSuggestionsEnabled`). Carries the text you are typing into
-        // the omnibox; transport is cookieless and ephemeral. See
-        // docs/NETWORK.md and issue #78.
+        // the omnibox; transport is cookieless and ephemeral. The destination
+        // is the engine you configured — DuckDuckGo or Ecosia, the only two
+        // with a vetted keyless autocomplete endpoint (see
+        // SearchSuggestionProviderFactory). See docs/NETWORK.md and issue #78.
         "duckduckgo.com",
+        "ac.ecosia.org",
     ]
 
     /// True when `host` is a permitted Category-A destination — exact match

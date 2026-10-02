@@ -63,6 +63,30 @@ public final class WebViewFactory {
         // Content blocking + HTTPS upgrade rule lists per current policy.
         shields.installDefaultLists(on: configuration.userContentController)
 
+        // Appearance + accessibility injections, read live from settings at
+        // web-view creation time: a forced theme gets a color-scheme hint,
+        // and the reduce-motion setting collapses CSS motion. Existing tabs
+        // keep their values until rebuilt (hibernation) — documented in the
+        // Appearance pane.
+        if let schemeScript = AccessibilityStyles.colorSchemeScript(for: settings.themeMode) {
+            configuration.userContentController.addUserScript(
+                WKUserScript(
+                    source: schemeScript,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: true
+                )
+            )
+        }
+        if settings.reduceMotionEnabled {
+            configuration.userContentController.addUserScript(
+                WKUserScript(
+                    source: AccessibilityStyles.reduceMotionScript,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: false
+                )
+            )
+        }
+
         let webView = WKWebView(frame: .zero, configuration: configuration)
         #if os(macOS)
             webView.allowsMagnification = true
@@ -72,6 +96,9 @@ public final class WebViewFactory {
             webView.isInspectable = true
         }
         webView.translatesAutoresizingMaskIntoConstraints = false
+        // The default zoom every new tab starts at; per-tab ⌘+/⌘- still
+        // adjusts from here.
+        webView.pageZoom = settings.defaultPageZoom
 
         tab.attach(webView: webView)
         return webView

@@ -227,8 +227,10 @@ public enum OmniboxSuggester {
         actions: [OmniboxAction] = [],
         remoteSuggestions: [RemoteSearchSuggestion] = [],
         searchURLBuilder: (String) -> URL? = { query in
+            // The default engine is Ecosia; callers with a live settings
+            // store pass `engine.searchURL(for:)` explicitly.
             guard let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
-            return URL(string: "https://duckduckgo.com/?q=\(enc)")
+            return URL(string: "https://www.ecosia.org/search?q=\(enc)")
         },
         now: Date = Date(),
         limit: Int = 6
