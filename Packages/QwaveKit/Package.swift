@@ -22,18 +22,13 @@ let package = Package(
         .library(
             name: "QwaveKit",
             targets: [
-                "BrowserCore", "Shields", "FeatureFlags", "VPNKit", "Persistence", "QwaveSupport", "WebExtensions",
+                "BrowserCore", "Shields", "FeatureFlags", "Persistence", "QwaveSupport", "WebExtensions",
                 "URLIdentity", "MemoryWave", "Summarize", "QwaveUI",
             ]
         ),
-        // Slim product linked by the PacketTunnel system extension.
-        .library(
-            name: "QwaveTunnelKit",
-            targets: ["VPNKit", "QwaveSupport"]
-        ),
         // Slim product linked by BOTH the app and the AutoFill Credential
         // Provider extension. Deliberately crypto-free (Foundation + Security
-        // only) so the extension never links VPNKit / the ML-KEM stack.
+        // only).
         .library(
             name: "WebCredentials",
             targets: ["WebCredentials"]
@@ -82,7 +77,7 @@ let package = Package(
             ],
             swiftSettings: swift6
         ),
-        // Canonical (WHATWG) host identity. Kept out of QwaveTunnelKit so the
+        // Canonical (WHATWG) host identity.
         // tunnel extension doesn't carry a URL parser it never uses.
         .target(
             name: "URLIdentity",
@@ -116,10 +111,6 @@ let package = Package(
             ],
             swiftSettings: swift6
         ),
-        // Post-quantum cryptography: Keccak, ML-KEM-768, and the hybrid
-        // construction used by the Stage B VPN negotiator.
-        .target(name: "PostQuantum", swiftSettings: swift6),
-        .target(name: "VPNKit", dependencies: ["QwaveSupport", "PostQuantum"], swiftSettings: swift6),
         // WebExtensions Manifest V3 engine: browser.* bridge, storage, popups.
         .target(name: "WebExtensions", dependencies: ["QwaveSupport"], swiftSettings: swift6),
         // MEM8 wave substrate: Cognitive/Nexus provenance, 79-byte WaveInt,
@@ -199,19 +190,8 @@ let package = Package(
             // is checked against the real embedding (issue #138).
             name: "BrowserCoreTests", dependencies: ["BrowserCore", "URLIdentity", "MemoryWave"],
             swiftSettings: swift6),
-        .testTarget(
-            name: "PostQuantumTests", dependencies: ["PostQuantum"], resources: [.process("Fixtures")],
-            swiftSettings: swift6),
         .testTarget(name: "WebExtensionsTests", dependencies: ["WebExtensions"], swiftSettings: swift6),
         .testTarget(name: "SummarizeTests", dependencies: ["Summarize", "BrowserCore"], swiftSettings: swift6),
-        .testTarget(
-            name: "VPNKitTests",
-            dependencies: ["VPNKit"],
-            resources: [
-                .process("Fixtures")
-            ],
-            swiftSettings: swift6
-        ),
         .testTarget(
             name: "MemoryWaveTests", dependencies: ["MemoryWave", "QwaveSupport", "Persistence"], swiftSettings: swift6),
         // Egress regression gate: enforces the committed Category-A host
@@ -227,7 +207,7 @@ let package = Package(
         ),
         .testTarget(
             name: "EgressGuardTests",
-            dependencies: ["QwaveSupport", "Shields", "VPNKit", "MemoryWave", "BrowserCore"],
+            dependencies: ["QwaveSupport", "Shields", "MemoryWave", "BrowserCore"],
             swiftSettings: swift6
         ),
     ]

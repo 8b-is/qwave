@@ -18,8 +18,6 @@ settings:
 packages:
   QwaveKit:
     path: Packages/QwaveKit
-  WireGuardKit:
-    path: Packages/WireGuardKit
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     # 2.9.5, pinned by commit: the update framework is a trust anchor, and a
@@ -39,8 +37,6 @@ targets:
       - package: QwaveKit
         product: WebCredentials
       - package: Sparkle
-      - target: PacketTunnel
-        embed: true
       - target: CredentialProvider
         embed: true
     settings:
@@ -48,6 +44,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave
         PRODUCT_NAME: Qwave
         PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_APP_PROVISIONING_PROFILE)"
+        # The sovereign core: a zero-dependency Rust staticlib, built by the
+        # pre-build script below and linked here. The Swift bridge speaks its
+        # C ABI (core/include/qwave_core.h → RustCoreBridge.swift).
+        SWIFT_OBJC_BRIDGING_HEADER: core/include/qwave_core.h
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/release"
+        OTHER_LDFLAGS: "$(inherited) -lqwave_core"
+    preBuildScripts:
+      - name: Build the Rust core (cargo)
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+            echo "error: cargo not found — the sovereign core needs Rust (rustup.rs)" >&2
+            exit 1
+          fi
+          export PATH="$PATH:$HOME/.cargo/bin"
+          cargo build --release --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
+        outputFiles:
+          - $(SRCROOT)/core/target/release/libqwave_core.a
     info:
       path: Resources/Qwave/Info.plist
       properties:
@@ -109,115 +124,6 @@ targets:
       path: Resources/Qwave/Qwave.entitlements
       properties:
         # Enforced only when the user signs with their team ID — see docs/SIGNING.md.
-        com.apple.developer.networking.networkextension:
-          - packet-tunnel-provider-systemextension
-        com.apple.security.application-groups:
-          - $(TeamIdentifierPrefix)group.is.8b.qwave
-        keychain-access-groups:
-          - $(TeamIdentifierPrefix)is.8b.qwave.shared
-
-  PacketTunnel:
-    type: system-extension
-    platform: macOS
-    sources:
-      - path: Sources/PacketTunnel
-      - path: zig-core/include
-        headerVisibility: public
-    dependencies:
-      - package: QwaveKit
-        product: QwaveTunnelKit
-      - package: WireGuardKit
-        product: WireGuardKit
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.tunnel
-        PRODUCT_NAME: PacketTunnel
-        PROVISIONING_PROFILE_SPECIFIER: "$(QWAVE_TUNNEL_PROVISIONING_PROFILE)"
-        # libwg-go.a is produced into BUILT_PRODUCTS_DIR by the pre-build
-        # make step; WireGuardKitGo links it via -lwg-go.
-        # libqpacket.a is produced by the Zig pre-build script below.
-        LIBRARY_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
-        OTHER_LDFLAGS: "$(inherited) -lqpacket"
-    preBuildScripts:
-      - name: Build WireGuard Go Bridge
-        shell: /bin/bash
-        script: |
-          set -euo pipefail
-          if ! command -v go >/dev/null 2>&1 && [ ! -x /opt/homebrew/bin/go ] && [ ! -x /usr/local/bin/go ]; then
-            echo "error: Go toolchain not found — WireGuardKitGo needs it (brew install go)" >&2
-            exit 1
-          fi
-          export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
-          derived_data="${BUILD_DIR%%/Build/*}"
-          wg_go_dir="${PROJECT_DIR}/Packages/WireGuardKit/Sources/WireGuardKitGo"
-          if [ ! -d "${wg_go_dir}" ]; then
-            wg_go_dir="${derived_data}/SourcePackages/checkouts/wireguard-apple/Sources/WireGuardKitGo"
-          fi
-          if [ ! -d "${wg_go_dir}" ]; then
-            echo "error: WireGuardKitGo checkout not found at ${wg_go_dir}" >&2
-            exit 1
-          fi
-          make -C "${wg_go_dir}" build
-        outputFiles:
-          - $(BUILT_PRODUCTS_DIR)/libwg-go.a
-      - name: Build Zig packet filter
-        shell: /bin/bash
-        script: |
-          set -euo pipefail
-          export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
-          if ! command -v zig >/dev/null 2>&1; then
-            echo "error: Zig not found — install with: brew install zig" >&2
-            exit 1
-          fi
-          cd "${PROJECT_DIR}/zig-core"
-          # Build one static-library slice per architecture xcodebuild asked
-          # for, then lipo them into the universal libqpacket.a the linker
-          # expects. Release builds are universal (arm64 + x86_64); a single
-          # aarch64 archive fails to link the x86_64 slice.
-          slices=()
-          for arch in ${ARCHS:-arm64}; do
-            case "$arch" in
-              arm64)  ztarget="aarch64-macos" ;;
-              x86_64) ztarget="x86_64-macos" ;;
-              *) echo "error: unsupported arch '$arch' for zig packet filter" >&2; exit 1 ;;
-            esac
-            zig_a="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.zig.a"
-            # -fcompiler-rt bundles Zig's compiler runtime into the archive.
-            # Without it the x86_64 slice leaves ___zig_probe_stack (and any
-            # other compiler-rt builtin) undefined at link time, since it links
-            # into a non-Zig binary that provides no Zig runtime.
-            zig build-lib src/packet.zig -O ReleaseSafe -target "$ztarget" -fcompiler-rt -femit-bin="$zig_a"
-            # Zig's archiver emits members that Apple's newer ld (Xcode 16.3+)
-            # rejects as "not 8-byte aligned". Re-pack the extracted objects with
-            # Apple's libtool, which aligns them correctly. Works on every
-            # toolchain, so it is a strict improvement over shipping zig's archive.
-            work="${BUILT_PRODUCTS_DIR}/qpacket-${arch}.objs"
-            rm -rf "$work"; mkdir -p "$work"
-            ( cd "$work" && ar x "$zig_a" )
-            # Zig stores archive members mode 0000; make them readable for libtool.
-            chmod u+rw "$work"/*.o
-            out="${BUILT_PRODUCTS_DIR}/libqpacket-${arch}.a"
-            rm -f "$out"
-            xcrun libtool -static -o "$out" "$work"/*.o
-            slices+=("$out")
-          done
-          lipo -create "${slices[@]}" -output "${BUILT_PRODUCTS_DIR}/libqpacket.a"
-        outputFiles:
-          - $(BUILT_PRODUCTS_DIR)/libqpacket.a
-    info:
-      path: Resources/PacketTunnel/Info.plist
-      properties:
-        CFBundleName: PacketTunnel
-        CFBundleDisplayName: Qwave VPN Tunnel
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "10000"
-        NetworkExtension:
-          NEMachServiceName: $(TeamIdentifierPrefix)group.is.8b.qwave.tunnel
-          NEProviderClasses:
-            com.apple.networkextension.packet-tunnel: PacketTunnel.PacketTunnelProvider
-    entitlements:
-      path: Resources/PacketTunnel/PacketTunnel.entitlements
-      properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider-systemextension
         com.apple.security.application-groups:

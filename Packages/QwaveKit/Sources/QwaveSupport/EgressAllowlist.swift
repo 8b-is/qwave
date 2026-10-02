@@ -6,8 +6,8 @@ import Foundation
 /// `permits(host:)` now has a real runtime call site: `EgressGuard`
 /// (`QwaveSupport/EgressGuard.swift`) is a `URLProtocol` that consults this
 /// allowlist and fails any request to a host not listed here, and it is
-/// wired into every fixed-host Qwave network client (`MullvadAPIClient` via
-/// `URLSession.mullvadPinned()`, the DuckDuckGo suggestion provider, Memory
+/// wired into every fixed-host Qwave network client (the update feed via
+/// `URLSession.shared` registration, the DuckDuckGo suggestion provider, Memory
 /// Wave's remote provider) plus, through `URLProtocol.registerClass` at
 /// process start, `URLSession.shared` — and only that session. A session
 /// Qwave constructs is never reached by that registration, not even one built
@@ -49,8 +49,6 @@ public enum EgressAllowlist {
     public static let hosts: Set<String> = [
         // Auto-update feed (Sparkle). User-consented; see docs/NETWORK.md.
         "github.com",
-        // Mullvad VPN control API. Only when the VPN is used.
-        "api.mullvad.net",
         // Memory Wave remote AI provider, default endpoint (off by default,
         // user-configurable to any HTTPS endpoint — a host you configure
         // instead is permitted only on the provider's own request, through

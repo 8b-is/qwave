@@ -16,8 +16,9 @@ It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
 sharing one sovereign core between the two lanes.
 Part of the **[8b.IS Ecosystem](https://8b.is)** and documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
 It combines per-container storage universes, native content shields, tab
-hibernation, an optional Mullvad WireGuard tunnel, a post-quantum negotiation
-path, an on-device page summarizer, and an egress allowlist that makes Qwave's
+hibernation, an on-device page summarizer, a **Rust sovereign core** (the
+egress allowlist and the MEM8 wave substrate, compiled as a zero-dependency
+staticlib and linked into the app), and an egress allowlist that makes Qwave's
 own network activity auditable.
 
 > Qwave is privacy-oriented software, not a promise of anonymity. Read the
@@ -39,8 +40,9 @@ own network activity auditable.
   by default, so keystrokes never leave the Mac unless you turn them on.
 - **Energy-aware tabs** — background WebKit views can be hibernated while tab
   state, history, and scroll position remain restorable.
-- **Optional VPN** — Mullvad relay discovery and WireGuard live in a dedicated
-  Network Extension; quantum-resistant PSK negotiation fails closed when enabled.
+- **Rust sovereign core** — the Category-A egress allowlist and the 79-byte
+  MEM8 wave frame live in `core/` (zero-dependency Rust) behind a small C ABI;
+  Swift keeps the WebKit shell, the decisions live in Rust.
 - **MemoryWave** — container-scoped encrypted memory storage with opt-in,
   AI-agnostic inference providers. Stored memory **bodies** never reach a
   remote provider: `WaveDirector` composes recalled memories into the prompt
@@ -164,24 +166,28 @@ Explicit command only: extract, generate, render inert text. See
                                  zero network egress
 ```
 
-### VPN and post-quantum path
+### The Rust core
 
-![Quantum network](docs/assets/gallery/quantum-network.jpg)
-
-Mullvad discovery, WireGuard in a Network Extension, and a PSK negotiated with
-a hybrid post-quantum KEM. See
-[`VPNKit`](Packages/QwaveKit/Sources/VPNKit/),
-[`PostQuantum`](Packages/QwaveKit/Sources/PostQuantum/),
-[docs/VPN_STAGE_B.md](docs/VPN_STAGE_B.md), [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md).
+The sovereign decisions — which hosts Qwave's own code may contact, and
+whether a MEM8 wave frame is intact — live in `core/`, a zero-dependency Rust
+crate. It compiles to a staticlib, is linked into the app, and is spoken
+through a three-function C ABI (`core/include/qwave_core.h`) from the Swift
+bridge in `Sources/QwaveApp/RustCoreBridge.swift`. The egress decision the
+omnibox makes before sending a suggestion query is the Rust core's, not
+Swift's.
 
 ```text
- Qwave.app ──▶ Mullvad relay discovery ──▶ WireGuard handshake
-      │                                        │
-      └── PSK via ML-KEM-768 KEM ──────────────┘
-          (FIPS 203; fails closed: no PQ-negotiated PSK ⇒ no tunnel)
-
- PacketTunnel.systemextension  (Network Extension, WireGuardKit)
+ core/  (Rust, zero deps)
+   ├── egress.rs     Category-A allowlist — permits(host), subdomain-aware
+   ├── rational.rs   the MEM8 rational, reduced + checked arithmetic
+   └── wave.rs       the 79-byte WaveInt frame: encode, validate, grid coord
 ```
+
+The WireGuard/VPN layer (PacketTunnel, WireGuardKit + Go bridge, Zig packet
+filter, VPNKit, PostQuantum) was **removed** — a tunnel is a different layer,
+not the browser's requirement. If it returns, it returns as a separate
+package.
+
 
 ### MemoryWave
 
@@ -278,8 +284,6 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── Persistence                actor-isolated SQLite stores
 │   ├── MemoryWave                 encrypted MEM8 memory substrate
 │   ├── Summarize                  on-device page summarization (macOS 26+)
-│   ├── VPNKit                     Mullvad API, tunnel lifecycle, PQ seam
-│   ├── PostQuantum                 Keccak, ML-KEM-768, hybrid (PQ+classical) KEM
 │   ├── WebExtensions               MV3 registry and browser.* bridge
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
@@ -308,9 +312,6 @@ the exact graph, isolation rules, data flow, and test boundaries.
 - **Summarize** — respond-only FoundationModels wrapper. Key types:
   `SummarizeSession`, `SummarizePolicy`, `ArticleExtractor` (byte-identical
   probe script). [source](Packages/QwaveKit/Sources/Summarize/) · [docs/SUMMARIZE.md](docs/SUMMARIZE.md)
-- **VPNKit** — Mullvad API, tunnel lifecycle, PQ PSK seam. [source](Packages/QwaveKit/Sources/VPNKit/)
-- **PostQuantum** — Keccak, ML-KEM-768 (official NIST ACVP vectors), hybrid KEM.
-  [source](Packages/QwaveKit/Sources/PostQuantum/) · [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md)
 - **WebExtensions** — MV3 registry and `browser.*` bridge. **Content scripts
   are not active in the shipping app**: `BrowserWindowController.ensureWebView`
   installs the bridge and nothing else, so a manifest's `content_scripts` entry

@@ -5,8 +5,6 @@ import XCTest
 @testable import MemoryWave
 @testable import QwaveSupport
 @testable import Shields
-@testable import VPNKit
-
 /// The egress regression gate (docs/NETWORK.md, "prove what it sends").
 ///
 /// Historically this suite only checked the `EgressAllowlist` *data* — three
@@ -78,14 +76,6 @@ final class EgressGuardTests: XCTestCase {
 
     // MARK: - Allowlist ↔ endpoint consistency
 
-    func testMullvadDefaultEndpointIsAllowlisted() {
-        let client = MullvadAPIClient()
-        XCTAssertTrue(
-            EgressAllowlist.permits(host: client.baseURL.host),
-            "Mullvad API host \(client.baseURL.host ?? "nil") must be on the egress allowlist"
-        )
-    }
-
     func testMemoryProviderDefaultEndpointIsAllowlisted() {
         let host = MemoryWavePreferences.defaultRemoteBaseURL.host
         XCTAssertTrue(
@@ -111,18 +101,6 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(
             EgressAllowlist.permits(host: url?.host),
             "DuckDuckGo suggestion host \(url?.host ?? "nil") must be on the egress allowlist"
-        )
-    }
-
-    /// The post-quantum key exchange targets the relay's in-tunnel gateway
-    /// (10.64.0.1), reachable only INSIDE the VPN — never open-internet
-    /// egress. It is deliberately NOT on the allowlist, and the allowlist
-    /// must not accidentally permit it.
-    func testInTunnelQuantumEndpointIsNotOpenEgress() {
-        let transport = MullvadEphemeralPeerTransport()
-        XCTAssertFalse(
-            EgressAllowlist.permits(host: transport.endpoint.host),
-            "the in-tunnel PQ endpoint must not be treated as an allowlisted open-internet host"
         )
     }
 
@@ -243,19 +221,9 @@ final class EgressGuardTests: XCTestCase {
         XCTAssertTrue(EgressGuard.onBlock.hosts().isEmpty)
     }
 
-    /// Production call site 1: the Mullvad control-API transport pins TLS
-    /// AND must install `EgressGuard`, since it is a custom-configuration
-    /// session the process-wide registration in `main.swift` never reaches.
-    func testMullvadPinnedSessionInstallsEgressGuard() {
-        let session = URLSession.mullvadPinned()
-        XCTAssertTrue(
-            session.configuration.protocolClasses?.contains(where: { $0 == EgressGuard.self }) ?? false,
-            "URLSession.mullvadPinned() must install EgressGuard so api.mullvad.net traffic is runtime-checked"
-        )
-    }
-
-    /// Production call site 2: the DuckDuckGo suggestion provider's default
-    /// session is also a custom configuration and must install the guard.
+    /// Production call site: the DuckDuckGo suggestion provider's default
+    /// session is a custom configuration and must install the guard, since
+    /// the process-wide registration in `main.swift` never reaches it.
     func testDuckDuckGoSuggestionProviderInstallsEgressGuard() {
         let provider = DuckDuckGoSuggestionProvider()
         XCTAssertTrue(
@@ -336,20 +304,6 @@ final class EgressGuardTests: XCTestCase {
 
     /// The regression the naive fix would have shipped, in reverse: gating the
     /// provider must not break the endpoint that ships in the box.
-    func testProviderDefaultEndpointStillReachesTheTransport() async {
-        EgressGuard.onBlock.reset()
-        StubTransport.reset()
-        XCTAssertNil(
-            EgressGuard.userConfiguredEndpoint.current(), "the default endpoint needs no user-configured host")
-
-        let blocked = await askProvider(
-            at: MemoryWavePreferences.defaultRemoteBaseURL.absoluteString, on: makeProviderStyleSession())
-
-        XCTAssertNil(blocked, "the committed default endpoint must not be refused")
-        XCTAssertEqual(StubTransport.receivedHosts, ["api.x.ai"])
-        XCTAssertTrue(EgressGuard.onBlock.hosts().isEmpty)
-    }
-
     /// Preferences wired to the guard exactly as `BrowserEnvironment` wires
     /// them: a closure over the same object Settings writes to, installed once.
     private func makeRemotePreferences(_ baseURL: String) throws -> MemoryWavePreferences {

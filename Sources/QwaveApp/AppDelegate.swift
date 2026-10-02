@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var windowControllers: [BrowserWindowController] = []
     private var settingsWindowController: SettingsWindowController?
     private var libraryWindowController: LibraryWindowController?
-    private var vpnStatusItem: VPNStatusItem?
     /// Sparkle auto-updater; feed and EdDSA public key come from Info.plist
     /// (SUFeedURL / SUPublicEDKey, declared in project.yml).
     private(set) var updaterController: SPUStandardUpdaterController?
@@ -44,14 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         startEnergyObservers()
         Task {
             environment = await BrowserEnvironment.bootstrap()
-            vpnStatusItem = VPNStatusItem(vpn: environment.vpn)
-            // Start the rule-list compile and VPN refresh now, but do NOT block
+            // Start the rule-list compile now, but do NOT block
             // the first window on them: the window + local start page paint
             // immediately (that is where the perceived-launch win lives), and the
             // first NETWORK navigation gates on shields.whenReady() inside
             // NavigationCoordinator — so shields are never bypassed. See issue #19.
             async let shieldsPrepared: Void = environment.shields.prepare()
-            async let vpnRefreshed: Void = environment.vpn.tunnel.refresh()
             await restoreOrOpenFirstWindow()
             replayPendingOpenURLs()
             startSessionAutosaver()
@@ -59,7 +56,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // Do not abandon the concurrent warmups (an unawaited async let is
             // cancelled at scope end); the gate already made them non-blocking.
             await shieldsPrepared
-            await vpnRefreshed
         }
         // No launch-time network egress: the blocklist ships as a committed
         // build-time snapshot (scripts/update-blocklist.sh + commit), so

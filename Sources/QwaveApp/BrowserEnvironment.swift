@@ -3,7 +3,6 @@ import BrowserCore
 import Shields
 import FeatureFlags
 import Persistence
-import VPNKit
 import WebExtensions
 import MemoryWave
 import QwaveSupport
@@ -25,7 +24,6 @@ final class BrowserEnvironment {
     let factory: WebViewFactory
     let hibernator: TabHibernator
     let hibernation: HibernationController
-    let vpn: MullvadVPNService
     /// WebExtensions MV3 engine (browser.* bridge, popups, storage).
     let extensions: WebExtensionHost
     /// MEM8 wave memory. Optional — the browser runs without it.
@@ -83,7 +81,6 @@ final class BrowserEnvironment {
         )
         hibernator = TabHibernator(factory: factory)
         hibernation = HibernationController(timeout: settings.hibernationTimeout)
-        vpn = MullvadVPNService(secrets: secrets)
         extensions = WebExtensionHost(storageDirectory: directory)
         // Memory Wave is optional, but a nil store must not silently read as
         // "no memories". A malformed master key means the records are still on

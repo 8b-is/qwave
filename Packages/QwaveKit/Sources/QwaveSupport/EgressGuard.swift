@@ -17,7 +17,7 @@ import Foundation
 ///    only its own `protocolClasses`. Every fixed-host Qwave client on `main`
 ///    builds its own session, so each must add `EgressGuard.self` explicitly:
 ///    see `EgressGuard.install(into:)` below and its call sites
-///    (`MullvadCertificatePinner.mullvadPinned()`,
+///    (`CertificatePinner.pinned()`,
 ///    `SearchSuggestionProvider.swift`, `MemoryProvider.swift`). Pinned by
 ///    `EgressGuardTests.testConstructedDefaultConfigurationSessionIsNotReachedByRegisterClass`,
 ///    because reading that sentence as "default-configuration sessions are
@@ -122,7 +122,7 @@ public final class EgressGuard: URLProtocol {
     ///
     /// That is also why the permission is stamped per request rather than kept
     /// in a slot on `EgressAllowlist`. A slot would be process-wide — the host
-    /// would be reachable by `URLSession.mullvadPinned()`, the DuckDuckGo
+    /// would be reachable by the pinned update session, the DuckDuckGo
     /// suggestion session, and everything on `URLSession.shared`, none of which
     /// the user consented to when they typed an endpoint for Memory Wave.
     public static func markUserConfiguredEndpoint(_ request: URLRequest) -> URLRequest {
@@ -286,7 +286,7 @@ public final class EgressGuard: URLProtocol {
 ///  - **Per request.** Only a request stamped by
 ///    `EgressGuard.markUserConfiguredEndpoint(_:)` is eligible, so the
 ///    permission applies to Memory Wave's own provider request and to nothing
-///    else — not `URLSession.mullvadPinned()`, not the DuckDuckGo suggestion
+///    else — not the pinned update session, not the DuckDuckGo suggestion
 ///    session, not `URLSession.shared`. It is not on `EgressAllowlist` at all;
 ///    `EgressAllowlist.permits(host:)` remains purely the committed list.
 ///  - **Exact match**, deliberately unlike `EgressAllowlist/hosts`. That list

@@ -159,42 +159,6 @@ struct ToggleShieldsIntent: AppIntent {
     }
 }
 
-// MARK: - VPN
-
-/// Shortcuts/Siri: "Connect Qwave VPN".
-struct ConnectVPNIntent: AppIntent {
-    static let title: LocalizedStringResource = LocalizedStringResource("Connect to VPN")
-    static let description = IntentDescription(
-        "Connects Qwave to your Mullvad relay.",
-        categoryName: "Privacy"
-    )
-    static let openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        let environment = try QwaveIntentHost.requireEnvironment()
-        await environment.vpn.connect()
-        return .result()
-    }
-}
-
-/// Shortcuts/Siri: "Disconnect Qwave VPN".
-struct DisconnectVPNIntent: AppIntent {
-    static let title: LocalizedStringResource = LocalizedStringResource("Disconnect VPN")
-    static let description = IntentDescription(
-        "Disconnects Qwave from the VPN.",
-        categoryName: "Privacy"
-    )
-    static let openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        let environment = try QwaveIntentHost.requireEnvironment()
-        environment.vpn.disconnect()
-        return .result()
-    }
-}
-
 // MARK: - Shortcuts catalog
 
 /// Registers the intents in the Shortcuts app (macOS 14+). App Intents are
@@ -234,24 +198,6 @@ struct QwaveAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Toggle Shields",
             systemImageName: "shield"
-        )
-        AppShortcut(
-            intent: ConnectVPNIntent(),
-            phrases: [
-                "Connect \(.applicationName) VPN",
-                "Connect to \(.applicationName) VPN",
-            ],
-            shortTitle: "Connect VPN",
-            systemImageName: "lock.shield"
-        )
-        AppShortcut(
-            intent: DisconnectVPNIntent(),
-            phrases: [
-                "Disconnect \(.applicationName) VPN",
-                "Disconnect from \(.applicationName) VPN",
-            ],
-            shortTitle: "Disconnect VPN",
-            systemImageName: "lock.open"
         )
     }
 }

@@ -1484,8 +1484,11 @@ extension BrowserWindowController: NSTextFieldDelegate {
             let bookmarks = await self.environment.cachedBookmarks()
             // Network suggestions are strictly opt-in (default OFF). Only when
             // the user has enabled them do we send the query to a third party.
+            // The destination itself is checked by the Rust core's Category-A
+            // allowlist — the same decision the Swift-side guard commits to.
             let remote: [RemoteSearchSuggestion]
-            if self.environment.settings.networkSuggestionsEnabled {
+            if self.environment.settings.networkSuggestionsEnabled,
+                RustCore.egressPermits("duckduckgo.com") {
                 remote = (try? await DuckDuckGoSuggestionProvider().fetchSuggestions(for: query)) ?? []
             } else {
                 remote = []

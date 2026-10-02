@@ -16,8 +16,6 @@ struct SettingsRootView: View {
                 .tabItem { Label("Shields", systemImage: "shield.lefthalf.filled") }
             FeatureFlagsPane(service: environment.featureFlags)
                 .tabItem { Label("Web Features", systemImage: "flask") }
-            VPNPane(vpn: environment.vpn)
-                .tabItem { Label("VPN", systemImage: "lock.shield") }
             MemoryWavePane(environment: environment)
                 .tabItem { Label("Memory Wave", systemImage: "waveform") }
         }
