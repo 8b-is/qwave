@@ -26,13 +26,10 @@ public enum WebAuthnOriginPolicy {
     /// `rpID` is authorized when it is equal to, or a registrable-domain suffix
     /// of, `originHost`. The suffix must break on a label boundary:
     /// `login.example.com` is covered by `example.com`, while `evil-example.com`
-    /// is not.
-    ///
-    /// Known limitation: with no public-suffix list in the tree, a suffix that
-    /// is itself a public suffix (`co.uk` claimed from `evil.co.uk`) cannot be
-    /// rejected. Single-label suffixes (`com`) are refused outright, which
-    /// covers the common shape; a real PSL is the follow-up — the same one
-    /// ``WebCredentialMatching`` already defers.
+    /// is not. A suffix that is itself a public suffix is refused: the ICANN
+    /// section of the Mozilla Public Suffix List is vendored as
+    /// ``PublicSuffixData``, so `co.uk` cannot be claimed from `evil.co.uk`
+    /// and `foo.ck` cannot be claimed under the `*.ck` wildcard.
     public static func authorizedRPID(_ rpID: String, forOriginHost originHost: String) -> String? {
         let rp = normalizeHost(rpID)
         let origin = normalizeHost(originHost)
@@ -47,6 +44,9 @@ public enum WebAuthnOriginPolicy {
         // A single-label rpId is never a site's registrable domain; refusing it
         // stops a page at "example.com" from claiming the whole "com" suffix.
         guard rp.contains(".") else { return nil }
+        // The claimed parent must itself be registrable: a public suffix is
+        // not, so "co.uk" may not be claimed from "evil.co.uk".
+        guard !isPublicSuffix(rp) else { return nil }
         // The dot is what forces the match onto a label boundary.
         return origin.hasSuffix("." + rp) ? rp : nil
     }
@@ -68,5 +68,21 @@ public enum WebAuthnOriginPolicy {
         return labels.allSatisfy { label in
             !label.isEmpty && label.allSatisfy { $0.isASCII && $0.isNumber }
         }
+    }
+
+    /// Is `host` a public suffix under the vendored ICANN PSL rules? Exact
+    /// rules first, then wildcard rules (`*.nom.br` makes every one-label
+    /// prefix of `nom.br` public), with exception rules (`www.ck` under
+    /// `*.ck`) kept registrable.
+    private static func isPublicSuffix(_ host: String) -> Bool {
+        if PublicSuffixData.icannSuffixes.contains(host) { return true }
+        if PublicSuffixData.exceptionSuffixes.contains(host) { return false }
+        for suffix in PublicSuffixData.wildcardSuffixes {
+            guard host.hasSuffix("." + suffix) else { continue }
+            let prefix = host.dropLast(suffix.count + 1)
+            // The wildcard covers exactly one label above the suffix.
+            if !prefix.contains(".") { return true }
+        }
+        return false
     }
 }

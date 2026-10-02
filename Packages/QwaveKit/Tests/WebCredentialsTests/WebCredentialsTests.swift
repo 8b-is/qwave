@@ -91,6 +91,49 @@ final class WebAuthnOriginPolicyTests: XCTestCase {
         XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("", forOriginHost: "example.com"))
         XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("", forOriginHost: ""))
     }
+
+    /// The vendored public-suffix list: a suffix that is itself a public
+    /// suffix is not registrable, so a page sitting beneath it may not claim
+    /// it as an rpId. `evil.co.uk` cannot run a ceremony for `co.uk`.
+    func testPublicSuffixCannotBeClaimedAsRPID() {
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("co.uk", forOriginHost: "evil.co.uk"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("com.au", forOriginHost: "shop.com.au"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("org.uk", forOriginHost: "charity.org.uk"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("k12.ak.us", forOriginHost: "school.k12.ak.us"))
+    }
+
+    /// Wildcard PSL rules: `*.ck` makes every one-label prefix of `ck`
+    /// public, so `foo.ck` is unclaimable — but two labels down is a
+    /// registrable name again.
+    func testWildcardPublicSuffixIsRefused() {
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("foo.ck", forOriginHost: "evil.foo.ck"))
+        XCTAssertNil(WebAuthnOriginPolicy.authorizedRPID("x.sch.uk", forOriginHost: "school.x.sch.uk"))
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.foo.ck", forOriginHost: "www.example.foo.ck"),
+            "example.foo.ck")
+    }
+
+    /// PSL exception rules stay registrable: `www.ck` is an exception under
+    /// `*.ck`, and `city.kawasaki.jp` under `*.kawasaki.jp`.
+    func testPSLExceptionRulesStayClaimable() {
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("www.ck", forOriginHost: "x.www.ck"), "www.ck")
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("city.kawasaki.jp", forOriginHost: "site.city.kawasaki.jp"),
+            "city.kawasaki.jp")
+    }
+
+    /// The public-suffix guard must not break legitimate claims one level
+    /// above a public suffix: `example.co.uk` is registrable and claimable
+    /// from `login.example.co.uk`.
+    func testRegistrableDomainAboveAPublicSuffixIsStillAllowed() {
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.co.uk", forOriginHost: "login.example.co.uk"),
+            "example.co.uk")
+        XCTAssertEqual(
+            WebAuthnOriginPolicy.authorizedRPID("example.co.uk", forOriginHost: "example.co.uk"),
+            "example.co.uk")
+    }
 }
 
 final class InMemoryWebCredentialStoreTests: XCTestCase {

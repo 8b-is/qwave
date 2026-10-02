@@ -2,7 +2,7 @@
 # Local mirror of .github/workflows/release.yml — same gates, same artifact
 # shapes, driven by what's available on this machine instead of CI secrets.
 #
-#   scripts/release.sh v0.3.0
+#   scripts/release.sh v2.0.0
 #
 # Environment (all optional — absent pieces degrade exactly like CI):
 #   QWAVE_SIGN_IDENTITY   "Developer ID Application" identity name/hash
@@ -30,14 +30,20 @@ mkdir -p "$out_dir"
 # --- Version gates (same as CI) ---------------------------------------------
 TAG_VERSION="${TAG#v}"
 TAG_VERSION="${TAG_VERSION%%-*}"
-grep -q "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml || {
-  echo "❌ ${TAG} does not match CFBundleShortVersionString in project.yml" >&2
+# Declaration counts, not hardcoded numbers: every target (Qwave,
+# CredentialProvider, QwaveIOS) must carry the tag version.
+TOTAL_SHORT=$(grep -c 'CFBundleShortVersionString:' project.yml || true)
+MATCH_SHORT=$(grep -c "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml || true)
+[ "$TOTAL_SHORT" -gt 0 ] && [ "$MATCH_SHORT" -eq "$TOTAL_SHORT" ] || {
+  echo "❌ ${TAG} matches CFBundleShortVersionString on only ${MATCH_SHORT}/${TOTAL_SHORT} targets" >&2
   exit 1
 }
 IFS=. read -r MAJOR MINOR PATCH <<< "$TAG_VERSION"
 EXPECTED_BUILD=$((MAJOR * 10000 + MINOR * 100 + PATCH))
-[ "$(grep -c "CFBundleVersion: \"${EXPECTED_BUILD}\"" project.yml)" -eq 2 ] || {
-  echo "❌ expected CFBundleVersion \"${EXPECTED_BUILD}\" on both targets" >&2
+TOTAL_BUILD=$(grep -c 'CFBundleVersion:' project.yml || true)
+MATCH_BUILD=$(grep -c "CFBundleVersion: \"${EXPECTED_BUILD}\"" project.yml || true)
+[ "$TOTAL_BUILD" -gt 0 ] && [ "$MATCH_BUILD" -eq "$TOTAL_BUILD" ] || {
+  echo "❌ expected CFBundleVersion \"${EXPECTED_BUILD}\" on all ${TOTAL_BUILD} targets, got ${MATCH_BUILD}" >&2
   exit 1
 }
 

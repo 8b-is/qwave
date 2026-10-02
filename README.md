@@ -10,6 +10,16 @@
 
 ![Qwave hero](docs/assets/hero-v2.jpg)
 
+<div align="center">
+
+**zero-fear browsing · one sovereign core · two lanes**
+
+*the WebKit engine you already trust, wrapped in boundaries you can read*
+
+*stable keeps WebKit's defaults · nightly flips every experimental feature ON · the decisions live in Rust*
+
+</div>
+
 Qwave is an open-source, WebKit-native browser for people who want
 stronger boundaries around browsing data without giving up the system engine.
 It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
@@ -25,7 +35,32 @@ own network activity auditable.
 > [threat model](SECURITY.md), the [network inventory](docs/NETWORK.md), and the
 > [8b.IS Architectural Documentation](https://www.8b.is/documentation).
 
-## What makes it different
+## 📑 Contents
+
+- [🧭 What makes it different](#-what-makes-it-different)
+- [⚡ Install & update](#-install--update)
+  - [Homebrew (macOS)](#homebrew-macos)
+  - [One-command nightly installer](#one-command-nightly-installer)
+  - [Build from source](#build-from-source)
+  - [Remove a previous version](#remove-a-previous-version)
+- [🔬 How it works — concept diagrams](#-how-it-works--concept-diagrams)
+  - [Container isolation](#container-isolation)
+  - [Shields pipeline](#shields-pipeline)
+  - [Energy governor and hibernation](#energy-governor-and-hibernation)
+  - [Summarize (on-device AI)](#summarize-on-device-ai)
+  - [The Rust core](#the-rust-core)
+  - [MemoryWave](#memorywave)
+  - [Egress audit](#egress-audit)
+- [🏛 Architecture at a glance](#-architecture-at-a-glance)
+- [🗺 Module map](#-module-map)
+- [⚙ Swift 6 engineering rules](#-swift-6-engineering-rules)
+- [📁 Repository map](#-repository-map)
+- [🏷 Versioning & releases](#-versioning--releases)
+- [📚 Documentation](#-documentation)
+- [🚦 Status](#-status)
+- [⚖ License](#-license)
+
+## 🧭 What makes it different
 
 - **Container universes** — each profile gets its own WebKit data store;
   ephemeral tabs use non-persistent storage and are never restored.
@@ -69,7 +104,7 @@ own network activity auditable.
 - **Spaces** — the container universes surface as first-class Spaces with a vertical
   tab sidebar; a system Focus filter can switch the active Space and tighten shields.
 
-## How it works — concept diagrams
+## 🔬 How it works — concept diagrams
 
 ### Container isolation
 
@@ -171,7 +206,7 @@ Explicit command only: extract, generate, render inert text. See
 The sovereign decisions — which hosts Qwave's own code may contact, and
 whether a MEM8 wave frame is intact — live in `core/`, a zero-dependency Rust
 crate. It compiles to a staticlib, is linked into the app, and is spoken
-through a three-function C ABI (`core/include/qwave_core.h`) from the Swift
+through a small C ABI (`core/include/qwave_core.h`) from the Swift
 bridge in `Sources/QwaveApp/RustCoreBridge.swift`. The egress decision the
 omnibox makes before sending a suggestion query is the Rust core's, not
 Swift's.
@@ -179,8 +214,11 @@ Swift's.
 ```text
  core/  (Rust, zero deps)
    ├── egress.rs     Category-A allowlist — permits(host), subdomain-aware
-   ├── rational.rs   the MEM8 rational, reduced + checked arithmetic
-   └── wave.rs       the 79-byte WaveInt frame: encode, validate, grid coord
+   ├── wave.rs       the 79-byte WaveInt frame: encode, validate, grid coord
+   ├── phoenix.rs    the Phoenix protocol — marine gate, custodian, verdict
+   ├── mem16.rs      governing/recovery sequences (mem|16-10 under `nightly`)
+   ├── telemetry.rs  the PII scrubber + histogram aggregator (qwave-agg)
+   └── rational.rs   the MEM8 rational, reduced + checked arithmetic
 ```
 
 The WireGuard/VPN layer (PacketTunnel, WireGuardKit + Go bridge, Zig packet
@@ -200,8 +238,8 @@ local by default, remote only when configured. See
  page text ─▶ ArticleExtractor ─▶ MEM8 store (container-scoped, encrypted)
       ▲                                    │
       └──────── MemoryProviding ◀──────────┘
-               default: NullMemoryProvider  (no inference configured)
-               optional: OpenAI-compatible  (explicit HTTPS endpoint only)
+               default: OnDeviceProvider  (local-first; remote only when
+               configured explicitly)
 ```
 
 ### Egress audit
@@ -223,8 +261,7 @@ request-free by a test whose reach is bounded (caveats below). See
       │                        allowed → steps aside, request proceeds
       │                        blocked → fails the request, logs, records
       ▼
- allowlisted hosts (4): github.com          Sparkle appcast
-                        api.mullvad.net     VPN control API
+ allowlisted hosts (3): github.com          Sparkle appcast
                         api.x.ai            default remote AI endpoint
                         duckduckgo.com      omnibox suggestions (opt-in)
       │
@@ -272,7 +309,7 @@ requested; the test builds its own `ShieldsDirector` rather than running the
 app's launch sequence, and WebKit's own network process (Category C) is
 invisible to any `URLProtocol`-based check, `EgressGuard` included.
 
-## Architecture at a glance
+## 🏛 Architecture at a glance
 
 ![Qwave browser](docs/assets/gallery/qwave-browser.jpg)
 
@@ -289,14 +326,18 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── FeatureFlags                guarded WebKit SPI feature access
 │   ├── WebCredentials              keychain-only passwords + passkeys (AutoFill)
 │   └── QwaveSupport                logging, keychain, egress guard
-└── PacketTunnel.systemextension    WireGuardKit + NetworkExtension boundary
+└── core/                          the Rust sovereign core (staticlib, C ABI)
+    ├── egress.rs                   the Category-A allowlist
+    ├── wave.rs                     the 79-byte MEM8 WaveInt frame
+    ├── phoenix.rs                  the Phoenix protocol (marine gate…verdict)
+    └── telemetry.rs                the privacy scrubber + histogram aggregator
 ```
 
 Dependency direction is one-way (app → QwaveKit; feature modules never reach
 into the AppKit shell) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the exact graph, isolation rules, data flow, and test boundaries.
 
-## Module map
+## 🗺 Module map
 
 - **BrowserCore** — the convergence point: tabs, containers, navigation,
   hibernation. Key types: `TabManager`, `ContainerRegistry`, `TabHibernator`,
@@ -330,23 +371,66 @@ the exact graph, isolation rules, data flow, and test boundaries.
 - **QwaveSupport** — `QwaveLog` (privacy-classified), keychain, egress allowlist.
   [source](Packages/QwaveKit/Sources/QwaveSupport/)
 
-## Build locally
+## ⚡ Install & update
 
-### Requirements
+### Homebrew (macOS)
+
+```sh
+# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked):
+brew tap 8b-is/tap
+brew install 8b-is/tap/qwave-nightly
+
+# update to the latest main — same command as any Homebrew package:
+brew upgrade qwave-nightly
+
+# uninstall:
+brew uninstall qwave-nightly
+```
+
+`qwave-nightly` is a head-only formula: every install/upgrade builds the
+current `main`. A stable formula (`brew install 8b-is/tap/qwave`) follows the
+tagged releases — see [🏷 Versioning & releases](#-versioning--releases).
+
+The formula builds the same way `tools/install-nightly.sh` does, and lands
+`Qwave.app` under Homebrew's prefix:
+
+```sh
+open "$(brew --prefix)/opt/qwave-nightly/Qwave.app"
+# or link it into /Applications yourself:
+ln -s "$(brew --prefix)/opt/qwave-nightly/Qwave.app" /Applications/Qwave.app
+```
+
+### One-command nightly installer
+
+No Homebrew? The installer script does the same thing:
+
+```sh
+git clone https://github.com/8b-is/qwave.git && cd qwave
+tools/install-nightly.sh            # build bleeding edge, swap into /Applications
+
+# update to the latest main and stay bleeding edge:
+git pull && tools/install-nightly.sh
+```
+
+### Build from source
+
+Requirements:
 
 - macOS 14 or newer (desktop lane)
 - iPhone with iOS 15 or newer (iPhone 13 minimum; phone lane)
 - Xcode 16+ (the package uses Swift 6 language mode)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- Rust (rustup) — the sovereign core builds a staticlib at compile time
+- Rust (rustup) — the sovereign core builds a staticlib at compile time.
+  Universal Release builds (`-destination 'platform=macOS'`) need both Apple
+  std targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
 
-### Package tests
+Package tests:
 
 ```sh
 swift test --package-path Packages/QwaveKit -c release
 ```
 
-### Generate and build the app
+Generate and build the app:
 
 ```sh
 xcodegen generate --spec project.yml
@@ -368,21 +452,6 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGN_IDENTITY= \
   build
-### Install & update on this Mac (bleeding edge)
-
-```sh
-git clone https://github.com/8b-is/qwave.git && cd qwave
-
-# stable build into /Applications
-xcodegen generate --spec project.yml
-xcodebuild -project Qwave.xcodeproj -scheme Qwave -configuration Release   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
-ditto "$(find ~/Library/Developer/Xcode/DerivedData -path '*Release/Qwave.app' -type d | head -1)" /Applications/Qwave.app
-
-# bleeding edge (nightly: every experimental WebKit feature ON) — one command:
-tools/install-nightly.sh
-
-# update to the latest main and stay bleeding edge:
-git pull && tools/install-nightly.sh
 ```
 
 The nightly channel flips all experimental WebKit features ON and links the
@@ -410,32 +479,50 @@ removed); nothing else lingers.
 shields core in a SwiftUI shell (`Sources/QwaveIOS`); the VPN layer was
 removed — a tunnel is a different layer, not the browser's requirement.
 
-## Swift 6 engineering rules
+## ⚙ Swift 6 engineering rules
 
 - QwaveKit targets use Swift 6 language mode and complete strict concurrency.
 - Persistence, MemoryWave, and service state use actors or explicit main-actor
   ownership; cross-boundary values are `Sendable` value types.
-- The NetworkExtension provider is a narrow SDK compatibility boundary. Its
-  legacy mutable provider surface is documented in [SECURITY.md](SECURITY.md)
-  and must not leak into QwaveKit APIs.
 - Async WebKit and persistence APIs stay async at their boundary; do not add
   blocking queues or semaphore bridges to silence compiler diagnostics.
 - New network clients must update the committed egress allowlist and tests.
 
-## Repository map
+## 📁 Repository map
 
 ```text
 Packages/QwaveKit/       Swift package and headless tests
-Packages/WireGuardKit/   vendored WireGuard bridge
 Sources/QwaveApp/        AppKit shell and SwiftUI panes
-Sources/PacketTunnel/    Network Extension provider
+Sources/QwaveIOS/        the iPhone lane (SwiftUI shell, iOS 15+)
+Sources/CredentialProvider/  the AutoFill app extension
+core/                    Rust sovereign core (staticlib + C ABI header)
 Resources/               plists, entitlements, bundled rules
 docs/                    architecture, network, signing, design site
 research/                evaluated platform/package notes + probes
+tools/                   install-nightly.sh, telemetry-export
 project.yml              XcodeGen source of truth
 ```
 
-## Documentation
+## 🏷 Versioning & releases
+
+`project.yml` is the **single source of truth** for the version. Every target
+(`Qwave`, `CredentialProvider`, `QwaveIOS`) declares the same two numbers:
+
+- `CFBundleShortVersionString` — the semver, currently `2.0.0`.
+- `CFBundleVersion` — `major*10000 + minor*100 + patch` (2.0.0 → `20000`).
+  Sparkle compares this number, and the release workflow **fails the tag** if
+  any target disagrees.
+
+The `v2.0.0` major covers the Rust-core rewrite: VPN layer removal, the
+sovereign core (`core/`), the stable/nightly channel split, and the removal
+of Go/Zig from the build.
+
+Releases: `git tag v2.0.0 && git push origin v2.0.0` runs
+`.github/workflows/release.yml` (signed + notarised DMG and the Sparkle
+appcast when the secrets are configured; unsigned zip otherwise). The full
+procedure lives in [docs/RELEASING.md](docs/RELEASING.md).
+
+## 📚 Documentation
 
 Product and engineering specs:
 
@@ -447,7 +534,7 @@ Product and engineering specs:
 - [Blocklist pipeline](docs/BLOCKLIST.md)
 - [Energy measurement](docs/ENERGY.md) · [Performance](docs/PERF.md)
 - [Crypto review](docs/CRYPTO_REVIEW.md)
-- [Signing and activation](docs/SIGNING.md) · [Releasing](docs/RELEASING.md)
+- [Signing](docs/SIGNING.md) · [Releasing](docs/RELEASING.md)
 - [Toolchain pinning](docs/PINNING.md) · [Xcode Cloud](docs/XCODE_CLOUD.md)
 - [GRDB evaluation](docs/GRDB-EVALUATION.md) · [Roadmap audit](docs/ROADMAP_AUDIT.md)
 - [Contributing](CONTRIBUTING.md)
@@ -469,30 +556,31 @@ Research (measured, version-stamped, Qwave-specific):
 - FoundationModels probe (availability, latency, provider seam):
   [02-on-device-ai/foundation-models-probe](research/02-on-device-ai/foundation-models-probe/)
 
-## Status
+## 🚦 Status
 
-Shipped in v1.0.0: the browser core, shields, WebExtensions MV3 bridge,
-MemoryWave, Summarize (macOS 26+ on Apple Silicon with Apple Intelligence),
-post-quantum KEM implementation, signed release workflow, and Swift 6
-concurrency migration — all covered by package tests.
+Shipped through the v1.0.0 line: the browser core, shields, WebExtensions MV3
+bridge, MemoryWave, Summarize (macOS 26+ on Apple Silicon with Apple
+Intelligence), the signed release workflow, and the Swift 6 concurrency
+migration — all covered by package tests.
 
-Since 1.0.0: downloads UI, crash-safe session restore, a `qwave://diagnostics`
-telemetry page, VoiceOver accessibility on the chrome, on-device semantic memory
-recall, a command palette, first-run bookmark import with Spotlight entities,
-container-bound Focus filters with a Spaces sidebar, keychain-only AutoFill
-(passwords + passkeys), and a zero-egress Safe Browsing host-set (shipped as a
-sample list — see [docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a
-real feed).
+v2.0.0 is the Rust-core line: the VPN layer (PacketTunnel, WireGuardKit,
+Go+Zig, VPNKit, PostQuantum) was **removed**, the sovereign decisions
+(egress, MEM8 waves, Phoenix, telemetry scrubbing) moved into `core/`, the
+stable/nightly channel split became real (nightly actually links the
+mem|16-10 library and flips the WebKit experimental features ON), and the
+WebAuthn rpId check now consults a real public-suffix list.
 
-The VPN system extension still depends on Apple Network Extension entitlements
-for signed distribution (Apple DTS case open); see
-[docs/SIGNING.md](docs/SIGNING.md) for the exact gap.
+Also in flight: downloads UI, crash-safe session restore, a
+`qwave://diagnostics` telemetry page, VoiceOver accessibility on the chrome,
+on-device semantic memory recall, a command palette, first-run bookmark
+import with Spotlight entities, container-bound Focus filters with a Spaces
+sidebar, keychain-only AutoFill (passwords + passkeys), a zero-egress Safe
+Browsing host-set (shipped as a sample list — see
+[docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a real feed),
+and the iPhone lane (the shared QwaveKit package compiles for iOS; the
+SwiftUI shell ships in `Sources/QwaveIOS`).
 
-An iPhone port is in progress: the shared QwaveKit package now compiles for iOS
-(Phase 0). A SwiftUI app target, iOS AutoFill, and a NetworkExtension VPN are the
-following phases.
-
-## License
+## ⚖ License
 
 Qwave is released under the [MIT License](LICENSE). Copyright © 2026 8b.is /
 Peter Lodri.

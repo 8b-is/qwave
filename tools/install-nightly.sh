@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # install-nightly — build the bleeding edge and swap it into /Applications.
 #
 #   tools/install-nightly.sh
@@ -17,10 +17,33 @@ cd "$ROOT"
 
 echo "── building QwaveNightly ──"
 xcodegen generate --spec project.yml
-xcodebuild -project Qwave.xcodeproj -scheme QwaveNightly -configuration Release \
-  -destination 'platform=macOS' \
+
+# Pin the destination to the host architecture: a plain `platform=macOS`
+# destination builds both slices, and the Rust staticlib cross-compile then
+# needs the other arch's rust std installed. Nightly installs are for the
+# machine in front of you — one arch, the native one, no extra toolchain.
+case "$(uname -m)" in
+  arm64) DEST="platform=macOS,arch=arm64" ;;
+  x86_64) DEST="platform=macOS,arch=x86_64" ;;
+  *)
+    echo "error: unsupported host architecture $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+BUILD_LOG="$(mktemp -t qwave-nightly-build)"
+if ! xcodebuild -project Qwave.xcodeproj -scheme QwaveNightly -configuration Release \
+  -destination "$DEST" \
+  ONLY_ACTIVE_ARCH=YES \
+  QWAVE_CHANNEL=nightly \
   CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= \
-  build | tail -1
+  build >"$BUILD_LOG" 2>&1; then
+  echo "error: build failed — last lines of the log:" >&2
+  tail -40 "$BUILD_LOG" >&2
+  echo "full log kept at $BUILD_LOG" >&2
+  exit 1
+fi
+echo "  build succeeded"
 
 BUILT="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
   -path '*Release/Qwave.app' -type d 2>/dev/null | head -1)"

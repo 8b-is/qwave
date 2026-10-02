@@ -14,6 +14,22 @@ All notable changes to Qwave will be documented in this file.
   `handleAppMessage` so the counters are a real measurement. Throughput
   still belongs on WireGuard UAPI, not these sanity-check counters
   (issue #135).
+- **The WebAuthn rpId check now consults a real public-suffix list.** The
+  origin binding refused single-label suffixes (`com`) but with no PSL in
+  the tree a multi-label public suffix like `co.uk` could still be claimed
+  from `evil.co.uk`. The ICANN section of the Mozilla Public Suffix List is
+  now vendored (`PublicSuffixData.swift`, generated from the
+  2026-10-01_23-02-52_UTC snapshot, IDN rules in punycode form) and
+  `WebAuthnOriginPolicy.authorizedRPID` refuses any rpId that is itself a
+  public suffix — exact rules, `*.ck`-style wildcards, and exception rules
+  (`www.ck` stays registrable) all handled.
+- **The nightly channel is now real.** The `QwaveNightly` scheme's build
+  setting was silently dropped by xcodegen, so every nightly build was
+  actually stable. `tools/install-nightly.sh` now passes `QWAVE_CHANNEL=nightly`
+  (it lands in Info.plist and in the cargo pre-build script's environment),
+  the pre-build script builds the core with `--features nightly` — the
+  mem|16-10 sovereign library is actually linked — and GUI runs of the
+  scheme set the channel through the scheme environment.
 
 ### Removed
 - **Dead code sweep: `NoOpCredentialIdentitySyncing`,
@@ -37,6 +53,23 @@ All notable changes to Qwave will be documented in this file.
   it added so a future teardown can be scoped correctly.
 
 ### Changed
+- **Version bumped to 2.0.0** across all three targets (`Qwave`,
+  `CredentialProvider`, `QwaveIOS`): `CFBundleShortVersionString` 2.0.0,
+  `CFBundleVersion` 20000. The 2.x line is the Rust-core era; the release
+  workflow and `scripts/release.sh` verify the tag against every target's
+  declaration.
+- **The Rust core pre-build script is architecture-aware.** A universal
+  Release build (`-destination platform=macOS`) used to link an arm64-only
+  staticlib into its x86_64 slice and die with `_qw_*` undefined symbols —
+  the `tools/install-nightly.sh` failure. The script now maps `ARCHS` onto
+  cargo targets, builds each slice, and merges with `lipo`; it hard-errors
+  with the exact `rustup target add` command when a std target is missing.
+  `tools/install-nightly.sh` pins the host architecture so a one-command
+  install never needs a cross toolchain; CI installs both std targets.
+- **`release.yml` dropped its VPN-era pieces**: the go/zig toolchain, the
+  Network Extension provisioning-profile steps, and the PacketTunnel
+  entitlement verification. Signed builds always use the CI no-VPN
+  entitlements (the generated ones still carry the leftover NE entry).
 - **CI no longer uses Blacksmith runners.** `ci.yml` and `release.yml` now
   use GitHub-hosted `macos-15`. The Xcode 26.3 / Swift 6.2 pin is unchanged.
 - **Local signing is Automatic** with team `CKQ9Q43ANM`, so a Debug run

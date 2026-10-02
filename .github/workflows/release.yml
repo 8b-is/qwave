@@ -21,23 +21,27 @@ jobs:
 
       - name: Pin Xcode
         run: |
-          # GitHub-hosted macos-15 ships Xcode 16.4 (16F6) as default.
-          # Assert the pin instead of globbing "latest" so an image update
-          # cannot change build behaviour without a commit.
-          if ls -d /Applications/Xcode_16.4*.app >/dev/null 2>&1; then
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_16.4*.app | sort -V | tail -n1)/Contents/Developer"
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly (the same pin ci.yml asserts). Assert the pin instead
+          # of globbing "latest" so an image update cannot change build
+          # behaviour without a commit.
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
           fi
           xcodebuild -version
-          xcodebuild -version | grep -q "Xcode 16.4" || {
-            echo "❌ CI image drifted from pinned Xcode 16.4 — update the pin deliberately"
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
             exit 1
           }
 
       - name: Install tools
-        # go: WireGuardKitGo builds libwg-go.a at compile time.
-        # zig: the "Build Zig packet filter" preBuildScript compiles
-        # libqpacket.a and hard-errors if zig is absent.
-        run: brew install xcodegen xcbeautify create-dmg go zig
+        # rustup + both Apple std targets: the universal Release build
+        # (platform=macOS) needs the matching rust std for each slice, and
+        # the preBuildScript hard-errors when one is missing.
+        run: |
+          brew install xcodegen xcbeautify create-dmg rustup
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Verify tag matches project versions
         run: |
@@ -46,10 +50,9 @@ jobs:
           TAG_VERSION="${TAG_VERSION%%-*}"
           # Compare against the DECLARATION COUNT, never a hardcoded number and
           # never `grep -q`. project.yml declares these once per target, and the
-          # target list grows: CredentialProvider was added after v1.0.0, which
-          # silently broke the old `-ne 2` check below (3 declarations today) and
-          # would have rejected a correct tag. An existence check has the mirror
-          # failure: a tag matching only PacketTunnel's value would have passed.
+          # target list changes: CredentialProvider was added after v1.0.0, and
+          # QwaveIOS joined later (3 declarations today) — an existence check
+          # alone would let a tag matching only one target's value pass.
           TOTAL_SHORT=$(grep -c 'CFBundleShortVersionString:' project.yml || true)
           MATCH_SHORT=$(grep -c "CFBundleShortVersionString: \"${TAG_VERSION}\"" project.yml || true)
           if [ "$TOTAL_SHORT" -eq 0 ]; then
@@ -103,8 +106,6 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-          MACOS_APP_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_B64 }}
-          MACOS_TUNNEL_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_TUNNEL_PROVISIONING_PROFILE_B64 }}
         run: |
           if [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$MACOS_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
             echo "sign=true" >> "$GITHUB_OUTPUT"
@@ -124,40 +125,6 @@ jobs:
             echo "appcast=false" >> "$GITHUB_OUTPUT"
             echo "ℹ️ SPARKLE_ED_PRIVATE_KEY absent — skipping appcast generation."
           fi
-          if [ -n "$MACOS_APP_PROVISIONING_PROFILE_B64" ] && [ -n "$MACOS_TUNNEL_PROVISIONING_PROFILE_B64" ] && [ -n "$APPLE_TEAM_ID" ]; then
-            echo "vpn_entitlements=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "vpn_entitlements=false" >> "$GITHUB_OUTPUT"
-            echo "ℹ️ Network Extension provisioning profiles absent — signed artifact will use Distribution-NoVPN.entitlements."
-          fi
-
-      - name: Install Network Extension provisioning profiles
-        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.vpn_entitlements == 'true'
-        env:
-          MACOS_APP_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_APP_PROVISIONING_PROFILE_B64 }}
-          MACOS_TUNNEL_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_TUNNEL_PROVISIONING_PROFILE_B64 }}
-        run: |
-          set -euo pipefail
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILE_DIR"
-          install_profile() {
-            local encoded="$1"
-            local output="$2"
-            echo "$encoded" | base64 --decode > "$output"
-            local uuid
-            uuid=$(security cms -D -i "$output" | plutil -extract UUID raw -o - -)
-            cp "$output" "$PROFILE_DIR/$uuid.provisionprofile"
-            echo "$uuid"
-          }
-          APP_PROFILE_PATH="$RUNNER_TEMP/qwave-app.provisionprofile"
-          TUNNEL_PROFILE_PATH="$RUNNER_TEMP/qwave-tunnel.provisionprofile"
-          APP_PROFILE_UUID=$(install_profile "$MACOS_APP_PROVISIONING_PROFILE_B64" "$APP_PROFILE_PATH")
-          TUNNEL_PROFILE_UUID=$(install_profile "$MACOS_TUNNEL_PROVISIONING_PROFILE_B64" "$TUNNEL_PROFILE_PATH")
-          APP_PROFILE_NAME=$(security cms -D -i "$APP_PROFILE_PATH" | plutil -extract Name raw -o - -)
-          TUNNEL_PROFILE_NAME=$(security cms -D -i "$TUNNEL_PROFILE_PATH" | plutil -extract Name raw -o - -)
-          echo "QWAVE_APP_PROVISIONING_PROFILE=$APP_PROFILE_NAME" >> "$GITHUB_ENV"
-          echo "QWAVE_TUNNEL_PROVISIONING_PROFILE=$TUNNEL_PROFILE_NAME" >> "$GITHUB_ENV"
-          echo "Installed app profile $APP_PROFILE_UUID and tunnel profile $TUNNEL_PROFILE_UUID"
 
       - name: Import Developer ID certificate
         if: steps.signing.outputs.sign == 'true'
@@ -177,10 +144,10 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
           rm "$RUNNER_TEMP/certificate.p12"
 
-      # The generated entitlements declare the Network Extension capability,
-      # which needs Apple's Developer ID NE approval + provisioning profiles.
-      # Until those exist, CI-signed builds carry empty entitlements: browser
-      # and Sparkle updates work, VPN activation does not (docs/SIGNING.md).
+      # The generated entitlements declare the Network Extension capability
+      # (a leftover of the removed VPN layer; see docs/SIGNING.md). Signed
+      # builds therefore carry the CI no-VPN entitlements instead: browser
+      # and Sparkle updates work, and the entitlements stay honest.
       - name: Build (signed Release)
         if: steps.signing.outputs.sign == 'true'
         env:
@@ -193,13 +160,9 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
             ENABLE_HARDENED_RUNTIME=YES
             OTHER_CODE_SIGN_FLAGS="--timestamp"
+            CODE_SIGN_ENTITLEMENTS="$PWD/Resources/CI/Distribution-NoVPN.entitlements"
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
           )
-          if [ "${{ steps.signing.outputs.vpn_entitlements }}" != "true" ]; then
-            XCODE_ARGS+=(
-              CODE_SIGN_ENTITLEMENTS="$PWD/Resources/CI/Distribution-NoVPN.entitlements"
-              CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
-            )
-          fi
           xcodebuild \
             -project Qwave.xcodeproj \
             -scheme Qwave \
@@ -208,17 +171,6 @@ jobs:
             -derivedDataPath build/DerivedData \
             "${XCODE_ARGS[@]}" \
             build | xcbeautify
-
-      - name: Verify signed Network Extension entitlements
-        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.vpn_entitlements == 'true'
-        run: |
-          set -euo pipefail
-          APP_ENTITLEMENTS=$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null)
-          TUNNEL_PATH="$APP_PATH/Contents/Library/SystemExtensions/PacketTunnel.systemextension"
-          TUNNEL_ENTITLEMENTS=$(codesign -d --entitlements :- "$TUNNEL_PATH" 2>/dev/null)
-          echo "$APP_ENTITLEMENTS" | grep -q "packet-tunnel-provider-systemextension"
-          echo "$TUNNEL_ENTITLEMENTS" | grep -q "packet-tunnel-provider-systemextension"
-          echo "✅ app and PacketTunnel carry Network Extension entitlements"
 
       - name: Build (unsigned Release)
         if: steps.signing.outputs.sign != 'true'

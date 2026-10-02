@@ -27,5 +27,7 @@
 4. **No VPN in-tree:** the WireGuard/VPN layer (PacketTunnel, WireGuardKit+Go bridge, Zig packet filter, VPNKit, PostQuantum) is removed — it is a different layer, not the browser's requirement. If it returns, it returns as a separate package/repo.
 5. **iOS 15 floor:** iPhone 13 is the minimum device. Any API newer than iOS 15 goes behind `#available`/`#if canImport` with an honest degradation path (see `ContainerRegistry` and `SemanticEmbedder`), never a bare call.
 6. **No AppKit in `Sources/QwaveIOS`:** the phone lane is SwiftUI-only. Shared QwaveKit files that need AppKit use the `#if canImport(AppKit)` gate (`DownloadsPopover`, `FindBarView` are the pattern).
+7. **Versioning:** `project.yml` is the single source of truth — `CFBundleShortVersionString` (semver) and `CFBundleVersion` (`major*10000 + minor*100 + patch`) on **all three** targets (`Qwave`, `CredentialProvider`, `QwaveIOS`). `release.yml` and `scripts/release.sh` fail any `v*` tag that disagrees with the declarations. Bump all targets together; see `docs/RELEASING.md`.
+8. **Universal builds need both Rust std targets:** the cargo pre-build script maps `ARCHS` onto cargo targets and hard-errors when a non-host std is missing (`rustup target add aarch64-apple-darwin x86_64-apple-darwin`). Local one-arch builds (`tools/install-nightly.sh`, Homebrew formulae) pin the host arch and skip the cross compile.
 
 *qwave · sovereign browser, two lanes · macOS + iPhone · 8b.is*

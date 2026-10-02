@@ -122,8 +122,13 @@ jobs:
 
       - name: Install tools
         # cargo: the Rust core preBuildScript builds libqwave_core.a and
-        # hard-errors if cargo is absent.
-        run: brew install xcodegen xcbeautify rustup && rustup default stable
+        # hard-errors if cargo is absent. Both Apple std targets: the Release
+        # build below targets `platform=macOS`, which builds both slices, and
+        # the preBuildScript requires the matching rust std for each.
+        run: |
+          brew install xcodegen xcbeautify rustup
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Cache SPM checkouts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

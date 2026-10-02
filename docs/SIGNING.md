@@ -1,85 +1,37 @@
-# Signing & Activating the VPN System Extension
+# Signing Qwave
 
-CI builds Qwave unsigned (`CODE_SIGNING_ALLOWED=NO`), which is enough to verify
-the code compiles and to produce a runnable browser — everything works except
-the VPN tunnel. Packet-tunnel system extensions require a real signature and
-the Network Extension entitlement, which only you can do, on your Mac, with
-your Apple Developer account.
+CI builds Qwave unsigned (`CODE_SIGNING_ALLOWED=NO`), which is enough to
+verify the code compiles and to produce a runnable browser. Distribution —
+Developer ID signing, notarisation, and the Sparkle update feed — is layered
+on top, driven entirely by which credentials exist.
 
-## Prerequisites
-
-- Apple Developer Program membership (the paid one; free accounts can't get NE
-  entitlements for system extensions).
-- Xcode 16+ on macOS 14+.
-- `brew install xcodegen`.
-
-## One-time Apple setup
-
-1. In [developer.apple.com](https://developer.apple.com/account) → Identifiers,
-   create two App IDs:
-   - `is.8b.qwave` (or your own reverse-DNS id — see "Renaming" below)
-   - `is.8b.qwave.tunnel`
-2. Enable **Network Extensions** capability on both, and **App Groups** with a
-   group like `group.is.8b.qwave` on both.
-
-## Building signed
+## Local development signing
 
 1. Generate the project:
 
    ```sh
    cd qwave
-   xcodegen generate
+   xcodegen generate --spec project.yml
    open Qwave.xcodeproj
    ```
 
-2. In both targets' Signing & Capabilities, confirm **Team** is
+2. In the `Qwave` target's Signing & Capabilities, confirm **Team** is
    `CKQ9Q43ANM` and signing is **Automatic** (`project.yml` defaults).
-   CI still builds unsigned (`CODE_SIGNING_ALLOWED=NO`); the release
-   workflow forces Manual + Developer ID.
+   The `CredentialProvider` extension (AutoFill) needs the same team so the
+   app-group and keychain-group entitlements resolve.
 
-3. The entitlements files are generated from `project.yml` and already contain:
-   - `com.apple.developer.networking.networkextension` → `packet-tunnel-provider-systemextension`
+3. The entitlements files are generated from `project.yml`:
    - app group `$(TeamIdentifierPrefix)group.is.8b.qwave`
    - keychain access group `$(TeamIdentifierPrefix)is.8b.qwave.shared`
+   - `com.apple.developer.authentication-services.autofill-credential-provider`
+     on the CredentialProvider extension
 
-   `$(TeamIdentifierPrefix)` resolves to your team id at signing time; nothing
-   to edit.
+   `$(TeamIdentifierPrefix)` resolves to your team id at signing time;
+   nothing to edit. The `networkextension` entry in `Qwave.entitlements` is a
+   leftover of the removed VPN layer and is deliberately not enforced — see
+   the Developer ID section below.
 
 4. Build & run the `Qwave` scheme.
-
-## Activating the extension
-
-System extensions only activate from `/Applications`:
-
-1. Build, then copy `Qwave.app` to `/Applications` and launch it from there.
-2. Settings → VPN → **Install VPN System Extension…**
-3. macOS will prompt: System Settings → Privacy & Security → allow the
-   extension from "Qwave".
-4. macOS asks to allow the VPN configuration when you first connect.
-
-During development you can loosen Gatekeeper's grip on extension versioning:
-
-```sh
-systemextensionsctl developer on      # allows running from Xcode's build dir
-systemextensionsctl list              # inspect installed extensions
-```
-
-## Connecting
-
-1. Settings → VPN → paste your Mullvad account number → **Log In** (this
-   registers a WireGuard device key, stored only in your keychain).
-2. Pick a country / owned-only / DAITA filters as desired.
-3. **Connect**. The menu-bar shield fills in when the tunnel is up.
-
-## Troubleshooting
-
-- `sysextd` logs: `log stream --predicate 'subsystem == "com.apple.sx"'`
-- Qwave logs: `log stream --predicate 'subsystem == "is.8b.qwave"'`
-- "VPN configuration error (…)" from the app almost always means the
-  extension isn't activated or the entitlement is missing from the profile.
-- If the tunnel starts but traffic doesn't flow, check that the WireGuard
-  key registered with Mullvad matches the keychain key: log out and back in
-  to rotate both together.
 
 ## CI release pipeline (signing, notarisation, Sparkle)
 
@@ -99,21 +51,20 @@ depends on which repository secrets exist:
 - **All signing secrets present** → Developer ID signed build (hardened
   runtime, timestamped), notarised via `notarytool`, stapled, verified with
   `spctl -a -vv`, shipped as a signed+stapled DMG.
-  *Verified locally 2026-08-13*: the signed build's chain
-  (`Developer ID Application` → `Developer ID Certification Authority` →
-  `Apple Root CA`), hardened-runtime flag, and `codesign --verify --deep
-  --strict` all pass; `spctl -a -vv` answers `rejected (Unnotarized
-  Developer ID)` until notarisation runs, which is exactly the step the CI
-  pipeline performs before its own `spctl` assertion.
 - **Signing secrets absent** → unsigned build, shipped as
-  `Qwave-vX.Y.Z-unsigned.zip` (the pre-v0.3.0 behaviour). Local dev keeps
-  working unsigned: `CODE_SIGNING_ALLOWED=NO` still builds.
-- **`SPARKLE_ED_PRIVATE_KEY` present** → `generate_appcast` (from the pinned
-  Sparkle 2.9.5 distribution, checksum-verified) signs the DMG with EdDSA and
-  publishes `appcast.xml` as a release asset. The app's `SUFeedURL` points at
+  `Qwave-vX.Y.Z-unsigned.zip`. Local dev keeps working unsigned:
+  `CODE_SIGNING_ALLOWED=NO` still builds.
+- **`SPARKLE_ED_PRIVATE_KEY` present** (and the build signed + notarised) →
+  `generate_appcast` (from the pinned Sparkle 2.9.5 distribution,
+  checksum-verified) signs the DMG with EdDSA and publishes `appcast.xml` as
+  a release asset. The app's `SUFeedURL` points at
   `releases/latest/download/appcast.xml`, so the appcast must ship with every
   release — the workflow re-downloads the previous appcast first to keep the
   update history.
+
+The workflow also hard-errors before notarisation if any embedded Sparkle
+helper lacks a Developer ID signature + hardened runtime: the notary service
+rejects them, and failing early beats failing at `notarytool`.
 
 ### Sparkle update keys
 
@@ -125,45 +76,24 @@ Ed25519 tool emitting a base64 32-byte seed), update `SUPublicEDKey`, update
 the secret, and ship one release signed with **both** keys' signatures per
 Sparkle's key-rotation guidance.
 
-### Network Extension entitlements under Developer ID
+### The leftover Network Extension entitlement
 
-The app and PacketTunnel entitlements declare
-`com.apple.developer.networking.networkextension`
-(`packet-tunnel-provider-systemextension`). Manual Developer ID signing with
-those entitlements fails outright — verified 2026-08-13 with a local
-Developer ID identity:
-
-```
-error: "Qwave" requires a provisioning profile with the Network Extensions
-feature. Select a provisioning profile in the Signing & Capabilities editor.
-```
-
-Fixing that requires Apple's **Developer ID Network Extension approval** and
-Developer ID provisioning profiles for `is.8b.qwave` / `is.8b.qwave.tunnel`
-— an Apple-side process, not a repo change. Until then, the CI signed path
-uses empty entitlements from `Resources/CI/Distribution-NoVPN.entitlements`:
-the signed app browses and auto-updates, but VPN activation is not available in
-CI-signed builds. Local Xcode signing with your team (see above) remains the
-working path for VPN testing.
-
-When Apple approval is granted, add these repository secrets:
-
-| Secret | Contents |
-|---|---|
-| `MACOS_APP_PROVISIONING_PROFILE_B64` | Base64 Developer ID profile for `is.8b.qwave` |
-| `MACOS_TUNNEL_PROVISIONING_PROFILE_B64` | Base64 Developer ID profile for `is.8b.qwave.tunnel` |
-
-The release workflow installs both profiles, passes their names to the two
-XcodeGen targets, uses the real entitlements from `project.yml`, and verifies
-the Network Extension entitlement on both the app and embedded system
-extension before notarization. If either profile is missing, it deliberately
-falls back to the no-VPN signed artifact instead of producing a misleading
-partially entitled release.
+`Qwave.entitlements` still declares
+`com.apple.developer.networking.networkextension` from the removed VPN layer.
+Manual Developer ID signing with that entitlement fails outright (Apple
+reserves NE for approved provisioning profiles), so the CI signed path
+overrides the generated entitlements with
+`Resources/CI/Distribution-NoVPN.entitlements`
+(`CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`): the signed app browses and
+auto-updates, and the entitlements it actually carries are honest. Dropping
+the NE entry from `project.yml` is the cleanup; the app-group and keychain
+groups must stay.
 
 ## Renaming
 
-`is.8b.qwave` is a placeholder identity. To rebrand: change `bundleIdPrefix`,
-the two `PRODUCT_BUNDLE_IDENTIFIER`s, the app group, keychain group, and
-`NEMachServiceName` in `project.yml`, plus `SystemExtensionActivator.extensionIdentifier`
-and `TunnelManager.providerBundleIdentifier` defaults in the sources. Grep for
-`is.8b.qwave` — every occurrence is intentional and greppable.
+`is.8b.qwave` is the 8b.IS identity. To rebrand: change `bundleIdPrefix`, the
+`PRODUCT_BUNDLE_IDENTIFIER`s (`is.8b.qwave`, `is.8b.qwave.mcp`,
+`is.8b.qwave.autofill`, `is.8b.qwave.ios`), the app group, and the keychain
+group in `project.yml`, plus the QwaveURL scheme handler and any
+`is.8b.qwave` defaults in the sources. Grep for `is.8b.qwave` — every
+occurrence is intentional and greppable.

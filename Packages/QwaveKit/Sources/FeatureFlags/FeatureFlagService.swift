@@ -15,6 +15,13 @@ public enum FeatureChannel: String, Sendable, Equatable {
 
     /// The channel this process was built as.
     public static var current: FeatureChannel {
+        // The environment wins over the bundle key: Xcode GUI runs of the
+        // QwaveNightly scheme set QWAVE_CHANNEL in the scheme's environment,
+        // while the one-command installer and CI pass it as a build setting
+        // that lands in Info.plist.
+        if ProcessInfo.processInfo.environment["QWAVE_CHANNEL"] == "nightly" {
+            return .nightly
+        }
         if Bundle.main.object(forInfoDictionaryKey: "QWAVE_CHANNEL") as? String == "nightly" {
             return .nightly
         }

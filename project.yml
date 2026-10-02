@@ -62,9 +62,61 @@ targets:
             echo "error: cargo not found — the sovereign core needs Rust (rustup.rs)" >&2
             exit 1
           fi
-          export PATH="$PATH:$HOME/.cargo/bin"
+          # rustup's shim first when present (its std targets are what
+          # cross-arch builds resolve against); Homebrew cargo is the fallback.
+          export PATH="$HOME/.cargo/bin:$PATH"
           export MACOSX_DEPLOYMENT_TARGET=14.0
-          cargo build --release --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
+          # Nightly links the mem|16-10 sovereign library (AGPL-3.0-only);
+          # stable must not — that keeps the shipped binary's MIT posture.
+          # A plain string, not an array: this script runs under macOS bash
+          # 3.2, where expanding an empty array trips `set -u`.
+          FEATURE_ARGS=""
+          if [ "${QWAVE_CHANNEL:-stable}" = "nightly" ]; then
+            FEATURE_ARGS="--features nightly"
+          fi
+          # Map the architectures Xcode wants (ARCHS) onto cargo targets and
+          # merge the slices with lipo. A Release build for
+          # `-destination platform=macOS` is universal, and a single-arch
+          # staticlib fails the other slice's link (the install-nightly.sh
+          # failure this guards against).
+          CARGO_TARGETS=()
+          for arch in ${ARCHS}; do
+            case "$arch" in
+              arm64) CARGO_TARGETS+=(aarch64-apple-darwin) ;;
+              x86_64) CARGO_TARGETS+=(x86_64-apple-darwin) ;;
+            esac
+          done
+          if [ "${#CARGO_TARGETS[@]}" -eq 0 ]; then
+            echo "error: no supported architecture in ARCHS='${ARCHS}'" >&2
+            exit 1
+          fi
+          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          for target in "${CARGO_TARGETS[@]}"; do
+            if [ "$target" = "$HOST_TRIPLE" ]; then
+              continue # the host std is always present
+            fi
+            if ! rustup target list --installed 2>/dev/null | grep -qx "$target"; then
+              echo "error: rust target $target is not installed — run: rustup target add $target" >&2
+              exit 1
+            fi
+          done
+          echo "building qwave-core for ${CARGO_TARGETS[*]} (${QWAVE_CHANNEL:-stable} channel)"
+          for target in "${CARGO_TARGETS[@]}"; do
+            cargo build --release $FEATURE_ARGS \
+              --target "$target" \
+              --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
+          done
+          LIPO_IN=()
+          for target in "${CARGO_TARGETS[@]}"; do
+            LIPO_IN+=("${PROJECT_DIR}/core/target/${target}/release/libqwave_core.a")
+          done
+          mkdir -p "${PROJECT_DIR}/core/target/release"
+          if [ "${#LIPO_IN[@]}" -eq 1 ]; then
+            cp "${LIPO_IN[0]}" "${PROJECT_DIR}/core/target/release/libqwave_core.a"
+          else
+            xcrun lipo -create "${LIPO_IN[@]}" \
+              -output "${PROJECT_DIR}/core/target/release/libqwave_core.a"
+          fi
         outputFiles:
           - $(SRCROOT)/core/target/release/libqwave_core.a
     info:
@@ -73,10 +125,10 @@ targets:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
         QWAVE_CHANNEL: $(QWAVE_CHANNEL)
-        CFBundleShortVersionString: "1.0.0"
+        CFBundleShortVersionString: "2.0.0"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "10000"
+        CFBundleVersion: "20000"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -177,8 +229,8 @@ targets:
       properties:
         CFBundleName: CredentialProvider
         CFBundleDisplayName: Qwave Passwords
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "10000"
+        CFBundleShortVersionString: "2.0.0"
+        CFBundleVersion: "20000"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
@@ -227,8 +279,8 @@ targets:
     info:
       path: Resources/QwaveIOS/Info.plist
       properties:
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "10000"
+        CFBundleShortVersionString: "2.0.0"
+        CFBundleVersion: "20000"
         LSRequiresIPhoneOS: true
 
 schemes:
@@ -246,11 +298,15 @@ schemes:
     build:
       targets:
         Qwave: all
-    settings:
-      base:
-        QWAVE_CHANNEL: nightly
     run:
       config: Debug
+      # The scheme cannot set build settings (xcodegen drops them), so the
+      # nightly channel travels two real paths: this environment variable for
+      # GUI runs, and the QWAVE_CHANNEL=nightly build-setting override in
+      # tools/install-nightly.sh (which lands in Info.plist and in the cargo
+      # pre-build script's environment).
+      environmentVariables:
+        QWAVE_CHANNEL: nightly
     test:
       config: Debug
     archive:
