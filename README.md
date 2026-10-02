@@ -392,29 +392,36 @@ the exact graph, isolation rules, data flow, and test boundaries.
 ### Homebrew (macOS)
 
 ```sh
-# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked):
+# stable release (v2.0.0 — signed, notarised, Sparkle auto-updates):
 brew tap 8b-is/tap
+brew install 8b-is/tap/qwave
+
+# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked):
 brew install 8b-is/tap/qwave-nightly
 
-# update to the latest main — same command as any Homebrew package:
-brew upgrade qwave-nightly
-
-# uninstall:
-brew uninstall qwave-nightly
+# update to the latest — same commands as any Homebrew package:
+brew upgrade qwave           # stable: next tagged release
+brew upgrade qwave-nightly   # nightly: latest main
 ```
 
-`qwave-nightly` is a head-only formula: every install/upgrade builds the
-current `main`. A stable formula (`brew install 8b-is/tap/qwave`) follows the
-tagged releases — see [🏷 Versioning & releases](#-versioning--releases).
-
-The formula builds the same way `tools/install-nightly.sh` does, and lands
-`Qwave.app` under Homebrew's prefix:
+`qwave` builds from the tagged release (v2.0.0); `qwave-nightly` is
+head-only. Both build the same way `tools/install-nightly.sh` does, and
+land `Qwave.app` under Homebrew's prefix:
 
 ```sh
 open "$(brew --prefix)/opt/qwave-nightly/Qwave.app"
 # or link it into /Applications yourself:
 ln -s "$(brew --prefix)/opt/qwave-nightly/Qwave.app" /Applications/Qwave.app
 ```
+
+### GitHub Releases (macOS)
+
+- **Stable** — signed, notarised, stapled DMG + Sparkle appcast:
+  <https://github.com/8b-is/qwave/releases/latest> — Gatekeeper accepts it
+  directly, and in-app updates ride the Sparkle feed.
+- **Nightly** — rolling unsigned prerelease (zip + DMG):
+  <https://github.com/8b-is/qwave/releases/tag/nightly> — bleeding edge,
+  unsigned by design; the signed lane is stable's.
 
 ### One-command nightly installer
 
@@ -531,11 +538,13 @@ project.yml              XcodeGen source of truth
 
 The `v2.0.0` major covers the Rust-core rewrite: VPN layer removal, the
 sovereign core (`core/`), the stable/nightly channel split, and the removal
-of Go/Zig from the build.
+of Go/Zig from the build. **v2.0.0 shipped on 2026-10-03** — signed,
+notarised, stapled, with the Sparkle appcast attached.
 
 Releases: `git tag v2.0.0 && git push origin v2.0.0` runs
 `.github/workflows/release.yml` (signed + notarised DMG and the Sparkle
-appcast when the secrets are configured; unsigned zip otherwise). The full
+appcast when the secrets are configured; unsigned zip otherwise). Nightly
+ships as a rolling prerelease via `scripts/release-nightly.sh`. The full
 procedure lives in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## 📚 Documentation

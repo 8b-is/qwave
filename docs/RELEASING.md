@@ -46,6 +46,38 @@ scripts/release.sh v2.0.0          # unsigned zip + DMG, no appcast
 scripts/release.sh v2.0.0-rc.1     # prerelease: same shapes, still no appcast
 ```
 
+**v2.0.0 shipped this way on 2026-10-03**: signed, notarised, stapled
+(`spctl -a -vv` accepted), appcast attached to the GitHub Release — the full
+pipeline, run locally because the org's Actions runners are not enabled.
+
+Notary credentials: `scripts/release.sh` prefers the **direct ASC API key**
+(`QWAVE_NOTARY_KEY` / `QWAVE_NOTARY_KEY_ID` / `QWAVE_NOTARY_ISSUER_ID`, the
+same flags `release.yml` uses). notarytool 1.x refuses to store API keys into
+a profile that ever held apple-id credentials, so the
+`QWAVE_NOTARY_PROFILE` path is the fallback, not the primary.
+
+The signing team: the **Developer ID Application** identity on the
+maintainer's Mac is team `7CFQYBX575` — pass that as `QWAVE_TEAM_ID`, not
+the development team `CKQ9Q43ANM` from `project.yml` (which is for
+automatic local signing). Mismatched teams fail with "No signing
+certificate … matching team ID".
+
+## Nightly releases
+
+```sh
+scripts/release-nightly.sh          # universal Release, unsigned, no appcast
+git push origin main                # the tag moves to the build commit
+git push origin "$(git rev-parse --short HEAD):refs/tags/nightly" -f
+gh release delete nightly -y
+gh release create nightly build/release-nightly/Qwave-nightly-*.zip \
+  build/release-nightly/Qwave-nightly-*.dmg --prerelease --title "Qwave nightly" --target main
+```
+
+Nightly is a **rolling prerelease**, unsigned by design (the signed +
+notarised lane is stable's), and never enters the Sparkle feed — the
+appcast is stable-only. The `nightly` tag does not match `v*`, so the
+release workflow ignores it.
+
 ## Repository secrets (Settings → Secrets → Actions)
 
 | Secret | Enables | How to produce |
@@ -74,14 +106,14 @@ Behavior by configuration:
 
 ```sh
 QWAVE_SIGN_IDENTITY="Developer ID Application" \
-QWAVE_TEAM_ID=CKQ9Q43ANM \
-QWAVE_NOTARY_PROFILE=qwave-notary \
+QWAVE_TEAM_ID=7CFQYBX575 \
+QWAVE_NOTARY_KEY=~/Documents/AuthKey_GS76KJ5978.p8 \
+QWAVE_NOTARY_KEY_ID=GS76KJ5978 \
+QWAVE_NOTARY_ISSUER_ID=5f48110e-66f5-40a2-ac5c-e0c225bee5ac \
 QWAVE_SPARKLE_KEY=~/.qwave-secrets/sparkle_ed25519_seed.b64 \
 scripts/release.sh v2.0.0
 ```
 
-Store the notary profile once with
-`xcrun notarytool store-credentials qwave-notary --apple-id … --team-id …`.
 Artifacts land in `build/release/`.
 
 ## Known limits

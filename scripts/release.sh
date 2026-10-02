@@ -123,16 +123,27 @@ if $SIGNED && [ "${#NOTARY_ARGS[@]}" -gt 0 ]; then
 fi
 
 # --- Package ----------------------------------------------------------------
-staging="$(mktemp -d)"
-cp -R "$APP_PATH" "$staging/"
-create-dmg \
-  --volname "Qwave" \
-  --window-size 540 380 --icon-size 96 \
-  --icon "Qwave.app" 140 180 --app-drop-link 400 180 \
-  --hide-extension "Qwave.app" \
-  --no-internet-enable --skip-jenkins --hdiutil-quiet \
-  "$out_dir/Qwave-${TAG}.dmg" "$staging/"
-rm -rf "$staging"
+# create-dmg when present (CI has it); otherwise a plain hdiutil DMG — the
+# same artifact shape, just without the custom Finder layout.
+if command -v create-dmg >/dev/null 2>&1; then
+  staging="$(mktemp -d)"
+  cp -R "$APP_PATH" "$staging/"
+  create-dmg \
+    --volname "Qwave" \
+    --window-size 540 380 --icon-size 96 \
+    --icon "Qwave.app" 140 180 --app-drop-link 400 180 \
+    --hide-extension "Qwave.app" \
+    --no-internet-enable --skip-jenkins --hdiutil-quiet \
+    "$out_dir/Qwave-${TAG}.dmg" "$staging/"
+  rm -rf "$staging"
+else
+  staging="$(mktemp -d)"
+  cp -R "$APP_PATH" "$staging/"
+  ln -s /Applications "$staging/Applications"
+  hdiutil create -volname "Qwave" -srcfolder "$staging" -ov -format UDZO \
+    "$out_dir/Qwave-${TAG}.dmg" >/dev/null
+  rm -rf "$staging"
+fi
 
 if $NOTARIZED; then
   codesign --force --timestamp --sign "$QWAVE_SIGN_IDENTITY" "$out_dir/Qwave-${TAG}.dmg"
