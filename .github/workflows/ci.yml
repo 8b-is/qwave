@@ -40,8 +40,7 @@ jobs:
             exit 1
           }
 
-      # Packages/WireGuardKit is a pinned upstream and must stay
-      # byte-identical to the reviewed revision — never linted or formatted.
+      # Sources are linted strictly; core/ (Rust) is cargo-formatted.
       - name: Lint formatting
         run: |
           xcrun swift-format lint --strict --recursive \
@@ -122,10 +121,9 @@ jobs:
           }
 
       - name: Install tools
-        # go: WireGuardKitGo builds libwg-go.a at compile time.
-        # zig: the "Build Zig packet filter" preBuildScript compiles
-        # libqpacket.a and hard-errors if zig is absent.
-        run: brew install xcodegen xcbeautify go zig
+        # cargo: the Rust core preBuildScript builds libqwave_core.a and
+        # hard-errors if cargo is absent.
+        run: brew install xcodegen xcbeautify rustup && rustup default stable
 
       - name: Cache SPM checkouts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -298,36 +296,6 @@ jobs:
           export PKG_CONFIG_PATH="$(brew --prefix jemalloc)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cd Benchmarks
           swift package benchmark thresholds check --no-progress
-
-  zig-validation:
-    name: Zig blocklist validation
-    runs-on: macos-15
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install Zig
-        run: brew install zig
-
-      - name: Build
-        run: |
-          cd zig-core
-          zig build
-
-      - name: Build static library
-        run: |
-          cd zig-core
-          zig build-lib src/packet.zig -O ReleaseSafe -target aarch64-macos -femit-bin=libqpacket.a
-
-      - name: Test
-        run: |
-          cd zig-core
-          zig build test
-
-      - name: Validate blocklist
-        run: |
-          cd zig-core
-          zig-out/bin/qwave-blocklist ../Packages/QwaveKit/Sources/Shields/Resources/easylist-compiled.json
 
   # ---------------------------------------------------------------------------
   # Experimental toolchain lane (NON-BLOCKING). Runs the authority test suite
