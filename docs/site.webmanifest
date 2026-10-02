@@ -1,7 +1,7 @@
 {
-  "name": "Qwave — Sovereign macOS Browser",
+  "name": "Qwave — The Browser That Proves What It Sends",
   "short_name": "Qwave",
-  "description": "High-performance, WebKit-native macOS browser with container isolation, MV3 DNR Shields, Apple Silicon UMA tuning, and WireGuard VPN.",
+  "description": "The WebKit-native browser that proves what it sends — container isolation, MV3 DNR shields, a Rust sovereign core, and a full iPhone lane.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#090B10",

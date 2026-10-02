@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   
   <!-- Primary Meta Tags -->
-  <title>Qwave — Sovereign WebKit-Native macOS Browser Node</title>
-  <meta name="title" content="Qwave — Sovereign WebKit-Native macOS Browser Node">
-  <meta name="description" content="High-performance, battery-optimized, WebKit-native macOS browser combining container isolation, MV3 DNR content shields, Apple Silicon UMA tuning, and Mullvad WireGuard VPN.">
-  <meta name="keywords" content="qwave, macos browser, webkit native, apple silicon, swift 6, wireguard, container tabs, ad blocker, mv3 dnr, performance, sovereign browser">
+  <title>Qwave — The Browser That Proves What It Sends</title>
+  <meta name="title" content="Qwave — The Browser That Proves What It Sends">
+  <meta name="description" content="The WebKit-native browser that proves what it sends — container isolation, MV3 DNR shields, a Rust sovereign core (mem8, Phoenix, egress), and a full iPhone lane.">
+  <meta name="keywords" content="qwave, macos browser, iphone browser, webkit native, apple silicon, swift 6, rust, container tabs, ad blocker, mv3 dnr, sovereign browser">
   <meta name="author" content="8b.is & vaked.dev">
   <meta name="theme-color" content="#090B10">
   
@@ -21,15 +21,15 @@
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://qwave.vaked.dev/">
-  <meta property="og:title" content="Qwave — Sovereign WebKit-Native macOS Browser Node">
-  <meta property="og:description" content="High-performance, battery-optimized, WebKit-native macOS browser with container isolation, MV3 DNR shields, Apple Silicon UMA tuning, and WireGuard VPN.">
+  <meta property="og:title" content="Qwave — The Browser That Proves What It Sends">
+  <meta property="og:description" content="The WebKit-native browser that proves what it sends — container isolation, MV3 DNR shields, a Rust sovereign core (mem8, Phoenix, egress), and a full iPhone lane.">
   <meta property="og:image" content="https://qwave.vaked.dev/assets/hero-v2.jpg">
   
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image">
   <meta property="twitter:url" content="https://qwave.vaked.dev/">
   <meta property="twitter:title" content="Qwave — Sovereign WebKit-Native macOS Browser Node">
-  <meta property="twitter:description" content="High-performance, battery-optimized, WebKit-native macOS browser with container isolation, MV3 DNR shields, Apple Silicon UMA tuning, and WireGuard VPN.">
+  <meta property="twitter:description" content="The WebKit-native browser that proves what it sends — container isolation, MV3 DNR shields, a Rust sovereign core (mem8, Phoenix, egress), and a full iPhone lane.">
   <meta property="twitter:image" content="https://qwave.vaked.dev/assets/hero-v2.jpg">
 
   <!-- JSON-LD Structured Data -->
@@ -45,7 +45,7 @@
       "price": "0",
       "priceCurrency": "USD"
     },
-    "description": "High-performance, battery-optimized, WebKit-native macOS browser combining container isolation, MV3 DNR content shields, Apple Silicon UMA tuning, and Mullvad WireGuard VPN.",
+    "description": "The WebKit-native browser that proves what it sends — container isolation, MV3 DNR shields, a Rust sovereign core, and a full iPhone lane.",
     "url": "https://qwave.vaked.dev/",
     "downloadUrl": "https://github.com/8b-is/qwave/releases/latest",
     "author": {
@@ -1021,8 +1021,9 @@
       </h1>
 
       <p class="hero-subtitle">
-        Combining Firefox-grade container isolation, sub-millisecond MV3 DNR shields, 
-        256MB SQLite UMA zero-copy memory maps, and kernel-level Mullvad WireGuard VPN into a single, battery-saving macOS client.
+        Container isolation, sub-millisecond MV3 DNR shields, an on-device summarizer,
+        and a Rust sovereign core — mem8, Phoenix, egress — force-linked into a single
+        battery-saving client, on the Mac and on the iPhone.
       </p>
 
       <div class="hero-cta-group">
@@ -1066,11 +1067,11 @@
             </div>
             <div class="tab-item">
               <div class="tab-indicator finance"></div>
-              <span>Finance (PQ-PSK)</span>
+              <span>Nightly (mem|16-10)</span>
             </div>
           </div>
           <div class="vpn-status">
-            <span>🛡️ WireGuard: Connected</span>
+            <span>🛡️ Sovereign core: force-linked</span>
           </div>
         </div>
 
@@ -1213,12 +1214,12 @@
                 <polyline points="22,6 12,13 2,6"></polyline>
               </svg>
             </div>
-            <h3 class="feature-title">Mullvad WireGuard &amp; PQ-PSK</h3>
+            <h3 class="feature-title">The Rust sovereign core</h3>
             <p class="feature-body">
-              Native macOS Network Extension with post-quantum pre-shared key rotation and per-container multi-hop tunnel routing.
+              Egress allowlist, MEM8 wave frames, the Phoenix protocol, and the telemetry scrubber — zero-dependency Rust, force-linked into both lanes.
             </p>
           </div>
-          <span class="feature-badge">VPNKit · WireGuard Apple</span>
+          <span class="feature-badge">mem8 · Phoenix · egress</span>
         </div>
       </div>
     </section>
@@ -1416,7 +1417,7 @@
             <h4>Engineering</h4>
             <ul>
               <li><a href="https://github.com/8b-is/qwave/tree/main/Packages/QwaveKit">QwaveKit Modules</a></li>
-              <li><a href="https://github.com/8b-is/qwave/tree/main/Sources/PacketTunnel">WireGuard PacketTunnel</a></li>
+              <li><a href="https://github.com/8b-is/qwave/tree/main/core">The Rust sovereign core</a></li>
               <li><a href="https://github.com/8b-is/qwave/tree/main/research">Research &amp; Probes</a></li>
               <li><a href="https://qwave.vaked.dev/design-system.html">Design Tokens</a></li>
             </ul>
@@ -1504,7 +1505,7 @@
 
       const registry = [
         { query: 'qwave:about', label: 'qwave:about', desc: 'Internal diagnostics and WebKit process health telemetry', tag: 'Scheme' },
-        { query: 'qwave:settings', label: 'qwave:settings', desc: 'Container security, WireGuard keys, and DNS isolation', tag: 'Scheme' },
+        { query: 'qwave:settings', label: 'qwave:settings', desc: 'Containers, shields, theme, and accessibility', tag: 'Scheme' },
         { query: 'qwave:shields', label: 'qwave:shields', desc: 'Declarative Net Request (MV3) filter list manager', tag: 'Scheme' },
         { query: 'silicon', label: 'https://pocoo.vaked.dev/silicon-world/', desc: 'Silicon World — Apple Silicon UMA tuning & Swift 6 concurrency', tag: 'Constellation' },
         { query: 'github', label: 'https://github.com/8b-is/qwave', desc: 'Qwave Browser Node GitHub Repository (Swift 5.10 / 6.0)', tag: 'Bookmark' },
