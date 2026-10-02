@@ -7,8 +7,11 @@
 # Environment (all optional — absent pieces degrade exactly like CI):
 #   QWAVE_SIGN_IDENTITY   "Developer ID Application" identity name/hash
 #   QWAVE_TEAM_ID         10-char team id (required with QWAVE_SIGN_IDENTITY)
-#   QWAVE_NOTARY_PROFILE  notarytool keychain profile (xcrun notarytool
-#                         store-credentials) — enables notarize+staple
+#   QWAVE_NOTARY_KEY      path to the App Store Connect API key .p8 — the
+#                         preferred notary path (same flags CI uses)
+#   QWAVE_NOTARY_KEY_ID   the ASC API key id (with QWAVE_NOTARY_KEY)
+#   QWAVE_NOTARY_ISSUER_ID  the ASC issuer UUID (with QWAVE_NOTARY_KEY)
+#   QWAVE_NOTARY_PROFILE  fallback: a notarytool keychain profile
 #   QWAVE_SPARKLE_KEY     path to the EdDSA seed file — enables appcast
 set -euo pipefail
 
@@ -77,9 +80,20 @@ fi
 APP_PATH="build/DerivedDataRelease/Build/Products/Release/Qwave.app"
 [ -d "$APP_PATH" ] || { echo "❌ app not found at $APP_PATH" >&2; exit 1; }
 
-# --- Notarize + staple the app (signed builds with a notary profile) --------
+# --- Notary credentials ------------------------------------------------------
+# Direct ASC API key (the CI path) preferred; the keychain profile is the
+# fallback. notarytool 1.x refuses to store API keys into a profile that
+# ever held apple-id credentials, so the direct path is also the reliable one.
+NOTARY_ARGS=()
+if [ -n "${QWAVE_NOTARY_KEY:-}" ] && [ -n "${QWAVE_NOTARY_KEY_ID:-}" ] && [ -n "${QWAVE_NOTARY_ISSUER_ID:-}" ]; then
+  NOTARY_ARGS=(--key "$QWAVE_NOTARY_KEY" --key-id "$QWAVE_NOTARY_KEY_ID" --issuer "$QWAVE_NOTARY_ISSUER_ID")
+elif [ -n "${QWAVE_NOTARY_PROFILE:-}" ]; then
+  NOTARY_ARGS=(--keychain-profile "$QWAVE_NOTARY_PROFILE")
+fi
+
+# --- Notarize + staple the app (signed builds with notary creds) ------------
 NOTARIZED=false
-if $SIGNED && [ -n "${QWAVE_NOTARY_PROFILE:-}" ]; then
+if $SIGNED && [ "${#NOTARY_ARGS[@]}" -gt 0 ]; then
   NOTARIZED=true
   # Sparkle's SPM-embedded XPC services/helpers lack the hardened runtime
   # as embedded — the notary service rejects them. Deep-sign inside-out,
@@ -102,7 +116,7 @@ if $SIGNED && [ -n "${QWAVE_NOTARY_PROFILE:-}" ]; then
   codesign --verify --deep --strict -v "$APP_PATH"
   ditto -c -k --keepParent "$APP_PATH" "$out_dir/Qwave-notarize.zip"
   xcrun notarytool submit "$out_dir/Qwave-notarize.zip" \
-    --keychain-profile "$QWAVE_NOTARY_PROFILE" --wait
+    "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$APP_PATH"
   rm "$out_dir/Qwave-notarize.zip"
   spctl -a -vv "$APP_PATH"
@@ -123,7 +137,7 @@ rm -rf "$staging"
 if $NOTARIZED; then
   codesign --force --timestamp --sign "$QWAVE_SIGN_IDENTITY" "$out_dir/Qwave-${TAG}.dmg"
   xcrun notarytool submit "$out_dir/Qwave-${TAG}.dmg" \
-    --keychain-profile "$QWAVE_NOTARY_PROFILE" --wait
+    "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$out_dir/Qwave-${TAG}.dmg"
 fi
 

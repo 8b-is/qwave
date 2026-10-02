@@ -4,7 +4,18 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-03
+
 ### Added
+- **Themes and accessibility settings.** A new Appearance pane on macOS and a
+  settings sheet on iOS: system/light/dark theme (chrome + an honest
+  color-scheme hint to pages), a default page zoom every tab starts at, and a
+  force-reduced-motion toggle that collapses CSS animation and transitions
+  document-wide.
+- **Ecosia end to end.** The default engine now has its own autocomplete
+  provider (`ac.ecosia.org`), allowlisted in both Category-A lists; suggestion
+  commit URLs use the engine's own search URL, and the iOS lane's search
+  fallback honors the configured engine instead of a hardcoded one.
 - **The iPhone lane is now a real browser lane, with the sovereign core in
   it.** `QwaveIOS` links the same Rust staticlib the desktop app links —
   force-loaded, so mem8 wave validation, the Phoenix protocol, the egress
@@ -36,15 +47,6 @@ All notable changes to Qwave will be documented in this file.
   endpoint, and Qwave does not ship an engine whose suggestions it cannot
   fetch honestly. Both remaining engines have providers, so the factory is
   exhaustive over the enum.
-- **Zig packet filter is on the WireGuard data plane.** The Go backend owns
-  the utun, so Swift could never hand it a packet. A Qwave overlay
-  (`qwave_filter_tun.go`) wraps the tun `Device` and calls `qpacket_filter`
-  on every Read/Write: malformed IPv4/IPv6 is dropped, valid traffic
-  passes. `PacketTunnelProvider` installs the handle with
-  `wgSetPacketFilter` before `adapter.start` and restores
-  `handleAppMessage` so the counters are a real measurement. Throughput
-  still belongs on WireGuard UAPI, not these sanity-check counters
-  (issue #135).
 - **The WebAuthn rpId check now consults a real public-suffix list.** The
   origin binding refused single-label suffixes (`com`) but with no PSL in
   the tree a multi-label public suffix like `co.uk` could still be claimed
@@ -82,8 +84,11 @@ All notable changes to Qwave will be documented in this file.
   #76 established is preserved as a comment on
   `ContentScriptEngine.installContentScripts`, which still returns the scripts
   it added so a future teardown can be scoped correctly.
+- **The VPN layer is gone.** PacketTunnel, WireGuardKit + the Go bridge, the
+  Zig packet filter, VPNKit, and PostQuantum left the tree — a tunnel is a
+  different layer, not the browser's requirement. The Go/Zig toolchain left
+  the CI with them.
 
-### Changed
 - **Version bumped to 2.0.0** across all three targets (`Qwave`,
   `CredentialProvider`, `QwaveIOS`): `CFBundleShortVersionString` 2.0.0,
   `CFBundleVersion` 20000. The 2.x line is the Rust-core era; the release
