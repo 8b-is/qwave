@@ -4,6 +4,16 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-10-04
+
+### Fixed
+- **The remaining launch-crash surface.** 2.0.3 fixed the AppDelegate entry
+  points; the same Swift executor check could still fire in
+  `BrowserWindowController`'s AppKit delegate callbacks (the reported crash:
+  `NSToolbarDelegate.toolbarDefaultItemIdentifiers` on New Window). The
+  window and toolbar delegate entry points are now `nonisolated` with
+  explicit `MainActor.assumeIsolated` hops too.
+
 ## [2.0.3] — 2026-10-03
 
 ### Fixed

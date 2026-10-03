@@ -1412,19 +1412,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
-    func windowDidBecomeKey(_ notification: Notification) {
+    nonisolated func windowDidBecomeKey(_ notification: Notification) {
+        MainActor.assumeIsolated { didBecomeKey() }
+    }
+
+    func didBecomeKey() {
         // Reclaim the app's current activity for the now-focused window.
         browsingActivity?.becomeCurrent()
     }
 
-    func windowDidResignKey(_ notification: Notification) {
+    nonisolated func windowDidResignKey(_ notification: Notification) {
+        MainActor.assumeIsolated { didResignKey() }
+    }
+
+    func didResignKey() {
         // Stop advertising this window's page the moment focus leaves it, so
         // Continuity never keeps offering a superseded window's page after the
         // user moves to another window (which may have nothing to hand off).
         browsingActivity?.resignCurrent()
     }
 
-    func windowWillClose(_ notification: Notification) {
+    nonisolated func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated { willClose() }
+    }
+
+    func willClose() {
         browsingActivity?.invalidate()
         browsingActivity = nil
         for tab in tabManager.tabs {
@@ -1563,22 +1575,30 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let downloadsItem = NSToolbarItem.Identifier("qwave.downloads")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+    nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        MainActor.assumeIsolated { defaultItemIdentifiers() }
+    }
+
+    func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
             Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
         ]
     }
 
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+    nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        MainActor.assumeIsolated { defaultItemIdentifiers() }
     }
 
-    func toolbar(
+    nonisolated func toolbar(
         _ toolbar: NSToolbar,
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        MainActor.assumeIsolated { makeToolbarItem(itemIdentifier: itemIdentifier) }
+    }
+
+    func makeToolbarItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         switch itemIdentifier {
         case Self.backItem:
