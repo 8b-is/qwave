@@ -4,6 +4,20 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-10-03
+
+### Fixed
+- **Launch crash fixed.** The app died at launch with a SIGSEGV in
+  `swift_task_isMainExecutorImpl` on the first AppKit delegate callback
+  (`applicationDidBecomeActive`): the @MainActor delegate entry points went
+  through Swift 6.2's expected-executor check, and a @MainActor object
+  constructed in a file-scope initializer (`SpotlightLaunchSync`) ran before
+  the executor was in service. Both fragile patterns are gone: every
+  NSApplicationDelegate entry point is now `nonisolated` and hops explicitly
+  via `MainActor.assumeIsolated`, and the Spotlight launch sweep is created
+  and started from `applicationDidFinishLaunching`, where the executor is
+  real. Diagnosed with a minimal-control repro, fixed on both lanes.
+
 ## [2.0.2] — 2026-10-03
 
 ### Added

@@ -27,9 +27,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Debounced, periodic crash-safe session autosave (see SessionAutosaver).
     private var sessionAutosaver: SessionAutosaver?
 
+    /// The one-shot Spotlight launch sweep. Created and started from
+    /// `applicationDidFinishLaunching` — the executor is real there (see
+    /// main.swift for why a file-scope global is forbidden).
+    private var spotlightLaunchSync: SpotlightLaunchSync?
+
     // MARK: - Launch
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    /// ObjC entry points are `nonisolated` and hop explicitly: Swift 6.2's
+    /// expected-executor check for @MainActor delegate callbacks crashes in
+    /// `swift_task_isMainExecutorImpl` when the executor lookup sees garbage
+    /// (the launch crash). `MainActor.assumeIsolated` runs the body on the
+    /// main thread exactly as the callback arrived — no hop, no check.
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated { didFinishLaunching() }
+    }
+
+    func didFinishLaunching() {
         let updater = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
@@ -41,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         startDiagnostics()
         startMemoryPressureSource()
         startEnergyObservers()
+        let spotlight = SpotlightLaunchSync()
+        spotlightLaunchSync = spotlight
+        spotlight.start()
         Task {
             environment = await BrowserEnvironment.bootstrap()
             // The theme applies to the chrome before the first window exists
@@ -69,7 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         QwaveLog.browser.info("Qwave launched")
     }
 
-    func applicationDidBecomeActive(_ notification: Notification) {
+    nonisolated func applicationDidBecomeActive(_ notification: Notification) {
+        MainActor.assumeIsolated { didBecomeActive() }
+    }
+
+    func didBecomeActive() {
         // modelNotReady self-heals: re-check availability on foreground so a
         // Summarize menu/button hidden at launch can appear without relaunch.
         refreshSummarizePresence()
@@ -173,7 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// macOS delivers URL opens (qwave://, and http(s) when Qwave is the
     /// default browser) through this delegate method.
-    func application(_ application: NSApplication, open urls: [URL]) {
+    nonisolated func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { didOpen(urls) }
+    }
+
+    func didOpen(_ urls: [URL]) {
         guard environment != nil else {
             pendingOpenURLs.append(contentsOf: urls)
             return
@@ -298,11 +323,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Termination
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    nonisolated func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { willTerminate() }
+    }
+
+    func willTerminate() {
         energyTimer?.cancel()
         sessionAutosaver?.stop()
         for observer in energyObservers {
@@ -318,7 +347,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// being cut short leaves the previous good snapshot intact rather than a
     /// half-written file. `reply` is called on every path, including when
     /// `self` is already gone.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    nonisolated func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { shouldTerminate(sender) }
+    }
+
+    func shouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { [weak self] in
             await self?.flushSessionForTermination()
             sender.reply(toApplicationShouldTerminate: true)
@@ -326,7 +359,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return .terminateLater
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainActor.assumeIsolated { shouldHandleReopen(sender, hasVisibleWindows: flag) }
+    }
+
+    func shouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             openWindow()
         }

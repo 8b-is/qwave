@@ -91,21 +91,16 @@ enum SpotlightIndexer {
 /// One-shot launch sweep that keeps the on-device index in sync with the
 /// bookmark table (including deletions made while the app was closed).
 ///
-/// Kept alive for the process lifetime by a file-scope global in `main.swift`.
+/// Owned by the AppDelegate and started from `applicationDidFinishLaunching`
+/// — never from a file-scope initializer: a @MainActor global constructed
+/// before the executor is in service breaks the first delegate callback's
+/// executor check (see main.swift).
 @MainActor
 final class SpotlightLaunchSync {
-    private var observer: NSObjectProtocol?
-
-    init() {
-        observer = NotificationCenter.default.addObserver(
-            forName: NSApplication.didFinishLaunchingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task(priority: .utility) { @MainActor in
-                guard let self else { return }
-                await self.reindexWhenReady()
-            }
+    func start() {
+        Task(priority: .utility) { @MainActor [weak self] in
+            guard let self else { return }
+            await self.reindexWhenReady()
         }
     }
 

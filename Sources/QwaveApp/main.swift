@@ -2,9 +2,12 @@ import AppKit
 import Foundation
 import QwaveSupport
 
-/// One-shot Spotlight sweep at launch. File-scope globals are never released,
-/// so the observer survives for the whole process lifetime.
-let spotlightLaunchSync = SpotlightLaunchSync()
+// NOTE: no file-scope @MainActor globals live here. A @MainActor class
+// constructed in a file-scope initializer runs before the main-actor
+// executor is in service and breaks the first delegate callback's executor
+// check (SIGSEGV in swift_task_isMainExecutorImpl — the launch crash).
+// Launch-time work is wired in AppDelegate.applicationDidFinishLaunching,
+// where the executor is real.
 
 // Runtime egress enforcement (issue #77): before anything else runs, install
 // EgressGuard as a process-wide URLProtocol so every default- or

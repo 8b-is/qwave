@@ -533,14 +533,14 @@ project.yml              XcodeGen source of truth
 `project.yml` is the **single source of truth** for the version. Every target
 (`Qwave`, `CredentialProvider`, `QwaveIOS`) declares the same two numbers:
 
-- `CFBundleShortVersionString` — the semver, currently `2.0.2`.
+- `CFBundleShortVersionString` — the semver, currently `2.0.3`.
 - `CFBundleVersion` — `major*10000 + minor*100 + patch` (2.0.0 → `20000`).
   Sparkle compares this number, and the release workflow **fails the tag** if
   any target disagrees.
 
 The `v2.0.0` major covers the Rust-core rewrite: VPN layer removal, the
 sovereign core (`core/`), the stable/nightly channel split, and the removal
-of Go/Zig from the build. **v2.0.2 is the current release** (2026-10-03):
+of Go/Zig from the build. **v2.0.3 is the current release** (2026-10-03):
 signed, notarised, stapled, with the Sparkle appcast attached — existing
 installs update in place.
 
