@@ -58,6 +58,10 @@ else
   rm -rf "$staging"
 fi
 
+# Stable-named copies for the Homebrew cask (the date-stamped names churn).
+cp "$out_dir/Qwave-nightly-${STAMP}.zip" "$out_dir/Qwave-nightly-latest.zip"
+cp "$out_dir/Qwave-nightly-${STAMP}.dmg" "$out_dir/Qwave-nightly-latest.dmg"
+
 SHA="$(git rev-parse --short HEAD)"
 ls -la "$out_dir" | grep -v "^total"
 echo
