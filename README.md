@@ -392,28 +392,24 @@ the exact graph, isolation rules, data flow, and test boundaries.
 ### Homebrew (macOS)
 
 ```sh
-# stable release (v2.0.0 — signed, notarised, Sparkle auto-updates):
 brew tap 8b-is/tap
-brew install 8b-is/tap/qwave
 
-# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked).
-# qwave-nightly is a HEAD-only formula — it always builds the latest main:
-brew install --HEAD 8b-is/tap/qwave-nightly
+# stable release (signed, notarised — Gatekeeper accepts it directly):
+brew install --cask 8b-is/tap/qwave
+brew upgrade --cask 8b-is/tap/qwave          # update to the next tagged release
 
-# update to the latest:
-brew upgrade 8b-is/tap/qwave                    # stable: next tagged release
-brew upgrade --fetch-HEAD 8b-is/tap/qwave-nightly  # nightly: re-pull latest main
+# bleeding edge (nightly: every experimental WebKit feature ON, mem|16-10 linked):
+brew install --cask 8b-is/tap/qwave-nightly
+brew upgrade --cask --greedy 8b-is/tap/qwave-nightly  # re-pull the rolling build
 ```
 
-`qwave` builds from the tagged release (v2.0.0); `qwave-nightly` is
-head-only, so every install is the current `main` and `--fetch-HEAD` is what
-re-pulls it. Both build the same way `tools/install-nightly.sh` does, and
-land `Qwave.app` under Homebrew's prefix:
+The casks install the ready DMGs from the GitHub Releases — no build on
+your machine (the build-from-source formulae were retired: xcodebuild's
+sandboxed package resolution cannot nest inside Homebrew's build sandbox).
+The app lands in `/Applications`:
 
 ```sh
-open "$(brew --prefix)/opt/qwave-nightly/Qwave.app"
-# or link it into /Applications yourself:
-ln -s "$(brew --prefix)/opt/qwave-nightly/Qwave.app" /Applications/Qwave.app
+open -a Qwave
 ```
 
 ### GitHub Releases (macOS)
