@@ -37,7 +37,7 @@ pub fn scrub_url(url: &str) -> String {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     // Strip userinfo (user:pass@).
     let host = authority.rsplit('@').next().unwrap_or("");
-    let path = rest.split(['?', '#']).next().unwrap_or("");
+    let path = rest[authority.len()..].split(['?', '#']).next().unwrap_or("");
     let path_hash = content_hash(path);
     format!("{scheme}://{host}/p:{}", &path_hash[..8])
 }
@@ -212,6 +212,19 @@ mod tests {
         let a = scrub_url("https://example.com/readme");
         let b = scrub_url("https://example.com/readme?utm=1");
         assert_eq!(a, b, "path hash must not depend on the query string");
+    }
+
+    #[test]
+    fn credentials_do_not_split_the_same_page_aggregate() {
+        let plain = scrub_url("https://example.com/readme");
+        assert_eq!(plain, scrub_url("https://alice:secret@example.com/readme"));
+        assert_eq!(plain, scrub_url("https://bob:other@example.com/readme?q=x#top"));
+    }
+
+    #[test]
+    fn empty_paths_ignore_credentials_query_and_fragment() {
+        assert_eq!(scrub_url("https://example.com"),
+                   scrub_url("https://alice:secret@example.com?q=x#top"));
     }
 
     #[test]

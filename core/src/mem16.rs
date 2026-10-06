@@ -24,15 +24,16 @@ pub fn verified(step_index: u32) -> bool {
 }
 
 /// C ABI: the governing sequence's `i`-th step name, or null out of range.
+/// The returned string is NUL-terminated, immutable, and valid for the process lifetime.
 ///
 /// # Safety
 /// `i` may be any value; null is returned for out-of-range indices.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qw_mem16_step_name(i: u32) -> *const core::ffi::c_char {
-    match GOVERNING_SEQUENCE_NAMES.get(i as usize) {
-        Some(name) => name.as_ptr().cast(),
-        None => core::ptr::null(),
-    }
+    const C_NAMES: [&core::ffi::CStr; 6] = [
+        c"POP", c"REFUSE", c"BIND", c"TRANSFORM", c"VERIFY", c"COLLAPSE",
+    ];
+    C_NAMES.get(i as usize).map_or(core::ptr::null(), |name| name.as_ptr())
 }
 
 /// The verification gate, over the C ABI.
@@ -75,6 +76,20 @@ mod tests {
         assert!(!verified(2));
         assert!(!verified(3));
         assert!(!verified(9));
+    }
+
+    #[test]
+    fn c_step_names_are_terminated_and_match_the_sequence() {
+        for (i, expected) in GOVERNING_SEQUENCE_NAMES.iter().enumerate() {
+            // SAFETY: the API now returns process-lifetime C string literals.
+            let ptr = unsafe { qw_mem16_step_name(i as u32) };
+            assert!(!ptr.is_null());
+            let name = unsafe { core::ffi::CStr::from_ptr(ptr) };
+            assert_eq!(name.to_str().unwrap(), *expected);
+            assert_eq!(name.to_bytes_with_nul().last(), Some(&0));
+        }
+        assert!(unsafe { qw_mem16_step_name(6) }.is_null());
+        assert!(unsafe { qw_mem16_step_name(u32::MAX) }.is_null());
     }
 
     #[cfg(feature = "mem16")]
