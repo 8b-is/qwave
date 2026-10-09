@@ -135,7 +135,8 @@ public actor NibbleVault {
                 if values.isDirectory == true && values.isSymbolicLink != true {
                     pending.append(url)
                 } else if (url.pathExtension.lowercased() == "md" && url.lastPathComponent != "README.md")
-                    || url.pathExtension == Self.resealTempSuffix {
+                    || url.pathExtension == Self.resealTempSuffix
+                {
                     files.append(url)
                 }
             }
