@@ -195,6 +195,12 @@ extension NavigationCoordinator: WKNavigationDelegate {
             return
         }
 
+        if let request = ReadingLanguageRequest.adapted(navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url) {
+            decisionHandler(.cancel, preferences)
+            webView.load(request)
+            return
+        }
+
         // Reconcile rule lists for the destination site, THEN allow the load.
         // On a cold launch this waits for the first rule-list compile, so a
         // network page never loads with shields on but no lists attached — the

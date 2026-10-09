@@ -179,6 +179,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         window?.addTitlebarAccessoryViewController(accessory)
     }
 
+    private let readingLanguageHost = NSHostingView(rootView: AnyView(EmptyView()))
+
     private func setupContent() {
         guard let contentView = window?.contentView else { return }
 
@@ -186,7 +188,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         findBar.translatesAutoresizingMaskIntoConstraints = false
         containerView.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [findBar, containerView])
+        let stack = NSStackView(views: [findBar, readingLanguageHost, containerView])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.distribution = .fill
@@ -511,6 +513,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         if let selected = tabManager.selectedTab {
             let webView = ensureWebView(for: selected)
             containerView.show(webView)
+            readingLanguageHost.rootView = AnyView(ReadingLanguageBar(webView: webView))
         }
         refreshChromeState()
     }

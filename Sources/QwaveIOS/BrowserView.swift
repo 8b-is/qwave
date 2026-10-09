@@ -200,6 +200,7 @@ struct BrowserView: View {
 
     @ViewBuilder private var activePage: some View {
         if let active = model.tabs.first(where: { $0.id == model.activeTabID }) {
+            ReadingLanguageBar(webView: model.webView(for: active))
             QwaveWebView(
                 webView: model.webView(for: active),
                 model: model
@@ -323,6 +324,14 @@ struct QwaveWebView: UIViewRepresentable {
         ) {
             model.loading = false
             refreshControl?.endRefreshing()
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let request = ReadingLanguageRequest.adapted(action.request, mainFrame: action.targetFrame?.isMainFrame == true, currentURL: webView.url) {
+                decisionHandler(.cancel)
+                webView.load(request)
+            } else { decisionHandler(.allow) }
         }
 
         // New windows (target=_blank etc.) open as new tabs.
