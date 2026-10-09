@@ -228,8 +228,15 @@ the Rust core's, not Swift's — on the iPhone exactly as on the Mac.
    ├── phoenix.rs    the Phoenix protocol — marine gate, custodian, verdict
    ├── mem16.rs      governing/recovery sequences (mem|16-10 under `nightly`)
    ├── telemetry.rs  the PII scrubber + histogram aggregator (qwave-agg)
+   ├── quanttern.rs  the emotional ternary code (VAD → {−1,0,+1}) → WaveInt fields
    └── rational.rs   the MEM8 rational, reduced + checked arithmetic
 ```
+
+`quanttern.rs` is the **qUltraKotoro** wire: the VAD emotional code from
+[`8b-is/qultrakotoro`](https://github.com/8b-is/qultrakotoro) (superwhisper on
+steroids — on-device STT + an emotional QuantTern code), ported here so a
+feeling can ride the MEM8 grid through `WaveInt`'s `emotional_valence` /
+`arousal` rationals. Same gate codec as `crush-love-dev/pureQTern.rs`.
 
 The WireGuard/VPN layer (PacketTunnel, WireGuardKit + Go bridge, Zig packet
 filter, VPNKit, PostQuantum) was **removed** — a tunnel is a different layer,
@@ -342,6 +349,7 @@ Qwave.app                         AppKit shell + SwiftUI settings
     ├── wave.rs                     the 79-byte MEM8 WaveInt frame
     ├── phoenix.rs                  the Phoenix protocol (marine gate…verdict)
     ├── telemetry.rs                the privacy scrubber + histogram aggregator
+    ├── quanttern.rs                the emotional ternary code (VAD → {−1,0,+1})
     └── build-apple.sh              ARCHS → cargo targets → lipo (both lanes)
 QwaveIOS.app                      SwiftUI shell, iOS 15+ (iPhone 13 minimum)
 ├── the same QwaveKit + core        one SovereignCore, one decision surface
