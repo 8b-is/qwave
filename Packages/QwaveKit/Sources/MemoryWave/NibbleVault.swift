@@ -122,19 +122,31 @@ public actor NibbleVault {
     /// "forget everything" action to actually forget everything, since the
     /// vault is a separate, undeduped mirror of what the store holds.
     public func deleteAll() throws {
-        // A re-seal interrupted by a crash can leave a `.reseal-tmp` sibling
-        // holding a sealed copy of a nibble. It is not a `.md` file, so the
-        // loop below would walk right past it and "forget everything" would
-        // leave a memory behind.
-        sweepInterruptedReseals()
-        for file in try markdownFiles() {
-            try? FileManager.default.removeItem(at: file.url)
+        // Enumerate strictly before deleting: an unreadable directory must not
+        // be mistaken for an empty vault. Do not follow directory symlinks.
+        var pending = [directory]
+        var files: [URL] = []
+        while let folder = pending.popLast() {
+            for url in try FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                if values.isDirectory == true && values.isSymbolicLink != true {
+                    pending.append(url)
+                } else if (url.pathExtension.lowercased() == "md" && url.lastPathComponent != "README.md")
+                    || url.pathExtension == Self.resealTempSuffix {
+                    files.append(url)
+                }
+            }
         }
-        // Drop the decode cache too: `all(limit:)` would no longer serve the
-        // removed files anyway, but a wipe shouldn't leave their decoded
-        // plaintext sitting in memory.
-        cache = nil
-        QwaveLog.memory.info("Deleted all nibble markdown files")
+        // Partial deletion must invalidate decoded data too. Propagate failures
+        // so callers cannot report that every memory has been removed.
+        defer { cache = nil }
+        for file in files {
+            try FileManager.default.removeItem(at: file)
+        }
+        QwaveLog.memory.info("Deleted all nibble markdown files and reseal remnants")
     }
 
     public func all(limit: Int = 400) throws -> [MemoryNibble] {

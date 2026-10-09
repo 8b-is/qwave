@@ -96,8 +96,12 @@ struct MemoryWavePane: View {
                 .accessibilityLabel("Open nibble folder in Finder")
                 Button("Forget all memories on this Mac", role: .destructive) {
                     Task { @MainActor in
-                        try? await environment.memoryWave.forgetAll()
-                        status = "Local wave store emptied."
+                        do {
+                            try await environment.memoryWave.forgetAll()
+                            status = "Local wave store emptied."
+                        } catch {
+                            status = "Some memories could not be removed. Please try again."
+                        }
                     }
                 }
                 .buttonStyle(.bordered)
