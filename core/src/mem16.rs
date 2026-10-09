@@ -8,13 +8,18 @@
 
 /// The governing sequence (SpherePOP), as names: the order every admissible
 /// transition must pass through.
-pub const GOVERNING_SEQUENCE_NAMES: [&str; 6] = [
-    "POP", "REFUSE", "BIND", "TRANSFORM", "VERIFY", "COLLAPSE",
-];
+pub const GOVERNING_SEQUENCE_NAMES: [&str; 6] =
+    ["POP", "REFUSE", "BIND", "TRANSFORM", "VERIFY", "COLLAPSE"];
 
 /// The recovery sequence (Phoenix), as names.
 pub const RECOVERY_SEQUENCE_NAMES: [&str; 7] = [
-    "DISCOVER", "VERIFY", "REPLAY", "BRANCH", "RANK", "PROPOSE", "BIND/REFUSE",
+    "DISCOVER",
+    "VERIFY",
+    "REPLAY",
+    "BRANCH",
+    "RANK",
+    "PROPOSE",
+    "BIND/REFUSE",
 ];
 
 /// The verification gate: only VERIFY (4) and COLLAPSE (5) are admissible
@@ -46,7 +51,7 @@ pub extern "C" fn qw_mem16_verified(i: u32) -> bool {
 /// is ON.
 #[cfg(feature = "mem16")]
 pub mod sovereign {
-    pub use mem16_10::{Step, GOVERNING_SEQUENCE, RECOVERY_SEQUENCE};
+    pub use mem16_10::{GOVERNING_SEQUENCE, RECOVERY_SEQUENCE, Step};
 
     /// The gate over the real crate type: admissible only after `Verify`.
     pub fn verified(step: Step) -> bool {

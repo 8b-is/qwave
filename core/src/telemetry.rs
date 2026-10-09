@@ -70,11 +70,10 @@ pub fn scrub_line(line: &str) -> String {
 }
 
 fn looks_like_email(token: &str) -> bool {
-    let Some(at) = token.find('@') else { return false };
-    at > 0
-        && at < token.len() - 1
-        && token[at + 1..].contains('.')
-        && !token.contains(['/', '?'])
+    let Some(at) = token.find('@') else {
+        return false;
+    };
+    at > 0 && at < token.len() - 1 && token[at + 1..].contains('.') && !token.contains(['/', '?'])
 }
 
 fn looks_like_ip(token: &str) -> bool {
@@ -217,7 +216,10 @@ mod tests {
     #[test]
     fn emails_and_ips_are_tagged() {
         assert_eq!(scrub_line("mail bob@example.com now"), "mail [EMAIL] now");
-        assert_eq!(scrub_line("from 192.168.1.10 to 10.0.0.1"), "from [IP] to [IP]");
+        assert_eq!(
+            scrub_line("from 192.168.1.10 to 10.0.0.1"),
+            "from [IP] to [IP]"
+        );
         assert_eq!(scrub_line("v6 ::1 here"), "v6 [IP] here");
     }
 

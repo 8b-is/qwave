@@ -4,6 +4,15 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Rust core polish + micro-optimization.** The core is now `cargo fmt`-clean,
+  and the egress allowlist folds the host to lowercase with a bulk slice
+  `make_ascii_lowercase` rather than a hand-rolled per-byte loop — the hot
+  decision stays allocation-free (44 core tests green).
+- **`docs/constellation.md` wires in the near ring:** quanttern / qUltraKotoro,
+  sphered (`#Commit = #ValidWitness`), enthea (the engine door), marqant, and
+  crush-love-dev.
+
 ## [2.0.4] — 2026-10-04
 
 ### Fixed
