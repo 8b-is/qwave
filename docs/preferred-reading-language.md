@@ -4,7 +4,7 @@ Qwave's Language menu chooses a persistent reading language, initially the syste
 
 On macOS 15+ and iOS 18+, Apple Translation translates page text on-device. Apple may request a language-model download. There is no cloud translation fallback. If a language is unsupported or translation fails, the original remains available and the user can retry from Language.
 
-The native bar identifies translated content and offers Show original. That choice is remembered for the current document, including tab switches; reloading starts a new document. Site and source-language exceptions persist across launches. Reset exceptions clears both lists. Translate this page retries when enabled; it does not override an explicit site or language exception.
+The native bar stays hidden while idle. The Translation toolbar button opens language controls on demand; the bar appears during translation and identifies translated content with Show original. That choice is remembered for the current document, including tab switches; reloading starts a new document. Site and source-language exceptions persist across launches. Reset exceptions clears both lists. Translate this page retries when enabled; it does not override an explicit site or language exception.
 
 The bounded scanner handles visible text, page titles, accessible labels, image alternate text and placeholders, including text added later. It operates in an isolated WebKit world and inserts plain text, never HTML. It excludes passwords, form values, editable regions, code, and translate=no regions. Restoration does not overwrite text the page changed after translation.
 

@@ -6,15 +6,28 @@ import NaturalLanguage
 @preconcurrency import Translation
 import Persistence
 
+public enum ReadingLanguageControls {
+    public static let toggle = Notification.Name("QwaveToggleReadingLanguageControls")
+    @MainActor public static func show(for webView: WKWebView) {
+        NotificationCenter.default.post(name: toggle, object: webView)
+    }
+}
+
 /// Native browser chrome: pages cannot impersonate the translation controls.
 public struct ReadingLanguageBar: View {
     let webView: WKWebView
+    @State private var showControls = false
     public init(webView: WKWebView) { self.webView = webView }
     public var body: some View {
-        if #available(macOS 15, iOS 18, *) {
-            LocalReadingBar(webView: webView).id(ObjectIdentifier(webView))
-        } else {
-            LegacyReadingLanguageBar()
+        Group {
+            if #available(macOS 15, iOS 18, *) {
+                LocalReadingBar(webView: webView, showControls: $showControls).id(ObjectIdentifier(webView))
+            } else if showControls {
+                LegacyReadingLanguageBar()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ReadingLanguageControls.toggle)) { notification in
+            if let target = notification.object as? WKWebView, target === webView { showControls.toggle() }
         }
     }
 }
@@ -39,6 +52,7 @@ private struct LegacyReadingLanguageBar: View {
 @available(macOS 15, iOS 18, *)
 private struct LocalReadingBar: View {
     let webView: WKWebView
+    @Binding var showControls: Bool
     @State private var language = ReadingLanguagePreferences.shared.language
     @State private var automatic = ReadingLanguagePreferences.shared.automatic
     @State private var status = "On-device translation"
@@ -105,6 +119,9 @@ private struct LocalReadingBar: View {
         }
         .buttonStyle(.borderless).padding(.horizontal, 10).padding(.vertical, 5)
         .background(.bar)
+        .frame(height: (busy || translated || showControls) ? nil : 0)
+        .clipped()
+        .accessibilityHidden(!(busy || translated || showControls))
         .onChange(of: language) { new in
             ReadingLanguagePreferences.shared.language = new
             restore(pause: false)

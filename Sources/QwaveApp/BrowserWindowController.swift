@@ -663,6 +663,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(containerView)
     }
 
+    @objc private func toggleReadingLanguage(_ sender: Any?) {
+        guard let tab = tabManager.selectedTab else { return }
+        ReadingLanguageControls.show(for: ensureWebView(for: tab))
+    }
+
     // MARK: - Menu / toolbar actions
 
     @objc func newTab(_ sender: Any?) { appendFreshTab(activate: true) }
@@ -1576,6 +1581,7 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
     private static let summarizeItem = NSToolbarItem.Identifier("qwave.summarize")
     private static let downloadsItem = NSToolbarItem.Identifier("qwave.downloads")
+    private static let readingLanguageItem = NSToolbarItem.Identifier("qwave.readingLanguage")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -1585,7 +1591,7 @@ extension BrowserWindowController: NSToolbarDelegate {
     func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
+            Self.memoryItem, Self.summarizeItem, Self.readingLanguageItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
         ]
     }
 
@@ -1633,6 +1639,10 @@ extension BrowserWindowController: NSToolbarDelegate {
                 symbol: "text.badge.star", label: "Summarize Page", action: #selector(summarizeThisPage(_:)))
             item.view = summarizeButton
             item.label = "Summarize Page"
+        case Self.readingLanguageItem:
+            item.view = makeToolbarButton(
+                symbol: "character.bubble", label: "Translation", action: #selector(toggleReadingLanguage(_:)))
+            item.label = "Translation"
         case Self.shieldsItem:
             shieldsButton = makeToolbarButton(
                 symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))

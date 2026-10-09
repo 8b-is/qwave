@@ -131,6 +131,15 @@ struct BrowserView: View {
             }
             .accessibilityLabel("Share")
 
+            Button {
+                if let active = model.tabs.first(where: { $0.id == model.activeTabID }) {
+                    ReadingLanguageControls.show(for: model.webView(for: active))
+                }
+            } label: {
+                Image(systemName: "character.bubble")
+            }
+            .accessibilityLabel("Translation")
+
             Button { showingSettings = true } label: {
                 Image(systemName: "gearshape")
             }
