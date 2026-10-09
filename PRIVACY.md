@@ -1,6 +1,6 @@
 # Qwave Privacy Policy
 
-Last updated: 2026-10-03
+Last updated: 2026-10-09
 
 Qwave is privacy-oriented software: the browser stores your data on your
 device and phones home as little as technically possible. This policy says
@@ -35,6 +35,21 @@ Qwave does **not** ship telemetry, analytics, crash reporters, or
 advertising identifiers of any kind. `qwave://diagnostics` is local
 (MetricKit data on your machine); the optional debug export scrubs URLs
 before anything is written.
+
+## Page translation
+
+Your reading language, automatic-translation choice, and site/language exceptions
+are stored in local settings. On supported systems (macOS 15+ / iOS 18+),
+Qwave uses Apple's Translation framework to process page text on-device.
+Automatic translation is enabled initially and can be disabled in Language.
+Apple may prompt to download the required language models; this is OS-managed
+network activity, not a Qwave translation-server upload.
+
+Qwave has no remote translation provider or cloud fallback. If local translation
+is unavailable, it keeps the original page. Show original restores translated
+text; form values, password fields and editable content are excluded. See
+[preferred reading language](docs/preferred-reading-language.md) for coverage
+and limits. This feature is separate from optional remote Memory Wave AI.
 
 ## What pages see
 

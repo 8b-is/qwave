@@ -35,6 +35,20 @@ There are three kinds of outbound connection, and the difference matters:
 > inventory as carefully maintained rather than machine-proven — see "What the
 > allowlist is, honestly" below the Category A table.
 
+## Preferred language and local translation
+
+`BrowserCore/ReadingLanguageRequest.swift` adds the selected `Accept-Language`
+to ordinary main-frame GET navigations. The destination site sees that language
+preference. This does not add another destination or replay form submissions.
+
+`BrowserCore/ReadingLanguageBar.swift` passes bounded page text to Apple's
+Translation framework on macOS 15+ / iOS 18+. Translation runs on-device; there
+is no Qwave remote-translation endpoint or fallback. The OS may request language
+model downloads. These framework-managed downloads are outside Qwave's own
+request builder and its endpoint allowlist; they have not been packet-capture
+verified. The Language menu controls automatic translation and exceptions.
+See [coverage and restoration behavior](preferred-reading-language.md).
+
 ## Category A — Qwave's own egress
 
 | Endpoint | Why | When | Can you turn it off? | Origin |
