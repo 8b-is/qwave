@@ -397,16 +397,17 @@ public enum InternalPages {
 
     private static let startExtraCSS = """
         .glass {
-            background: linear-gradient(165deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.07) 38%, rgba(8,22,32,0.32) 100%);
-            backdrop-filter: blur(42px) saturate(190%);
-            -webkit-backdrop-filter: blur(42px) saturate(190%);
+            background: linear-gradient(165deg, rgba(18,35,45,0.92) 0%, rgba(9,24,34,0.90) 38%, rgba(4,14,23,0.94) 100%);
+            backdrop-filter: blur(28px) saturate(110%) brightness(65%);
+            -webkit-backdrop-filter: blur(28px) saturate(110%) brightness(65%);
             border: 1px solid rgba(255,255,255,0.32);
             box-shadow: 0 24px 80px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -1px 0 rgba(255,255,255,0.06);
             border-radius: 28px;
         }
         .slate { pointer-events: auto; padding: 36px 40px 32px; margin: 0 auto; }
         .start-slate { max-width: 720px; }
-        .overlay.interactive { width: min(880px, 94vw); }
+        .overlay.interactive { width: min(880px, 94vw); mix-blend-mode: normal; color: #edf6f8; }
+        .slate :is(a, button, input):focus-visible { outline: 2px solid #a5efff; outline-offset: 3px; }
         h1 { font-size: clamp(3.2rem, 11vw, 7rem); }
         #start-form { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
         #start-q {
@@ -444,10 +445,10 @@ public enum InternalPages {
         .row {
             display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; margin: 0 0 6px;
             color: inherit; text-decoration: none; border-radius: 12px;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(24,43,55,0.88); border: 1px solid rgba(255,255,255,0.18);
             font-family: ui-sans-serif, system-ui, sans-serif; text-transform: none; letter-spacing: 0;
         }
-        .row:hover { background: rgba(255,255,255,0.14); }
+        .row:hover { background: rgba(38,61,75,0.96); }
         .row-title { font-weight: 600; }
         .row-detail { font-size: 0.82rem; opacity: 0.7; }
         """
