@@ -15,6 +15,23 @@ final class FeatureFlagServiceTests: XCTestCase {
         return defaults
     }
 
+    #if QWAVE_APP_STORE
+        func testStoreBuildNeverLoadsOrPersistsExperimentalOverrides() {
+            let defaults = makeDefaults()
+            defaults.set(["WebGPU": true], forKey: FeatureFlagService.overridesKey)
+            let service = FeatureFlagService(defaults: defaults)
+            service.loadFeatures()
+            service.setEnabled(true, forKey: "SomeFeature")
+            service.apply(to: WKPreferences())
+            XCTAssertFalse(service.isSPIAvailable)
+            XCTAssertEqual(service.surfaceState, .unavailable)
+            XCTAssertTrue(service.features.isEmpty)
+            XCTAssertEqual(service.overriddenCount, 0)
+            XCTAssertEqual(
+                defaults.dictionary(forKey: FeatureFlagService.overridesKey) as? [String: Bool], ["WebGPU": true])
+        }
+    #endif
+
     func testDiscoveryCanaryDistinguishesAllThreeStates() {
         // Pure derivation: all three states are distinct — "responds but
         // empty" must never masquerade as "SPI absent" (or vice versa).

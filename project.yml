@@ -133,6 +133,22 @@ targets:
         keychain-access-groups:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
 
+  # AppKit regression checks compile the actual tab strip without starting a
+  # browser session or accessing the user's persisted browsing state.
+  QwaveTabBarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Sources/QwaveApp/TabBarView.swift
+      - path: Tests/QwaveTabBarTests
+    dependencies:
+      - package: QwaveKit
+        product: QwaveKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.tabbar-tests
+
   # Read-only MCP server over Qwave's persisted state, spoken over stdio.
   #
   # Deliberately NOT a dependency of the Qwave app and NOT embedded in its
@@ -229,7 +245,7 @@ targets:
         # weak stubs at link time.
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)"
         OTHER_LDFLAGS: "$(inherited) -force_load $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a"
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
@@ -244,8 +260,23 @@ targets:
         CFBundleShortVersionString: "2.0.4"
         CFBundleVersion: "20004"
         LSRequiresIPhoneOS: true
+        CFBundleDisplayName: Qwave
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
 
 schemes:
+  QwaveTabBarTests:
+    build:
+      targets:
+        QwaveTabBarTests: [test]
+    test:
+      config: Debug
+      targets:
+        - QwaveTabBarTests
   Qwave:
     build:
       targets:

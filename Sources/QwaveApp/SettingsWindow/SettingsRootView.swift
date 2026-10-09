@@ -1,10 +1,9 @@
 import Persistence
-import Sparkle
 import SwiftUI
 
 struct SettingsRootView: View {
     let environment: BrowserEnvironment
-    let updater: SPUUpdater?
+    let updater: QwaveUpdater?
 
     var body: some View {
         TabView {
@@ -16,8 +15,10 @@ struct SettingsRootView: View {
                 .tabItem { Label("Containers", systemImage: "square.stack.3d.up") }
             ShieldsPane(policy: environment.shieldsPolicy, settings: environment.settings)
                 .tabItem { Label("Shields", systemImage: "shield.lefthalf.filled") }
-            FeatureFlagsPane(service: environment.featureFlags)
-                .tabItem { Label("Web Features", systemImage: "flask") }
+            #if !QWAVE_APP_STORE
+                FeatureFlagsPane(service: environment.featureFlags)
+                    .tabItem { Label("Web Features", systemImage: "flask") }
+            #endif
             MemoryWavePane(environment: environment)
                 .tabItem { Label("Memory Wave", systemImage: "waveform") }
         }
@@ -28,7 +29,7 @@ struct SettingsRootView: View {
 
 private struct GeneralPane: View {
     let environment: BrowserEnvironment
-    let updater: SPUUpdater?
+    let updater: QwaveUpdater?
     @State private var searchEngine: SearchEngine = .ecosia
     @State private var networkSuggestions = false
     @State private var restoreSession = true
@@ -82,7 +83,7 @@ private struct GeneralPane: View {
                 environment.settings.hibernationTimeout = newValue * 60
             }
 
-            if let updater {
+            if let updater, updater.supportsUpdates {
                 Divider()
                 Toggle("Check for updates automatically", isOn: $autoCheckUpdates)
                     .onChange(of: autoCheckUpdates) { _, newValue in

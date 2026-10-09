@@ -8,6 +8,7 @@ Resources/PacketTunnel/Info.plist
 Resources/PacketTunnel/PacketTunnel.entitlements
 Resources/CredentialProvider/Info.plist
 Resources/CredentialProvider/CredentialProvider.entitlements
+Resources/AppStore/
 
 # Build products
 .build/

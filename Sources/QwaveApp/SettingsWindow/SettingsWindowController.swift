@@ -1,9 +1,8 @@
 import AppKit
-import Sparkle
 import SwiftUI
 
 final class SettingsWindowController: NSWindowController {
-    init(environment: BrowserEnvironment, updater: SPUUpdater?) {
+    init(environment: BrowserEnvironment, updater: QwaveUpdater?) {
         let hosting = NSHostingController(
             rootView: SettingsRootView(environment: environment, updater: updater))
         let window = NSWindow(contentViewController: hosting)

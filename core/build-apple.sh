@@ -55,7 +55,9 @@ fi
 SUPPORTED_TARGETS="$(rustc --print=target-list)"
 CARGO_TARGETS_FINAL=()
 STUB_ARCHES=()
-for target in "${CARGO_TARGETS[@]}"; do
+# Bash 3.2 treats an empty array as unset under set -u. The guarded
+# expansions below preserve zero arguments without an unbound-array error.
+for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
   if printf '%s\n' "$SUPPORTED_TARGETS" | grep -qx "$target"; then
     CARGO_TARGETS_FINAL+=("$target")
   else
@@ -70,10 +72,10 @@ if [ "${#CARGO_TARGETS_FINAL[@]}" -eq 0 ] && [ "${#STUB_ARCHES[@]}" -eq 0 ]; the
   echo "error: no buildable architecture in ARCHS='${ARCHS}' for ${PLATFORM_NAME:-macosx}" >&2
   exit 1
 fi
-CARGO_TARGETS=("${CARGO_TARGETS_FINAL[@]}")
+CARGO_TARGETS=(${CARGO_TARGETS_FINAL[@]+"${CARGO_TARGETS_FINAL[@]}"})
 
 HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
-for target in "${CARGO_TARGETS[@]}"; do
+for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
   if [ "$target" = "$HOST_TRIPLE" ]; then
     continue # the host std is always present
   fi
@@ -84,14 +86,14 @@ for target in "${CARGO_TARGETS[@]}"; do
 done
 
 echo "building qwave-core for ${CARGO_TARGETS[*]}${STUB_ARCHES:+ (stub slices: ${STUB_ARCHES[*]})} (${QWAVE_CHANNEL:-stable} channel, ${PLATFORM_NAME:-macosx})"
-for target in "${CARGO_TARGETS[@]}"; do
+for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
   cargo build --release $FEATURE_ARGS \
     --target "$target" \
     --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
 done
 
 # Stub slices for targets rustc dropped: a tiny safe-fail staticlib per arch.
-for arch in "${STUB_ARCHES[@]}"; do
+for arch in ${STUB_ARCHES[@]+"${STUB_ARCHES[@]}"}; do
   STUB_DIR="${PROJECT_DIR}/core/target/stub-${arch}"
   mkdir -p "$STUB_DIR"
   SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
@@ -103,10 +105,10 @@ for arch in "${STUB_ARCHES[@]}"; do
 done
 
 LIPO_IN=()
-for target in "${CARGO_TARGETS[@]}"; do
+for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
   LIPO_IN+=("${PROJECT_DIR}/core/target/${target}/release/libqwave_core.a")
 done
-for arch in "${STUB_ARCHES[@]}"; do
+for arch in ${STUB_ARCHES[@]+"${STUB_ARCHES[@]}"}; do
   LIPO_IN+=("${PROJECT_DIR}/core/target/stub-${arch}/libqwave_core.a")
 done
 

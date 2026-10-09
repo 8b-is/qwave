@@ -1,6 +1,5 @@
 import Summarize
 import AppKit
-import Sparkle
 
 /// Programmatic main menu. Actions dispatch through the responder chain; tab
 /// and navigation actions land on `BrowserWindowController`, app-level ones
@@ -10,7 +9,7 @@ enum MainMenu {
     /// Held so the AppDelegate can hide the whole Summarize menu when the
     /// model is unavailable (vanish-cleanly: no grey-out, no empty menu).
     static var summarizeTopLevelItem: NSMenuItem?
-    static func build(updater: SPUStandardUpdaterController) -> NSMenu {
+    static func build(updater: QwaveUpdater) -> NSMenu {
         let main = NSMenu()
 
         // App
@@ -22,12 +21,13 @@ enum MainMenu {
             withTitle: "About Qwave", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: "")
         appMenu.addItem(.separator())
-        // Sparkle enables/disables this item itself via SPUUpdater.canCheckForUpdates.
-        let checkForUpdates = appMenu.addItem(
-            withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
-            keyEquivalent: "")
-        checkForUpdates.target = updater
-        appMenu.addItem(.separator())
+        if updater.supportsUpdates {
+            let checkForUpdates = appMenu.addItem(
+                withTitle: "Check for Updates…", action: #selector(QwaveUpdater.checkForUpdates(_:)),
+                keyEquivalent: "")
+            checkForUpdates.target = updater
+            appMenu.addItem(.separator())
+        }
         appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         // Title + enabled state are set in AppDelegate.validateMenuItem based on
         // whether Qwave is already the default browser.
@@ -133,21 +133,24 @@ enum MainMenu {
             withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
 
-        // Develop — WebKit's Web Inspector (Elements/Console/Network/Sources/…),
-        // the WebKit-native equivalent of Chrome DevTools. isInspectable is set
-        // in WebViewFactory, so right-click "Inspect Element" also opens it.
-        let developItem = NSMenuItem()
-        main.addItem(developItem)
-        let developMenu = NSMenu(title: "Develop")
-        developItem.submenu = developMenu
-        let inspector = developMenu.addItem(
-            withTitle: "Show Web Inspector",
-            action: #selector(BrowserWindowController.showWebInspector(_:)), keyEquivalent: "i")
-        inspector.keyEquivalentModifierMask = [.command, .option]
-        let jsConsole = developMenu.addItem(
-            withTitle: "Show JavaScript Console",
-            action: #selector(BrowserWindowController.showJavaScriptConsole(_:)), keyEquivalent: "c")
-        jsConsole.keyEquivalentModifierMask = [.command, .option]
+        #if !QWAVE_APP_STORE
+            // Develop — WebKit's Web Inspector (Elements/Console/Network/Sources/…),
+            // the WebKit-native equivalent of Chrome DevTools. isInspectable is set
+            // in WebViewFactory, so right-click "Inspect Element" also opens it.
+            let developItem = NSMenuItem()
+            main.addItem(developItem)
+            let developMenu = NSMenu(title: "Develop")
+            developItem.submenu = developMenu
+            let inspector = developMenu.addItem(
+                withTitle: "Show Web Inspector",
+                action: #selector(BrowserWindowController.showWebInspector(_:)), keyEquivalent: "i")
+            inspector.keyEquivalentModifierMask = [.command, .option]
+            let jsConsole = developMenu.addItem(
+                withTitle: "Show JavaScript Console",
+                action: #selector(BrowserWindowController.showJavaScriptConsole(_:)), keyEquivalent: "c")
+            jsConsole.keyEquivalentModifierMask = [.command, .option]
+
+        #endif
 
         // History
         let historyItem = NSMenuItem()

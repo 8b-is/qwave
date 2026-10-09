@@ -7,7 +7,8 @@ import PackageDescription
 // them). Dropping it also drops `unsafeFlags`, which bars a package from being
 // consumed as a versioned dependency and is rejected in some build contexts.
 let swift6: [SwiftSetting] = [
-    .swiftLanguageMode(.v6)
+    .swiftLanguageMode(.v6),
+    .define("QWAVE_APP_STORE", .when(traits: ["AppStore"])),
 ]
 
 let package = Package(
@@ -45,6 +46,9 @@ let package = Package(
             name: "qwave-mcp",
             targets: ["QwaveMCP"]
         ),
+    ],
+    traits: [
+        .trait(name: "AppStore", description: "Compile without private WebKit APIs for Apple store distribution")
     ],
     dependencies: [
         // WHATWG URL parser — canonical host identity for policy decisions

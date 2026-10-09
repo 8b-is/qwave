@@ -1,0 +1,99 @@
+# Version numbers and sources remain owned by project.yml.
+# Generate with: xcodegen generate --spec project-app-store.yml
+include: project.yml
+name: QwaveAppStore
+options:
+  minimumXcodeGenVersion: "2.46.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: $(QWAVE_DEVELOPMENT_TEAM)
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) QWAVE_APP_STORE
+packages:REPLACE:
+  QwaveKit:
+    path: Packages/QwaveKit
+    traits: [AppStore]
+targets:
+  Qwave:
+    sources:
+      - path: Resources/StoreDistribution/PrivacyInfo.xcprivacy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.q-wave
+    dependencies:REPLACE:
+      - package: QwaveKit
+        product: QwaveKit
+      - package: QwaveKit
+        product: WebCredentials
+      - target: CredentialProvider
+        embed: true
+    info:
+      path: Resources/AppStore/MacInfo.plist
+      properties:
+        SUFeedURL: ""
+        SUPublicEDKey: ""
+    entitlements:
+      path: Resources/AppStore/Mac.entitlements
+      properties:REPLACE:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.downloads.read-write: true
+        com.apple.security.device.camera: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.personal-information.location: true
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)group.is.8b.qwave
+        keychain-access-groups:
+          - $(TeamIdentifierPrefix)is.8b.qwave.shared
+  CredentialProvider:
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.q-wave.autofill
+    info:
+      path: Resources/AppStore/CredentialProviderInfo.plist
+    entitlements:
+      path: Resources/AppStore/CredentialProvider.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+  QwaveIOS:
+    sources:
+      - path: Resources/StoreDistribution/PrivacyInfo.xcprivacy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.q-wave
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: $(QWAVE_DEVELOPMENT_TEAM)
+    info:
+      path: Resources/AppStore/IOSInfo.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+        NSCameraUsageDescription: Qwave asks for the camera only when a website you are visiting requests it, such as for a video call.
+        NSMicrophoneUsageDescription: Qwave asks for the microphone only when a website you are visiting requests it, such as for a call or voice input.
+        NSLocationWhenInUseUsageDescription: Qwave shares your location only when a website you are visiting requests it, such as for maps or local search.
+# No nightly or standalone MCP release in the store project.
+schemes:REPLACE:
+  QwaveTabBarTests:
+    build:
+      targets:
+        QwaveTabBarTests: [test]
+    test:
+      config: Debug
+      targets:
+        - QwaveTabBarTests
+  QwaveAppStore:
+    build:
+      targets:
+        Qwave: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  QwaveIOSAppStore:
+    build:
+      targets:
+        QwaveIOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
