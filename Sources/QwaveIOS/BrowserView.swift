@@ -324,6 +324,7 @@ struct QwaveWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             model.loading = false
             refreshControl?.endRefreshing()
+            showOfflineArcade(webView, error: error)
         }
 
         func webView(
@@ -333,6 +334,16 @@ struct QwaveWebView: UIViewRepresentable {
         ) {
             model.loading = false
             refreshControl?.endRefreshing()
+            showOfflineArcade(webView, error: error)
+        }
+
+        private func showOfflineArcade(_ webView: WKWebView, error: Error) {
+            let error = error as NSError
+            let failed = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+                ?? URL(string: model.address)
+            if let arcade = OfflineArcade.pageURL(error: error, failingURL: failed) {
+                webView.load(URLRequest(url: arcade))
+            }
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

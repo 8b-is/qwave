@@ -170,6 +170,12 @@ extension NavigationCoordinator: WKNavigationDelegate {
             return
         }
 
+        if url?.scheme == "qwave", url?.host == "arcade" {
+            preferences.allowsContentJavaScript = true
+            decisionHandler(.allow, preferences)
+            return
+        }
+
         let policy = shields.policy.resolvedPolicy(forHost: host)
 
         // HTTPS-first upgrade for main-frame http navigations.
@@ -326,6 +332,11 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
         // HTTPS-first fallback: retry the original http URL once.
         let failingURL = (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url
+        if let arcade = OfflineArcade.pageURL(error: nsError, failingURL: failingURL) {
+            webView.load(URLRequest(url: arcade))
+            onStateChange?()
+            return
+        }
         if let fallback = httpsUpgrader.fallbackURL(afterFailureOf: failingURL, errorCode: nsError.code) {
             QwaveLog.shields.info("HTTPS-first fallback to \(fallback.host ?? "?", privacy: .public)")
             webView.load(URLRequest(url: fallback))
