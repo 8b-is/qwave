@@ -24,7 +24,7 @@ Qwave is an open-source, WebKit-native browser for people who want
 stronger boundaries around browsing data without giving up the system engine.
 It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
 sharing one sovereign core between the two lanes.
-Part of the **[8b.IS Ecosystem](https://8b.is)** and documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
+An **[8b.is Research](https://8b.is/research)** project, documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
 It combines per-container storage universes, native content shields, tab
 hibernation, an on-device page summarizer, a **Rust sovereign core** (the
 egress allowlist and the MEM8 wave substrate, compiled as a zero-dependency
