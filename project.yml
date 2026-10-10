@@ -260,6 +260,12 @@ targets:
         CFBundleShortVersionString: "2.0.5"
         CFBundleVersion: "20005"
         LSRequiresIPhoneOS: true
+        # Required for Apple-managed default-browser eligibility. The managed
+        # entitlement is enabled separately after Apple approves the request.
+        CFBundleURLTypes:
+          - CFBundleURLName: is.8b.qwave.ios.web
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [http, https]
         CFBundleDisplayName: Qwave
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true

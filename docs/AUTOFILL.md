@@ -14,25 +14,17 @@
 
 ## Why a browser needs this at all
 
-Qwave is built on `WKWebView`. WebKit gives an app **nothing** for password
-AutoFill: unlike Safari, an embedding app cannot ask WebKit to fill a login
-form, offer a saved password in a QuickType-style bar, or drive a passkey
-ceremony from page JavaScript. Those affordances belong to the system, and the
-system only offers them to two kinds of participant:
+Qwave is built on `WKWebView`. Apple documents native WebAuthn handling in
+WebKit for browser apps with the appropriate browser capabilities. Website
+passkey support and a credential-provider extension are separate roles:
+WebKit uses the user's chosen authenticator, while an extension supplies
+credentials that Qwave itself manages.
 
-- **AutoFill credential providers** — an app-extension of type
-  *AutoFill Credential Provider* that the user enables in
-  System Settings → Passwords → Password Options. macOS then routes AutoFill
-  requests originating anywhere (including inside our `WKWebView`) to the
-  extension.
-- **Relying-party clients** — code that runs a WebAuthn ceremony itself via
-  `ASAuthorizationController` (Sign in with Apple, security keys, passkeys).
-
-A Developer-ID browser that wants first-class login/passkey UX has to become
-the first kind (register an `ASCredentialProviderExtension`) and, for the
-in-page "sign in" affordances a site invokes, speak the second (drive
-`ASAuthorizationController`). This spike scopes the extension; the
-`ASAuthorizationController` client path is noted where it touches the design.
+The Mac app's custom `__qwavePasskeyGet/Create` bridge is not a standard
+`navigator.credentials` implementation and does not establish full website
+compatibility. See [Native website passkeys](BROWSER-PASSKEYS.md) for the
+managed-capability requirements, current gaps, and device acceptance checks.
+The extension design below is retained as historical implementation context.
 
 ## Architecture
 

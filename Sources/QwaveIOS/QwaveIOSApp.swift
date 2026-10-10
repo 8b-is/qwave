@@ -10,6 +10,7 @@ import SwiftUI
 import WebKit
 import Combine
 import BrowserCore
+import URLIdentity
 import Shields
 import FeatureFlags
 import Persistence
@@ -98,6 +99,8 @@ final class BrowserViewModel: ObservableObject {
     // MARK: - Tabs
 
     func open(_ url: URL) {
+        // URLs delivered by another app may not invoke internal pages or scripts.
+        guard ExternalBrowserURL.isAllowed(url) else { return }
         addTab(pendingURL: url)
     }
 
