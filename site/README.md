@@ -1,6 +1,6 @@
 # Qwave product and support site
 
-Static companion site for the current 2.0.4 TestFlight build. Product copy must stay aligned with the build available to users; newer translation/panel work is explicitly not advertised as shipped.
+Static companion site for the 2.0.5 (20005) internal TestFlight build. Product copy must stay aligned with verified tester availability. Source copy includes translation, panels and offline arcade; full website passkey support remains unverified. This source update is not proof that the live site has been redeployed.
 
 ## Local preview
 
