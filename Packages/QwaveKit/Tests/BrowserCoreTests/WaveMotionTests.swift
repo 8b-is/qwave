@@ -5,7 +5,8 @@ import XCTest
 final class WaveMotionTests: XCTestCase {
     private func scene(reduced: Bool, legacy: Bool = false) throws -> JSContext {
         let context = try XCTUnwrap(JSContext())
-        context.evaluateScript("""
+        context.evaluateScript(
+            """
             const pending = new Map();
             let nextID = 0, draws = 0, timeValue = null;
             const events = {}, mediaEvents = {};
