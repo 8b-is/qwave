@@ -91,7 +91,10 @@ public enum InternalPages {
     public static func startHTML(
         memories: [StartMemoryChip],
         providerLabel: String,
-        rememberEverything: Bool = false
+        rememberEverything: Bool = false,
+        deviceLabel: String = "this Mac only",
+        showsTimeline: Bool = true,
+        prompt: String = "Ask, search, or enter a path…"
     ) -> String {
         let chips: String
         if memories.isEmpty {
@@ -115,12 +118,12 @@ public enum InternalPages {
                     <h1>qwave</h1>
                     <p class="lead">Memory Wave</p>
                     <form id="start-form" autocomplete="off">
-                      <input id="start-q" type="text" placeholder="Ask, search, or enter a path…" autofocus>
+                      <input id="start-q" type="text" placeholder="\(MarkdownCompiler.escape(prompt))">
                       <button class="escape-btn" type="submit">Initialize</button>
                     </form>
                     <div class="chips">\(chips)</div>
-                    <p class="foot">\(MarkdownCompiler.escape(providerLabel)) · \(mode) · this Mac only</p>
-                    <a class="escape-btn" href="qwave://timeline">Open timeline</a>
+                    <p class="foot">\(MarkdownCompiler.escape(providerLabel)) · \(mode) · \(MarkdownCompiler.escape(deviceLabel))</p>
+                    \(showsTimeline ? "<a class=\"escape-btn\" href=\"qwave://timeline\">Open timeline</a>" : "")
                   </div>
                 </div>
                 """,
@@ -405,13 +408,13 @@ public enum InternalPages {
             border-radius: 28px;
         }
         .slate { pointer-events: auto; padding: 36px 40px 32px; margin: 0 auto; }
-        .start-slate { max-width: 720px; }
+        .start-slate { max-width: 720px; max-height: 82vh; overflow: auto; box-sizing: border-box; }
         .overlay.interactive { width: min(880px, 94vw); mix-blend-mode: normal; color: #edf6f8; }
         .slate :is(a, button, input):focus-visible { outline: 2px solid #a5efff; outline-offset: 3px; }
         h1 { font-size: clamp(3.2rem, 11vw, 7rem); }
         #start-form { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
         #start-q {
-            min-width: min(420px, 80vw); padding: 14px 18px; font: inherit; font-size: 1.05rem;
+            min-width: 0; width: min(420px, 100%); box-sizing: border-box; padding: 14px 18px; font: inherit; font-size: 1.05rem;
             color: #fff; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.35);
             backdrop-filter: blur(12px); letter-spacing: 1px; border-radius: 14px;
         }

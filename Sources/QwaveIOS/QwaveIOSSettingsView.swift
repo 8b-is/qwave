@@ -19,6 +19,8 @@ struct QwaveIOSSettingsView: View {
     @State private var defaultZoom: Double = 1.0
     @State private var reduceMotion = false
 
+    @State private var confirmForget = false
+
     var body: some View {
         NavigationView {
             Form {
@@ -58,6 +60,12 @@ struct QwaveIOSSettingsView: View {
                     }
                 }
 
+                Section("Memory Wave") {
+                    Text("Use Remember this page to save a suggestion on your Wave home. Saved titles and links stay on this device; browsing is not automatically recorded.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button("Clear saved Memory Waves", role: .destructive) { confirmForget = true }
+                }
+
                 Section("Accessibility") {
                     VStack(alignment: .leading) {
                         Slider(value: $defaultZoom, in: SettingsStore.zoomBounds, step: 0.1) {
@@ -91,6 +99,11 @@ struct QwaveIOSSettingsView: View {
                 defaultZoom = model.settings.defaultPageZoom
                 reduceMotion = model.settings.reduceMotionEnabled
             }
+        }
+        .navigationViewStyle(.stack)
+        .confirmationDialog("Clear all saved Memory Waves on this device?", isPresented: $confirmForget,
+                            titleVisibility: .visible) {
+            Button("Clear Memory Waves", role: .destructive, action: model.forgetMemories)
         }
     }
 }

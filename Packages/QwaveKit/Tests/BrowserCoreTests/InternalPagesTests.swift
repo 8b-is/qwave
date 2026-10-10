@@ -227,6 +227,15 @@ final class WavePageTests: XCTestCase {
         XCTAssertTrue(html.contains("qwave://timeline"))
     }
 
+    func testDeviceStartPageEscapesLabelsAndHidesUnavailableTimeline() {
+        let html = InternalPages.startHTML(memories: [], providerLabel: "Saved pages",
+            deviceLabel: "this iPad <only>", showsTimeline: false, prompt: "Search \"here\"")
+        XCTAssertTrue(html.contains("this iPad &lt;only&gt;"))
+        XCTAssertTrue(html.contains("Search &quot;here&quot;"))
+        XCTAssertFalse(html.contains("href=\"qwave://timeline\""))
+        XCTAssertFalse(html.contains("this Mac only"))
+    }
+
     func testTimelineSlate() {
         let html = InternalPages.timelineHTML(
             days: [

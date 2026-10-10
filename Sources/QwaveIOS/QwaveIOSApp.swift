@@ -15,6 +15,8 @@ import Shields
 import FeatureFlags
 import Persistence
 import SovereignCore
+import MemoryWave
+import QwaveSupport
 
 /// BrowserCore's tab type, aliased: `Tab` collides with SwiftUI's `Tab`.
 typealias BrowserTab = BrowserCore.Tab
@@ -48,6 +50,10 @@ final class BrowserViewModel: ObservableObject {
     /// Per-tab titles observed from WebKit (BrowserCore's Tab.title is
     /// owned by NavigationCoordinator on the desktop lane).
     @Published var tabTitles: [UUID: String] = [:]
+
+    @Published var memoryNotice: String?
+    private var memoryWave: WaveDirector?
+    private var remembered: [MemoryRecord] = []
 
     let factory: WebViewFactory
     let settings: SettingsStore
@@ -90,10 +96,75 @@ final class BrowserViewModel: ObservableObject {
         }
         energy.install()
 
-        let firstTab = BrowserTab(pendingURL: settings.homepage ?? URL(string: "https://qwave.8b.is/"))
+        let firstTab = BrowserTab(pendingURL: settings.homepage ?? InternalPages.startURL)
         tabs = [firstTab]
         activeTabID = firstTab.id
         address = firstTab.pendingURL?.absoluteString ?? ""
+        QwaveInternal.startPageHTML = { [weak self] in
+            InternalPages.startHTML(
+                memories: self?.remembered.map { StartMemoryChip(title: $0.title, preview: $0.url?.host ?? "Saved memory") } ?? [],
+                providerLabel: "Saved page suggestions", deviceLabel: "this device only",
+                showsTimeline: false, prompt: "Search or enter an address…")
+        }
+        Task { await prepareMemoryWave() }
+    }
+
+    private func prepareMemoryWave() async {
+        do {
+            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("MemoryWave", isDirectory: true)
+            let secrets = KeychainSecretStore()
+            let store = try MemoryStore(directory: directory, secrets: secrets)
+            memoryWave = WaveDirector(store: store, preferences: MemoryWavePreferences(secrets: secrets))
+            await refreshMemories()
+        } catch {
+            QwaveLog.memory.error("iOS Memory Wave store unavailable: \(String(describing: error))")
+            memoryNotice = "Memory Wave could not open its local store. Your saved data has not been replaced."
+        }
+    }
+
+    private func refreshMemories() async {
+        guard let memoryWave else { return }
+        do {
+            remembered = try await memoryWave.recall(containerID: nil, limit: 12)
+            // Only refresh the local start page, never an unrelated browsing page.
+            for tab in tabs where InternalPages.isStartURL(tab.webView?.url) {
+                tab.webView?.reload()
+            }
+        } catch { memoryNotice = "Saved Memory Waves could not be loaded." }
+    }
+
+    func rememberCurrentPage() {
+        guard let tab = tabs.first(where: { $0.id == activeTabID }),
+              let url = tab.webView?.url, ExternalBrowserURL.isAllowed(url) else { return }
+        let title = displayTitle(for: tab)
+        Task {
+            do {
+                guard let memoryWave else { throw MemoryProviderError.unavailable }
+                _ = try await memoryWave.remember(title: title, body: url.host ?? title, url: url,
+                    containerID: nil, isEphemeral: tab.isEphemeral, isExplicit: true)
+                await refreshMemories()
+                memoryNotice = "Saved to Memory Wave on this device. Find it on your next new tab."
+            } catch { memoryNotice = "This page could not be saved to Memory Wave." }
+        }
+    }
+
+    func forgetMemories() {
+        Task {
+            do {
+                guard let memoryWave else { throw MemoryProviderError.unavailable }
+                try await memoryWave.forgetAll()
+                await refreshMemories()
+            } catch { memoryNotice = "Memory Waves could not be cleared. Please try again." }
+        }
+    }
+
+    func submitWaveQuery(_ query: String) {
+        // A saved suggestion opens its original page; its title is never sent to search.
+        if let memory = remembered.first(where: { $0.title == query }) {
+            if let url = memory.url, ExternalBrowserURL.isAllowed(url) { navigate(url.absoluteString) }
+            else { memoryNotice = memory.body }
+        } else { navigate(query) }
     }
 
     // MARK: - Tabs
@@ -105,8 +176,8 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func newTab() {
-        addTab(pendingURL: nil)
-        address = ""
+        addTab(pendingURL: InternalPages.startURL)
+        Task { await refreshMemories() }
     }
 
     private func addTab(pendingURL: URL?) {
@@ -114,6 +185,10 @@ final class BrowserViewModel: ObservableObject {
         let tab = BrowserTab(pendingURL: pendingURL)
         tabs.append(tab)
         activeTabID = tab.id
+        loading = false
+        canGoBack = false
+        canGoForward = false
+        suggestions = []
         if let pendingURL {
             address = pendingURL.absoluteString
         }
@@ -122,9 +197,10 @@ final class BrowserViewModel: ObservableObject {
     func closeTab(_ id: UUID) {
         guard tabs.count > 1 else { return }
         titleObservations[id] = nil
+        tabTitles[id] = nil
         tabs.removeAll { $0.id == id }
         if activeTabID == id {
-            activeTabID = tabs.last?.id ?? tabs[0].id
+            selectTab(tabs.last?.id ?? tabs[0].id)
         }
     }
 
@@ -147,6 +223,9 @@ final class BrowserViewModel: ObservableObject {
         tabs.first(where: { $0.id == id })?.noteActivated()
         if let active = tabs.first(where: { $0.id == id }) {
             address = active.url?.absoluteString ?? active.pendingURL?.absoluteString ?? ""
+            canGoBack = active.webView?.canGoBack ?? false
+            canGoForward = active.webView?.canGoForward ?? false
+            loading = active.webView?.isLoading ?? false
         }
     }
 

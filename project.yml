@@ -70,10 +70,10 @@ targets:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
         QWAVE_CHANNEL: $(QWAVE_CHANNEL)
-        CFBundleShortVersionString: "2.0.5"
+        CFBundleShortVersionString: "2.0.6"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "20005"
+        CFBundleVersion: "20006"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -190,8 +190,8 @@ targets:
       properties:
         CFBundleName: CredentialProvider
         CFBundleDisplayName: Qwave Passwords
-        CFBundleShortVersionString: "2.0.5"
-        CFBundleVersion: "20005"
+        CFBundleShortVersionString: "2.0.6"
+        CFBundleVersion: "20006"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
@@ -246,7 +246,7 @@ targets:
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)"
         OTHER_LDFLAGS: "$(inherited) -force_load $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a"
         GENERATE_INFOPLIST_FILE: NO
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
@@ -257,8 +257,8 @@ targets:
     info:
       path: Resources/QwaveIOS/Info.plist
       properties:
-        CFBundleShortVersionString: "2.0.5"
-        CFBundleVersion: "20005"
+        CFBundleShortVersionString: "2.0.6"
+        CFBundleVersion: "20006"
         LSRequiresIPhoneOS: true
         # Required for Apple-managed default-browser eligibility. The managed
         # entitlement is enabled separately after Apple approves the request.
@@ -269,6 +269,11 @@ targets:
         CFBundleDisplayName: Qwave
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
