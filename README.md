@@ -25,6 +25,8 @@ stronger boundaries around browsing data without giving up the system engine.
 It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
 sharing one sovereign core between the two lanes.
 An **[8b.is Research](https://8b.is/research)** project, documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
+Built collaboratively by **Peter Lodri, Alexandra, Christopher Chenoweth, and Aye Partner (AI-assisted development)**.
+
 It combines per-container storage universes, native content shields, tab
 hibernation, an on-device page summarizer, a **Rust sovereign core** (the
 egress allowlist and the MEM8 wave substrate, compiled as a zero-dependency
