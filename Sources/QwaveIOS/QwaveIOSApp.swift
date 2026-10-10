@@ -89,7 +89,7 @@ final class BrowserViewModel: ObservableObject {
         }
         energy.install()
 
-        let firstTab = BrowserTab(pendingURL: URL(string: "https://vaked.dev"))
+        let firstTab = BrowserTab(pendingURL: settings.homepage ?? URL(string: "https://qwave.8b.is/"))
         tabs = [firstTab]
         activeTabID = firstTab.id
         address = firstTab.pendingURL?.absoluteString ?? ""

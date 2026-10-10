@@ -1,0 +1,22 @@
+const {readFileSync}=require('node:fs');
+const vm=require('node:vm');
+const assert=require('node:assert/strict');
+const html=readFileSync('Packages/QwaveKit/Sources/BrowserCore/Resources/offline-arcade.html','utf8');
+const nodes=new Map();
+function node(id){if(!nodes.has(id))nodes.set(id,{value:'balloons',textContent:'',disabled:false,events:{},addEventListener(n,f){this.events[n]=f},setPointerCapture(){},focus(){},getBoundingClientRect(){return {left:0,width:640}},getContext(){return new Proxy({},{get:()=>()=>{}})}});return nodes.get(id)}
+const document={querySelector:node,hidden:false,addEventListener(){}};
+const context=vm.createContext({document,window:{addEventListener(){}},requestAnimationFrame:()=>1,cancelAnimationFrame(){},Math,Set});
+vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+const run=s=>vm.runInContext(s,context);
+run('start()');assert.equal(run('running'),true);
+node('canvas').events.pointerdown({pointerId:1,clientX:180});assert.equal(run('paddle'),180);
+node('#right').events.pointerdown({pointerId:2});run('step(.025)');assert.ok(run('paddle')>180);
+node('#right').events.pointercancel();assert.equal(run('keys.size'),0);
+run('toggle()');assert.equal(run('paused'),true);run('toggle()');assert.equal(run('paused'),false);
+run('x=targets[0].x; y=targets[0].y; vx=0; vy=0; step(0)');assert.equal(run('score'),30);
+run('y=500;step(0)');assert.equal(run('lives'),2);
+node('#game').value='bricks';node('#game').onchange();assert.equal(run('running'),false);run('start()');assert.equal(run('mode'),'bricks');
+run('paddle=320;x=320;y=397;vy=270;step(.01)');assert.ok(run('vy')<0);
+run('lives=1;y=500;step(0)');assert.equal(run('running'),false);assert.equal(node('#pause').disabled,true);
+run('start()');assert.equal(run('lives'),3);assert.equal(run('score'),0);
+console.log('PASS: pointer steering, held controls, cancellation, pause/resume, scoring, lives, cartridge switch, paddle bounce, game-over, restart');
