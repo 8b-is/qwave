@@ -70,10 +70,10 @@ targets:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
         QWAVE_CHANNEL: $(QWAVE_CHANNEL)
-        CFBundleShortVersionString: "2.0.4"
+        CFBundleShortVersionString: "2.0.5"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "20004"
+        CFBundleVersion: "20005"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -190,8 +190,8 @@ targets:
       properties:
         CFBundleName: CredentialProvider
         CFBundleDisplayName: Qwave Passwords
-        CFBundleShortVersionString: "2.0.4"
-        CFBundleVersion: "20004"
+        CFBundleShortVersionString: "2.0.5"
+        CFBundleVersion: "20005"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
@@ -257,8 +257,8 @@ targets:
     info:
       path: Resources/QwaveIOS/Info.plist
       properties:
-        CFBundleShortVersionString: "2.0.4"
-        CFBundleVersion: "20004"
+        CFBundleShortVersionString: "2.0.5"
+        CFBundleVersion: "20005"
         LSRequiresIPhoneOS: true
         CFBundleDisplayName: Qwave
         UILaunchScreen: {}
