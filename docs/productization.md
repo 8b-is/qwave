@@ -25,7 +25,7 @@ scope by construction.
 
 **What people already ask for** (patterns worth selling):
 - "Give me the *nightly* — every experimental WebKit flag ON, ZIG lane, the
-  VPN stage-B, the superpowers." → **bleeding-edge access**.
+  superpowers." → **bleeding-edge access**.
 - "Show me how you built the blocklist / the crypto review / the MEM8 core."
   → **the academy**.
 - "Where is everyone?" → **the hub**.
@@ -68,7 +68,7 @@ Small, honest numbers. Currency EUR; annual = 10× monthly (two months free).
 | Tier | Price | Gets |
 |---|---|---|
 | **Free** | €0 | the full browser (MIT), stable channel, docs, the library, the hub read-only |
-| **Supporter** | **€4.20 / mo** | nightly + beta builds, the academy, badge, weekly hub meeting, hub-write |
+| **Supporter** | **€4.20 / mo** | nightly + beta builds (early + supported — see 5.2), the academy, badge, weekly hub meeting, hub-write |
 | **Patron** | **€12 / mo** | everything + name in `PATRONS.md`, quarterly office hours with the maintainer, vote on the roadmap |
 | **Team / Institutional** | €42 / mo (5 seats) | everything + private onboarding, priority in the meeting, "supporter of record" badge |
 | **One-off** | pay-what-you-want | the badge, one month of nightly — no lock-in, no shame |
@@ -87,17 +87,21 @@ live behind any of them.
 
 ### 4.1 Bleeding-edge lane (features)
 The subscription unlocks the *unstable* channel. Concretely, from the repo's own
-backlog (`ROADMAP_AUDIT.md`, `docs/superpowers`, `VPN_STAGE_B.md`,
-`ZIG_INTEGRATION.md`):
+backlog (`ROADMAP_AUDIT.md`, `docs/superpowers`, `ZIG_INTEGRATION.md`):
 
 | Feature | State | Gate |
 |---|---|---|
-| **Nightly channel** (all experimental WebKit flags ON) | exists (two lanes) | Supporter |
+| **Nightly channel** (all experimental WebKit flags ON) | exists (two lanes) | Supporter — early + supported, not exclusive (5.2) |
 | **superpowers** (the `docs/superpowers` specs) | planned | Supporter (beta) |
-| **VPN Stage-B** (`VPN_STAGE_B.md`) | staged | Supporter (beta) |
 | **ZIG lane** (`ZIG_INTEGRATION.md`) | scoped | Supporter (alpha) |
 | **Beta model / features you can try first** | ongoing | Supporter |
 | **Stable channel** | ships | **everyone, free** |
+
+**Out of scope — no VPN.** The WireGuard/VPN stack (PacketTunnel, WireGuardKit +
+Go bridge, Zig packet filter, VPNKit, PostQuantum) is not in-tree and does not
+belong on this roadmap. Per `AGENTS.md` rule 4 it returns, if it ever returns, as
+its own package/repo — and that separate product owns its own distribution and
+membership. Nothing in the membership spine depends on it.
 
 Rule: **beta never replaces stable, and never removes a free feature.** Paid
 users get *earlier*, not *more privacy*.
@@ -162,12 +166,30 @@ the membership (not via Discord), so the community survives a venue change.
 - The app holds only the **signed badge**; verification is offline (pinned key).
 - **No account, no email, no telemetry** — checkout hands back a signed token.
 
-### 5.2 Channel gating (in-app)
+### 5.2 Channel gating (in-app) — and what it can honestly enforce
 - `stable` → everyone.
 - `nightly` / `beta` → badge present **and** unexpired; otherwise a plain,
   non-nagging link to membership.
 - Never a countdown, never a blur. A one-line reason: *"nightly is a member
   channel — stable is yours, free."*
+
+**The limit, stated up front.** That check is a *convenience, not a lock*.
+`scripts/release-nightly.sh` publishes the same unsigned nightly to the public
+`nightly` prerelease, and the channel is selected from `QWAVE_CHANNEL` (env or
+bundle) — so anyone can download or build nightly and turn it on without a
+token. This tier therefore must not be sold as exclusive access.
+
+What is actually enforced is **distribution and support**, not runtime:
+
+| Enforceable | Not enforceable |
+|---|---|
+| the signed artifacts and release notes we publish and stand behind | the code itself — the repo is open and builds |
+| the supported build for your machine, with a fix path | hiding the nightly binary |
+| early notification, and the hub lane where changes are discussed | blocking `QWAVE_CHANNEL=nightly` |
+
+If exclusivity is ever required, it needs a restricted distribution and
+authorization design first (private artifacts + entitlement to fetch). That is a
+deliberate product decision, not a badge check.
 
 ### 5.3 Hub bot (minimal surface)
 Commands: `!badge` (show/verify), `!nightly` (channel status), `!meet` (next
@@ -189,7 +211,7 @@ reason (asked, never tracked). **No per-user analytics. Ever.**
 | Phase | Window | Ships | Done when |
 |---|---|---|---|
 | **P0 — decide** | 1 week | this doc reviewed; tier prices frozen; rails picked | one page published, linked from `koan.vaked.dev` |
-| **P1 — membership spine** | 2–3 weeks | signed badge + offline verify + channel gating; PATRONS.md | a paying member gets nightly; a non-member sees a clean free browser |
+| **P1 — membership spine** | 2–3 weeks | signed badge + offline verify + channel gating; PATRONS.md | a paying member gets a supported nightly with notes; a non-member can still build nightly — the gate is support, not secrecy (5.2) |
 | **P2 — the room** | 3–4 weeks | hub bot + weekly cadence + first meeting note | two consecutive weekly notes exist |
 | **P3 — the academy** | 4–6 weeks | 5 lessons from existing docs + first live walkthrough | one member completes the track |
 | **P4 — sovereign hub** | 6–12 weeks | Matrix/etherhive bridge; Discord demoted to a door | members can move venues without losing identity |
