@@ -36,9 +36,16 @@ pub fn verified(step_index: u32) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qw_mem16_step_name(i: u32) -> *const core::ffi::c_char {
     const C_NAMES: [&core::ffi::CStr; 6] = [
-        c"POP", c"REFUSE", c"BIND", c"TRANSFORM", c"VERIFY", c"COLLAPSE",
+        c"POP",
+        c"REFUSE",
+        c"BIND",
+        c"TRANSFORM",
+        c"VERIFY",
+        c"COLLAPSE",
     ];
-    C_NAMES.get(i as usize).map_or(core::ptr::null(), |name| name.as_ptr())
+    C_NAMES
+        .get(i as usize)
+        .map_or(core::ptr::null(), |name| name.as_ptr())
 }
 
 /// The verification gate, over the C ABI.
