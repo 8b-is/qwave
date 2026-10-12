@@ -1,6 +1,6 @@
 # Qwave Privacy Policy
 
-Last updated: 2026-10-09
+Last updated: 2026-10-12
 
 Qwave is privacy-oriented software: the browser stores your data on your
 device and phones home as little as technically possible. This policy says
@@ -28,7 +28,7 @@ account, no cloud sync operated by us:
 |---|---|---|---|
 | Omnibox autocomplete | `ac.ecosia.org` (Ecosia) or `duckduckgo.com` — the engine you chose | Only while you type, and only if you enabled search suggestions | **Yes** — on-device suggestions (history, bookmarks, open tabs) need no network |
 | Auto-update check (macOS) | `github.com` (the Sparkle appcast) | After you consent to update checks; manual "Check for Updates" always works | **Yes** — asks before any background check |
-| Memory Wave remote AI | The OpenAI-compatible endpoint **you** configured (default: `api.x.ai`) | Only when you explicitly Summarize/Ask with a remote provider configured | **Yes** — local-first; the page text you ask about is what is sent |
+| Memory Wave remote AI (macOS) | The OpenAI-compatible endpoint **you** configured (default: `api.x.ai`) | Only when you explicitly Ask, summarize a page, or summarize a timeline with a remote provider configured | **Yes** — remote Ask/page summaries send your prompt and any included current page text; timeline summaries send saved titles, times, and site hostnames without saved page bodies |
 | Shields blocklist | — | Nothing: the blocklist ships as a committed snapshot | n/a — no runtime fetch |
 
 Qwave does **not** ship telemetry, analytics, crash reporters, or
