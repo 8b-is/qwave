@@ -465,7 +465,7 @@ struct QwaveWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             if let request = ReadingLanguageRequest.adapted(action.request, mainFrame: action.targetFrame?.isMainFrame == true, currentURL: webView.url) {
                 decisionHandler(.cancel)
                 webView.load(request)
