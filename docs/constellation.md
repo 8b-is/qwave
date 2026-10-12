@@ -72,5 +72,36 @@ rules: `8b-kit/docs/ADR-001-abi-contract.md`.
 | 8b-kit | `8b-is/8b-kit` — foundation blocks: kit-core, engine facade, Chez runtime, GPU ML lane, host glue |
 | iPhone lane | same core force-loaded — mem8 / Phoenix / egress on the phone, battery policy on top |
 | telemetry | `8b-is/qwave-telemetry` (private) — scrubbed JSONL + histograms |
+| quanttern | `core/src/quanttern.rs` — the emotional ternary code (sibling of `qultrakotoro` + `crush-love-dev/quanttern.rs`) |
+| sphered | `<(...)>` admissible witnessed transitions — `#Commit = #ValidWitness` |
+| enthea | the engine door — MCP servers + personas, armed by `crush-love-dev --enthea` |
+
+## The recent wire-in (2026-10-10)
+
+The near constellation, wired rather than copied — each points at its home repo.
+
+- **quanttern — the emotional code.** `core/src/quanttern.rs` is the VAD of
+  feeling (Valence · Arousal · Dominance, each −1…+1) quantized to
+  `{−1, 0, +1}` and packed four trits per byte. The origin is
+  [`qultrakotoro`](https://github.com/8b-is/qultrakotoro)
+  (`Sources/QuantTern/QuantTern.swift`); the same port lives in
+  [`crush-love-dev`](https://github.com/8b-is/crush-love-dev) (`quanttern.rs`).
+  Three alphabets, one contract.
+- **sphered — the admissible transition.** [`8b-is/sphered`](https://github.com/8b-is/sphered),
+  the SpherePOP ASCII DSL: `?` admit · `~` transform · `!` verify · `@`
+  attribute · `>` commit, inside `<(...)>`. Its spine — `#Commit =
+  #ValidWitness`, *no state change without a witness* — is the same discipline
+  qwave's egress audit keeps: nothing asserted without evidence.
+- **enthea — the engine door.** [`8b-is/enthea`](https://github.com/8b-is/enthea),
+  one static Go binary: the deepsiper-enthea MCP servers and the constellation
+  personas. It wires itself into a client (`enthea setup opencode`); crush gets
+  the same door via `crush-love-dev --enthea`, so qwave's decisions and the
+  engine's voices run on one surface.
+- **marqant — the kompression lane.** [`8b-is/marqant`](https://github.com/8b-is/marqant),
+  quantum-compressed markdown (dynamic + standard token sets). The docs and the
+  sovereign library kompress through it; qwave cites, never vendors it.
+- **crush-love-dev — the launcher.** [`8b-is/crush-love-dev`](https://github.com/8b-is/crush-love-dev):
+  the e2e launcher (`--loop`, `--quanttern`, `--lsp`, `--enthea`). The dev
+  surface qwave is built on.
 
 *the constellation · 0 + 1 · fine touch from within · vaked.dev*

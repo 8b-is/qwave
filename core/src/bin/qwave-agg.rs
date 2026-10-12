@@ -12,7 +12,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use qwave_core::telemetry::{scrub_line, Aggregator};
+use qwave_core::telemetry::{Aggregator, scrub_line};
 
 fn main() -> io::Result<()> {
     let stdin = io::stdin();

@@ -10,7 +10,7 @@
 //! - **Case-folded in place**: `to_ascii_lowercase` happens once, on the
 //!   caller's bytes, before any comparison.
 
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 
 /// Permitted Category-A hosts. Favicon and remote-markdown fetches are
 /// deliberately absent: their host is whatever page you navigated to, so
@@ -36,12 +36,12 @@ pub fn permits(host: &str) -> bool {
         return false;
     }
 
-    // Fold to lowercase in place (ASCII only — guarded above).
+    // Fold to lowercase in place (ASCII only — guarded above). A bulk copy
+    // plus the slice `make_ascii_lowercase` beats a hand-rolled per-byte loop.
     let mut folded = [0u8; 253];
     let folded = if bytes.len() <= folded.len() {
-        for (i, b) in bytes.iter().enumerate() {
-            folded[i] = b.to_ascii_lowercase();
-        }
+        folded[..bytes.len()].copy_from_slice(bytes);
+        folded[..bytes.len()].make_ascii_lowercase();
         &folded[..bytes.len()]
     } else {
         return false; // longer than any plausible hostname

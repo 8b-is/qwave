@@ -73,7 +73,13 @@ pub fn decay(t_seconds: f64, tau_seconds: u64) -> f64 {
 pub struct Wave32(pub [u8; 32]);
 
 impl Wave32 {
-    pub fn pack(essence: &str, amplitude: f32, frequency: f32, phase_deg: u8, decay_id: u8) -> Self {
+    pub fn pack(
+        essence: &str,
+        amplitude: f32,
+        frequency: f32,
+        phase_deg: u8,
+        decay_id: u8,
+    ) -> Self {
         let digest = md5(essence.as_bytes());
         let mut out = [0u8; 32];
         out[0..16].copy_from_slice(&digest);
@@ -311,7 +317,8 @@ pub unsafe extern "C" fn qw_phoenix_decide(
     };
     // SAFETY: caller contract — the phoenix pointer came from qw_phoenix_new.
     let phoenix = unsafe { &mut *phoenix };
-    let (verdict, amp) = phoenix.decide(essence, precious, amplitude, frequency, phase_deg, decay_id);
+    let (verdict, amp) =
+        phoenix.decide(essence, precious, amplitude, frequency, phase_deg, decay_id);
     if !amplitude_out.is_null() {
         unsafe { *amplitude_out = amp };
     }
@@ -348,15 +355,69 @@ pub fn md5(input: &[u8]) -> [u8; 16] {
         6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
     const K: [u32; 64] = [
-        0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee, 0xf57c_0faf, 0x4787_c62a, 0xa830_4613,
-        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
-        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
-        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
-        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
-        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xd76a_a478,
+        0xe8c7_b756,
+        0x2420_70db,
+        0xc1bd_ceee,
+        0xf57c_0faf,
+        0x4787_c62a,
+        0xa830_4613,
+        0xfd469501,
+        0x698098d8,
+        0x8b44f7af,
+        0xffff5bb1,
+        0x895cd7be,
+        0x6b901122,
+        0xfd987193,
+        0xa679438e,
+        0x49b40821,
+        0xf61e2562,
+        0xc040b340,
+        0x265e5a51,
+        0xe9b6c7aa,
+        0xd62f105d,
+        0x02441453,
+        0xd8a1e681,
+        0xe7d3fbc8,
+        0x21e1cde6,
+        0xc33707d6,
+        0xf4d50d87,
+        0x455a14ed,
+        0xa9e3e905,
+        0xfcefa3f8,
+        0x676f02d9,
+        0x8d2a4c8a,
+        0xfffa3942,
+        0x8771f681,
+        0x6d9d6122,
+        0xfde5380c,
+        0xa4beea44,
+        0x4bdecfa9,
+        0xf6bb4b60,
+        0xbebfbc70,
+        0x289b7ec6,
+        0xeaa127fa,
+        0xd4ef3085,
+        0x04881d05,
+        0xd9d4d039,
+        0xe6db99e5,
+        0x1fa27cf8,
+        0xc4ac5665,
+        0xf4292244,
+        0x432aff97,
+        0xab9423a7,
+        0xfc93a039,
+        0x655b59c3,
+        0x8f0ccc92,
+        0xffeff47d,
+        0x85845dd1,
+        0x6fa87e4f,
+        0xfe2ce6e0,
+        0xa3014314,
+        0x4e0811a1,
+        0xf7537e82,
+        0xbd3af235,
+        0x2ad7d2bb,
         0xeb86d391,
     ];
 
@@ -454,12 +515,11 @@ mod tests {
     #[test]
     fn precious_overrides_the_gate() {
         let mut phoenix = Phoenix::new();
-        let (verdict, amp) =
-            phoenix.decide("!! weird jitter text !!", true, 0.2, 48.0, 0, 1);
+        let (verdict, amp) = phoenix.decide("!! weird jitter text !!", true, 0.2, 48.0, 0, 1);
         assert_eq!(verdict, Verdict::Store);
         assert!(amp >= 0.5, "precious always stores at full amplitude");
         // And it is stored with τ=∞ (decay id 0).
-        assert_eq!(phoenix.store[0].1 .0[25], 0);
+        assert_eq!(phoenix.store[0].1.0[25], 0);
     }
 
     #[test]
@@ -491,7 +551,10 @@ mod tests {
         phoenix.decide("a wave at forty eight hertz", false, 1.0, 48.0, 0, 1);
         phoenix.decide("a wave at thirty hertz", false, 1.0, 29.66, 0, 1); // ≈ 48/φ
         let companions = phoenix.phi_companions(48.0);
-        assert!(companions.contains(&29.66), "48/φ must be found within the 6% band");
+        assert!(
+            companions.contains(&29.66),
+            "48/φ must be found within the 6% band"
+        );
     }
 
     #[test]

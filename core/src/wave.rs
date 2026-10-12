@@ -93,8 +93,8 @@ impl WaveInt {
         if bytes[0] > FRAME_VERSION {
             return Err(WaveFrameError::UnsupportedVersion);
         }
-        let provenance = WaveProvenance::from_raw(bytes[1])
-            .ok_or(WaveFrameError::InvalidProvenance)?;
+        let provenance =
+            WaveProvenance::from_raw(bytes[1]).ok_or(WaveFrameError::InvalidProvenance)?;
         if bytes[78] != checksum(&bytes[..78]) {
             return Err(WaveFrameError::ChecksumMismatch);
         }
@@ -311,7 +311,10 @@ mod tests {
     #[test]
     fn provenance_values_are_the_wire_contract() {
         assert_ne!(WaveProvenance::Cognitive as u8, WaveProvenance::Nexus as u8);
-        assert_eq!(WaveProvenance::from_raw(0x01), Some(WaveProvenance::Cognitive));
+        assert_eq!(
+            WaveProvenance::from_raw(0x01),
+            Some(WaveProvenance::Cognitive)
+        );
         assert_eq!(WaveProvenance::from_raw(0x02), Some(WaveProvenance::Nexus));
         assert_eq!(WaveProvenance::from_raw(0x07), None);
     }
