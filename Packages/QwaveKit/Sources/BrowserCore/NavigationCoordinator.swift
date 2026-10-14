@@ -35,6 +35,13 @@ public final class NavigationCoordinator: NSObject {
 
     private var observations: [NSKeyValueObservation] = []
     private let session: URLSession
+    private struct MarkdownFetch {
+        let id: UUID
+        let tabID: UUID
+        let task: Task<(Data, URLResponse), Error>
+    }
+    private var markdownFetch: MarkdownFetch?
+    private var isDetached = false
 
     public init(
         tab: Tab,
@@ -55,6 +62,8 @@ public final class NavigationCoordinator: NSObject {
 
     /// Wire this coordinator to the tab's freshly built web view.
     public func attach(to webView: WKWebView) {
+        cancelMarkdownFetch()
+        isDetached = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
@@ -100,9 +109,16 @@ public final class NavigationCoordinator: NSObject {
     }
 
     public func detach() {
+        isDetached = true
+        cancelMarkdownFetch()
         observations.forEach { $0.invalidate() }
         observations = []
         tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+    }
+
+    private func cancelMarkdownFetch() {
+        markdownFetch?.task.cancel()
+        markdownFetch = nil
     }
 }
 
@@ -135,6 +151,13 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 return
             }
         #endif
+
+        // A new main-frame intent supersedes the reader's re-fetch, even if
+        // the next navigation is later cancelled or redirected by policy.
+        // Popups and subframes do not replace this tab's document.
+        if navigationAction.targetFrame?.isMainFrame == true, tab?.webView === webView {
+            cancelMarkdownFetch()
+        }
 
         if isMainFrame, let url, url.scheme == QwaveSchemeHandler.scheme {
             preferences.allowsContentJavaScript = true
@@ -227,7 +250,11 @@ extension NavigationCoordinator: WKNavigationDelegate {
             let url = navigationResponse.response.url
             if let url, LocalDocumentResolver.isMarkdownURL(url) || LocalDocumentResolver.isMarkdownMIME(mime) {
                 decisionHandler(.cancel)
-                Task { await self.fetchAndPresentMarkdown(url, in: webView) }
+                // Allocate the identity synchronously: a later navigation can
+                // invalidate this request before the presentation task starts.
+                if let fetch = beginMarkdownFetch(url, in: webView) {
+                    Task { await self.presentMarkdownResponse(fetch, requestedURL: url, in: webView) }
+                }
                 return
             }
             if let http = navigationResponse.response as? HTTPURLResponse,
@@ -301,6 +328,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// the current back/forward item — never leave the user staring at a blank
     /// tab.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if tab?.webView === webView { cancelMarkdownFetch() }
         QwaveLog.browser.warning("WebContent process terminated; restoring tab")
         if let state = webView.interactionState as? Data {
             webView.interactionState = state
@@ -354,7 +382,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
     }
 
     /// - Parameter trust: which origin the compiled page will end up in.
-    ///   `loadHTMLString(_:baseURL:)` below adopts `url`'s origin, so this is
+    ///   The HTML load below adopts `url`'s origin, so this is
     ///   the caller's answer to "would script in this document be running as
     ///   the document's own site, or as the user's `file://` origin?" — see
     ///   `MarkdownTrust` and issue #131.
@@ -365,10 +393,25 @@ extension NavigationCoordinator: WKNavigationDelegate {
         let body = MarkdownCompiler.compile(source, trust: trust)
         let html = InternalPages.markdownHTML(
             title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
-        webView.loadHTMLString(html, baseURL: url)
+        loadMarkdownHTML(html, at: url, in: webView)
         tab?.url = url
         tab?.title = title
         onStateChange?()
+    }
+
+    private func loadMarkdownHTML(_ html: String, at url: URL, in webView: WKWebView) {
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else {
+            webView.loadHTMLString(html, baseURL: url)
+            return
+        }
+        // loadHTMLString synthesizes a headerless request. The normal reading
+        // language policy would replay it over the network, losing our HTML
+        // and repeatedly fetching the same Markdown. A simulated response
+        // retains the request's language policy without sending it again.
+        let request = URLRequest(url: url)
+        let adapted = ReadingLanguageRequest.adapted(request, mainFrame: true) ?? request
+        webView.loadSimulatedRequest(adapted, responseHTML: html)
     }
 
     /// Re-fetches the markdown document WebKit just started loading (we
@@ -387,8 +430,43 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// Internal rather than private so `EgressGuardTests` can drive the real
     /// fetch — including the real default `session` — instead of restating it.
     func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
+        guard let fetch = beginMarkdownFetch(url, in: webView) else { return }
+        await presentMarkdownResponse(fetch, requestedURL: url, in: webView)
+    }
+
+    private func beginMarkdownFetch(_ url: URL, in webView: WKWebView) -> MarkdownFetch? {
+        guard !isDetached, let tab, tab.webView === webView else { return nil }
+        cancelMarkdownFetch()
+        let session = self.session
+        let fetch = MarkdownFetch(
+            id: UUID(), tabID: tab.id,
+            task: Task { try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url))) })
+        markdownFetch = fetch
+        return fetch
+    }
+
+    private func isCurrentMarkdownFetch(_ fetch: MarkdownFetch, in webView: WKWebView) -> Bool {
+        !Task.isCancelled && !isDetached && markdownFetch?.id == fetch.id
+            && tab?.id == fetch.tabID && tab?.webView === webView
+    }
+
+    private func presentMarkdownResponse(_ fetch: MarkdownFetch, requestedURL url: URL, in webView: WKWebView) async {
+        defer {
+            // An older completion must not clear the newer request's handle.
+            if markdownFetch?.id == fetch.id { markdownFetch = nil }
+        }
+        guard isCurrentMarkdownFetch(fetch, in: webView) else {
+            fetch.task.cancel()
+            return
+        }
         do {
-            let (data, response) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
+            let task = fetch.task
+            let (data, response) = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            guard isCurrentMarkdownFetch(fetch, in: webView) else { return }
             guard let http = response as? HTTPURLResponse,
                 let responseURL = http.url,
                 let scheme = responseURL.scheme?.lowercased(), scheme == "http" || scheme == "https",
@@ -397,9 +475,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
             guard (200..<300).contains(http.statusCode) else {
                 // An error body is not the Markdown document the user requested.
-                webView.loadHTMLString(
+                loadMarkdownHTML(
                     InternalPages.httpErrorHTML(status: http.statusCode, host: responseURL.host ?? ""),
-                    baseURL: responseURL
+                    at: responseURL, in: webView
                 )
                 tab?.url = responseURL
                 tab?.title = String(http.statusCode)
@@ -414,10 +492,13 @@ extension NavigationCoordinator: WKNavigationDelegate {
             presentMarkdown(
                 source, at: responseURL, trust: .rawHTMLAllowed, in: webView)
         } catch {
-            webView.loadHTMLString(
+            guard isCurrentMarkdownFetch(fetch, in: webView),
+                !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled
+            else { return }
+            loadMarkdownHTML(
                 InternalPages.connectionLostHTML(
                     host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
-                baseURL: url
+                at: url, in: webView
             )
         }
     }

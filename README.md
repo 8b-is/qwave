@@ -473,6 +473,20 @@ cache isolation, ordinary container reuse, and a separate-process restart
 with synthetic loopback images and a temporary database. It does not launch
 the browser or access existing browsing data.
 
+Mac Markdown navigation regression (Xcode Swift and Python 3 standard library):
+
+```sh
+python3 scripts/test-markdown-navigation.py --output-dir /tmp/qwave-markdown-navigation
+```
+
+This drives the actual navigation delegate in nonpersistent WebKit views
+against a loopback server. It checks normal Markdown rendering without a
+reload loop, safe HTTP error pages, and preservation of a newer page after
+a delayed fetch. The runner temporarily installs its package test fixture,
+removes it afterward, and limits the build to two workers and five minutes.
+Use `--scratch-path PATH` to reuse an existing package build cache. Run it
+separately from other package builds; it never opens a user browser profile.
+
 Generate and build the app:
 
 ```sh

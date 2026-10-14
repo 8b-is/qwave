@@ -553,7 +553,11 @@ final class EgressGuardTests: XCTestCase {
             "this test is only meaningful while raw.githubusercontent.com is off the allowlist"
         )
 
-        await coordinator.fetchAndPresentMarkdown(url, in: WKWebView())
+        let webConfiguration = WKWebViewConfiguration()
+        webConfiguration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .zero, configuration: webConfiguration)
+        tab.attach(webView: webView)
+        await coordinator.fetchAndPresentMarkdown(url, in: webView)
 
         XCTAssertTrue(
             EgressGuard.onBlock.hosts().isEmpty,
