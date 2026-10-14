@@ -388,16 +388,31 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// fetch — including the real default `session` — instead of restating it.
     func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
         do {
-            let (data, _) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
+            let (data, response) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
+            guard let http = response as? HTTPURLResponse,
+                let responseURL = http.url,
+                let scheme = responseURL.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                CanonicalHost.host(of: responseURL) != nil
+            else { throw URLError(.badServerResponse) }
+
+            guard (200..<300).contains(http.statusCode) else {
+                // An error body is not the Markdown document the user requested.
+                webView.loadHTMLString(
+                    InternalPages.httpErrorHTML(status: http.statusCode, host: responseURL.host ?? ""),
+                    baseURL: responseURL
+                )
+                tab?.url = responseURL
+                tab?.title = String(http.statusCode)
+                onStateChange?()
+                return
+            }
             let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            // Remote markdown renders at its own URL, so raw HTML in it runs as
-            // that site's origin and gains nothing over the site serving HTML.
-            // The `isFileURL` arm is unreachable today — file:// markdown is
-            // intercepted in `decidePolicyFor navigationAction` above — but the
-            // trust level is decided by the URL we are about to hand
-            // `loadHTMLString`, not by which caller we happen to be in.
+            // URLSession follows redirects. Raw HTML must run as the FINAL
+            // response's origin, never as the site that redirected to it.
+            // Local files use the separate compiler-only path above; a remote
+            // response cannot opt into a file or internal-page origin here.
             presentMarkdown(
-                source, at: url, trust: url.isFileURL ? .compilerOutputOnly : .rawHTMLAllowed, in: webView)
+                source, at: responseURL, trust: .rawHTMLAllowed, in: webView)
         } catch {
             webView.loadHTMLString(
                 InternalPages.connectionLostHTML(
