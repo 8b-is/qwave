@@ -100,9 +100,10 @@ own network activity auditable.
   see [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
-- **AutoFill** — passwords and passkeys through an `ASCredentialProvider` extension
-  and WebAuthn, kept in the OS / iCloud keychain and deliberately separate from the
-  post-quantum / `DeviceKeyManager` stack.
+- **AutoFill (macOS)** — saved website passwords through a credential-provider
+  extension and OS / iCloud Keychain. The iPhone/iPad shell does not include that
+  extension. Website passkey support has separate capability and compatibility
+  limits; see [native website passkeys](docs/BROWSER-PASSKEYS.md).
 - **Spaces** — the container universes surface as first-class Spaces with a vertical
   tab sidebar; a system Focus filter can switch the active Space and tighten shields.
 - **The iPhone lane runs the same sovereign core** — `QwaveIOS` links the same
@@ -343,7 +344,7 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── WebExtensions               MV3 registry and browser.* bridge
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
-│   ├── WebCredentials              keychain-only passwords + passkeys (AutoFill)
+│   ├── WebCredentials              Keychain passwords + WebAuthn request policies
 │   ├── SovereignCore               the Swift face over the core's C ABI
 │   └── QwaveSupport                logging, keychain, egress guard
 └── core/                          the Rust sovereign core (staticlib, C ABI)
@@ -385,7 +386,7 @@ the exact graph, isolation rules, data flow, and test boundaries.
   is never injected into a tab and `ContentScriptEngine` is reached only from
   tests (`WebExtensions/WebExtensionHost.swift:8-20`).
   [source](Packages/QwaveKit/Sources/WebExtensions/)
-- **WebCredentials** — keychain-only website logins and passkeys for AutoFill.
+- **WebCredentials** — Keychain website passwords and WebAuthn request policies.
   Foundation + Security only; never links the crypto/VPN stack. Key types:
   `WebCredential`, `WebCredentialStore`. [source](Packages/QwaveKit/Sources/WebCredentials/)
 - **URLIdentity** — WHATWG/WebKit-compatible host identity (fixes a shielding
@@ -608,7 +609,7 @@ Also in flight: downloads UI, crash-safe session restore, a
 `qwave://diagnostics` telemetry page, VoiceOver accessibility on the chrome,
 on-device semantic memory recall, a command palette, first-run bookmark
 import with Spotlight entities, container-bound Focus filters with a Spaces
-sidebar, keychain-only AutoFill (passwords + passkeys), a zero-egress Safe
+sidebar, Mac password AutoFill and platform-dependent passkey support, a zero-egress Safe
 Browsing host-set (shipped as a sample list — see
 [docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a real feed),
 and the iPhone lane — now a full lane: the same WebKit + shields + Rust core
