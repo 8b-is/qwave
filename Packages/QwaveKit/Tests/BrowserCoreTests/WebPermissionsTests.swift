@@ -20,7 +20,9 @@ final class WebPermissionsTests: XCTestCase {
                 XCTAssertEqual(store.decision(for: key), decision)
                 for other in others {
                     let otherKey = WebPermissionKey(containerID: nil, origin: other, permission: permission)
-                    XCTAssertNil(store.decision(for: otherKey), "\(permission): \(original) must not share \(decision) with \(other)")
+                    XCTAssertNil(
+                        store.decision(for: otherKey),
+                        "\(permission): \(original) must not share \(decision) with \(other)")
                 }
             }
         }
@@ -43,10 +45,13 @@ final class WebPermissionsTests: XCTestCase {
     }
 
     func testPromptIdentifiesSchemeAndNonstandardPort() {
-        XCTAssertEqual(WebPermissionOrigin(scheme: "https", host: "example.com", port: 0).displayName, "https://example.com")
-        XCTAssertEqual(WebPermissionOrigin(scheme: "http", host: "example.com", port: 8443).displayName, "http://example.com:8443")
+        XCTAssertEqual(
+            WebPermissionOrigin(scheme: "https", host: "example.com", port: 0).displayName, "https://example.com")
+        XCTAssertEqual(
+            WebPermissionOrigin(scheme: "http", host: "example.com", port: 8443).displayName, "http://example.com:8443")
         XCTAssertEqual(WebPermissionOrigin(scheme: "https", host: "::1", port: 9443).displayName, "https://[::1]:9443")
-        XCTAssertEqual(WebPermissionOrigin(scheme: "https", host: "[::1]", port: 9443).displayName, "https://[::1]:9443")
+        XCTAssertEqual(
+            WebPermissionOrigin(scheme: "https", host: "[::1]", port: 9443).displayName, "https://[::1]:9443")
     }
 
     func testInvalidOriginsDeniedEvenWithCachedAllow() {
@@ -62,7 +67,9 @@ final class WebPermissionsTests: XCTestCase {
                 store.record(.allow, for: WebPermissionKey(containerID: nil, origin: origin, permission: permission))
             }
             let media = expectation(description: "invalid media origin")
-            WebPermissionArbiter.decideMediaCapture(origin: origin, type: .cameraAndMicrophone, containerID: nil, store: store) {
+            WebPermissionArbiter.decideMediaCapture(
+                origin: origin, type: .cameraAndMicrophone, containerID: nil, store: store
+            ) {
                 XCTAssertEqual($0, .deny)
                 media.fulfill()
             }
@@ -99,15 +106,25 @@ final class WebPermissionsTests: XCTestCase {
     }
 
     func testKeyLowercasesHostForStableMatching() {
-        let a = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "Meet.Google.COM", port: 443), permission: .camera)
-        let b = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "meet.google.com", port: 443), permission: .camera)
+        let a = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "Meet.Google.COM", port: 443),
+            permission: .camera)
+        let b = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "meet.google.com", port: 443),
+            permission: .camera)
         XCTAssertEqual(a, b)
     }
 
     func testKeyDistinguishesPermissionAndHost() {
-        let cam = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .camera)
-        let mic = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .microphone)
-        let other = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "other.com", port: 443), permission: .camera)
+        let cam = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .camera)
+        let mic = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .microphone)
+        let other = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "other.com", port: 443),
+            permission: .camera)
         XCTAssertNotEqual(cam, mic)
         XCTAssertNotEqual(cam, other)
     }
@@ -116,9 +133,15 @@ final class WebPermissionsTests: XCTestCase {
         let store = WebPermissionStore()
         let personal = UUID()
         let work = UUID()
-        let inPersonal = WebPermissionKey(containerID: personal, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .camera)
-        let inWork = WebPermissionKey(containerID: work, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .camera)
-        let inDefault = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .camera)
+        let inPersonal = WebPermissionKey(
+            containerID: personal, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .camera)
+        let inWork = WebPermissionKey(
+            containerID: work, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .camera)
+        let inDefault = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .camera)
 
         store.record(.allow, for: inPersonal)
 
@@ -130,7 +153,9 @@ final class WebPermissionsTests: XCTestCase {
 
     func testRecordOverwritesAndResetClears() {
         let store = WebPermissionStore()
-        let key = WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .location)
+        let key = WebPermissionKey(
+            containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+            permission: .location)
         store.record(.allow, for: key)
         XCTAssertEqual(store.decision(for: key), .allow)
         store.record(.deny, for: key)
@@ -149,7 +174,8 @@ final class WebPermissionsTests: XCTestCase {
         let store = WebPermissionStore()
         let exp = expectation(description: "decision")
         WebPermissionArbiter.decideMediaCapture(
-            origin: WebPermissionOrigin(scheme: "https", host: "", port: 443), type: .cameraAndMicrophone, containerID: nil, store: store
+            origin: WebPermissionOrigin(scheme: "https", host: "", port: 443), type: .cameraAndMicrophone,
+            containerID: nil, store: store
         ) { decision in
             XCTAssertEqual(decision, .deny)
             exp.fulfill()
@@ -159,11 +185,16 @@ final class WebPermissionsTests: XCTestCase {
 
     func testRememberedDenyShortCircuitsToDeny() {
         let store = WebPermissionStore()
-        store.record(.deny, for: WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .camera))
+        store.record(
+            .deny,
+            for: WebPermissionKey(
+                containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+                permission: .camera))
         let exp = expectation(description: "decision")
         // Camera already denied -> the whole camera+mic request is denied without a prompt.
         WebPermissionArbiter.decideMediaCapture(
-            origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), type: .cameraAndMicrophone, containerID: nil, store: store
+            origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), type: .cameraAndMicrophone,
+            containerID: nil, store: store
         ) { decision in
             XCTAssertEqual(decision, .deny)
             exp.fulfill()
@@ -173,9 +204,15 @@ final class WebPermissionsTests: XCTestCase {
 
     func testRememberedGeolocationDenyReturnsDeny() {
         let store = WebPermissionStore()
-        store.record(.deny, for: WebPermissionKey(containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), permission: .location))
+        store.record(
+            .deny,
+            for: WebPermissionKey(
+                containerID: nil, origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443),
+                permission: .location))
         let exp = expectation(description: "decision")
-        WebPermissionArbiter.decideGeolocation(origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), containerID: nil, store: store) { decision in
+        WebPermissionArbiter.decideGeolocation(
+            origin: WebPermissionOrigin(scheme: "https", host: "example.com", port: 443), containerID: nil, store: store
+        ) { decision in
             XCTAssertEqual(decision, .deny)
             exp.fulfill()
         }

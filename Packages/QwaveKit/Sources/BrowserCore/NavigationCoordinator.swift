@@ -201,7 +201,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
             return
         }
 
-        if let request = ReadingLanguageRequest.adapted(navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url) {
+        if let request = ReadingLanguageRequest.adapted(
+            navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url)
+        {
             decisionHandler(.cancel, preferences)
             webView.load(request)
             return
