@@ -29,8 +29,10 @@ public final class ContainerRegistry: ObservableObject {
     @Published public private(set) var profiles: [ContainerProfile]
 
     private let fileURL: URL?
+    private let permissions: WebPermissionStore
 
-    public init(directory: URL?) {
+    public init(directory: URL?, permissions: WebPermissionStore = .shared) {
+        self.permissions = permissions
         if let directory {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             self.fileURL = directory.appendingPathComponent("containers.json")
@@ -76,6 +78,7 @@ public final class ContainerRegistry: ObservableObject {
 
     /// Deletes the profile and wipes its entire storage universe.
     public func deleteProfile(id: UUID) async {
+        permissions.reset(containerID: id)
         profiles.removeAll { $0.id == id }
         save()
         if #available(iOS 17.0, macOS 14.0, *) {
@@ -114,7 +117,8 @@ public final class ContainerRegistry: ObservableObject {
         if #available(iOS 17.0, macOS 14.0, *) {
             return WKWebsiteDataStore(forIdentifier: profile.id)
         }
-        QwaveLog.browser.info("Identifier-backed stores need iOS 17; profile \(profileID, privacy: .public) shares the default store")
+        QwaveLog.browser.info(
+            "Identifier-backed stores need iOS 17; profile \(profileID, privacy: .public) shares the default store")
         return .default()
     }
 

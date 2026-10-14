@@ -21,6 +21,9 @@ public final class NavigationCoordinator: NSObject {
     private let httpsUpgrader: HTTPSFirstUpgrader
     private let history: HistoryStore?
     private let downloads: DownloadManager
+    private let permissions: WebPermissionStore
+    private let ephemeralPermissions: WebPermissionStore
+    private weak var attachedWebView: WKWebView?
 
     /// (url, activate) — open a link in a new tab in the same container.
     public var onOpenNewTab: ((URL?, Bool) -> Void)?
@@ -56,13 +59,16 @@ public final class NavigationCoordinator: NSObject {
         shields: ShieldsDirector,
         httpsUpgrader: HTTPSFirstUpgrader,
         history: HistoryStore?,
-        downloads: DownloadManager
+        downloads: DownloadManager,
+        permissions: WebPermissionStore = .shared
     ) {
         self.tab = tab
         self.shields = shields
         self.httpsUpgrader = httpsUpgrader
         self.history = history
         self.downloads = downloads
+        self.permissions = permissions
+        ephemeralPermissions = WebPermissionStore(invalidationSource: permissions, containerID: tab.containerID)
         super.init()
     }
 
@@ -71,6 +77,8 @@ public final class NavigationCoordinator: NSObject {
         cancelMarkdownFetch()
         localDocumentLoad = nil
         isDetached = false
+        if attachedWebView !== webView { ephemeralPermissions.reset() }
+        attachedWebView = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
@@ -119,6 +127,8 @@ public final class NavigationCoordinator: NSObject {
         isDetached = true
         cancelMarkdownFetch()
         localDocumentLoad = nil
+        attachedWebView = nil
+        ephemeralPermissions.reset()
         observations.forEach { $0.invalidate() }
         observations = []
         tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
@@ -127,6 +137,14 @@ public final class NavigationCoordinator: NSObject {
     private func cancelMarkdownFetch() {
         markdownFetch?.task.cancel()
         markdownFetch = nil
+    }
+
+    /// Follow the actual storage lifetime, including custom nonpersistent
+    /// profiles. The shared burner profile ID is not a consent boundary.
+    func permissionStore(for webView: WKWebView) -> WebPermissionStore? {
+        guard let tab, tab.webView === webView, attachedWebView === webView else { return nil }
+        return tab.isEphemeral || !webView.configuration.websiteDataStore.isPersistent
+            ? ephemeralPermissions : permissions
     }
 }
 
@@ -666,11 +684,20 @@ extension NavigationCoordinator: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
+        guard let store = permissionStore(for: webView), let tab else {
+            decisionHandler(.deny); return
+        }
         WebPermissionArbiter.decideMediaCapture(
-            host: origin.host,
+            origin: WebPermissionOrigin(origin),
             type: type,
-            containerID: tab?.containerID,
-            completion: decisionHandler)
+            containerID: tab.containerID,
+            store: store
+        ) { [weak self, weak webView] decision in
+            guard let self, let webView, self.permissionStore(for: webView) === store else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(decision)
+        }
     }
 
     public func webView(
@@ -679,10 +706,19 @@ extension NavigationCoordinator: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
+        guard let store = permissionStore(for: webView), let tab else {
+            decisionHandler(.deny); return
+        }
         WebPermissionArbiter.decideGeolocation(
-            host: origin.host,
-            containerID: tab?.containerID,
-            completion: decisionHandler)
+            origin: WebPermissionOrigin(origin),
+            containerID: tab.containerID,
+            store: store
+        ) { [weak self, weak webView] decision in
+            guard let self, let webView, self.permissionStore(for: webView) === store else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(decision)
+        }
     }
 
     public func webViewDidClose(_ webView: WKWebView) {
