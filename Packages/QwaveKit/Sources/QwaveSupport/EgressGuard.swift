@@ -46,16 +46,12 @@ import Foundation
 ///    guarded (declared intent, and redirects off the configured origin);
 ///    this adds the host check they never performed.
 ///
-/// Two of those exclusions hold for **different mechanical reasons**, and
-/// conflating them cost a working feature. `FaviconLoader`
-/// builds its own session and simply never calls `install(into:)`, so
-/// nothing here ever sees it. The remote-markdown fetch does not: it runs on
-/// `URLSession.shared` (`BrowserCore/NavigationCoordinator.swift`), the one
-/// session `registerClass` above *does* reach. So for four documents' worth of
-/// prose claiming it was ungated, it was in fact gated — and navigating to any
-/// `.md` URL off the four-host allowlist failed with `BlockedError` instead of
-/// rendering. `markPageDriven(_:)` below is the exclusion those documents
-/// described, made real and greppable.
+/// Page-driven clients have explicit boundaries. FaviconLoader constructs its
+/// own session without installing this guard. MarkdownDocumentLoader installs
+/// it in a fresh ephemeral session and marks only the navigated document and
+/// its redirects with markPageDriven(_:). Unmarked requests remain gated.
+/// Markdown previously used URLSession.shared; omitting this request marker
+/// broke navigation to documents outside the fixed-host allowlist.
 public final class EgressGuard: URLProtocol {
     /// Key under which ``markPageDriven(_:)`` stamps its provenance flag. A
     /// `URLProtocol` property rather than a header: it reaches `canInit`
@@ -79,14 +75,14 @@ public final class EgressGuard: URLProtocol {
     /// per-session: `URLSession.shared` stays gated for everything else, and a
     /// fixed-host client added to that session later is still caught.
     ///
-    /// The privacy cost at the sole call site is close to nil, and that is not
-    /// a general licence. `NavigationCoordinator.fetchAndPresentMarkdown` runs
+    /// This is limited to a reader re-fetch, not a general licence.
+    /// `NavigationCoordinator.fetchAndPresentMarkdown` runs
     /// from `decidePolicyFor navigationResponse` — WebKit has *already*
     /// connected to that host and received response headers by then (Category
     /// B/C, outside this guard's reach either way). The marked request is a
     /// second fetch of a document the browser just retrieved at the user's
-    /// explicit instruction: no new destination, no data the host did not
-    /// already receive. A future caller that cannot make that same argument
+    /// explicit instruction, using only cookies from that WebKit context.
+    /// A future caller that cannot make that same argument
     /// does not belong here.
     public static func markPageDriven(_ request: URLRequest) -> URLRequest {
         guard let mutable = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {

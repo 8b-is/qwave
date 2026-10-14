@@ -22,16 +22,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--scratch-path', type=Path)
+    parser.add_argument('--storage', action='store_true', help='Test isolated Markdown re-fetch storage and limits')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     package = repo / 'Packages/QwaveKit'
-    target = package / 'Tests/EgressGuardTests/MarkdownNavigationIntegrationTests.swift'
+    test_class = 'MarkdownStorageIntegrationTests' if args.storage else 'MarkdownNavigationIntegrationTests'
+    probe_folder = 'MarkdownStorage' if args.storage else 'MarkdownNavigation'
+    target = package / 'Tests/EgressGuardTests' / (test_class + '.swift')
     if target.exists():
         raise SystemExit(f'Refusing to overwrite existing fixture: {target}')
-    source = (repo / 'Tests/MarkdownNavigation/Probe.swift').read_bytes()
+    source = (repo / 'Tests' / probe_folder / 'Probe.swift').read_bytes()
     requests = []
+    details = []
     lock = threading.Lock()
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -39,15 +43,51 @@ def main():
             with lock:
                 requests.append(self.path)
                 number = requests.count(self.path)
+                if args.storage and self.path != '/_storage_state':
+                    details.append({'path': self.path, 'host': self.headers.get('Host', ''),
+                                    'cookie': self.headers.get('Cookie', ''),
+                                    'authorization': self.headers.get('Authorization', '')})
             # Keep even a failing reader-loop regression bounded and gentle.
             time.sleep(0.01 if number <= 8 else 0.05)
             status = 200
-            if self.path == '/_state':
+            headers = {}
+            if self.path == '/_storage_state':
+                with lock:
+                    body = json.dumps(details)
+                mime = 'application/json'
+            elif self.path == '/auth/cache.md':
+                cookie = self.headers.get('Cookie', '')
+                marker = cookie.removeprefix('auth=')
+                body, mime = '# Authenticated ' + marker, 'text/markdown'
+                headers = {'Cache-Control': 'public, max-age=3600', 'Set-Cookie': 'responseOnly=discard; Path=/'}
+            elif self.path in ['/redirect.md', '/transient.md']:
+                status = 302
+                port = self.server.server_port
+                destination = f'http://127.0.0.1:{port}/transient.md' if self.path == '/redirect.md' else f'http://localhost:{port}/final.md'
+                headers['Location'] = destination
+                if self.path == '/redirect.md':
+                    headers['Set-Cookie'] = 'transient=one-request; Path=/'
+                body, mime = '', 'text/markdown'
+            elif self.path == '/final.md':
+                body, mime = '# Redirected destination', 'text/markdown'
+                headers['Set-Cookie'] = 'responseOnly=discard; Path=/'
+            elif self.path == '/cookie-slow.md':
+                body, mime = '# Cancelled old response', 'text/markdown'
+                headers['Set-Cookie'] = 'late=discard; Path=/'
+            elif self.path == '/basic.md':
+                status = 401
+                headers['WWW-Authenticate'] = 'Basic realm="synthetic-qwave-test"'
+                body, mime = 'Authentication required', 'text/plain'
+            elif self.path in ['/oversize.md', '/oversize-stream.md']:
+                body, mime = 'x' * (8 * 1024 * 1024 + 1), 'text/markdown'
+            elif self.path == '/_state':
                 with lock:
                     body = json.dumps(dict(collections.Counter(requests)))
                 mime = 'application/json'
             elif self.path == '/direct.md':
-                body, mime = '# Active Markdown fixture', 'text/markdown'
+                body, mime = '# Active Markdown fixture\n\nCookies: ' + self.headers.get('Cookie', ''), 'text/markdown'
+                value = 'from-webkit' if number == 1 else 'refetch-must-not-replace'
+                headers['Set-Cookie'] = f'nativeResponse={value}; Path=/'
             elif self.path == '/forbidden.md':
                 status = 403
                 body = '# Untrusted error\n<script>window.syntheticErrorScript=true;</script>'
@@ -66,9 +106,14 @@ def main():
             try:
                 self.send_response(status)
                 self.send_header('Content-Type', mime)
-                self.send_header('Content-Length', str(len(data)))
-                self.send_header('Cache-Control', 'no-store')
+                if self.path != '/oversize-stream.md':
+                    self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', headers.pop('Cache-Control', 'no-store'))
+                for key, value in headers.items():
+                    self.send_header(key, value)
                 self.end_headers()
+                if self.path == '/cookie-slow.md':
+                    time.sleep(0.8)
                 self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError):
                 pass  # Expected when WebKit cancels a Markdown response.
@@ -87,7 +132,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     command = ['xcrun', 'swift', 'test', '-c', 'release', '--package-path', str(package),
-               '--jobs', '2', '--disable-automatic-resolution', '--filter', 'MarkdownNavigationIntegrationTests']
+               '--jobs', '2', '--disable-automatic-resolution', '--filter', (test_class + '|MarkdownLifecycleTests|MarkdownResponseTests|EgressGuardTests|MarkdownCompilerTests|MarkdownSanitisationTests|MarkdownSourceBlockTests') if args.storage else test_class]
     if args.scratch_path:
         command += ['--scratch-path', str(args.scratch_path.resolve())]
     env = os.environ.copy()

@@ -26,13 +26,18 @@ final class MarkdownNavigationIntegrationTests: XCTestCase {
         webConfiguration.preferences.isFraudulentWebsiteWarningEnabled = false
         let web = WKWebView(frame: .zero, configuration: webConfiguration)
         tab.attach(webView: web)
+        let cookie = HTTPCookie(properties: [
+            .name: "nativeAuth", .value: "navigation", .domain: "127.0.0.1", .path: "/",
+        ])!
+        await webConfiguration.websiteDataStore.httpCookieStore.setCookie(cookie)
+
         let shields = ShieldsDirector(
             compiler: RuleListCompiler(store: WKContentRuleListStore(url: directory)!),
             policy: ShieldsPolicy(directory: nil))
         shields.markReady()
         let coordinator = NavigationCoordinator(
             tab: tab, shields: shields, httpsUpgrader: HTTPSFirstUpgrader(), history: nil,
-            downloads: DownloadManager(directory: directory), session: session)
+            downloads: DownloadManager(directory: directory))
         coordinator.attach(to: web)
         defer { coordinator.detach(); web.stopLoading() }
         func document(_ marker: String) async throws -> [String: Any] {
@@ -54,6 +59,11 @@ final class MarkdownNavigationIntegrationTests: XCTestCase {
         web.load(URLRequest(url: direct))
         let valid = try await document("Active Markdown fixture")
         XCTAssertEqual(valid["markdown"] as? Bool, true)
+        XCTAssertTrue((valid["text"] as? String)?.contains("nativeAuth=navigation") == true)
+        XCTAssertTrue((valid["text"] as? String)?.contains("nativeResponse=from-webkit") == true)
+        let nativeCookies = await webConfiguration.websiteDataStore.httpCookieStore.allCookies()
+        XCTAssertEqual(nativeCookies.first { $0.name == "nativeResponse" }?.value, "from-webkit")
+
         XCTAssertEqual(tab.url, direct)
         report["valid"] = ["document": valid, "tab_url": tab.url?.absoluteString ?? ""]
 

@@ -480,11 +480,8 @@ final class EgressGuardTests: XCTestCase {
 
     // MARK: - Page-driven markdown fetch
 
-    /// Answers requests on `URLSession.shared` (the session the production
-    /// markdown fetch uses) so nothing leaves the machine, and records which
-    /// hosts got that far. Registered process-wide BEFORE `EgressGuard` so the
-    /// guard — registered last, consulted first — decides ahead of it, exactly
-    /// as `main.swift` arranges it around the rest of Foundation's transports.
+    /// Synthetic transport for the real Markdown loader. EgressGuard is
+    /// installed ahead of this transport by the production configuration.
     final class SharedTransport: URLProtocol {
         nonisolated(unsafe) static var receivedHosts: [String] = []
         private static let lock = NSLock()
@@ -515,22 +512,12 @@ final class EgressGuardTests: XCTestCase {
     /// time `decidePolicyFor navigationResponse` hands the URL to
     /// `fetchAndPresentMarkdown` — so the allowlist, a list of hosts *Qwave*
     /// picked, has nothing to say about it. This drives the production
-    /// coordinator on its production default session (`URLSession.shared`)
-    /// with `EgressGuard` registered process-wide exactly as `main.swift`
-    /// registers it, because that combination is what silently broke: the
-    /// fetch was documented as ungated in four places while running on the one
-    /// session global registration does reach.
+    /// coordinator with its production ephemeral storage and EgressGuard;
+    /// only the wire transport is replaced to keep the test offline.
     @MainActor
     func testRemoteMarkdownFetchOnNonAllowlistedHostIsNotBlocked() async throws {
         EgressGuard.onBlock.reset()
         SharedTransport.reset()
-        URLProtocol.registerClass(SharedTransport.self)
-        URLProtocol.registerClass(EgressGuard.self)
-        defer {
-            URLProtocol.unregisterClass(EgressGuard.self)
-            URLProtocol.unregisterClass(SharedTransport.self)
-        }
-
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwave-markdown-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -547,6 +534,7 @@ final class EgressGuardTests: XCTestCase {
             history: nil,
             downloads: DownloadManager(directory: dir)
         )
+        coordinator.markdownProtocolClasses = [SharedTransport.self]
         let url = URL(string: "https://raw.githubusercontent.com/8b-is/qwave/main/README.md")!
         XCTAssertFalse(
             EgressAllowlist.permits(host: url.host),

@@ -120,14 +120,12 @@ final class MarkdownLifecycleTests: XCTestCase {
         let tab: Tab
         let web: WKWebView
         let coordinator: NavigationCoordinator
-        let session: URLSession
         func url(_ name: String) -> URL {
             URL(string: "https://lifecycle.example/\(name).md?fixture=\(tab.id)")!
         }
         func close() {
             coordinator.detach()
             web.stopLoading()
-            session.invalidateAndCancel()
             try? FileManager.default.removeItem(at: directory)
         }
     }
@@ -135,12 +133,6 @@ final class MarkdownLifecycleTests: XCTestCase {
     private func context() async throws -> Context {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("qwave-md-lifecycle-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let config = URLSessionConfiguration.ephemeral
-        config.urlCache = nil
-        config.httpCookieStorage = nil
-        config.urlCredentialStorage = nil
-        config.protocolClasses = [LifecycleTransport.self]
-        let session = URLSession(configuration: config)
         let tab = Tab(isEphemeral: true)
         let webConfig = WKWebViewConfiguration()
         webConfig.websiteDataStore = .nonPersistent()
@@ -153,11 +145,12 @@ final class MarkdownLifecycleTests: XCTestCase {
         shields.markReady()
         let coordinator = NavigationCoordinator(
             tab: tab, shields: shields, httpsUpgrader: HTTPSFirstUpgrader(), history: nil,
-            downloads: DownloadManager(directory: directory), session: session)
+            downloads: DownloadManager(directory: directory))
+        coordinator.markdownProtocolClasses = [LifecycleTransport.self]
         web.loadHTMLString("<h1>Original document</h1>", baseURL: nil)
         try await rendered("Original document", in: web)
         tab.title = "Original"
-        return Context(directory: directory, tab: tab, web: web, coordinator: coordinator, session: session)
+        return Context(directory: directory, tab: tab, web: web, coordinator: coordinator)
     }
 
     private func started(_ url: URL) async throws {

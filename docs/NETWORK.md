@@ -221,16 +221,24 @@ configured.
 refuse a redirect off the configured origin, and refuse a request that
 declares it carries stored memories — neither of which was ever a host check.
 
-**The remaining exclusions are not one mechanism, and treating them as one
-broke a feature.** `FaviconLoader` constructs its own session and never
-installs the guard, so it never sees it. The remote-markdown fetch does
-the opposite: it runs on `URLSession.shared`, the one session global
-registration *does* reach. For as long as this page and three other places said
-that fetch was ungated, it was gated — navigating to any `.md` URL outside the
-four allowlisted hosts (`raw.githubusercontent.com`, say) failed with an egress
-block instead of rendering. It is now exempt by an explicit, greppable marker,
-`EgressGuard.markPageDriven(_:)`, applied at the single call site in
-`NavigationCoordinator.fetchAndPresentMarkdown`.
+**Page-driven requests use explicit boundaries.** `FaviconLoader` constructs
+its own session and never installs the guard. Remote Markdown constructs a
+fresh ephemeral session for each re-fetch and explicitly installs the guard.
+`EgressGuard.markPageDriven(_:)` marks the navigated document request and each
+HTTP(S) redirect, so it remains usable on hosts outside the fixed allowlist.
+No host or entire session is exempted.
+
+The request jar is seeded only from the initiating web view's cookie store.
+Foundation applies domain, path and Secure matching at each hop; response
+cookies stay in that disposable jar and are never copied back to WebKit.
+The original WebKit navigation owns browser cookie updates. This prevents a
+late/cancelled reader re-fetch from mutating browser cookies. There is no
+URLCache or URLCredentialStorage, even for ordinary tabs. Sessions are
+invalidated when finished or cancelled, with a 20-second idle timeout,
+45-second resource timeout and 8 MiB response limit. HTTP-auth and client
+certificate credentials cannot be imported from WebKit; these challenges fail
+rather than using another context's stored credentials. TLS validation still
+uses the system default. Credential-bearing and non-HTTP(S) URLs are refused.
 
 Being straight about the cost, since a page-driven exemption is a hole in the
 guard by construction: any caller that applies the marker bypasses the
@@ -238,8 +246,8 @@ allowlist, and only review stops one from doing so. Two things bound it. It is
 per **request**, not per host or per session — `URLSession.shared` stays gated
 for everything else, and an unmarked request to the very same host is still
 refused (both pinned by
-`testPageDrivenExemptionDoesNotExemptTheHostOrTheSession`). And at its one call
-site it discloses nothing new: the fetch runs from `decidePolicyFor
+`testPageDrivenExemptionDoesNotExemptTheHostOrTheSession`). The initiating
+request is tied to browser navigation: the fetch runs from `decidePolicyFor
 navigationResponse`, i.e. after WebKit has already connected to that host and
 received response headers, so the marked request re-fetches a document the
 browser just retrieved because you asked it to.

@@ -34,7 +34,8 @@ public final class NavigationCoordinator: NSObject {
     public var onMainFrameFinished: ((WKWebView, Tab) -> Void)?
 
     private var observations: [NSKeyValueObservation] = []
-    private let session: URLSession
+    // Test transports may replace the wire, but cannot inject shared storage.
+    var markdownProtocolClasses: [AnyClass]?
     private struct MarkdownFetch {
         let id: UUID
         let tabID: UUID
@@ -48,15 +49,13 @@ public final class NavigationCoordinator: NSObject {
         shields: ShieldsDirector,
         httpsUpgrader: HTTPSFirstUpgrader,
         history: HistoryStore?,
-        downloads: DownloadManager,
-        session: URLSession = .shared
+        downloads: DownloadManager
     ) {
         self.tab = tab
         self.shields = shields
         self.httpsUpgrader = httpsUpgrader
         self.history = history
         self.downloads = downloads
-        self.session = session
         super.init()
     }
 
@@ -418,17 +417,14 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// cancelled that navigation in `decidePolicyFor navigationResponse`) and
     /// renders it in the reader.
     ///
-    /// The request is marked page-driven: `session` defaults to
-    /// `URLSession.shared`, which is the one session the process-wide
-    /// `URLProtocol.registerClass(EgressGuard.self)` in `main.swift` reaches,
-    /// so without the marker this fetch is checked against `EgressAllowlist` —
-    /// four hosts Qwave chose — and every `.md` URL outside them fails. The
-    /// host here is whichever one the user navigated to, and WebKit has
-    /// already fetched a response from it; the allowlist has nothing to say
-    /// about it. See `EgressGuard.markPageDriven(_:)`.
+    /// Each request uses a fresh ephemeral session seeded from this web view's
+    /// cookie store. No shared cache or credentials, and no response-cookie
+    /// writeback: the original WebKit navigation owns browser cookie updates.
+    /// The explicit page-driven marker exempts this navigated document from
+    /// EgressGuard, which is installed in the disposable session.
     ///
     /// Internal rather than private so `EgressGuardTests` can drive the real
-    /// fetch — including the real default `session` — instead of restating it.
+    /// fetch and its storage configuration instead of restating them.
     func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
         guard let fetch = beginMarkdownFetch(url, in: webView) else { return }
         await presentMarkdownResponse(fetch, requestedURL: url, in: webView)
@@ -437,10 +433,15 @@ extension NavigationCoordinator: WKNavigationDelegate {
     private func beginMarkdownFetch(_ url: URL, in webView: WKWebView) -> MarkdownFetch? {
         guard !isDetached, let tab, tab.webView === webView else { return nil }
         cancelMarkdownFetch()
-        let session = self.session
+        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+        let protocols = markdownProtocolClasses
         let fetch = MarkdownFetch(
             id: UUID(), tabID: tab.id,
-            task: Task { try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url))) })
+            task: Task {
+                let cookies = await cookieStore.allCookies()
+                try Task.checkCancellation()
+                return try await MarkdownDocumentLoader.fetch(url, cookies: cookies, protocols: protocols)
+            })
         markdownFetch = fetch
         return fetch
     }

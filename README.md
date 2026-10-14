@@ -315,14 +315,19 @@ nothing by itself: the guard resolves it against
 switching the provider off revokes the previous host immediately, with no
 inference needed in between, and no other client in the process ever gains it.
 
-Two Category-A clients are still not gated, and for two different mechanical
-reasons — conflating them once broke a feature. `FaviconLoader` builds its own
-session and never installs the guard, so the guard never sees it. The
-remote-markdown fetch is the opposite: it runs on `URLSession.shared`, which
-the global registration *does* reach, and is exempted by an explicit
-`EgressGuard.markPageDriven(_:)` marker at its single call site
-(`BrowserCore/NavigationCoordinator.swift:363`) — per request, not per host or
-per session. The shields launch-path assertion is the one thing here asserting
+Two page-driven clients are exempt from the fixed-host allowlist.
+`FaviconLoader` builds its own session and never installs the guard. Remote
+Markdown uses a fresh ephemeral session with the guard explicitly installed;
+`EgressGuard.markPageDriven(_:)` exempts only the document request and its
+redirects. An unmarked request on the same configuration remains gated.
+The Markdown re-fetch copies cookies only from the initiating WebKit store,
+uses no shared cache or credential store, and discards its response cookies.
+WebKit's original navigation remains responsible for browser cookie updates.
+The reader limits responses to 8 MiB and requests to 45 seconds in total.
+WebKit HTTP-auth/client-certificate credentials cannot be transferred, so
+those challenges fail without consulting shared credentials.
+
+The shields launch-path assertion is the one thing here asserting
 the *absence* of a request rather than the shape of one: it registers a
 `URLProtocol` recorder over the shields launch path and asserts nothing was
 requested; the test builds its own `ShieldsDirector` rather than running the
@@ -477,13 +482,19 @@ Mac Markdown navigation regression (Xcode Swift and Python 3 standard library):
 
 ```sh
 python3 scripts/test-markdown-navigation.py --output-dir /tmp/qwave-markdown-navigation
+python3 scripts/test-markdown-navigation.py --storage --output-dir /tmp/qwave-markdown-storage
 ```
 
-This drives the actual navigation delegate in nonpersistent WebKit views
-against a loopback server. It checks normal Markdown rendering without a
-reload loop, safe HTTP error pages, and preservation of a newer page after
-a delayed fetch. The runner temporarily installs its package test fixture,
-removes it afterward, and limits the build to two workers and five minutes.
+The default mode drives the actual navigation delegate in nonpersistent WebKit
+views against a loopback server. It checks normal Markdown rendering without a
+reload loop, cookie-authenticated navigation, safe HTTP error pages, and a newer
+page surviving a delayed fetch. Storage mode drives the coordinator's reader
+fetch directly and checks distinct container/private cookies, cache isolation,
+redirect cookie scoping, cancellation without cookie writeback, HTTP-auth
+rejection, and known/unknown-length response limits. It also runs the focused
+Markdown and egress unit tests. The runner temporarily installs its package
+test fixture, removes it afterward, and limits the build to two workers and
+five minutes.
 Use `--scratch-path PATH` to reuse an existing package build cache. Run it
 separately from other package builds; it never opens a user browser profile.
 

@@ -80,13 +80,6 @@ final class MarkdownResponseTests: XCTestCase {
             "qwave-markdown-response-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil
-        configuration.httpCookieStorage = nil
-        configuration.urlCredentialStorage = nil
-        configuration.protocolClasses = [EgressGuard.self, MarkdownResponseTransport.self]
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
         let tab = Tab(isEphemeral: true)
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.websiteDataStore = .nonPersistent()
@@ -100,8 +93,9 @@ final class MarkdownResponseTests: XCTestCase {
                 policy: ShieldsPolicy(directory: nil)
             ),
             httpsUpgrader: HTTPSFirstUpgrader(), history: nil,
-            downloads: DownloadManager(directory: directory), session: session
+            downloads: DownloadManager(directory: directory)
         )
+        coordinator.markdownProtocolClasses = [MarkdownResponseTransport.self]
         await coordinator.fetchAndPresentMarkdown(URL(string: "https://request.example/\(kind).md")!, in: web)
         return (tab, web)
     }
