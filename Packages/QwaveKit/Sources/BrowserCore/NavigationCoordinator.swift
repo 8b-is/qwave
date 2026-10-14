@@ -24,6 +24,8 @@ public final class NavigationCoordinator: NSObject {
     private let permissions: WebPermissionStore
     private let ephemeralPermissions: WebPermissionStore
     private weak var attachedWebView: WKWebView?
+    private(set) var internalActionGeneration = UUID()
+    private(set) var markdownRememberDocument: MarkdownRememberDocument?
 
     /// (url, activate) — open a link in a new tab in the same container.
     public var onOpenNewTab: ((URL?, Bool) -> Void)?
@@ -74,6 +76,9 @@ public final class NavigationCoordinator: NSObject {
 
     /// Wire this coordinator to the tab's freshly built web view.
     public func attach(to webView: WKWebView) {
+        removeInternalHandlers(from: attachedWebView)
+        internalActionGeneration = UUID()
+        markdownRememberDocument = nil
         cancelMarkdownFetch()
         localDocumentLoad = nil
         isDetached = false
@@ -83,6 +88,10 @@ public final class NavigationCoordinator: NSObject {
         webView.uiDelegate = self
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
         webView.configuration.userContentController.add(self, name: "qwave")
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: MarkdownRememberBridge.name, contentWorld: MarkdownRememberBridge.world)
+        webView.configuration.userContentController.add(
+            self, contentWorld: MarkdownRememberBridge.world, name: MarkdownRememberBridge.name)
 
         observations = [
             webView.observe(\.title) { [weak self] webView, _ in
@@ -125,13 +134,27 @@ public final class NavigationCoordinator: NSObject {
 
     public func detach() {
         isDetached = true
+        internalActionGeneration = UUID()
+        markdownRememberDocument = nil
+        removeInternalHandlers(from: attachedWebView)
         cancelMarkdownFetch()
         localDocumentLoad = nil
         attachedWebView = nil
         ephemeralPermissions.reset()
         observations.forEach { $0.invalidate() }
         observations = []
-        tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+
+    }
+
+    private func removeInternalHandlers(from webView: WKWebView?) {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: MarkdownRememberBridge.name, contentWorld: MarkdownRememberBridge.world)
+    }
+
+    public func captureInternalActionSource() -> InternalActionSource? {
+        guard !isDetached, let tab, let webView = attachedWebView, tab.webView === webView else { return nil }
+        return InternalActionSource(coordinator: self, tab: tab, webView: webView, generation: internalActionGeneration)
     }
 
     private func cancelMarkdownFetch() {
@@ -192,6 +215,36 @@ extension NavigationCoordinator: WKNavigationDelegate {
                     && navigationAction.request.value(forHTTPHeaderField: Self.localDocumentHeader) == pending.token
             }
             localDocumentLoad = nil
+        }
+
+        // A fragment jump keeps the same reader document and isolated
+        // listener. It must not silently disable the toolbar. Reloads still
+        // consume the old capability and resolve the document again.
+        if navigationAction.targetFrame?.isMainFrame == true, attachedWebView === webView,
+            let document = markdownRememberDocument, document.ready,
+            navigationAction.navigationType != .reload, url?.fragment != nil,
+            url?.fragment != webView.url?.fragment, document.owns(url), document.owns(webView.url)
+        {
+            internalActionGeneration = UUID()
+            decisionHandler(.allow, preferences)
+            return
+        }
+
+        // Every main-frame intent invalidates async shell work, even when a
+        // same-URL reload never changes the observable URL. Only the reader's
+        // one pending simulated intent can retain its new remember capability.
+        if navigationAction.targetFrame?.isMainFrame == true, attachedWebView === webView {
+            internalActionGeneration = UUID()
+            if var document = markdownRememberDocument,
+                document.awaitingIntent, document.url == url,
+                navigationAction.navigationType == .other,
+                navigationAction.request.value(forHTTPHeaderField: MarkdownRememberBridge.header) == document.token
+            {
+                document.awaitingIntent = false
+                markdownRememberDocument = document
+            } else {
+                markdownRememberDocument = nil
+            }
         }
 
         // A new main-frame intent supersedes the reader's re-fetch, even if
@@ -334,7 +387,18 @@ extension NavigationCoordinator: WKNavigationDelegate {
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let tab, let url = webView.url else { return }
+        guard !isDetached, let tab, tab.webView === webView, attachedWebView === webView,
+            let url = webView.url
+        else { return }
+        if var document = markdownRememberDocument, !document.ready, let navigation,
+            document.navigation === navigation, document.url == url, !document.awaitingIntent
+        {
+            document.ready = true
+            markdownRememberDocument = document
+            webView.evaluateJavaScript(
+                MarkdownRememberBridge.script(token: document.token), in: nil, in: MarkdownRememberBridge.world,
+                completionHandler: nil)
+        }
         httpsUpgrader.noteSuccessfulNavigation(to: url)
 
         if !tab.isEphemeral, let scheme = url.scheme, scheme == "http" || scheme == "https" {
@@ -377,6 +441,8 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// tab.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if tab?.webView === webView {
+            internalActionGeneration = UUID()
+            markdownRememberDocument = nil
             cancelMarkdownFetch()
             localDocumentLoad = nil
         }
@@ -444,22 +510,29 @@ extension NavigationCoordinator: WKNavigationDelegate {
         let body = MarkdownCompiler.compile(source, trust: trust)
         let html = InternalPages.markdownHTML(
             title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
-        loadGeneratedHTML(html, at: url, in: webView)
+        let document = MarkdownRememberDocument(url: url, source: source)
+        // Install before load, so the policy callback can consume its intent.
+        markdownRememberDocument = tab?.isEphemeral == true ? nil : document
+        let navigation = loadGeneratedHTML(html, at: url, in: webView, rememberToken: document.token)
+        if markdownRememberDocument?.token == document.token {
+            markdownRememberDocument?.navigation = navigation
+        }
         tab?.url = url
         tab?.title = title
         onStateChange?()
     }
 
-    private func loadGeneratedHTML(_ html: String, at url: URL?, in webView: WKWebView) {
+    @discardableResult
+    private func loadGeneratedHTML(
+        _ html: String, at url: URL?, in webView: WKWebView, rememberToken: String? = nil
+    ) -> WKNavigation? {
         localDocumentLoad = nil
         guard let url else {
-            webView.loadHTMLString(html, baseURL: nil)
-            return
+            return webView.loadHTMLString(html, baseURL: nil)
         }
         let scheme = url.scheme?.lowercased()
         guard url.isFileURL || scheme == "http" || scheme == "https" else {
-            webView.loadHTMLString(html, baseURL: url)
-            return
+            return webView.loadHTMLString(html, baseURL: url)
         }
         // loadHTMLString synthesizes a headerless request. The normal reading
         // language policy would replay it over the network, losing our HTML
@@ -474,8 +547,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
             // which otherwise recursively resolves the same Markdown again.
             request.setValue(token, forHTTPHeaderField: Self.localDocumentHeader)
         }
+        if let rememberToken { request.setValue(rememberToken, forHTTPHeaderField: MarkdownRememberBridge.header) }
         let adapted = ReadingLanguageRequest.adapted(request, mainFrame: true) ?? request
-        webView.loadSimulatedRequest(adapted, responseHTML: html)
+        return webView.loadSimulatedRequest(adapted, responseHTML: html)
     }
 
     /// Re-fetches the markdown document WebKit just started loading (we
@@ -574,22 +648,36 @@ extension NavigationCoordinator: WKScriptMessageHandler {
     public func userContentController(
         _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
     ) {
-        guard message.name == "qwave", let body = message.body as? [String: Any],
-            let type = body["type"] as? String
+        guard !isDetached, let webView = message.webView, attachedWebView === webView,
+            tab?.webView === webView, message.frameInfo.isMainFrame,
+            let body = message.body as? [String: Any]
+        else { return }
+        if message.name == MarkdownRememberBridge.name {
+            guard message.world.name == MarkdownRememberBridge.world.name,
+                tab?.isEphemeral != true, let document = markdownRememberDocument,
+                document.owns(webView.url), document.owns(message.frameInfo.request.url),
+                let action = document.action(body: body)
+            else { return }
+            onInternalAction?(action)
+            return
+        }
+        guard message.name == "qwave", message.world == .page,
+            let type = body["type"] as? String,
+            message.frameInfo.securityOrigin.protocol == QwaveSchemeHandler.scheme
         else { return }
         switch type {
         case "submit":
-            if let query = body["query"] as? String {
-                onInternalAction?(.submit(query))
-            }
-        case "remember":
-            let scope = body["scope"] as? String ?? "page"
-            let text = body["text"] as? String ?? ""
-            onInternalAction?(.remember(scope: scope, text: text))
+            guard InternalPages.isStartURL(webView.url), InternalPages.isStartURL(message.frameInfo.request.url),
+                message.frameInfo.securityOrigin.host == "start",
+                let query = body["query"] as? String, !query.isEmpty, query.count <= 4096
+            else { return }
+            onInternalAction?(.submit(query))
         case "summarize":
-            if let range = body["range"] as? String {
-                onInternalAction?(.summarize(range))
-            }
+            guard InternalPages.isTimelineURL(webView.url), InternalPages.isTimelineURL(message.frameInfo.request.url),
+                message.frameInfo.securityOrigin.host == "timeline",
+                let range = body["range"] as? String, ["today", "week", "all"].contains(range)
+            else { return }
+            onInternalAction?(.summarize(range))
         default:
             break
         }

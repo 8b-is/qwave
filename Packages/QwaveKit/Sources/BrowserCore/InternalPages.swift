@@ -325,7 +325,7 @@ public enum InternalPages {
                 </div>
                 """,
             extraHead: markdownHead,
-            extraScripts: markdownScript,
+            extraScripts: "",
             markdownSource: source
         )
     }
@@ -528,25 +528,4 @@ public enum InternalPages {
         .md-body .math-display { margin: 1em 0; overflow-x: auto; }
         """
 
-    private static let markdownScript = """
-        (function () {
-          function send(payload) {
-            try { window.webkit.messageHandlers.qwave.postMessage(payload); } catch (e) {}
-          }
-          document.querySelectorAll('[data-remember]').forEach(function (el) {
-            el.addEventListener('click', function () {
-              const scope = el.getAttribute('data-remember') || 'page';
-              let text = '';
-              if (scope === 'selection') {
-                text = window.getSelection() ? window.getSelection().toString() : '';
-              }
-              if (!text) {
-                text = \(markdownSourceExpression)
-                  || (document.querySelector('.md-body') || document.body).innerText;
-              }
-              send({ type: 'remember', scope: scope, text: text });
-            });
-          });
-        })();
-        """
 }
