@@ -43,6 +43,13 @@ public final class NavigationCoordinator: NSObject {
     }
     private var markdownFetch: MarkdownFetch?
     private var isDetached = false
+    private struct LocalDocumentLoad {
+        let token: String
+        let url: URL
+        let webView: ObjectIdentifier
+    }
+    private var localDocumentLoad: LocalDocumentLoad?
+    private static let localDocumentHeader = "X-Qwave-Local-Document"
 
     public init(
         tab: Tab,
@@ -62,6 +69,7 @@ public final class NavigationCoordinator: NSObject {
     /// Wire this coordinator to the tab's freshly built web view.
     public func attach(to webView: WKWebView) {
         cancelMarkdownFetch()
+        localDocumentLoad = nil
         isDetached = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -110,6 +118,7 @@ public final class NavigationCoordinator: NSObject {
     public func detach() {
         isDetached = true
         cancelMarkdownFetch()
+        localDocumentLoad = nil
         observations.forEach { $0.invalidate() }
         observations = []
         tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
@@ -151,6 +160,22 @@ extension NavigationCoordinator: WKNavigationDelegate {
             }
         #endif
 
+        // Only our one pending simulated file load may skip file resolution.
+        // Consume its nonce on the next main-frame intent, including a
+        // mismatching one; reloads/back/forward and ordinary file requests
+        // must resolve and sanitise the source again.
+        var isGeneratedLocalDocument = false
+        if navigationAction.targetFrame?.isMainFrame == true {
+            if let pending = localDocumentLoad {
+                isGeneratedLocalDocument =
+                    !isDetached && pending.url == url
+                    && pending.webView == ObjectIdentifier(webView) && tab?.webView === webView
+                    && navigationAction.navigationType == .other
+                    && navigationAction.request.value(forHTTPHeaderField: Self.localDocumentHeader) == pending.token
+            }
+            localDocumentLoad = nil
+        }
+
         // A new main-frame intent supersedes the reader's re-fetch, even if
         // the next navigation is later cancelled or redirected by policy.
         // Popups and subframes do not replace this tab's document.
@@ -166,6 +191,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
         if isMainFrame, let url, url.isFileURL {
             preferences.allowsContentJavaScript = true
+            if isGeneratedLocalDocument {
+                decisionHandler(.allow, preferences)
+                return
+            }
             switch LocalDocumentResolver.resolve(url) {
             case .file:
                 decisionHandler(.allow, preferences)
@@ -184,9 +213,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 presentMarkdown(markdown, at: directory, trust: .compilerOutputOnly, in: webView)
             case .missing:
                 decisionHandler(.cancel, preferences)
-                webView.loadHTMLString(
+                loadGeneratedHTML(
                     InternalPages.httpErrorHTML(status: 404, host: url.lastPathComponent),
-                    baseURL: url
+                    at: url, in: webView
                 )
             }
             return
@@ -223,7 +252,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
             return
         }
 
-        if let request = ReadingLanguageRequest.adapted(navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url) {
+        if let request = ReadingLanguageRequest.adapted(
+            navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url)
+        {
             decisionHandler(.cancel, preferences)
             webView.load(request)
             return
@@ -261,9 +292,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
             {
                 decisionHandler(.cancel)
                 let host = http.url.flatMap(CanonicalHost.host(of:)) ?? http.url?.host ?? ""
-                webView.loadHTMLString(
+                loadGeneratedHTML(
                     InternalPages.httpErrorHTML(status: http.statusCode, host: host),
-                    baseURL: http.url
+                    at: http.url, in: webView
                 )
                 return
             }
@@ -327,7 +358,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// the current back/forward item — never leave the user staring at a blank
     /// tab.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if tab?.webView === webView { cancelMarkdownFetch() }
+        if tab?.webView === webView {
+            cancelMarkdownFetch()
+            localDocumentLoad = nil
+        }
         QwaveLog.browser.warning("WebContent process terminated; restoring tab")
         if let state = webView.interactionState as? Data {
             webView.interactionState = state
@@ -377,7 +411,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
     private func showErrorPage(in webView: WKWebView, error: NSError, url: URL?) {
         let host = url.flatMap(CanonicalHost.host(of:)) ?? url?.host ?? ""
         let html = InternalPages.connectionLostHTML(host: host, message: error.localizedDescription)
-        webView.loadHTMLString(html, baseURL: url)
+        loadGeneratedHTML(html, at: url, in: webView)
     }
 
     /// - Parameter trust: which origin the compiled page will end up in.
@@ -392,23 +426,36 @@ extension NavigationCoordinator: WKNavigationDelegate {
         let body = MarkdownCompiler.compile(source, trust: trust)
         let html = InternalPages.markdownHTML(
             title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
-        loadMarkdownHTML(html, at: url, in: webView)
+        loadGeneratedHTML(html, at: url, in: webView)
         tab?.url = url
         tab?.title = title
         onStateChange?()
     }
 
-    private func loadMarkdownHTML(_ html: String, at url: URL, in webView: WKWebView) {
+    private func loadGeneratedHTML(_ html: String, at url: URL?, in webView: WKWebView) {
+        localDocumentLoad = nil
+        guard let url else {
+            webView.loadHTMLString(html, baseURL: nil)
+            return
+        }
         let scheme = url.scheme?.lowercased()
-        guard scheme == "http" || scheme == "https" else {
+        guard url.isFileURL || scheme == "http" || scheme == "https" else {
             webView.loadHTMLString(html, baseURL: url)
             return
         }
         // loadHTMLString synthesizes a headerless request. The normal reading
         // language policy would replay it over the network, losing our HTML
-        // and repeatedly fetching the same Markdown. A simulated response
+        // and fetching the failed URL or Markdown again. A simulated response
         // retains the request's language policy without sending it again.
-        let request = URLRequest(url: url)
+        var request = URLRequest(url: url)
+        if url.isFileURL {
+            let token = UUID().uuidString
+            localDocumentLoad = LocalDocumentLoad(token: token, url: url, webView: ObjectIdentifier(webView))
+            // This request is simulated and never sent to the URL. The nonce
+            // distinguishes compiled/sanitised HTML from a fresh file load,
+            // which otherwise recursively resolves the same Markdown again.
+            request.setValue(token, forHTTPHeaderField: Self.localDocumentHeader)
+        }
         let adapted = ReadingLanguageRequest.adapted(request, mainFrame: true) ?? request
         webView.loadSimulatedRequest(adapted, responseHTML: html)
     }
@@ -476,7 +523,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
             guard (200..<300).contains(http.statusCode) else {
                 // An error body is not the Markdown document the user requested.
-                loadMarkdownHTML(
+                loadGeneratedHTML(
                     InternalPages.httpErrorHTML(status: http.statusCode, host: responseURL.host ?? ""),
                     at: responseURL, in: webView
                 )
@@ -496,7 +543,7 @@ extension NavigationCoordinator: WKNavigationDelegate {
             guard isCurrentMarkdownFetch(fetch, in: webView),
                 !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled
             else { return }
-            loadMarkdownHTML(
+            loadGeneratedHTML(
                 InternalPages.connectionLostHTML(
                     host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
                 at: url, in: webView

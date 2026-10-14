@@ -483,6 +483,7 @@ Mac Markdown navigation regression (Xcode Swift and Python 3 standard library):
 ```sh
 python3 scripts/test-markdown-navigation.py --output-dir /tmp/qwave-markdown-navigation
 python3 scripts/test-markdown-navigation.py --storage --output-dir /tmp/qwave-markdown-storage
+python3 scripts/test-markdown-navigation.py --generated --output-dir /tmp/qwave-generated-pages
 ```
 
 The default mode drives the actual navigation delegate in nonpersistent WebKit
@@ -494,7 +495,11 @@ redirect cookie scoping, cancellation without cookie writeback, HTTP-auth
 rejection, and known/unknown-length response limits. It also runs the focused
 Markdown and egress unit tests. The runner temporarily installs its package
 test fixture, removes it afterward, and limits the build to two workers and
-five minutes.
+five minutes. Generated-page mode covers local Markdown (including changed-source
+reload and a forged internal marker), directory listings/README, missing files,
+and HTTP-error presentation. It injects a timeout callback to exercise the
+connection-error template, then observes real WebKit policy callbacks. Its
+forwarding delegate stops a regression after 16 navigation actions per view.
 Use `--scratch-path PATH` to reuse an existing package build cache. Run it
 separately from other package builds; it never opens a user browser profile.
 

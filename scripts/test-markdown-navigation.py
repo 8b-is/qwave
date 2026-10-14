@@ -23,13 +23,17 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--scratch-path', type=Path)
     parser.add_argument('--storage', action='store_true', help='Test isolated Markdown re-fetch storage and limits')
+    parser.add_argument('--generated', action='store_true', help='Test local documents and generated error pages')
     args = parser.parse_args()
+    if args.generated and args.storage:
+        parser.error('Choose one of --generated or --storage')
     repo = Path(__file__).resolve().parent.parent
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     package = repo / 'Packages/QwaveKit'
-    test_class = 'MarkdownStorageIntegrationTests' if args.storage else 'MarkdownNavigationIntegrationTests'
-    probe_folder = 'MarkdownStorage' if args.storage else 'MarkdownNavigation'
+    test_class = ('GeneratedPageNavigationIntegrationTests' if args.generated else
+                  'MarkdownStorageIntegrationTests' if args.storage else 'MarkdownNavigationIntegrationTests')
+    probe_folder = 'GeneratedNavigation' if args.generated else 'MarkdownStorage' if args.storage else 'MarkdownNavigation'
     target = package / 'Tests/EgressGuardTests' / (test_class + '.swift')
     if target.exists():
         raise SystemExit(f'Refusing to overwrite existing fixture: {target}')
@@ -88,6 +92,11 @@ def main():
                 body, mime = '# Active Markdown fixture\n\nCookies: ' + self.headers.get('Cookie', ''), 'text/markdown'
                 value = 'from-webkit' if number == 1 else 'refetch-must-not-replace'
                 headers['Set-Cookie'] = f'nativeResponse={value}; Path=/'
+            elif self.path == '/not-found.html':
+                status = 404
+                body, mime = '<script>window.syntheticErrorScript=true;</script>untrusted error', 'text/html'
+            elif self.path == '/connection-failure.html':
+                body, mime = '<h1>Unwanted network replay</h1>', 'text/html'
             elif self.path == '/forbidden.md':
                 status = 403
                 body = '# Untrusted error\n<script>window.syntheticErrorScript=true;</script>'
