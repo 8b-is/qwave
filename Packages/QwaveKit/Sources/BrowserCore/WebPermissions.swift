@@ -30,18 +30,57 @@ public enum WebPermissionDecision: Sendable {
     case deny
 }
 
+/// A snapshot of WebKit's security origin, including scheme and port. Never
+/// derive this from the tab URL: a requesting frame can have a different origin.
+public struct WebPermissionOrigin: Hashable, Sendable {
+    public let scheme: String
+    public let host: String
+    public let port: Int
+
+    public init(scheme: String, host: String, port: Int) {
+        self.scheme = scheme.lowercased()
+        self.host = host.lowercased()
+        // WKSecurityOrigin uses zero when no port is present. Store the
+        // effective HTTP(S) port so an explicit default port matches too.
+        if port == 0, self.scheme == "https" {
+            self.port = 443
+        } else if port == 0, self.scheme == "http" {
+            self.port = 80
+        } else {
+            self.port = port
+        }
+    }
+
+    @MainActor
+    public init(_ origin: WKSecurityOrigin) {
+        self.init(scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+
+    var isValid: Bool {
+        !scheme.isEmpty && !host.isEmpty && (0...65535).contains(port)
+    }
+
+    /// Include the scheme and nonstandard port so the consent prompt identifies
+    /// the same boundary as the remembered choice. Bracket IPv6 hosts once.
+    var displayName: String {
+        let authority = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let isDefaultPort = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+        let suffix = port == 0 || isDefaultPort ? "" : ":\(port)"
+        return "\(scheme)://\(authority)\(suffix)"
+    }
+}
+
 /// Identifies a decision inside container isolation. The same origin is answered
 /// independently in each container (and in the default, container-less space),
-/// so a camera grant in a personal container never leaks into a work one. Host
-/// is compared case-insensitively.
+/// so a camera grant in a personal container never leaks into a work one.
 public struct WebPermissionKey: Hashable, Sendable {
     public let containerID: UUID?
-    public let originHost: String
+    public let origin: WebPermissionOrigin
     public let permission: WebPermission
 
-    public init(containerID: UUID?, originHost: String, permission: WebPermission) {
+    public init(containerID: UUID?, origin: WebPermissionOrigin, permission: WebPermission) {
         self.containerID = containerID
-        self.originHost = originHost.lowercased()
+        self.origin = origin
         self.permission = permission
     }
 }
@@ -96,19 +135,19 @@ public enum WebPermissionArbiter {
         }
     }
 
-    /// Resolve a `getUserMedia` request for `origin`'s host within `containerID`.
+    /// Resolve a `getUserMedia` request for the complete origin within `containerID`.
     public static func decideMediaCapture(
-        host: String,
+        origin: WebPermissionOrigin,
         type: WKMediaCaptureType,
         containerID: UUID?,
         store: WebPermissionStore = .shared,
         completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
         let perms = permissions(for: type)
-        guard !perms.isEmpty, !host.isEmpty else { completion(.deny); return }
+        guard !perms.isEmpty, origin.isValid else { completion(.deny); return }
 
         let keys = perms.map {
-            WebPermissionKey(containerID: containerID, originHost: host, permission: $0)
+            WebPermissionKey(containerID: containerID, origin: origin, permission: $0)
         }
         // A single prior "deny" for any requested capability is decisive.
         if keys.contains(where: { store.decision(for: $0) == .deny }) {
@@ -119,7 +158,7 @@ public enum WebPermissionArbiter {
 
         Task { @MainActor in
             if !undecided.isEmpty {
-                let allow = promptUser(host: host, permissions: undecided.map(\.permission))
+                let allow = promptUser(origin: origin, permissions: undecided.map(\.permission))
                 for key in undecided { store.record(allow ? .allow : .deny, for: key) }
                 guard allow else { completion(.deny); return }
             }
@@ -131,31 +170,31 @@ public enum WebPermissionArbiter {
         }
     }
 
-    /// Resolve a Geolocation API request for `origin`'s host within `containerID`.
+    /// Resolve a Geolocation API request for the complete origin within `containerID`.
     public static func decideGeolocation(
-        host: String,
+        origin: WebPermissionOrigin,
         containerID: UUID?,
         store: WebPermissionStore = .shared,
         completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
-        guard !host.isEmpty else { completion(.deny); return }
-        let key = WebPermissionKey(containerID: containerID, originHost: host, permission: .location)
+        guard origin.isValid else { completion(.deny); return }
+        let key = WebPermissionKey(containerID: containerID, origin: origin, permission: .location)
         if let decided = store.decision(for: key) {
             completion(decided == .allow ? .grant : .deny)
             return
         }
         Task { @MainActor in
-            let allow = promptUser(host: host, permissions: [.location])
+            let allow = promptUser(origin: origin, permissions: [.location])
             store.record(allow ? .allow : .deny, for: key)
             completion(allow ? .grant : .deny)
         }
     }
 
     /// A modal per-origin allow/deny sheet. Returns `true` on Allow.
-    private static func promptUser(host: String, permissions: [WebPermission]) -> Bool {
+    private static func promptUser(origin: WebPermissionOrigin, permissions: [WebPermission]) -> Bool {
         #if os(macOS)
             let alert = NSAlert()
-            alert.messageText = "“\(host)” wants to use your \(joined(permissions))"
+            alert.messageText = "“\(origin.displayName)” wants to use your \(joined(permissions))"
             alert.informativeText =
                 "Qwave only shares this while you are on this site, and forgets the choice when you quit."
             alert.addButton(withTitle: "Allow")

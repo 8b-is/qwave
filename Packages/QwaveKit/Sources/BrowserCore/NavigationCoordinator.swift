@@ -523,7 +523,7 @@ extension NavigationCoordinator: WKUIDelegate {
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
         WebPermissionArbiter.decideMediaCapture(
-            host: origin.host,
+            origin: WebPermissionOrigin(origin),
             type: type,
             containerID: tab?.containerID,
             completion: decisionHandler)
@@ -536,7 +536,7 @@ extension NavigationCoordinator: WKUIDelegate {
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
         WebPermissionArbiter.decideGeolocation(
-            host: origin.host,
+            origin: WebPermissionOrigin(origin),
             containerID: tab?.containerID,
             completion: decisionHandler)
     }
