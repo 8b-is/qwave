@@ -2,14 +2,29 @@ import AppKit
 import Foundation
 import Persistence
 
-/// Fetches and caches site favicons. The fetch deliberately carries NO
-/// cookies and stores nothing (ephemeral session, cookies disabled): a
-/// favicon request must never leak one container's identity into another's
-/// universe, and no cookies at all is strictly stronger isolation than
-/// per-container cookies. The cache is still keyed per container so icon
-/// *presence* metadata never crosses containers either.
+/// Fetches favicons without cookies or a URLSession response cache.
+/// Ordinary tabs use a per-container memory/SQLite cache. Private and
+/// nonpersistent tabs receive only the fetched image, owned by that tab.
 @MainActor
 final class FaviconLoader {
+    enum CachePolicy {
+        case persistent
+        case tabOnly
+
+        init(
+            isPrivateWindow: Bool,
+            isEphemeralTab: Bool,
+            isEphemeralContainer: Bool,
+            dataStoreIsPersistent: Bool?
+        ) {
+            // A missing web view has no verified persistent store. Its existing
+            // tab-owned favicon can still be displayed while it is hibernated.
+            self =
+                !isPrivateWindow && !isEphemeralTab && !isEphemeralContainer && dataStoreIsPersistent == true
+                ? .persistent : .tabOnly
+        }
+    }
+
     private var cache: [String: NSImage] = [:]
     private var inFlight: Set<String> = []
     private let session: URLSession
@@ -20,6 +35,8 @@ final class FaviconLoader {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
         session = URLSession(configuration: configuration)
     }
@@ -28,8 +45,8 @@ final class FaviconLoader {
         "\(containerID?.uuidString ?? "default")|\(host)"
     }
 
-    func cachedIcon(forHost host: String?, containerID: UUID?) -> NSImage? {
-        guard let host else { return nil }
+    func cachedIcon(forHost host: String?, containerID: UUID?, cachePolicy: CachePolicy) -> NSImage? {
+        guard cachePolicy == .persistent, let host else { return nil }
         let cacheKey = key(host: host, containerID: containerID)
         if let memoryCached = cache[cacheKey] {
             return memoryCached
@@ -53,11 +70,14 @@ final class FaviconLoader {
     }
 
     /// Fetches `iconURL`, caching under the PAGE host (the host the tab
-    /// shows, not the CDN the icon happens to live on).
+    /// shows, not the CDN the icon happens to live on). Tab-only requests
+    /// bypass every shared cache and in-flight lookup, including ordinary
+    /// requests for the same host/container that are still pending.
     func load(
         iconURL: URL,
         pageHost: String?,
         containerID: UUID?,
+        cachePolicy: CachePolicy,
         completion: @escaping @MainActor (NSImage?) -> Void
     ) {
         guard let pageHost else {
@@ -65,15 +85,19 @@ final class FaviconLoader {
             return
         }
         let cacheKey = key(host: pageHost, containerID: containerID)
-        if let cached = cache[cacheKey] {
-            completion(cached)
-            return
+        if cachePolicy == .persistent {
+            if let cached = cache[cacheKey] {
+                completion(cached)
+                return
+            }
+            guard !inFlight.contains(cacheKey) else { return }
+            inFlight.insert(cacheKey)
         }
-        guard !inFlight.contains(cacheKey) else { return }
-        inFlight.insert(cacheKey)
 
         Task(priority: .utility) { @MainActor [weak self] in
-            defer { self?.inFlight.remove(cacheKey) }
+            defer {
+                if cachePolicy == .persistent { self?.inFlight.remove(cacheKey) }
+            }
             guard let (data, response) = try? await self?.session.data(from: iconURL),
                 let http = response as? HTTPURLResponse, http.statusCode == 200,
                 data.count <= 512 * 1024,
@@ -83,16 +107,16 @@ final class FaviconLoader {
                 return
             }
             image.size = NSSize(width: 16, height: 16)
-            self?.cache[cacheKey] = image
-
-            // Persist to SQLite store
-            if let store = self?.store {
-                Task(priority: .background) {
-                    try? await store.store(
-                        host: pageHost,
-                        containerID: containerID,
-                        data: data
-                    )
+            if cachePolicy == .persistent {
+                self?.cache[cacheKey] = image
+                if let store = self?.store {
+                    Task(priority: .background) {
+                        try? await store.store(
+                            host: pageHost,
+                            containerID: containerID,
+                            data: data
+                        )
+                    }
                 }
             }
 

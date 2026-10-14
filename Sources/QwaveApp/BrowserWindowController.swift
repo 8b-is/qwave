@@ -444,7 +444,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             self.faviconLoader.load(
                 iconURL: iconURL,
                 pageHost: tab.url.flatMap(CanonicalHost.host(of:)),
-                containerID: tab.containerID
+                containerID: tab.containerID,
+                cachePolicy: self.faviconCachePolicy(for: tab)
             ) { [weak self, weak tab] image in
                 guard let image, let tab else { return }
                 tab.favicon = image
@@ -479,6 +480,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func faviconCachePolicy(for tab: BrowserCore.Tab) -> FaviconLoader.CachePolicy {
+        FaviconLoader.CachePolicy(
+            isPrivateWindow: isPrivate,
+            isEphemeralTab: tab.isEphemeral,
+            isEphemeralContainer: environment.containers.profile(withID: tab.containerID)?.isEphemeral == true,
+            dataStoreIsPersistent: tab.webView?.configuration.websiteDataStore.isPersistent
+        )
+    }
+
     // MARK: - Rendering
 
     /// Builds display models for a set of tabs, shared by the horizontal strip
@@ -495,7 +505,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
                 favicon: tab.favicon
                     ?? faviconLoader.cachedIcon(
-                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
+                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID,
+                        cachePolicy: faviconCachePolicy(for: tab))
             )
         }
     }
@@ -1591,7 +1602,8 @@ extension BrowserWindowController: NSToolbarDelegate {
     func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.memoryItem, Self.summarizeItem, Self.readingLanguageItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
+            Self.memoryItem, Self.summarizeItem, Self.readingLanguageItem, Self.shieldsItem, Self.downloadsItem,
+            Self.extensionsItem,
         ]
     }
 

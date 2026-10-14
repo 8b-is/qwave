@@ -462,6 +462,17 @@ Package tests:
 swift test --package-path Packages/QwaveKit -c release
 ```
 
+Mac favicon privacy regression (Xcode Swift 6 and Python 3 standard library):
+
+```sh
+python3 scripts/test-favicon-privacy.py
+```
+
+This compiles the actual app loader and SQLite store, then checks private
+cache isolation, ordinary container reuse, and a separate-process restart
+with synthetic loopback images and a temporary database. It does not launch
+the browser or access existing browsing data.
+
 Generate and build the app:
 
 ```sh
