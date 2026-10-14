@@ -22,7 +22,7 @@ public final class NavigationCoordinator: NSObject {
     private let history: HistoryStore?
     private let downloads: DownloadManager
     private let permissions: WebPermissionStore
-    private let ephemeralPermissions = WebPermissionStore()
+    private let ephemeralPermissions: WebPermissionStore
     private weak var attachedWebView: WKWebView?
 
     /// (url, activate) — open a link in a new tab in the same container.
@@ -55,6 +55,7 @@ public final class NavigationCoordinator: NSObject {
         self.downloads = downloads
         self.session = session
         self.permissions = permissions
+        ephemeralPermissions = WebPermissionStore(invalidationSource: permissions, containerID: tab.containerID)
         super.init()
     }
 

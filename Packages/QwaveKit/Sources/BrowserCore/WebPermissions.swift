@@ -97,6 +97,9 @@ public final class WebPermissionStore {
     private var decisions: [WebPermissionKey: WebPermissionDecision] = [:]
     private var generation: UInt64 = 0
     private var containerGenerations: [UUID?: UInt64] = [:]
+    private let invalidationSource: WebPermissionStore?
+    private let invalidationContainerID: UUID?
+    private var sourceRevision: Revision?
 
     struct Revision: Equatable {
         let generation: UInt64
@@ -104,16 +107,39 @@ public final class WebPermissionStore {
     }
 
     func revision(for containerID: UUID?) -> Revision {
-        Revision(generation: generation, containerGeneration: containerGenerations[containerID, default: 0])
+        reconcileInvalidation()
+        return Revision(generation: generation, containerGeneration: containerGenerations[containerID, default: 0])
     }
 
-    public init() {}
+    public init() {
+        invalidationSource = nil
+        invalidationContainerID = nil
+    }
+
+    /// Private decisions stay local, but deleting their container must also
+    /// invalidate them. Consult the parent's revision before every access so
+    /// no observer or global list of private tabs is needed.
+    init(invalidationSource: WebPermissionStore, containerID: UUID?) {
+        self.invalidationSource = invalidationSource
+        invalidationContainerID = containerID
+        sourceRevision = invalidationSource.revision(for: containerID)
+    }
+
+    private func reconcileInvalidation() {
+        guard let invalidationSource else { return }
+        let current = invalidationSource.revision(for: invalidationContainerID)
+        guard current != sourceRevision else { return }
+        sourceRevision = current
+        reset()
+    }
 
     public func decision(for key: WebPermissionKey) -> WebPermissionDecision? {
-        decisions[key]
+        reconcileInvalidation()
+        return decisions[key]
     }
 
     public func record(_ decision: WebPermissionDecision, for key: WebPermissionKey) {
+        reconcileInvalidation()
         decisions[key] = decision
     }
 

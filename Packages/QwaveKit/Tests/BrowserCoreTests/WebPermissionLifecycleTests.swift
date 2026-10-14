@@ -194,6 +194,47 @@ final class WebPermissionLifecycleTests: XCTestCase {
         XCTAssertNil(store.decision(for: key(id, .camera)))
     }
 
+    func testDeletingContainerAlsoInvalidatesItsNonpersistentTabs() async throws {
+        let shared = WebPermissionStore()
+        let registry = ContainerRegistry(directory: nil, permissions: shared)
+        let removed = registry.createProfile(name: "Disposable test profile", colorHex: "#000000")
+        let retained = registry.createProfile(name: "Control test profile", colorHex: "#FFFFFF")
+        let a = webView(), b = webView()
+        let tabA = Tab(containerID: removed.id), tabB = Tab(containerID: retained.id)
+        tabA.attach(webView: a); tabB.attach(webView: b)
+        let first = coordinator(tabA, store: shared), second = coordinator(tabB, store: shared)
+        first.attach(to: a); second.attach(to: b)
+        defer { first.detach(); second.detach() }
+        let privateA = try XCTUnwrap(first.permissionStore(for: a))
+        let privateB = try XCTUnwrap(second.permissionStore(for: b))
+        privateA.record(.allow, for: key(removed.id))
+        privateB.record(.allow, for: key(retained.id))
+        await registry.deleteProfile(id: removed.id)
+        XCTAssertNil(privateA.decision(for: key(removed.id)))
+        XCTAssertEqual(privateB.decision(for: key(retained.id)), .allow)
+    }
+
+    func testParentInvalidationCancelsPendingPrivateCapture() async {
+        let shared = WebPermissionStore()
+        let id = UUID()
+        let privateStore = WebPermissionStore(invalidationSource: shared, containerID: id)
+        let done = expectation(description: "deleted container private capture denied")
+        let environment = WebPermissionArbiter.Environment(
+            prompt: { _, _ in true },
+            captureAccess: { _ in
+                await Task.yield()
+                shared.reset(containerID: id)
+                return true
+            })
+        WebPermissionArbiter.decideMediaCapture(
+            origin: origin, type: .camera, containerID: id, store: privateStore, environment: environment
+        ) {
+            XCTAssertEqual($0, .deny); done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 2)
+        XCTAssertNil(privateStore.decision(for: key(id, .camera)))
+    }
+
     func testResetDuringMediaPromptCannotRestoreConsent() async {
         let store = WebPermissionStore()
         let id = UUID()
