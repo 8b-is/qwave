@@ -38,10 +38,11 @@ public enum ArticleExtractor {
     }
 
     /// Extracts the article text (a JSON payload with `text`). Returns nil on
-    /// timeout or when the script is missing. Main-actor bound: WKWebView
+    /// cancellation, timeout or when the script is missing. Main-actor bound: WKWebView
     /// message handlers and evaluateJavaScript are main-thread APIs.
     @MainActor
     public static func extract(from webView: WKWebView) async -> String? {
+        guard !Task.isCancelled else { return nil }
         let source = script
         guard !source.isEmpty else { return nil }
         let receiver = Receiver()
@@ -56,22 +57,36 @@ public enum ArticleExtractor {
         while receiver.message == nil && Date() < deadline {
             // Nanoseconds, not Duration-based sleep: the Duration form needs
             // iOS 16, and the floor is iPhone 13 (iOS 15).
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                return nil
+            }
         }
+        guard !Task.isCancelled else { return nil }
         // readyState race: if the page was still loading, the script may have
         // run against a partial DOM. Wait for complete, then re-evaluate.
         if receiver.message == nil {
             var complete = false
             let loadDeadline = Date().addingTimeInterval(10)
             while !complete && Date() < loadDeadline {
+                guard !Task.isCancelled else { return nil }
                 let result: Any? = try? await webView.evaluateJavaScript("document.readyState")
+                guard !Task.isCancelled else { return nil }
                 complete = result as? String == "complete"
-                if !complete { try? await Task.sleep(nanoseconds: 100_000_000) }
+                if !complete {
+                    do {
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    } catch {
+                        return nil
+                    }
+                }
             }
             guard complete else { return nil }
             let result: Any? = try? await webView.evaluateJavaScript(source)
             if let json = result as? String { receiver.message = json }
         }
+        guard !Task.isCancelled else { return nil }
         return receiver.message
     }
 

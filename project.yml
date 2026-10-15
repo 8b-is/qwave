@@ -59,6 +59,7 @@ targets:
     preBuildScripts:
       - name: Build the Rust core (cargo)
         shell: /bin/bash
+        basedOnDependencyAnalysis: false
         script: |
           set -euo pipefail
           bash "${PROJECT_DIR}/core/build-apple.sh"
@@ -228,6 +229,7 @@ targets:
     preBuildScripts:
       - name: Build the Rust core for iOS (cargo)
         shell: /bin/bash
+        basedOnDependencyAnalysis: false
         script: |
           set -euo pipefail
           bash "${PROJECT_DIR}/core/build-apple.sh"
