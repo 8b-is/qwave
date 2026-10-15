@@ -130,7 +130,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix rustup)/bin/cargo" --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
@@ -143,6 +144,7 @@ jobs:
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
             build | xcbeautify
@@ -223,7 +225,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-ios-sim
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix rustup)/bin/cargo" --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
@@ -236,6 +239,7 @@ jobs:
             -scheme QwaveIOS \
             -configuration Release \
             -destination 'generic/platform=iOS Simulator' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
             IPHONEOS_DEPLOYMENT_TARGET=15.0 \

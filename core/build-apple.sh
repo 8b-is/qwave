@@ -8,6 +8,12 @@
 # and writes core/target/apple/<PLATFORM_NAME>/libqwave_core.a.
 set -euo pipefail
 
+# Xcode sanitizes PATH. Homebrew rustup keeps its proxies outside ~/.cargo/bin;
+# CI passes that directory explicitly after installing and validating Rust.
+if [ -n "${QWAVE_RUST_BIN:-}" ]; then
+  export PATH="$QWAVE_RUST_BIN:$PATH"
+fi
+
 if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
   echo "error: cargo not found — the sovereign core needs Rust (rustup.rs)" >&2
   exit 1

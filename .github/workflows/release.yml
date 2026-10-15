@@ -43,7 +43,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix rustup)/bin/cargo" --version
 
       - name: Verify tag matches project versions
         run: |
@@ -170,6 +171,7 @@ jobs:
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             -derivedDataPath build/DerivedData \
             "${XCODE_ARGS[@]}" \
             build | xcbeautify
@@ -183,6 +185,7 @@ jobs:
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
