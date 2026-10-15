@@ -30,18 +30,57 @@ public enum WebPermissionDecision: Sendable {
     case deny
 }
 
+/// A snapshot of WebKit's security origin, including scheme and port. Never
+/// derive this from the tab URL: a requesting frame can have a different origin.
+public struct WebPermissionOrigin: Hashable, Sendable {
+    public let scheme: String
+    public let host: String
+    public let port: Int
+
+    public init(scheme: String, host: String, port: Int) {
+        self.scheme = scheme.lowercased()
+        self.host = host.lowercased()
+        // WKSecurityOrigin uses zero when no port is present. Store the
+        // effective HTTP(S) port so an explicit default port matches too.
+        if port == 0, self.scheme == "https" {
+            self.port = 443
+        } else if port == 0, self.scheme == "http" {
+            self.port = 80
+        } else {
+            self.port = port
+        }
+    }
+
+    @MainActor
+    public init(_ origin: WKSecurityOrigin) {
+        self.init(scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+
+    var isValid: Bool {
+        !scheme.isEmpty && !host.isEmpty && (0...65535).contains(port)
+    }
+
+    /// Include the scheme and nonstandard port so the consent prompt identifies
+    /// the same boundary as the remembered choice. Bracket IPv6 hosts once.
+    var displayName: String {
+        let authority = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let isDefaultPort = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+        let suffix = port == 0 || isDefaultPort ? "" : ":\(port)"
+        return "\(scheme)://\(authority)\(suffix)"
+    }
+}
+
 /// Identifies a decision inside container isolation. The same origin is answered
 /// independently in each container (and in the default, container-less space),
-/// so a camera grant in a personal container never leaks into a work one. Host
-/// is compared case-insensitively.
+/// so a camera grant in a personal container never leaks into a work one.
 public struct WebPermissionKey: Hashable, Sendable {
     public let containerID: UUID?
-    public let originHost: String
+    public let origin: WebPermissionOrigin
     public let permission: WebPermission
 
-    public init(containerID: UUID?, originHost: String, permission: WebPermission) {
+    public init(containerID: UUID?, origin: WebPermissionOrigin, permission: WebPermission) {
         self.containerID = containerID
-        self.originHost = originHost.lowercased()
+        self.origin = origin
         self.permission = permission
     }
 }
@@ -49,27 +88,73 @@ public struct WebPermissionKey: Hashable, Sendable {
 /// Session-scoped memory of camera / microphone / location choices, keyed per
 /// (container, origin, capability). Deliberately not persisted: a privacy-first
 /// browser forgets grants when it quits, so a site must re-ask next launch.
-/// MainActor-isolated, so a single shared instance is safe across every tab's
-/// coordinator.
+/// Persistent tabs share a store; each nonpersistent tab has its own store.
+/// MainActor isolation keeps decisions and invalidation ordered.
 @MainActor
 public final class WebPermissionStore {
     public static let shared = WebPermissionStore()
 
     private var decisions: [WebPermissionKey: WebPermissionDecision] = [:]
+    private var generation: UInt64 = 0
+    private var containerGenerations: [UUID?: UInt64] = [:]
+    private let invalidationSource: WebPermissionStore?
+    private let invalidationContainerID: UUID?
+    private var sourceRevision: Revision?
 
-    public init() {}
+    struct Revision: Equatable {
+        let generation: UInt64
+        let containerGeneration: UInt64
+    }
+
+    func revision(for containerID: UUID?) -> Revision {
+        reconcileInvalidation()
+        return Revision(generation: generation, containerGeneration: containerGenerations[containerID, default: 0])
+    }
+
+    public init() {
+        invalidationSource = nil
+        invalidationContainerID = nil
+    }
+
+    /// Private decisions stay local, but deleting their container must also
+    /// invalidate them. Consult the parent's revision before every access so
+    /// no observer or global list of private tabs is needed.
+    init(invalidationSource: WebPermissionStore, containerID: UUID?) {
+        self.invalidationSource = invalidationSource
+        invalidationContainerID = containerID
+        sourceRevision = invalidationSource.revision(for: containerID)
+    }
+
+    private func reconcileInvalidation() {
+        guard let invalidationSource else { return }
+        let current = invalidationSource.revision(for: invalidationContainerID)
+        guard current != sourceRevision else { return }
+        sourceRevision = current
+        reset()
+    }
 
     public func decision(for key: WebPermissionKey) -> WebPermissionDecision? {
-        decisions[key]
+        reconcileInvalidation()
+        return decisions[key]
     }
 
     public func record(_ decision: WebPermissionDecision, for key: WebPermissionKey) {
+        reconcileInvalidation()
         decisions[key] = decision
     }
 
-    /// Forget every decision — used when the user clears site data.
+    /// Forget this container's choices and invalidate its pending requests.
+    /// Other containers keep both their choices and their in-flight requests.
+    public func reset(containerID: UUID?) {
+        decisions = decisions.filter { $0.key.containerID != containerID }
+        containerGenerations[containerID, default: 0] &+= 1
+    }
+
+    /// Forget every decision and invalidate pending requests for this store.
     public func reset() {
         decisions.removeAll()
+        generation &+= 1
+        containerGenerations.removeAll()
     }
 }
 
@@ -86,6 +171,16 @@ public final class WebPermissionStore {
 /// `NSLocationWhenInUseUsageDescription`.
 @MainActor
 public enum WebPermissionArbiter {
+    /// Internal test seam: tests never need real consent sheets or device access.
+    struct Environment {
+        var prompt: @MainActor @Sendable (WebPermissionOrigin, [WebPermission]) -> Bool
+        var captureAccess: @MainActor @Sendable (AVMediaType) async -> Bool
+
+        static var live: Self {
+            Self(prompt: promptUser, captureAccess: systemCaptureAccess)
+        }
+    }
+
     /// Map a media-capture request to the concrete capabilities it needs.
     public static func permissions(for type: WKMediaCaptureType) -> [WebPermission] {
         switch type {
@@ -96,66 +191,113 @@ public enum WebPermissionArbiter {
         }
     }
 
-    /// Resolve a `getUserMedia` request for `origin`'s host within `containerID`.
+    /// Resolve a `getUserMedia` request for the complete origin within `containerID`.
     public static func decideMediaCapture(
-        host: String,
+        origin: WebPermissionOrigin,
         type: WKMediaCaptureType,
         containerID: UUID?,
         store: WebPermissionStore = .shared,
         completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
+        decideMediaCapture(
+            origin: origin, type: type, containerID: containerID, store: store,
+            environment: .live, completion: completion)
+    }
+
+    static func decideMediaCapture(
+        origin: WebPermissionOrigin,
+        type: WKMediaCaptureType,
+        containerID: UUID?,
+        store: WebPermissionStore,
+        environment: Environment,
+        completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
         let perms = permissions(for: type)
-        guard !perms.isEmpty, !host.isEmpty else { completion(.deny); return }
+        guard !perms.isEmpty, origin.isValid else { completion(.deny); return }
 
         let keys = perms.map {
-            WebPermissionKey(containerID: containerID, originHost: host, permission: $0)
+            WebPermissionKey(containerID: containerID, origin: origin, permission: $0)
         }
         // A single prior "deny" for any requested capability is decisive.
         if keys.contains(where: { store.decision(for: $0) == .deny }) {
             completion(.deny)
             return
         }
-        let undecided = keys.filter { store.decision(for: $0) == nil }
+        let revision = store.revision(for: containerID)
 
         Task { @MainActor in
+            guard store.revision(for: containerID) == revision else { completion(.deny); return }
+            // Another request may have completed before this task began.
+            guard !keys.contains(where: { store.decision(for: $0) == .deny }) else {
+                completion(.deny); return
+            }
+            let undecided = keys.filter { store.decision(for: $0) == nil }
             if !undecided.isEmpty {
-                let allow = promptUser(host: host, permissions: undecided.map(\.permission))
+                let allow = environment.prompt(origin, undecided.map(\.permission))
+                // A modal sheet runs a nested event loop. Deletion or tab
+                // teardown during that loop must not resurrect old consent.
+                guard store.revision(for: containerID) == revision else { completion(.deny); return }
                 for key in undecided { store.record(allow ? .allow : .deny, for: key) }
                 guard allow else { completion(.deny); return }
             }
             // Web-level consent granted; now clear the OS-level (TCC) gate.
             var granted = true
-            if perms.contains(.camera) { granted = await systemCaptureAccess(.video) && granted }
-            if perms.contains(.microphone) { granted = await systemCaptureAccess(.audio) && granted }
+            if perms.contains(.camera) {
+                granted = await environment.captureAccess(.video) && granted
+                guard store.revision(for: containerID) == revision else { completion(.deny); return }
+            }
+            if perms.contains(.microphone) {
+                granted = await environment.captureAccess(.audio) && granted
+                guard store.revision(for: containerID) == revision else { completion(.deny); return }
+            }
             completion(granted ? .grant : .deny)
         }
     }
 
-    /// Resolve a Geolocation API request for `origin`'s host within `containerID`.
+    /// Resolve a Geolocation API request for the complete origin within `containerID`.
     public static func decideGeolocation(
-        host: String,
+        origin: WebPermissionOrigin,
         containerID: UUID?,
         store: WebPermissionStore = .shared,
         completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
-        guard !host.isEmpty else { completion(.deny); return }
-        let key = WebPermissionKey(containerID: containerID, originHost: host, permission: .location)
+        decideGeolocation(
+            origin: origin, containerID: containerID, store: store,
+            environment: .live, completion: completion)
+    }
+
+    static func decideGeolocation(
+        origin: WebPermissionOrigin,
+        containerID: UUID?,
+        store: WebPermissionStore,
+        environment: Environment,
+        completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        guard origin.isValid else { completion(.deny); return }
+        let key = WebPermissionKey(containerID: containerID, origin: origin, permission: .location)
         if let decided = store.decision(for: key) {
             completion(decided == .allow ? .grant : .deny)
             return
         }
+        let revision = store.revision(for: containerID)
         Task { @MainActor in
-            let allow = promptUser(host: host, permissions: [.location])
+            guard store.revision(for: containerID) == revision else { completion(.deny); return }
+            if let decided = store.decision(for: key) {
+                completion(decided == .allow ? .grant : .deny)
+                return
+            }
+            let allow = environment.prompt(origin, [.location])
+            guard store.revision(for: containerID) == revision else { completion(.deny); return }
             store.record(allow ? .allow : .deny, for: key)
             completion(allow ? .grant : .deny)
         }
     }
 
     /// A modal per-origin allow/deny sheet. Returns `true` on Allow.
-    private static func promptUser(host: String, permissions: [WebPermission]) -> Bool {
+    private static func promptUser(origin: WebPermissionOrigin, permissions: [WebPermission]) -> Bool {
         #if os(macOS)
             let alert = NSAlert()
-            alert.messageText = "“\(host)” wants to use your \(joined(permissions))"
+            alert.messageText = "“\(origin.displayName)” wants to use your \(joined(permissions))"
             alert.informativeText =
                 "Qwave only shares this while you are on this site, and forgets the choice when you quit."
             alert.addButton(withTitle: "Allow")

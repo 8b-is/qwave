@@ -125,15 +125,16 @@ public enum WaveScene {
 
           const uTimeLocation = gl.getUniformLocation(program, "u_time");
           const uResolutionLocation = gl.getUniformLocation(program, "u_resolution");
-          const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+          let reduce = motionPreference.matches;
 
           function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             gl.viewport(0, 0, canvas.width, canvas.height);
+            // Resizing clears the drawing buffer, including a static frame.
+            if (reduce && !document.hidden) render(8000);
           }
-          window.addEventListener("resize", resize);
-          resize();
 
           function render(time) {
             const seconds = reduce ? 8.0 : time * 0.001;
@@ -152,6 +153,8 @@ public enum WaveScene {
           let rafId = 0;
 
           function frame(time) {
+            rafId = 0;
+            if (document.hidden || reduce) return;
             if (time - lastRender >= FPS_CAP_MS) {
               lastRender = time;
               render(time);
@@ -159,20 +162,29 @@ public enum WaveScene {
             rafId = requestAnimationFrame(frame);
           }
 
-          function onVisibility() {
-            if (document.hidden) {
-              cancelAnimationFrame(rafId);
-            } else if (!reduce) {
+          function syncAnimation() {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+            reduce = motionPreference.matches;
+            lastRender = -1000;
+            if (document.hidden) return;
+            if (reduce) {
+              render(8000);
+            } else {
               rafId = requestAnimationFrame(frame);
             }
           }
-          document.addEventListener("visibilitychange", onVisibility);
-
-          if (reduce) {
-            render(8000);
-          } else if (!document.hidden) {
-            rafId = requestAnimationFrame(frame);
+          document.addEventListener("visibilitychange", syncAnimation);
+          if (motionPreference.addEventListener) {
+            motionPreference.addEventListener("change", syncAnimation);
+          } else {
+            motionPreference.addListener(syncAnimation);
           }
+          window.addEventListener("resize", resize);
+          resize();
+
+          // resize already drew the static frame when reduced motion is on.
+          if (!reduce) syncAnimation();
         })();
         """
 

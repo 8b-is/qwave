@@ -3,7 +3,6 @@ import AppKit
 import BrowserCore
 import Persistence
 import QwaveSupport
-import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
@@ -11,9 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var windowControllers: [BrowserWindowController] = []
     private var settingsWindowController: SettingsWindowController?
     private var libraryWindowController: LibraryWindowController?
-    /// Sparkle auto-updater; feed and EdDSA public key come from Info.plist
-    /// (SUFeedURL / SUPublicEDKey, declared in project.yml).
-    private(set) var updaterController: SPUStandardUpdaterController?
+    /// Distribution-aware updater; direct releases use the signed Sparkle feed.
+    private(set) var updaterController: QwaveUpdater?
 
     /// Single coalesced timer driving hibernation + energy management for the
     /// whole app — one wakeup, generous leeway, instead of per-tab timers.
@@ -44,11 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func didFinishLaunching() {
-        let updater = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
+        let updater = QwaveUpdater()
         updaterController = updater
         NSApp.mainMenu = MainMenu.build(updater: updater)
         refreshSummarizePresence()
@@ -239,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func showSettings(_ sender: Any?) {
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(
-                environment: environment, updater: updaterController?.updater)
+                environment: environment, updater: updaterController)
         }
         settingsWindowController?.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)

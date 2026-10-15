@@ -20,7 +20,7 @@ struct MemoryWavePane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 Text(
-                    "Remote providers never receive stored memory. They see only the current prompt and, if you include it, the current page."
+                    "Remote Ask and page summaries send your prompt and any included current page text. Timeline summaries send saved titles, times, and site hostnames, without saved page bodies."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -29,7 +29,7 @@ struct MemoryWavePane: View {
                         environment.memoryPreferences.rememberEverything = newValue
                     }
                 Text(
-                    "When on, every non-private page is captured as a Cognitive wave on this Mac. Private and ephemeral tabs are still never written. Timeline summaries stay local; remote providers only see titles and times, never page bodies."
+                    "When on, every non-private page is captured as a Cognitive wave on this Mac. Private and ephemeral tabs are still never written. Stored page bodies stay local; remote timeline summaries send saved titles, times, and site hostnames."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -49,7 +49,7 @@ struct MemoryWavePane: View {
             if provider == .openaiCompatible {
                 Section("Remote endpoint") {
                     Text(
-                        "Pages you summarise or ask about with this provider are sent to this endpoint. Nothing else is: stored memories stay on this Mac, and timeline summaries send only titles and times."
+                        "Your prompt and any current page text you summarise or ask about are sent to this endpoint. Timeline summaries send saved titles, times, and site hostnames, without saved page bodies."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -96,8 +96,12 @@ struct MemoryWavePane: View {
                 .accessibilityLabel("Open nibble folder in Finder")
                 Button("Forget all memories on this Mac", role: .destructive) {
                     Task { @MainActor in
-                        try? await environment.memoryWave.forgetAll()
-                        status = "Local wave store emptied."
+                        do {
+                            try await environment.memoryWave.forgetAll()
+                            status = "Local wave store emptied."
+                        } catch {
+                            status = "Some memories could not be removed. Please try again."
+                        }
                     }
                 }
                 .buttonStyle(.bordered)

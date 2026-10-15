@@ -356,47 +356,30 @@ final class MarkdownSourceBlockTests: XCTestCase {
         <!--<script>
         """
 
-    /// The real "Remember page" path, end to end: the shipped
-    /// `InternalPages.markdownScript` posts to the `qwave` message handler, and
-    /// this drives the actual button rather than re-implementing its reader.
-    func testRememberPageButtonDeliversTheSourceByteForByte() async throws {
+    /// Reader controls must not expose the privileged remember callback in
+    /// the page world. Actual dispatch belongs to the isolated native bridge.
+    func testRememberPageHasNoPageWorldMessageBridge() async throws {
         let sink = MessageSink()
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.add(sink, name: "qwave")
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.loadHTMLString(
-            InternalPages.markdownHTML(
-                title: "README.md",
-                bodyHTML: MarkdownCompiler.compile(Self.roundTripSource, trust: .compilerOutputOnly),
-                source: Self.roundTripSource,
-                allowRemember: true
-            ),
-            baseURL: URL(string: "file:///tmp/README.md")
-        )
-
-        // The button exists as soon as the overlay parses, but the script that
-        // listens on it is the last element in `<body>` — so keep clicking until
-        // a message actually arrives rather than assuming the first click lands.
-        var clicked = false
-        for _ in 0..<80 where sink.last == nil {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            let value = try? await webView.evaluateJavaScript(
-                """
-                String((function () {
-                  const b = document.querySelector('[data-remember="page"]');
-                  if (!b || document.readyState !== 'complete') { return false; }
-                  b.click();
-                  return true;
-                })())
-                """)
-            clicked = clicked || value as? String == "true"
+        let html = InternalPages.markdownHTML(
+            title: "README.md", bodyHTML: MarkdownCompiler.compile(Self.roundTripSource, trust: .compilerOutputOnly),
+            source: Self.roundTripSource, allowRemember: true)
+        XCTAssertFalse(html.contains("messageHandlers.qwave"))
+        webView.loadHTMLString(html, baseURL: URL(string: "file:///tmp/README.md"))
+        var ready = false
+        for _ in 0..<80 where !ready {
+            try await Task.sleep(nanoseconds: 25_000_000)
+            ready =
+                (try? await webView.evaluateJavaScript(
+                    "document.readyState === 'complete' && !!document.querySelector('[data-remember=page]')")) as? Bool
+                == true
         }
-        try XCTSkipUnless(clicked, "WKWebView could not load a document in this test process")
-        let received = try XCTUnwrap(sink.last, "the Remember button posted no message")
-        XCTAssertEqual(received["scope"] as? String, "page")
-        XCTAssertEqual(
-            received["text"] as? String, Self.roundTripSource,
-            "Remember page did not round-trip the source")
+        XCTAssertTrue(ready)
+        _ = try await webView.evaluateJavaScript("document.querySelector('[data-remember=page]').click(); 0")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertNil(sink.last)
     }
 
     /// `BrowserWindowController.rememberCurrentSelection` lives in the app

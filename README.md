@@ -24,7 +24,9 @@ Qwave is an open-source, WebKit-native browser for people who want
 stronger boundaries around browsing data without giving up the system engine.
 It runs on **macOS 14+** and on **iPhone, iOS 15+ (minimum device: iPhone 13)**,
 sharing one sovereign core between the two lanes.
-Part of the **[8b.IS Ecosystem](https://8b.is)** and documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
+An **[8b.is Research](https://8b.is/research)** project, documented in the **[8b.IS Documentation Hub](https://www.8b.is/documentation)**.
+Built collaboratively by **Peter Lodri, Alexandra, Christopher Chenoweth, and Aye Partner (AI-assisted development)**.
+
 It combines per-container storage universes, native content shields, tab
 hibernation, an on-device page summarizer, a **Rust sovereign core** (the
 egress allowlist and the MEM8 wave substrate, compiled as a zero-dependency
@@ -98,9 +100,10 @@ own network activity auditable.
   see [docs/NETWORK.md](docs/NETWORK.md).
 - **Summarize** — on-device page summarization via Apple's FoundationModels.
   No streaming, no network, no model output that can act on the browser.
-- **AutoFill** — passwords and passkeys through an `ASCredentialProvider` extension
-  and WebAuthn, kept in the OS / iCloud keychain and deliberately separate from the
-  post-quantum / `DeviceKeyManager` stack.
+- **AutoFill (macOS)** — saved website passwords through a credential-provider
+  extension and OS / iCloud Keychain. The iPhone/iPad shell does not include that
+  extension. Website passkey support has separate capability and compatibility
+  limits; see [native website passkeys](docs/BROWSER-PASSKEYS.md).
 - **Spaces** — the container universes surface as first-class Spaces with a vertical
   tab sidebar; a system Focus filter can switch the active Space and tighten shields.
 - **The iPhone lane runs the same sovereign core** — `QwaveIOS` links the same
@@ -312,14 +315,19 @@ nothing by itself: the guard resolves it against
 switching the provider off revokes the previous host immediately, with no
 inference needed in between, and no other client in the process ever gains it.
 
-Two Category-A clients are still not gated, and for two different mechanical
-reasons — conflating them once broke a feature. `FaviconLoader` builds its own
-session and never installs the guard, so the guard never sees it. The
-remote-markdown fetch is the opposite: it runs on `URLSession.shared`, which
-the global registration *does* reach, and is exempted by an explicit
-`EgressGuard.markPageDriven(_:)` marker at its single call site
-(`BrowserCore/NavigationCoordinator.swift:363`) — per request, not per host or
-per session. The shields launch-path assertion is the one thing here asserting
+Two page-driven clients are exempt from the fixed-host allowlist.
+`FaviconLoader` builds its own session and never installs the guard. Remote
+Markdown uses a fresh ephemeral session with the guard explicitly installed;
+`EgressGuard.markPageDriven(_:)` exempts only the document request and its
+redirects. An unmarked request on the same configuration remains gated.
+The Markdown re-fetch copies cookies only from the initiating WebKit store,
+uses no shared cache or credential store, and discards its response cookies.
+WebKit's original navigation remains responsible for browser cookie updates.
+The reader limits responses to 8 MiB and requests to 45 seconds in total.
+WebKit HTTP-auth/client-certificate credentials cannot be transferred, so
+those challenges fail without consulting shared credentials.
+
+The shields launch-path assertion is the one thing here asserting
 the *absence* of a request rather than the shape of one: it registers a
 `URLProtocol` recorder over the shields launch path and asserts nothing was
 requested; the test builds its own `ShieldsDirector` rather than running the
@@ -341,7 +349,7 @@ Qwave.app                         AppKit shell + SwiftUI settings
 │   ├── WebExtensions               MV3 registry and browser.* bridge
 │   ├── URLIdentity                 WHATWG/WebKit-compatible host identity
 │   ├── FeatureFlags                guarded WebKit SPI feature access
-│   ├── WebCredentials              keychain-only passwords + passkeys (AutoFill)
+│   ├── WebCredentials              Keychain passwords + WebAuthn request policies
 │   ├── SovereignCore               the Swift face over the core's C ABI
 │   └── QwaveSupport                logging, keychain, egress guard
 └── core/                          the Rust sovereign core (staticlib, C ABI)
@@ -383,7 +391,7 @@ the exact graph, isolation rules, data flow, and test boundaries.
   is never injected into a tab and `ContentScriptEngine` is reached only from
   tests (`WebExtensions/WebExtensionHost.swift:8-20`).
   [source](Packages/QwaveKit/Sources/WebExtensions/)
-- **WebCredentials** — keychain-only website logins and passkeys for AutoFill.
+- **WebCredentials** — Keychain website passwords and WebAuthn request policies.
   Foundation + Security only; never links the crypto/VPN stack. Key types:
   `WebCredential`, `WebCredentialStore`. [source](Packages/QwaveKit/Sources/WebCredentials/)
 - **URLIdentity** — WHATWG/WebKit-compatible host identity (fixes a shielding
@@ -458,6 +466,42 @@ Package tests:
 ```sh
 swift test --package-path Packages/QwaveKit -c release
 ```
+
+Mac favicon privacy regression (Xcode Swift 6 and Python 3 standard library):
+
+```sh
+python3 scripts/test-favicon-privacy.py
+```
+
+This compiles the actual app loader and SQLite store, then checks private
+cache isolation, ordinary container reuse, and a separate-process restart
+with synthetic loopback images and a temporary database. It does not launch
+the browser or access existing browsing data.
+
+Mac Markdown navigation regression (Xcode Swift and Python 3 standard library):
+
+```sh
+python3 scripts/test-markdown-navigation.py --output-dir /tmp/qwave-markdown-navigation
+python3 scripts/test-markdown-navigation.py --storage --output-dir /tmp/qwave-markdown-storage
+python3 scripts/test-markdown-navigation.py --generated --output-dir /tmp/qwave-generated-pages
+```
+
+The default mode drives the actual navigation delegate in nonpersistent WebKit
+views against a loopback server. It checks normal Markdown rendering without a
+reload loop, cookie-authenticated navigation, safe HTTP error pages, and a newer
+page surviving a delayed fetch. Storage mode drives the coordinator's reader
+fetch directly and checks distinct container/private cookies, cache isolation,
+redirect cookie scoping, cancellation without cookie writeback, HTTP-auth
+rejection, and known/unknown-length response limits. It also runs the focused
+Markdown and egress unit tests. The runner temporarily installs its package
+test fixture, removes it afterward, and limits the build to two workers and
+five minutes. Generated-page mode covers local Markdown (including changed-source
+reload and a forged internal marker), directory listings/README, missing files,
+and HTTP-error presentation. It injects a timeout callback to exercise the
+connection-error template, then observes real WebKit policy callbacks. Its
+forwarding delegate stops a regression after 16 navigation actions per view.
+Use `--scratch-path PATH` to reuse an existing package build cache. Run it
+separately from other package builds; it never opens a user browser profile.
 
 Generate and build the app:
 
@@ -606,7 +650,7 @@ Also in flight: downloads UI, crash-safe session restore, a
 `qwave://diagnostics` telemetry page, VoiceOver accessibility on the chrome,
 on-device semantic memory recall, a command palette, first-run bookmark
 import with Spotlight entities, container-bound Focus filters with a Spaces
-sidebar, keychain-only AutoFill (passwords + passkeys), a zero-egress Safe
+sidebar, Mac password AutoFill and platform-dependent passkey support, a zero-egress Safe
 Browsing host-set (shipped as a sample list — see
 [docs/SAFE-BROWSING.md](docs/SAFE-BROWSING.md) for sourcing a real feed),
 and the iPhone lane — now a full lane: the same WebKit + shields + Rust core

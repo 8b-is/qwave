@@ -177,7 +177,11 @@ final class TabBarView: NSView {
         }
         for (i, view) in newViews.enumerated() {
             if i < stack.arrangedSubviews.count, stack.arrangedSubviews[i] === view { continue }
-            stack.removeArrangedSubview(view)
+            // A newly created tab is not in the stack yet. AppKit asserts if
+            // removeArrangedSubview is asked to remove an unarranged view.
+            if stack.arrangedSubviews.contains(where: { $0 === view }) {
+                stack.removeArrangedSubview(view)
+            }
             stack.insertArrangedSubview(view, at: i)
         }
     }

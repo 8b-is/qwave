@@ -1,0 +1,11 @@
+# Run behind the existing HTTPS proxy; this container listens only on port 8080.
+:8080 {
+    root * /srv
+    encode gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        Content-Security-Policy "default-src 'self'; style-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+    }
+    file_server
+}
