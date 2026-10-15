@@ -19,7 +19,7 @@ public enum LocalReadingError: Error, Equatable, Sendable {
 
 /// One native worker shared by all local sessions. A busy caller fails promptly;
 /// the UI may retain only its latest document request, without queuing old pages.
-private final class LocalReadingWorker: @unchecked Sendable {
+final class LocalReadingWorker: @unchecked Sendable {
     static let shared = LocalReadingWorker()
     private let queue = DispatchQueue(label: "is.8b.qwave.local-reading", qos: .utility)
     private let lock = NSLock()
