@@ -102,7 +102,9 @@ final class BrowserViewModel: ObservableObject {
         address = firstTab.pendingURL?.absoluteString ?? ""
         QwaveInternal.startPageHTML = { [weak self] in
             InternalPages.startHTML(
-                memories: self?.remembered.map { StartMemoryChip(title: $0.title, preview: $0.url?.host ?? "Saved memory") } ?? [],
+                memories: self?.remembered.map {
+                    StartMemoryChip(title: $0.title, preview: $0.url?.host ?? "Saved memory")
+                } ?? [],
                 providerLabel: "Saved page suggestions", deviceLabel: "this device only",
                 showsTimeline: false, prompt: "Search or enter an address…")
         }
@@ -136,12 +138,14 @@ final class BrowserViewModel: ObservableObject {
 
     func rememberCurrentPage() {
         guard let tab = tabs.first(where: { $0.id == activeTabID }),
-              let url = tab.webView?.url, ExternalBrowserURL.isAllowed(url) else { return }
+            let url = tab.webView?.url, ExternalBrowserURL.isAllowed(url)
+        else { return }
         let title = displayTitle(for: tab)
         Task {
             do {
                 guard let memoryWave else { throw MemoryProviderError.unavailable }
-                _ = try await memoryWave.remember(title: title, body: url.host ?? title, url: url,
+                _ = try await memoryWave.remember(
+                    title: title, body: url.host ?? title, url: url,
                     containerID: nil, isEphemeral: tab.isEphemeral, isExplicit: true)
                 await refreshMemories()
                 memoryNotice = "Saved to Memory Wave on this device. Find it on your next new tab."
@@ -162,9 +166,14 @@ final class BrowserViewModel: ObservableObject {
     func submitWaveQuery(_ query: String) {
         // A saved suggestion opens its original page; its title is never sent to search.
         if let memory = remembered.first(where: { $0.title == query }) {
-            if let url = memory.url, ExternalBrowserURL.isAllowed(url) { navigate(url.absoluteString) }
-            else { memoryNotice = memory.body }
-        } else { navigate(query) }
+            if let url = memory.url, ExternalBrowserURL.isAllowed(url) {
+                navigate(url.absoluteString)
+            } else {
+                memoryNotice = memory.body
+            }
+        } else {
+            navigate(query)
+        }
     }
 
     // MARK: - Tabs
@@ -210,7 +219,8 @@ final class BrowserViewModel: ObservableObject {
     /// later reloads it. Never evicts the active tab.
     private func evictIfNeeded() {
         guard tabs.count >= energy.maxLiveTabs else { return }
-        let evictable = tabs
+        let evictable =
+            tabs
             .filter { $0.id != activeTabID }
             .sorted { $0.lastActivated < $1.lastActivated }
         guard let victim = evictable.first else { return }
@@ -278,8 +288,12 @@ final class BrowserViewModel: ObservableObject {
         {
             url = direct
         } else {
-            url = settings.searchEngine.searchURL(for: trimmed)
-                ?? URL(string: "https://www.ecosia.org/search?q=\(trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")!
+            url =
+                settings.searchEngine.searchURL(for: trimmed)
+                ?? URL(
+                    string:
+                        "https://www.ecosia.org/search?q=\(trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+                )!
         }
         suggestions = []
         load(url, in: active)

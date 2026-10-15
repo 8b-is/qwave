@@ -4,8 +4,8 @@ import Foundation
 public enum OfflineArcade {
     public static func pageURL(error: NSError, failingURL: URL?) -> URL? {
         guard error.domain == NSURLErrorDomain,
-              [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost].contains(error.code),
-              let failingURL, ["https", "http"].contains(failingURL.scheme?.lowercased() ?? "")
+            [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost].contains(error.code),
+            let failingURL, ["https", "http"].contains(failingURL.scheme?.lowercased() ?? "")
         else { return nil }
         var parts = URLComponents(string: "qwave://arcade")!
         parts.queryItems = [URLQueryItem(name: "retry", value: failingURL.absoluteString)]
@@ -15,7 +15,8 @@ public enum OfflineArcade {
     public static func html(retry: String?) -> String {
         let bundle = Bundle.module
         guard let file = bundle.url(forResource: "offline-arcade", withExtension: "html"),
-              let template = try? String(contentsOf: file, encoding: .utf8) else {
+            let template = try? String(contentsOf: file, encoding: .utf8)
+        else {
             return "<h1>Connection lost</h1><p>Please try your page again.</p>"
         }
         let url = retry.flatMap(URL.init(string:))

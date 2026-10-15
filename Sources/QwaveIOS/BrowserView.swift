@@ -49,10 +49,16 @@ struct BrowserView: View {
         .sheet(isPresented: $showingSettings) { QwaveIOSSettingsView(model: model) }
         .onChange(of: model.energy.tier) { _ in model.applyEnergyTier() }
         .onAppear { closeHaptics.prepare() }
-        .alert("Memory Wave", isPresented: Binding(get: { model.memoryNotice != nil },
-            set: { if !$0 { model.memoryNotice = nil } })) {
+        .alert(
+            "Memory Wave",
+            isPresented: Binding(
+                get: { model.memoryNotice != nil },
+                set: { if !$0 { model.memoryNotice = nil } })
+        ) {
             Button("OK") { model.memoryNotice = nil }
-        } message: { Text(model.memoryNotice ?? "") }
+        } message: {
+            Text(model.memoryNotice ?? "")
+        }
     }
 
     private var sidebar: some View {
@@ -87,7 +93,9 @@ struct BrowserView: View {
                 .onChange(of: model.activeTabID) { id in proxy.scrollTo(id) }
             }
             Spacer(minLength: 0)
-            Button { showingSettings = true } label: {
+            Button {
+                showingSettings = true
+            } label: {
                 Label("Settings", systemImage: "slider.horizontal.3")
                     .font(.subheadline).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }.buttonStyle(.plain)
@@ -100,7 +108,9 @@ struct BrowserView: View {
 
     private func tabRow(_ tab: BrowserTab) -> some View {
         HStack(spacing: 0) {
-            Button { model.selectTab(tab.id) } label: {
+            Button {
+                model.selectTab(tab.id)
+            } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "globe").foregroundStyle(waveAccent)
                     Text(model.displayTitle(for: tab)).font(.subheadline).lineLimit(2)
@@ -110,15 +120,18 @@ struct BrowserView: View {
                 .contentShape(Rectangle())
             }
             .accessibilityAddTraits(tab.id == model.activeTabID ? .isSelected : [])
-            Button { model.closeTab(tab.id) } label: {
+            Button {
+                model.closeTab(tab.id)
+            } label: {
                 Image(systemName: "xmark").font(.caption).frame(width: 44, height: 52)
             }
             .disabled(model.tabs.count == 1)
             .accessibilityLabel("Close tab \(model.displayTitle(for: tab))")
         }
         .buttonStyle(.plain)
-        .background(tab.id == model.activeTabID ? waveAccent.opacity(0.16) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 12))
+        .background(
+            tab.id == model.activeTabID ? waveAccent.opacity(0.16) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var tabStrip: some View {
@@ -126,12 +139,14 @@ struct BrowserView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.tabs) { tab in
-                        TabPill(title: model.displayTitle(for: tab),
-                                isActive: tab.id == model.activeTabID,
-                                canClose: model.tabs.count > 1,
-                                onSelect: { model.selectTab(tab.id) },
-                                onClose: { model.closeTab(tab.id) })
-                            .id(tab.id)
+                        TabPill(
+                            title: model.displayTitle(for: tab),
+                            isActive: tab.id == model.activeTabID,
+                            canClose: model.tabs.count > 1,
+                            onSelect: { model.selectTab(tab.id) },
+                            onClose: { model.closeTab(tab.id) }
+                        )
+                        .id(tab.id)
                     }
                     Button(action: model.newTab) {
                         Image(systemName: "plus").frame(width: 44, height: 44)
@@ -153,7 +168,9 @@ struct BrowserView: View {
             HStack(spacing: 8) {
                 if spacious {
                     if canToggleSidebar {
-                        Button { sidebarVisible.toggle() } label: {
+                        Button {
+                            sidebarVisible.toggle()
+                        } label: {
                             Image(systemName: "sidebar.left").frame(width: 44, height: 44)
                         }.accessibilityLabel("Toggle tab sidebar")
                     }
@@ -170,7 +187,7 @@ struct BrowserView: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WaveControlStyle())
         .padding(.horizontal, spacious ? 18 : 12)
         .padding(.vertical, 10)
         .background(Color(uiColor: .secondarySystemBackground))
@@ -199,8 +216,9 @@ struct BrowserView: View {
         .padding(.horizontal, 14)
         .frame(minHeight: 46)
         .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(
-            omniboxFocused ? waveAccent : Color.primary.opacity(0.10), lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14).strokeBorder(
+                omniboxFocused ? waveAccent : Color.primary.opacity(0.10), lineWidth: 1))
     }
 
     private var navigationControls: some View {
@@ -221,23 +239,36 @@ struct BrowserView: View {
         HStack(spacing: 0) {
             Button {
                 if let active = model.tabs.first(where: { $0.id == model.activeTabID }),
-                   let url = active.webView?.url ?? active.url ?? active.pendingURL {
+                    let url = active.webView?.url ?? active.url ?? active.pendingURL
+                {
                     sharing = SharingURL(url: url)
                 }
-            } label: { Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44) }
+            } label: {
+                Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
+            }
             .accessibilityLabel("Share")
             Button {
                 if let active = model.tabs.first(where: { $0.id == model.activeTabID }) {
                     ReadingLanguageControls.show(for: model.webView(for: active))
                 }
-            } label: { Image(systemName: "character.bubble").frame(width: 44, height: 44) }
+            } label: {
+                Image(systemName: "character.bubble").frame(width: 44, height: 44)
+            }
             .accessibilityLabel("Translation")
             Menu {
                 Button(action: model.rememberCurrentPage) { Label("Remember this page", systemImage: "bookmark") }
-                Button { model.navigate(InternalPages.startURL.absoluteString) } label: { Label("Memory Wave home", systemImage: "waveform") }
-            } label: { Image(systemName: "waveform").frame(width: 44, height: 44) }
+                Button {
+                    model.navigate(InternalPages.startURL.absoluteString)
+                } label: {
+                    Label("Memory Wave home", systemImage: "waveform")
+                }
+            } label: {
+                MemoryRippleIcon().frame(width: 22, height: 22).frame(width: 44, height: 44)
+            }
             .accessibilityLabel("Memory Wave")
-            Button { showingSettings = true } label: {
+            Button {
+                showingSettings = true
+            } label: {
                 Image(systemName: "gearshape").frame(width: 44, height: 44)
             }.keyboardShortcut(",", modifiers: .command).accessibilityLabel("Settings")
         }
@@ -310,6 +341,48 @@ struct BrowserView: View {
     }
 }
 
+/// Crisp ripples keep Memory Wave recognizable at toolbar size.
+private struct MemoryRippleIcon: View {
+    var body: some View {
+        ZStack {
+            ForEach(0..<3) { ring in
+                Ellipse()
+                    .stroke(lineWidth: 1.6)
+                    .frame(width: CGFloat(6 + ring * 7), height: CGFloat(4 + ring * 5))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Material is decorative; accessibility preferences always win over glass.
+private struct WaveControlStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
+                if reduceTransparency || contrast == .increased {
+                    shape.fill(Color(uiColor: .tertiarySystemBackground))
+                } else {
+                    shape.fill(.thinMaterial)
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.10), lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+    }
+}
+
 private struct TabPill: View {
     let title: String
     let isActive: Bool
@@ -332,8 +405,9 @@ private struct TabPill: View {
             .accessibilityLabel("Close tab \(title)")
         }
         .buttonStyle(.plain)
-        .background(RoundedRectangle(cornerRadius: 12)
-            .fill(isActive ? Color.accentColor.opacity(0.16) : Color(uiColor: .tertiarySystemBackground)))
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isActive ? Color.accentColor.opacity(0.16) : Color(uiColor: .tertiarySystemBackground)))
     }
 }
 
@@ -379,8 +453,9 @@ struct QwaveWebView: UIViewRepresentable {
         context.coordinator.refreshControl = refresh
         // The factory configures a view; the shell owns its first navigation.
         if webView.url == nil,
-           let tab = model.tabs.first(where: { $0.id == model.activeTabID }),
-           let url = tab.pendingURL {
+            let tab = model.tabs.first(where: { $0.id == model.activeTabID }),
+            let url = tab.pendingURL
+        {
             webView.load(URLRequest(url: url))
         }
         return webView
@@ -401,11 +476,12 @@ struct QwaveWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame,
-                  InternalPages.isStartURL(message.frameInfo.request.url),
-                  InternalPages.isStartURL(message.webView?.url),
-                  let webView = message.webView, isActive(webView),
-                  let body = message.body as? [String: Any], body["type"] as? String == "submit",
-                  let query = body["query"] as? String, query.count <= 4096 else { return }
+                InternalPages.isStartURL(message.frameInfo.request.url),
+                InternalPages.isStartURL(message.webView?.url),
+                let webView = message.webView, isActive(webView),
+                let body = message.body as? [String: Any], body["type"] as? String == "submit",
+                let query = body["query"] as? String, query.count <= 4096
+            else { return }
             model.submitWaveQuery(query)
         }
 
@@ -457,19 +533,26 @@ struct QwaveWebView: UIViewRepresentable {
 
         private func showOfflineArcade(_ webView: WKWebView, error: Error) {
             let error = error as NSError
-            let failed = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            let failed =
+                (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
                 ?? URL(string: model.address)
             if let arcade = OfflineArcade.pageURL(error: error, failingURL: failed) {
                 webView.load(URLRequest(url: arcade))
             }
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-            if let request = ReadingLanguageRequest.adapted(action.request, mainFrame: action.targetFrame?.isMainFrame == true, currentURL: webView.url) {
+        func webView(
+            _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        ) {
+            if let request = ReadingLanguageRequest.adapted(
+                action.request, mainFrame: action.targetFrame?.isMainFrame == true, currentURL: webView.url)
+            {
                 decisionHandler(.cancel)
                 webView.load(request)
-            } else { decisionHandler(.allow) }
+            } else {
+                decisionHandler(.allow)
+            }
         }
 
         // New windows (target=_blank etc.) open as new tabs.

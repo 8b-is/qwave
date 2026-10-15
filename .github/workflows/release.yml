@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -40,8 +40,10 @@ jobs:
         # the preBuildScript hard-errors when one is missing.
         run: |
           brew install xcodegen xcbeautify create-dmg rustup
+          rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Verify tag matches project versions
         run: |
@@ -401,23 +403,26 @@ jobs:
           echo "APPCAST_PATH=updates/appcast.xml" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: |
-            ${{ env.DMG_PATH }}
-            ${{ env.ZIP_PATH }}
-            ${{ env.APPCAST_PATH }}
-          name: "Qwave ${{ github.ref_name }}"
-          body: |
-            ## Qwave ${{ github.ref_name }}
-
-            Signed builds pass Gatekeeper (`spctl -a -vv`) and auto-update via
-            Sparkle (`appcast.xml` attached). Unsigned builds are published as
-            a zip when Developer ID secrets are not configured — see
-            `docs/SIGNING.md` for enabling the signed pipeline.
-
-            Full changes: see `CHANGELOG.md`.
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Use the runner's authenticated GitHub CLI; no third-party action
+          # or organization-wide policy expansion is needed to publish.
+          assets=("$DMG_PATH")
+          [ -z "${ZIP_PATH:-}" ] || assets+=("$ZIP_PATH")
+          [ -z "${APPCAST_PATH:-}" ] || assets+=("$APPCAST_PATH")
+          release_flags=()
+          case "$GITHUB_REF_NAME" in *-*) release_flags+=(--prerelease) ;; esac
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          Signed builds pass Gatekeeper and include a notarized app. When an
+          appcast is attached, the release also supports Sparkle updates.
+          Unsigned builds are explicitly labeled; see docs/SIGNING.md.
+
+          Full changes: see CHANGELOG.md.
+          EOF
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Qwave $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "${release_flags[@]}"

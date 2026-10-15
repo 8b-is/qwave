@@ -61,8 +61,10 @@ struct QwaveIOSSettingsView: View {
                 }
 
                 Section("Memory Wave") {
-                    Text("Use Remember this page to save a suggestion on your Wave home. Saved titles and links stay on this device; browsing is not automatically recorded.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Text(
+                        "Use Remember this page to save a suggestion on your Wave home. Saved titles and links stay on this device; browsing is not automatically recorded."
+                    )
+                    .font(.footnote).foregroundStyle(.secondary)
                     Button("Clear saved Memory Waves", role: .destructive) { confirmForget = true }
                 }
 
@@ -101,8 +103,10 @@ struct QwaveIOSSettingsView: View {
             }
         }
         .navigationViewStyle(.stack)
-        .confirmationDialog("Clear all saved Memory Waves on this device?", isPresented: $confirmForget,
-                            titleVisibility: .visible) {
+        .confirmationDialog(
+            "Clear all saved Memory Waves on this device?", isPresented: $confirmForget,
+            titleVisibility: .visible
+        ) {
             Button("Clear Memory Waves", role: .destructive, action: model.forgetMemories)
         }
     }

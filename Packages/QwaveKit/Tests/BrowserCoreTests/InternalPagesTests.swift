@@ -228,7 +228,8 @@ final class WavePageTests: XCTestCase {
     }
 
     func testDeviceStartPageEscapesLabelsAndHidesUnavailableTimeline() {
-        let html = InternalPages.startHTML(memories: [], providerLabel: "Saved pages",
+        let html = InternalPages.startHTML(
+            memories: [], providerLabel: "Saved pages",
             deviceLabel: "this iPad <only>", showsTimeline: false, prompt: "Search \"here\"")
         XCTAssertTrue(html.contains("this iPad &lt;only&gt;"))
         XCTAssertTrue(html.contains("Search &quot;here&quot;"))
