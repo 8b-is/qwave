@@ -22,6 +22,7 @@ public enum PageTranslationScript {
             out.push({id, text:value}); return budget + value.length;
           }
           globalThis.qwaveReading = {
+            documentID,
             configure(target, enabled) {
               if (targetLanguage && targetLanguage !== target) this.restore(false);
               if (automatic !== enabled) this.restore(!enabled);
