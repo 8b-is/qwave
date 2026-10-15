@@ -66,3 +66,28 @@ weak stub; linked C consumers returned ABI versions 1 and 0 respectively. Six
 invalid manifest/cache/channel selections failed without changing the archive.
 This checks build selection, not browser operation, iOS linking, model quality,
 or distribution readiness.
+
+## Host-owned model files
+
+`LocalReadingModelStore.install(modelURL:tokenizerURL:)` accepts explicitly
+selected local files for the pinned LFM2.5-1.2B-Instruct Q4_K_M model and its
+canonical tokenizer. It streams bounded chunks into a private staging directory,
+checks exact lengths and SHA-256 values, and publishes the complete pair by
+renaming that directory. The source files are untouched. Installed files are
+owner-readable, with no write bits; the managed directory is private and excluded
+from backups. The weights retain their original license and are not bundled or
+downloaded by this API.
+
+`installed()` revalidates the pair before returning its URLs. Missing files,
+changed bytes, writable assets and symbolic links cannot become a usable model.
+A damaged installation is left for explicit repair, never silently overwritten.
+Import and verification share the native utility worker, reject concurrent work,
+and check cancellation between chunks; cancelled staging files are removed. A
+cancellation racing final delivery may leave a fully verified installation for
+the next lookup. Read-only files prevent accidental edits, not a malicious writer
+with the same OS account; the host must keep assets immutable for each session.
+
+The store layer has synthetic import/corruption/cancellation tests. File-picker
+controls, application-sandbox import testing and real-model setup through the
+browser are still pending. Hosts must offer setup only when the native engine is
+available, and must never start speech merely because an import succeeded.
