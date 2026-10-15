@@ -124,7 +124,7 @@ let package = Package(
         .target(
             name: "BrowserCore",
             dependencies: [
-                "QwaveSupport", "Persistence", "Shields", "FeatureFlags", "URLIdentity",
+                "QwaveSupport", "Persistence", "Shields", "FeatureFlags", "URLIdentity", "SovereignCore",
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],
             resources: [
