@@ -2,8 +2,9 @@
 
 `SovereignCore.RustLocalReadingSession` extends the existing qwave-core C ABI for
 bounded English/Japanese translation and extractive summaries. Both app lanes
-use this same shared Swift face. This is an integration boundary under test;
-**browser controls and opt-in automatic speech are not connected yet**.
+use this same shared Swift face. Explicit native builds connect this translation
+provider to the shared reading-language bar. **Local summary controls and opt-in
+automatic speech are not connected yet**.
 
 Default public builds have no local model implementation or model files. Their
 weak C stubs report unavailable. They never produce placeholder translations or
@@ -34,7 +35,7 @@ Validation distinguishes the standalone package's unavailable behavior from an
 explicitly linked implementation. The local pilot has exercised actual CPU
 translation through C and Swift, original-sentence retention, stale-generation
 rejection and task cancellation. Device memory, broader translation/summary
-quality, model setup UI, browser DOM delivery and audio remain separate gates;
+quality, sandboxed model import, physical-device operation and audio remain separate gates;
 this code does not establish an App Store-ready feature.
 
 ## Explicit integration builds
@@ -87,7 +88,32 @@ cancellation racing final delivery may leave a fully verified installation for
 the next lookup. Read-only files prevent accidental edits, not a malicious writer
 with the same OS account; the host must keep assets immutable for each session.
 
-The store layer has synthetic import/corruption/cancellation tests. File-picker
-controls, application-sandbox import testing and real-model setup through the
-browser are still pending. Hosts must offer setup only when the native engine is
-available, and must never start speech merely because an import succeeded.
+The store layer has synthetic import/corruption/cancellation tests. The shared
+language bar offers a local file picker only when reading ABI v1 is present.
+Application-sandbox import testing and real-model setup through the browser
+remain pending. Importing files does not start speech.
+
+## Browser translation controls
+
+In an explicit native build, open Language and choose Local model setup. Select
+the matching GGUF and tokenizer together; Qwave verifies both before enabling
+translation. Normal public builds keep the existing Apple translation path.
+The native model supports English and Japanese. Other saved target languages
+remain unchanged and show an availability message instead of being overwritten.
+
+`NativeReadingRuntime` shares one lazy native session across tabs/windows. A
+controller requests at most four plain-text blocks per pass and releases deferred
+blocks for a later pass. Busy providers do not create a page queue. Existing
+site/language exceptions and automatic-translation preference still apply.
+The isolated WebKit world preserves originals, excludes form values/editors,
+and applies model output as text only when both the document and request match.
+Stop, Show original and navigation invalidate the request; disappearing chrome
+cancels work while preserving an explicit Show original choice. Failed or
+incomplete batches preserve untranslated text until an explicit retry.
+
+Real WebKit tests with a controlled provider cover inert/reversible delivery,
+draft exclusion, Stop and navigation with deliberately late output, immediate
+cancellation/retry, preferences, busy races, incomplete output and bounded
+passes. These tests do not establish model quality, file-picker behavior,
+physical-device performance, or speech readiness. Test the actual linked model
+in the application sandbox before removing the draft/integration status.

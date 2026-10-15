@@ -5,6 +5,7 @@ import NaturalLanguage
 // translationTask lifetime, with only one in-flight batch and no detached work.
 @preconcurrency import Translation
 import Persistence
+import SovereignCore
 
 public enum ReadingLanguageControls {
     public static let toggle = Notification.Name("QwaveToggleReadingLanguageControls")
@@ -20,7 +21,9 @@ public struct ReadingLanguageBar: View {
     public init(webView: WKWebView) { self.webView = webView }
     public var body: some View {
         Group {
-            if #available(macOS 15, iOS 18, *) {
+            if RustLocalReadingSession.isAvailable {
+                NativeReadingLanguageBar(webView: webView, showControls: $showControls).id(ObjectIdentifier(webView))
+            } else if #available(macOS 15, iOS 18, *) {
                 LocalReadingBar(webView: webView, showControls: $showControls).id(ObjectIdentifier(webView))
             } else if showControls {
                 LegacyReadingLanguageBar()
