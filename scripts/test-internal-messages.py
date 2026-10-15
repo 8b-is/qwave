@@ -14,12 +14,13 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--output-dir', type=Path, required=True)
 parser.add_argument('--scratch-path', type=Path, required=True)
+parser.add_argument('--native-input', action='store_true', help='Use native AppKit input in a synthetic WebKit window')
 args = parser.parse_args()
 OUT = args.output_dir.resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 REPO = Path(__file__).resolve().parent.parent
 HEAD = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
-source = (REPO / 'Tests/InternalMessageBoundary/Probe.swift').read_bytes()
+source = (REPO / 'Tests/InternalMessageBoundary' / ('NativeInputProbe.swift' if args.native_input else 'Probe.swift')).read_bytes()
 target = REPO / 'Packages/QwaveKit/Tests/EgressGuardTests/InternalMessageBoundaryTests.swift'
 requests = []
 
@@ -52,7 +53,8 @@ server = Server(('127.0.0.1', 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 command = ['xcrun', 'swift', 'test', '-c', 'release', '--package-path', str(REPO / 'Packages/QwaveKit'),
-           '--jobs', '2', '--disable-automatic-resolution', '--filter', 'InternalMessageBoundaryTests',
+           '--jobs', '2', '--disable-automatic-resolution', '--filter',
+           'InternalMessageNativeInputTests' if args.native_input else 'InternalMessageBoundaryTests',
            '--scratch-path', str(args.scratch_path.resolve())]
 env = os.environ.copy()
 env['QWAVE_PROBE_URL'] = f'http://127.0.0.1:{server.server_port}/synthetic.md'
