@@ -1236,8 +1236,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         let webView = ensureWebView(for: tab)
+        let json = await ArticleExtractor.extract(from: webView)
+        guard !Task.isCancelled else { return }
         guard
-            let json = await ArticleExtractor.extract(from: webView),
+            let json,
             let text = ArticleExtractor.text(from: json)
         else {
             summarizeBody = "Couldn't read the page."
