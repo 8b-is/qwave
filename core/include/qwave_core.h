@@ -105,6 +105,56 @@ bool qw_channel_entitled(uint8_t channel, uint64_t member_hash, uint8_t tier,
 /* Static NUL-terminated non-nagging notice for `channel`, or null. */
 const char *qw_channel_notice(uint8_t channel);
 
+/* Local reading ABI v1. Optional implementation in the SAME core archive.
+ * Version 0 means unavailable; callers must keep the original page. No cloud
+ * fallback, downloading, or speaker playback occurs at this boundary.
+ * All input/output buffers must be valid for their lengths, non-overlapping,
+ * and not concurrently mutated. UTF-8 JSON is length-delimited, not NUL-ended.
+ * Handles/generations are process-local IDs, never pointers; 0 is invalid.
+ * Run open/run off the UI thread. One session and one inference at a time.
+ */
+#define QW_READING_OK 0
+#define QW_READING_UNAVAILABLE 1
+#define QW_READING_INVALID_ARGUMENT 2
+#define QW_READING_INVALID_HANDLE 3
+#define QW_READING_BUSY 4
+#define QW_READING_CANCELLED 5
+#define QW_READING_MODEL_ERROR 6
+#define QW_READING_BUFFER_TOO_SMALL 7
+#define QW_READING_FAILED 8
+#define QW_READING_MAX_JSON 65536
+
+uint32_t qw_reading_abi_version(void);
+/* Configuration: {"model_path":"/absolute/file.gguf",
+ *                 "tokenizer_path":"/absolute/tokenizer.json"}.
+ * The optional implementation verifies its pinned assets; no caller-supplied
+ * hashes or download URLs. Host-owned model files must remain immutable.
+ * out_handle is zero on failure; success must be paired with close once. */
+uint32_t qw_reading_open(const uint8_t *config, size_t config_len,
+                         uint64_t *out_handle);
+/* Begin cancels all older generations. out_generation is zero on failure. */
+uint32_t qw_reading_begin(uint64_t handle, uint64_t *out_generation);
+/* Cancel the matching generation; 0 explicitly cancels the current one.
+ * A late cancellation for an older generation cannot cancel a new one. */
+uint32_t qw_reading_cancel(uint64_t handle, uint64_t generation);
+/* Removes the handle immediately and cancels pending/running inference.
+ * Running calls retain their session safely until they finish. */
+uint32_t qw_reading_close(uint64_t handle);
+/* Request (exactly one tagged task):
+ * {"task":"translate","request":{"source_language":"ja",
+ *   "target_language":"en","text":"..."}} -> {"text":"..."}
+ * {"task":"summarize","sentences":["..."]} -> {"sentences":["..."]}
+ * Only en/ja initially. Translation blocks <=4096 UTF-8 bytes; summary uses
+ * 1..32 sentences <=1024 bytes each. Input JSON <=QW_READING_MAX_JSON bytes.
+ * Output capacity must be >=QW_READING_MAX_JSON before inference begins.
+ * Output is written only on success, without a NUL; *written=0 on any failure.
+ * Busy returns immediately: do not enqueue retries for obsolete documents.
+ * Recheck generation AND document identity before applying text or speech.
+ * Translation is plain text, never HTML; summary sentences remain verbatim. */
+uint32_t qw_reading_run(uint64_t handle, uint64_t generation,
+                        const uint8_t *input, size_t input_len,
+                        uint8_t *output, size_t output_capacity, size_t *written);
+
 #ifdef __cplusplus
 }
 #endif
