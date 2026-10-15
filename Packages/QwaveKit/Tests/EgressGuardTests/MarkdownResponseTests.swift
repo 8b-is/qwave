@@ -105,12 +105,14 @@ final class MarkdownResponseTests: XCTestCase {
         for _ in 0..<100 {
             if let value = try? await web.evaluateJavaScript(
                 """
-                ({text: document.body?.textContent || '', origin: location.origin,
+                ({ready: document.readyState, text: document.body?.textContent || '', origin: location.origin,
                   base: document.baseURI, scriptOrigin: window.syntheticScriptOrigin || '',
                   link: document.querySelector('.md-body a')?.href || '',
                   markdown: document.querySelector('.md-body') !== null})
                 """
-            ) as? [String: Any], (value["text"] as? String)?.contains(marker) == true {
+            ) as? [String: Any], value["ready"] as? String == "complete",
+                (value["text"] as? String)?.contains(marker) == true
+            {
                 return value
             }
             try await Task.sleep(nanoseconds: 30_000_000)
