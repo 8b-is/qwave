@@ -36,3 +36,33 @@ translation through C and Swift, original-sentence retention, stale-generation
 rejection and task cancellation. Device memory, broader translation/summary
 quality, model setup UI, browser DOM delivery and audio remain separate gates;
 this code does not establish an App Store-ready feature.
+
+## Explicit integration builds
+
+Select a reviewed external integration manifest with the build setting
+`QWAVE_LOCAL_READING_MANIFEST=/absolute/path/to/integration/Cargo.toml`. It must
+produce `libqwave_core.a`, retain the existing core exports, implement reading
+ABI v1, and have a committed `Cargo.lock`. The script uses `--locked` and accepts
+this selection only in the stable channel. Model files are not bundled.
+
+The optional `QWAVE_LOCAL_READING_TARGET_DIR` chooses an absolute, separate Cargo
+cache. Otherwise, local-reading products use a `local-reading` subdirectory of
+the default Cargo target directory. A cache equal to the default core cache is
+rejected so two different manifests cannot overwrite the same named archive.
+`CARGO_TARGET_DIR`, when set, determines the default core cache; both modes copy
+the resulting architecture slices into the existing per-platform link location.
+
+Both app lanes always run the core build phase. This makes switching the
+manifest setting (including clearing it) rebuild/select the intended archive
+instead of reusing a previously linked implementation. The final per-platform
+archive is replaced only after all slices build and lipo succeeds. Keep private
+build settings outside the public project and do not replace uploaded release
+artifacts with an experimental integration build.
+
+Local validation built the unsigned Mac app for arm64 and x86_64 with an
+explicit implementation, then rebuilt the same Xcode products with the setting
+cleared. Both slices changed from the real reading export to the unavailable
+weak stub; linked C consumers returned ABI versions 1 and 0 respectively. Six
+invalid manifest/cache/channel selections failed without changing the archive.
+This checks build selection, not browser operation, iOS linking, model quality,
+or distribution readiness.
