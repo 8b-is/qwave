@@ -238,7 +238,18 @@ the Rust core's, not Swift's — on the iPhone exactly as on the Mac.
 [`8b-is/qultrakotoro`](https://github.com/8b-is/qultrakotoro) (superwhisper on
 steroids — on-device STT + an emotional QuantTern code), ported here so a
 feeling can ride the MEM8 grid through `WaveInt`'s `emotional_valence` /
-`arousal` rationals. Same gate codec as `crush-love-dev/pureQTern.rs`.
+`arousal` rationals and across the C ABI (`qw_quanttern_*`). Same gate codec as
+`crush-love-dev/pureQTern.rs`.
+
+`badge.rs` is the **sphered** witness spine (`#Commit = #ValidWitness` over the
+5-stage `<(? admit ~ transform ! verify @ attribute > commit)>` grammar from
+[`8b-is/sphered`](https://github.com/8b-is/sphered)) and the P1 channel gate
+from [docs/productization.md](docs/productization.md): `Channel::Stable` is
+unconditionally free for everyone by construction, while `Beta` and `Nightly`
+check for an active witnessed badge as an in-app support/convenience indicator
+(and otherwise return the plain one-line notice: *"nightly is a member channel —
+stable is yours, free."*). `qwave-inspect` (`cargo run --bin qwave-inspect`)
+verifies `egress`, `quanttern`, `badge`, and `scrub` directly from the CLI.
 
 The WireGuard/VPN layer (PacketTunnel, WireGuardKit + Go bridge, Zig packet
 filter, VPNKit, PostQuantum) was **removed** — a tunnel is a different layer,
@@ -352,6 +363,8 @@ Qwave.app                         AppKit shell + SwiftUI settings
     ├── phoenix.rs                  the Phoenix protocol (marine gate…verdict)
     ├── telemetry.rs                the privacy scrubber + histogram aggregator
     ├── quanttern.rs                the emotional ternary code (VAD → {−1,0,+1})
+    ├── badge.rs                    sphered witness (#Commit = #ValidWitness) + P1 gate
+    ├── bin/                        qwave-agg + qwave-inspect CLI
     └── build-apple.sh              ARCHS → cargo targets → lipo (both lanes)
 QwaveIOS.app                      SwiftUI shell, iOS 15+ (iPhone 13 minimum)
 ├── the same QwaveKit + core        one SovereignCore, one decision surface
@@ -561,6 +574,8 @@ procedure lives in [docs/RELEASING.md](docs/RELEASING.md).
 Product and engineering specs:
 
 - [Architecture](docs/ARCHITECTURE.md) — module graph, isolation, data flow
+- [Constellation wiring](docs/constellation.md) — mem|8, Phoenix, mem|16-10, quanttern, sphered, zoneInn
+- [Productization & P1 membership spine](docs/productization.md) — free MIT browser + `sphered` badge witness
 - [Security policy and threat model](SECURITY.md)
 - [What Qwave sends](docs/NETWORK.md) — the network inventory + egress allowlist
 - [VPN Stage B](docs/VPN_STAGE_B.md)
