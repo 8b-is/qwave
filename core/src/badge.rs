@@ -57,11 +57,11 @@ impl Channel {
         }
     }
 
-    const fn notice_cstr(self) -> &'static [u8] {
+    const fn notice_cstr(self) -> &'static core::ffi::CStr {
         match self {
-            Self::Stable => b"stable is yours, free.\0",
-            Self::Beta => b"beta is a member channel \xe2\x80\x94 stable is yours, free.\0",
-            Self::Nightly => b"nightly is a member channel \xe2\x80\x94 stable is yours, free.\0",
+            Self::Stable => c"stable is yours, free.",
+            Self::Beta => c"beta is a member channel — stable is yours, free.",
+            Self::Nightly => c"nightly is a member channel — stable is yours, free.",
         }
     }
 }
@@ -351,7 +351,7 @@ pub extern "C" fn qw_channel_entitled(
 #[unsafe(no_mangle)]
 pub extern "C" fn qw_channel_notice(channel: u8) -> *const c_char {
     match Channel::from_u8(channel) {
-        Some(ch) => ch.notice_cstr().as_ptr().cast::<c_char>(),
+        Some(ch) => ch.notice_cstr().as_ptr(),
         None => core::ptr::null(),
     }
 }
