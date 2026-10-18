@@ -1412,8 +1412,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
-    nonisolated func windowDidBecomeKey(_ notification: Notification) {
-        MainActor.assumeIsolated { didBecomeKey() }
+    func windowDidBecomeKey(_ notification: Notification) {
+        didBecomeKey()
     }
 
     func didBecomeKey() {
@@ -1421,8 +1421,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         browsingActivity?.becomeCurrent()
     }
 
-    nonisolated func windowDidResignKey(_ notification: Notification) {
-        MainActor.assumeIsolated { didResignKey() }
+    func windowDidResignKey(_ notification: Notification) {
+        didResignKey()
     }
 
     func didResignKey() {
@@ -1432,8 +1432,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         browsingActivity?.resignCurrent()
     }
 
-    nonisolated func windowWillClose(_ notification: Notification) {
-        MainActor.assumeIsolated { willClose() }
+    func windowWillClose(_ notification: Notification) {
+        willClose()
     }
 
     func willClose() {
@@ -1575,8 +1575,8 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let downloadsItem = NSToolbarItem.Identifier("qwave.downloads")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
-    nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        MainActor.assumeIsolated { defaultItemIdentifiers() }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        defaultItemIdentifiers()
     }
 
     func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
@@ -1586,16 +1586,16 @@ extension BrowserWindowController: NSToolbarDelegate {
         ]
     }
 
-    nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        MainActor.assumeIsolated { defaultItemIdentifiers() }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        defaultItemIdentifiers()
     }
 
-    nonisolated func toolbar(
+    func toolbar(
         _ toolbar: NSToolbar,
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        MainActor.assumeIsolated { makeToolbarItem(itemIdentifier: itemIdentifier) }
+        makeToolbarItem(itemIdentifier: itemIdentifier)
     }
 
     func makeToolbarItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {

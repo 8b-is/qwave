@@ -4,14 +4,48 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **P1 membership & `sphered` witness spine (`core/src/badge.rs`).** Implements
+  the 5-stage SpherePOP witness (`<(? admit ~ transform ! verify @ attribute > commit)>`)
+  enforcing `#Commit = #ValidWitness` (`8b-is/sphered`) and the in-app channel
+  entitlement gate from `docs/productization.md` (§4.3, §5.1–5.2). `Channel::Stable`
+  is unconditionally free for everyone by construction; `Beta` and `Nightly`
+  require an active, witnessed badge (`Supporter` €4.20/mo, `Patron` €12/mo,
+  `Team` €42/mo, or `OneOff`) and otherwise return the plain non-nagging notice
+  (`"nightly is a member channel — stable is yours, free."`). Exported across
+  the C ABI (`qw_badge_seal`, `qw_badge_verify`, `qw_channel_entitled`,
+  `qw_channel_notice`) and bridged into Swift `SovereignCore.RustCore`.
+- **`QuantTern` C ABI & Swift bridge.** Exported zero-allocation gate-coded VAD
+  byte functions (`qw_quanttern_encode`, `qw_quanttern_magnitude`,
+  `qw_quanttern_agreement`) in `core/include/qwave_core.h`, safe-fail stubs in
+  `qwave_core_stubs.c`, and Swift wrappers on `RustCore`.
+- **`qwave-inspect` CLI & integration test suite.** Added `core/src/bin/qwave-inspect.rs`
+  for command-line verification of `egress`, `quanttern`, `badge`, and `scrub`,
+  plus `core/tests/sovereign_core_integration.rs` and `core/{Makefile,rustfmt.toml,clippy.toml}`
+  (53 Rust tests green).
+
+### Fixed
+- **`qw_mem16_step_name` missing NUL terminator (`core/src/mem16.rs`).**
+  `qw_mem16_step_name` previously returned `.as_ptr()` on a Rust `&str` slice
+  from `GOVERNING_SEQUENCE_NAMES`, causing C/Swift `CStr` readers to over-read
+  adjacent string literals in `.rodata` (`"POPREFUSETRANSFORMVERIFY"`). It now
+  indexes a `CStr` literal table (`c"POP"` … `c"COLLAPSE"`), pinned by unit and
+  integration tests.
+- **macOS 26 main-actor @objc thunk crash.** App targets (`Qwave`, `QwaveIOS`,
+  `CredentialProvider`) now build in Swift 5 language mode with
+  `SWIFT_STRICT_CONCURRENCY: complete` while `QwaveKit` stays in Swift 6 mode,
+  avoiding the macOS 26 `swift_task_isMainExecutorImpl` SIGSEGV on AppKit
+  delegate callbacks.
+
 ### Changed
 - **Rust core polish + micro-optimization.** The core is now `cargo fmt`-clean,
   and the egress allowlist folds the host to lowercase with a bulk slice
   `make_ascii_lowercase` rather than a hand-rolled per-byte loop — the hot
-  decision stays allocation-free (44 core tests green).
+  decision stays allocation-free.
 - **`docs/constellation.md` wires in the near ring:** quanttern / qUltraKotoro,
-  sphered (`#Commit = #ValidWitness`), enthea (the engine door), marqant, and
-  crush-love-dev.
+  sphered + `badge.rs` (`#Commit = #ValidWitness`), `zoneInn`
+  (`zoneinn.vaked.dev` · `radio.vaked.dev`), enthea (the engine door), marqant,
+  and crush-love-dev.
 
 ## [2.0.4] — 2026-10-04
 

@@ -229,7 +229,9 @@ the Rust core's, not Swift's — on the iPhone exactly as on the Mac.
    ├── mem16.rs      governing/recovery sequences (mem|16-10 under `nightly`)
    ├── telemetry.rs  the PII scrubber + histogram aggregator (qwave-agg)
    ├── quanttern.rs  the emotional ternary code (VAD → {−1,0,+1}) → WaveInt fields
-   └── rational.rs   the MEM8 rational, reduced + checked arithmetic
+   ├── badge.rs      sphered witness (#Commit = #ValidWitness) + P1 channel gate
+   ├── rational.rs   the MEM8 rational, reduced + checked arithmetic
+   └── bin/          qwave-agg (telemetry histogram) + qwave-inspect (CLI verifier)
 ```
 
 `quanttern.rs` is the **qUltraKotoro** wire: the VAD emotional code from

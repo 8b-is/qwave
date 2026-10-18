@@ -72,26 +72,38 @@ rules: `8b-kit/docs/ADR-001-abi-contract.md`.
 | 8b-kit | `8b-is/8b-kit` — foundation blocks: kit-core, engine facade, Chez runtime, GPU ML lane, host glue |
 | iPhone lane | same core force-loaded — mem8 / Phoenix / egress on the phone, battery policy on top |
 | telemetry | `8b-is/qwave-telemetry` (private) — scrubbed JSONL + histograms |
-| quanttern | `core/src/quanttern.rs` — the emotional ternary code (sibling of `qultrakotoro` + `crush-love-dev/quanttern.rs`) |
-| sphered | `<(...)>` admissible witnessed transitions — `#Commit = #ValidWitness` |
+| quanttern | `core/src/quanttern.rs` — the emotional ternary code (sibling of `qultrakotoro` + `crush-love-dev/quanttern.rs`), exported over C ABI (`qw_quanttern_*`) |
+| sphered + badge | `core/src/badge.rs` — `<(? ~ ! @ >)>` admissible witnessed transitions (`#Commit = #ValidWitness`) + P1 membership channel gate (`Stable` unconditionally free) |
+| zoneInn | `8b-is/zoneInn` (`zoneinn.vaked.dev` · `radio.vaked.dev`) — Web & Bluetooth Radio Studio, 14 Favourite Musics Crate, and Ultrawhale NAND Oscillator Refeed |
 | enthea | the engine door — MCP servers + personas, armed by `crush-love-dev --enthea` |
 
-## The recent wire-in (2026-10-10)
+## The recent wire-in (2026-10-18)
 
 The near constellation, wired rather than copied — each points at its home repo.
 
 - **quanttern — the emotional code.** `core/src/quanttern.rs` is the VAD of
   feeling (Valence · Arousal · Dominance, each −1…+1) quantized to
-  `{−1, 0, +1}` and packed four trits per byte. The origin is
+  `{−1, 0, +1}` and packed four trits per byte, exported across the C ABI
+  (`qw_quanttern_encode`, `qw_quanttern_magnitude`, `qw_quanttern_agreement`)
+  and into Swift `SovereignCore`. The origin is
   [`qultrakotoro`](https://github.com/8b-is/qultrakotoro)
   (`Sources/QuantTern/QuantTern.swift`); the same port lives in
   [`crush-love-dev`](https://github.com/8b-is/crush-love-dev) (`quanttern.rs`).
   Three alphabets, one contract.
-- **sphered — the admissible transition.** [`8b-is/sphered`](https://github.com/8b-is/sphered),
-  the SpherePOP ASCII DSL: `?` admit · `~` transform · `!` verify · `@`
-  attribute · `>` commit, inside `<(...)>`. Its spine — `#Commit =
-  #ValidWitness`, *no state change without a witness* — is the same discipline
-  qwave's egress audit keeps: nothing asserted without evidence.
+- **sphered & P1 badge witness — the admissible transition.**
+  [`8b-is/sphered`](https://github.com/8b-is/sphered), the SpherePOP ASCII DSL:
+  `?` admit · `~` transform · `!` verify · `@` attribute · `>` commit, inside
+  `<(...)>`. `core/src/badge.rs` makes `#Commit = #ValidWitness` concrete in
+  the sovereign core (`SphereWitness`, `Badge`, `decide_channel`, and the
+  `qw_badge_*` / `qw_channel_*` C ABI), enforcing both laws from
+  `docs/productization.md`: `Stable` is unconditionally free for everyone, and
+  `Beta`/`Nightly` require an unexpired witnessed badge (or return the plain
+  one-line notice: *"nightly is a member channel — stable is yours, free."*).
+- **zoneInn — the radio & Bluetooth dial.** [`8b-is/zoneInn`](https://github.com/8b-is/zoneInn)
+  ([`zoneinn.vaked.dev`](https://zoneinn.vaked.dev) · `radio.vaked.dev`), the
+  sovereign Web Radio & Bluetooth Studio with the 14 Favourite Musics Crate,
+  live `rodio 0.23` + CoreAudio Bluetooth routing, and the 7-stage Ultrawhale
+  NAND ring oscillator feeding `peetpedro/ultrawhale-oscillator`.
 - **enthea — the engine door.** [`8b-is/enthea`](https://github.com/8b-is/enthea),
   one static Go binary: the deepsiper-enthea MCP servers and the constellation
   personas. It wires itself into a client (`enthea setup opencode`); crush gets

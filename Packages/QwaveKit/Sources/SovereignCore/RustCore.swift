@@ -1,9 +1,10 @@
 // RustCore.swift — the thin Swift face over the qwave-core C ABI.
 //
 // The real implementations live in `core/src` (zero-dependency Rust: the
-// egress allowlist, the MEM8 wave substrate, the Phoenix protocol, and the
-// telemetry scrubber). This type is only the trampoline; nothing here
-// contains a decision.
+// egress allowlist, the MEM8 wave substrate, the Phoenix protocol, the
+// telemetry scrubber, the QuantTern emotional ternary code, and the sphered
+// membership badge witness gate). This type is only the trampoline; nothing
+// here contains a decision.
 //
 // Shared by both lanes: the macOS app and the iPhone app link the same
 // staticlib and speak the same ABI through this same module (the app targets
@@ -60,6 +61,95 @@ public enum RustCore {
     /// The mem|16-10 verification gate.
     public static func mem16Verified(_ i: UInt32) -> Bool {
         qw_mem16_verified(i)
+    }
+
+    // MARK: - QuantTern (qUltraKotoro emotional ternary code)
+
+    /// Quantize `(valence, arousal, dominance)` into one gate-coded byte.
+    public static func quantternEncode(
+        valence: Float,
+        arousal: Float,
+        dominance: Float,
+        threshold: Float = 0.33
+    ) -> UInt8 {
+        qw_quanttern_encode(valence, arousal, dominance, threshold)
+    }
+
+    /// Count of non-neutral trits (`0...3`) in a gate-coded VAD byte.
+    public static func quantternMagnitude(_ packed: UInt8) -> UInt8 {
+        qw_quanttern_magnitude(packed)
+    }
+
+    /// Agreement fraction (`0.0...1.0`) between two gate-coded VAD bytes.
+    public static func quantternAgreement(_ packedA: UInt8, _ packedB: UInt8) -> Float {
+        qw_quanttern_agreement(packedA, packedB)
+    }
+
+    // MARK: - sphered badge witness & P1 channel gate
+
+    /// Release channels in Qwave (`docs/PRODUCTIZATION.md` §4.1, §5.2).
+    public enum Channel: UInt8, Sendable {
+        case stable = 0
+        case beta = 1
+        case nightly = 2
+    }
+
+    /// Membership tiers (`docs/PRODUCTIZATION.md` §3).
+    public enum Tier: UInt8, Sendable {
+        case free = 0
+        case supporter = 1
+        case patron = 2
+        case team = 3
+        case oneOff = 4
+    }
+
+    /// Compute the deterministic 64-bit witness seal for a badge tuple.
+    public static func badgeSeal(
+        memberHash: UInt64,
+        tier: Tier,
+        sinceEpoch: UInt64,
+        untilEpoch: UInt64
+    ) -> UInt64 {
+        qw_badge_seal(memberHash, tier.rawValue, sinceEpoch, untilEpoch)
+    }
+
+    /// Verify a badge's 5-stage SpherePOP witness (`#Commit = #ValidWitness`).
+    public static func badgeVerify(
+        memberHash: UInt64,
+        tier: Tier,
+        sinceEpoch: UInt64,
+        untilEpoch: UInt64,
+        witnessSeal: UInt64
+    ) -> Bool {
+        qw_badge_verify(memberHash, tier.rawValue, sinceEpoch, untilEpoch, witnessSeal)
+    }
+
+    /// Check whether `channel` is unlocked at `nowEpoch`.
+    /// `.stable` is unconditionally free for everyone (`docs/PRODUCTIZATION.md` §0).
+    public static func channelEntitled(
+        _ channel: Channel,
+        memberHash: UInt64 = 0,
+        tier: Tier = .free,
+        sinceEpoch: UInt64 = 0,
+        untilEpoch: UInt64 = 0,
+        witnessSeal: UInt64 = 0,
+        nowEpoch: UInt64 = 0
+    ) -> Bool {
+        qw_channel_entitled(
+            channel.rawValue,
+            memberHash,
+            tier.rawValue,
+            sinceEpoch,
+            untilEpoch,
+            witnessSeal,
+            nowEpoch
+        )
+    }
+
+    /// Non-nagging one-line explanation for `channel`, or nil in stub builds.
+    public static func channelNotice(_ channel: Channel) -> String? {
+        guard let cString = qw_channel_notice(channel.rawValue) else { return nil }
+        return String(cString: cString)
     }
 }
 

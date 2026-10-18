@@ -28,14 +28,26 @@ pub fn verified(step_index: u32) -> bool {
     matches!(step_index, 4 | 5)
 }
 
+/// NUL-terminated C strings for the governing sequence, matching
+/// [`GOVERNING_SEQUENCE_NAMES`] entry for entry so `qw_mem16_step_name` never
+/// hands a non-NUL-terminated Rust `&str` slice to C or Swift.
+const GOVERNING_SEQUENCE_CSTRS: [&core::ffi::CStr; 6] = [
+    c"POP",
+    c"REFUSE",
+    c"BIND",
+    c"TRANSFORM",
+    c"VERIFY",
+    c"COLLAPSE",
+];
+
 /// C ABI: the governing sequence's `i`-th step name, or null out of range.
 ///
 /// # Safety
 /// `i` may be any value; null is returned for out-of-range indices.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qw_mem16_step_name(i: u32) -> *const core::ffi::c_char {
-    match GOVERNING_SEQUENCE_NAMES.get(i as usize) {
-        Some(name) => name.as_ptr().cast(),
+    match GOVERNING_SEQUENCE_CSTRS.get(i as usize) {
+        Some(name) => name.as_ptr(),
         None => core::ptr::null(),
     }
 }
@@ -80,6 +92,17 @@ mod tests {
         assert!(!verified(2));
         assert!(!verified(3));
         assert!(!verified(9));
+    }
+
+    #[test]
+    fn c_abi_step_names_are_nul_terminated() {
+        for (i, expected) in GOVERNING_SEQUENCE_NAMES.iter().enumerate() {
+            let ptr = unsafe { qw_mem16_step_name(i as u32) };
+            assert!(!ptr.is_null());
+            let actual = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
+            assert_eq!(actual, *expected);
+        }
+        assert!(unsafe { qw_mem16_step_name(6) }.is_null());
     }
 
     #[cfg(feature = "mem16")]
