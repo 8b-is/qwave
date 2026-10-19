@@ -309,6 +309,13 @@ jobs:
       - name: Install jemalloc
         run: brew install jemalloc
 
+      # Isolate primitive URL costs on the same pinned compiler and OS.
+      # Informational only: this cannot replace or skip the threshold gate.
+      - name: Diagnose Omnibox allocations
+        continue-on-error: true
+        timeout-minutes: 3
+        run: bash scripts/diagnostics/omnibox-allocations.sh
+
       # Only mallocCountTotal is checked (deterministic per code path);
       # see Benchmarks/README.md.
       - name: Check benchmark thresholds
