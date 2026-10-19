@@ -104,7 +104,9 @@ public enum OmniboxSuggester {
             // dedup key, and building it twice cost an allocation per entry
             // on every keystroke.
             let urlString = entry.url.absoluteString
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title)
+            guard
+                let base = matchScore(
+                    trimmed, host: hostForMatching(entry.url), urlString: urlString, title: entry.title)
             else { continue }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
@@ -155,7 +157,8 @@ public enum OmniboxSuggester {
         // higher value than reloading it.
         for tab in openTabs {
             let urlString = tab.url.absoluteString
-            guard let base = matchScore(trimmed, host: tab.url.host, urlString: urlString, title: tab.title) else {
+            guard let base = matchScore(trimmed, host: hostForMatching(tab.url), urlString: urlString, title: tab.title)
+            else {
                 continue
             }
             consider(
@@ -169,7 +172,10 @@ public enum OmniboxSuggester {
         // history-only path).
         for entry in history {
             let urlString = entry.url.absoluteString
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title) else {
+            guard
+                let base = matchScore(
+                    trimmed, host: hostForMatching(entry.url), urlString: urlString, title: entry.title)
+            else {
                 continue
             }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
@@ -185,7 +191,9 @@ public enum OmniboxSuggester {
         // Bookmarks: a small bonus over a bare history match — the user chose to save them.
         for bookmark in bookmarks {
             let urlString = bookmark.url.absoluteString
-            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: urlString, title: bookmark.title)
+            guard
+                let base = matchScore(
+                    trimmed, host: hostForMatching(bookmark.url), urlString: urlString, title: bookmark.title)
             else { continue }
             consider(
                 base + 8,
@@ -272,6 +280,19 @@ public enum OmniboxSuggester {
     private enum DedupKey: Hashable {
         case url(String)
         case action(String)
+    }
+
+    /// Avoid legacy host decoding allocations for an already-plain ASCII host.
+    /// Encoded international names, percent escapes, and IPv6 zones retain the
+    /// legacy accessor so match tiers and canonical host spelling stay intact.
+    private static func hostForMatching(_ url: URL) -> String? {
+        if #available(macOS 13.0, iOS 16.0, tvOS 16.0, watchOS 9.0, *),
+            let encoded = url.host(percentEncoded: true),
+            !encoded.utf8.contains(where: { $0 == 0x25 || $0 >= 0x80 })
+        {
+            return encoded
+        }
+        return url.host
     }
 
     /// Scores a candidate (history entry, bookmark, or open tab) against the
