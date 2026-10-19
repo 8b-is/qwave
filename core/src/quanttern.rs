@@ -187,7 +187,71 @@ pub fn agreement(a: &[Trit], b: &[Trit]) -> f32 {
 }
 
 fn clamp1(x: f32) -> f32 {
-    x.max(-1.0).min(1.0)
+    x.clamp(-1.0, 1.0)
+}
+
+/// Pack a single 3-axis VAD reading into one gate-coded byte (allocation-free).
+///
+/// Layout (LSB first, 2 bits per trit):
+/// - bits `0..2`: valence (`-1 -> 0b00`, `0 -> 0b01`, `+1 -> 0b10`)
+/// - bits `2..4`: arousal
+/// - bits `4..6`: dominance
+/// - bits `6..8`: padding (`Trit::Zero` = `0b01`)
+pub fn pack_vad_byte(vad: Vad, threshold: f32) -> u8 {
+    let [v, a, d] = vad.trits(threshold);
+    v.code() | (a.code() << 2) | (d.code() << 4) | (Trit::Zero.code() << 6)
+}
+
+/// Unpack a single gate-coded VAD byte into `[valence, arousal, dominance]`.
+pub const fn unpack_vad_byte(packed: u8) -> [Trit; 3] {
+    [
+        Trit::from_code_const(packed & 0b11),
+        Trit::from_code_const((packed >> 2) & 0b11),
+        Trit::from_code_const((packed >> 4) & 0b11),
+    ]
+}
+
+impl Trit {
+    const fn from_code_const(code: u8) -> Self {
+        match code & 0b11 {
+            0b00 => Trit::Minus,
+            0b01 => Trit::Zero,
+            0b10 => Trit::Plus,
+            _ => Trit::Zero,
+        }
+    }
+}
+
+/// C ABI: quantize `(valence, arousal, dominance)` into one gate-coded byte.
+/// If `threshold <= 0.0`, [`DEFAULT_THRESHOLD`] (`0.33`) is used.
+#[unsafe(no_mangle)]
+pub extern "C" fn qw_quanttern_encode(
+    valence: f32,
+    arousal: f32,
+    dominance: f32,
+    threshold: f32,
+) -> u8 {
+    let thresh = if threshold > 0.0 {
+        threshold
+    } else {
+        DEFAULT_THRESHOLD
+    };
+    pack_vad_byte(Vad::new(valence, arousal, dominance), thresh)
+}
+
+/// C ABI: count non-neutral trits (`0..=3`) in a gate-coded VAD byte.
+#[unsafe(no_mangle)]
+pub extern "C" fn qw_quanttern_magnitude(packed: u8) -> u8 {
+    let [v, a, d] = unpack_vad_byte(packed);
+    (v != Trit::Zero) as u8 + (a != Trit::Zero) as u8 + (d != Trit::Zero) as u8
+}
+
+/// C ABI: agreement in `0.0..=1.0` between two gate-coded VAD bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn qw_quanttern_agreement(packed_a: u8, packed_b: u8) -> f32 {
+    let a = unpack_vad_byte(packed_a);
+    let b = unpack_vad_byte(packed_b);
+    agreement(&a, &b)
 }
 
 #[cfg(test)]
@@ -261,5 +325,16 @@ mod tests {
         assert_eq!(agreement(&a, &a), 1.0);
         assert!((agreement(&a, &b) - 2.0 / 3.0).abs() < 1e-6);
         assert_eq!(agreement(&[], &[]), 1.0);
+    }
+
+    #[test]
+    fn c_abi_vad_byte_matches_heap_encoder() {
+        let b = qw_quanttern_encode(0.62, -0.41, 0.10, 0.0);
+        assert_eq!(b, 0x52);
+        assert_eq!(qw_quanttern_magnitude(b), 2);
+        let neutral = qw_quanttern_encode(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(neutral, 0x55);
+        assert_eq!(qw_quanttern_magnitude(neutral), 0);
+        assert!((qw_quanttern_agreement(b, b) - 1.0).abs() < 1e-6);
     }
 }

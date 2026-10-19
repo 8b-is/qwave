@@ -29,6 +29,27 @@ final class SovereignCoreTests: XCTestCase {
         XCTAssertFalse(RustCore.mem16Verified(4))
         XCTAssertNil(RustCore.mem16StepName(4))
         XCTAssertNil(RustCore.scrubURL("https://example.com/private/path"))
+
+        // QuantTern stubs fail to neutral ("don't know" = 0x55, magnitude 0):
+        let packed = RustCore.quantternEncode(valence: 0.9, arousal: -0.9, dominance: 0.5)
+        XCTAssertEqual(packed, 0x55)
+        XCTAssertEqual(RustCore.quantternMagnitude(packed), 0)
+        XCTAssertEqual(RustCore.quantternAgreement(packed, packed), 0.0)
+
+        // Badge witness and member channels fail closed in stubs, while
+        // `.stable` remains unconditionally free (MIT constitution):
+        XCTAssertTrue(RustCore.channelEntitled(.stable))
+        XCTAssertFalse(RustCore.channelEntitled(.beta))
+        XCTAssertFalse(RustCore.channelEntitled(.nightly))
+        XCTAssertEqual(
+            RustCore.badgeSeal(memberHash: 0x8b15, tier: .supporter, sinceEpoch: 1, untilEpoch: 2),
+            0
+        )
+        XCTAssertFalse(
+            RustCore.badgeVerify(
+                memberHash: 0x8b15, tier: .supporter, sinceEpoch: 1, untilEpoch: 2, witnessSeal: 1)
+        )
+        XCTAssertNil(RustCore.channelNotice(.nightly))
     }
 
     /// The Phoenix facade over the stubs: no orchestration, no custody —

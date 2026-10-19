@@ -7,6 +7,8 @@
  *   the MEM|8 wave store
  * - the mem|16-10 governing sequence (verification gate)
  * - PII-scrubbed URL export for the debug telemetry lane
+ * - QuantTern emotional ternary code (VAD -> {-1, 0, +1} gate-coded byte)
+ * - sphered membership badge witness & channel entitlement gate
  */
 #ifndef QWAVE_CORE_H
 #define QWAVE_CORE_H
@@ -68,6 +70,40 @@ bool qw_mem16_verified(uint32_t i);
  * hash into `out` (capacity `out_len` bytes, NUL-terminated). Returns bytes
  * written excluding the NUL; 0 on failure. */
 size_t qw_telemetry_scrub_url(const char *url, char *out, size_t out_len);
+
+/* ── QuantTern (qUltraKotoro emotional ternary code) ─────────────────────── */
+
+/* Quantize (valence, arousal, dominance) in [-1, +1] to one gate-coded byte
+ * (2 bits per trit, LSB first: -1 -> 0b00, 0 -> 0b01, +1 -> 0b10).
+ * Pass threshold <= 0.0f to use the default 0.33f threshold. */
+uint8_t qw_quanttern_encode(float valence, float arousal, float dominance,
+                            float threshold);
+
+/* Count of non-neutral trits (0..3) in a gate-coded VAD byte. */
+uint8_t qw_quanttern_magnitude(uint8_t packed);
+
+/* Agreement fraction in [0.0, 1.0] across the three VAD axes. */
+float qw_quanttern_agreement(uint8_t packed_a, uint8_t packed_b);
+
+/* ── sphered badge witness & channel gate (P1 membership spine) ──────────── */
+
+/* Compute the deterministic 64-bit witness seal for a badge tuple. */
+uint64_t qw_badge_seal(uint64_t member_hash, uint8_t tier,
+                       uint64_t since_epoch, uint64_t until_epoch);
+
+/* Verify a badge's 5-stage SpherePOP witness (#Commit = #ValidWitness). */
+bool qw_badge_verify(uint64_t member_hash, uint8_t tier,
+                     uint64_t since_epoch, uint64_t until_epoch,
+                     uint64_t witness_seal);
+
+/* Check whether `channel` (0 = stable, 1 = beta, 2 = nightly) is unlocked at
+ * `now_epoch`. Channel 0 (stable) is unconditionally free for everyone. */
+bool qw_channel_entitled(uint8_t channel, uint64_t member_hash, uint8_t tier,
+                         uint64_t since_epoch, uint64_t until_epoch,
+                         uint64_t witness_seal, uint64_t now_epoch);
+
+/* Static NUL-terminated non-nagging notice for `channel`, or null. */
+const char *qw_channel_notice(uint8_t channel);
 
 #ifdef __cplusplus
 }

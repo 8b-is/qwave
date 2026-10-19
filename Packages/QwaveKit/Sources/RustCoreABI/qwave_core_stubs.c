@@ -7,8 +7,9 @@
  * defaults instead of failing with undefined symbols.
  *
  * Safety of the defaults: everything returns the "nothing permitted /
- * nothing valid / nothing stored" answer. A stub is only ever reached in a
- * process that deliberately did not link the core.
+ * nothing valid / nothing stored" answer, except `stable` (channel 0), which
+ * is unconditionally free by the MIT constitution. A stub is only ever
+ * reached in a process that deliberately did not link the core.
  */
 
 #include "qwave_core.h"
@@ -73,5 +74,70 @@ __attribute__((weak)) size_t qw_telemetry_scrub_url(const char *url, char *out,
     (void)url;
     (void)out;
     (void)out_len;
+    return 0;
+}
+
+__attribute__((weak)) uint8_t qw_quanttern_encode(float valence, float arousal,
+                                                  float dominance,
+                                                  float threshold) {
+    (void)valence;
+    (void)arousal;
+    (void)dominance;
+    (void)threshold;
+    return 0x55; /* 0b01_01_01_01: all four trits = Trit::Zero ("don't know") */
+}
+
+__attribute__((weak)) uint8_t qw_quanttern_magnitude(uint8_t packed) {
+    (void)packed;
+    return 0;
+}
+
+__attribute__((weak)) float qw_quanttern_agreement(uint8_t packed_a,
+                                                   uint8_t packed_b) {
+    (void)packed_a;
+    (void)packed_b;
+    return 0.0f;
+}
+
+__attribute__((weak)) uint64_t qw_badge_seal(uint64_t member_hash, uint8_t tier,
+                                             uint64_t since_epoch,
+                                             uint64_t until_epoch) {
+    (void)member_hash;
+    (void)tier;
+    (void)since_epoch;
+    (void)until_epoch;
+    return 0;
+}
+
+__attribute__((weak)) bool qw_badge_verify(uint64_t member_hash, uint8_t tier,
+                                           uint64_t since_epoch,
+                                           uint64_t until_epoch,
+                                           uint64_t witness_seal) {
+    (void)member_hash;
+    (void)tier;
+    (void)since_epoch;
+    (void)until_epoch;
+    (void)witness_seal;
+    return false;
+}
+
+__attribute__((weak)) bool qw_channel_entitled(uint8_t channel,
+                                               uint64_t member_hash,
+                                               uint8_t tier,
+                                               uint64_t since_epoch,
+                                               uint64_t until_epoch,
+                                               uint64_t witness_seal,
+                                               uint64_t now_epoch) {
+    (void)member_hash;
+    (void)tier;
+    (void)since_epoch;
+    (void)until_epoch;
+    (void)witness_seal;
+    (void)now_epoch;
+    return channel == 0; /* stable (0) is always free; member channels fail closed */
+}
+
+__attribute__((weak)) const char *qw_channel_notice(uint8_t channel) {
+    (void)channel;
     return 0;
 }

@@ -125,53 +125,50 @@ final class PasskeyCeremonyController: NSObject {
 
 @available(macOS 14.0, *)
 extension PasskeyCeremonyController: ASAuthorizationControllerDelegate {
-    // AuthenticationServices invokes these on the main thread.
-    nonisolated func authorizationController(
+    // AuthenticationServices invokes these on the main thread, and the class is
+    // @MainActor, so they stay main-actor methods with no re-assertion hop:
+    // both the Swift 6 thunk check and `MainActor.assumeIsolated` crash in the
+    // macOS 26 executor comparison (see AppDelegate for the full note).
+    func authorizationController(
         controller: ASAuthorizationController,
         didCompleteWithAuthorization authorization: ASAuthorization
     ) {
-        MainActor.assumeIsolated {
-            switch authorization.credential {
-            case let assertion as ASAuthorizationPlatformPublicKeyCredentialAssertion:
-                finishAssertion(
-                    .success(
-                        AssertionResult(
-                            credentialID: Base64URL.encode(assertion.credentialID),
-                            authenticatorData: Base64URL.encode(assertion.rawAuthenticatorData),
-                            signature: Base64URL.encode(assertion.signature),
-                            userHandle: assertion.userID.map(Base64URL.encode),
-                            clientDataJSON: Base64URL.encode(assertion.rawClientDataJSON)
-                        )))
-            case let registration as ASAuthorizationPlatformPublicKeyCredentialRegistration:
-                finishRegistration(
-                    .success(
-                        RegistrationResult(
-                            credentialID: Base64URL.encode(registration.credentialID),
-                            attestationObject: registration.rawAttestationObject.map(Base64URL.encode) ?? "",
-                            clientDataJSON: Base64URL.encode(registration.rawClientDataJSON)
-                        )))
-            default:
-                failAll(CeremonyError.unexpectedCredentialType)
-            }
+        switch authorization.credential {
+        case let assertion as ASAuthorizationPlatformPublicKeyCredentialAssertion:
+            finishAssertion(
+                .success(
+                    AssertionResult(
+                        credentialID: Base64URL.encode(assertion.credentialID),
+                        authenticatorData: Base64URL.encode(assertion.rawAuthenticatorData),
+                        signature: Base64URL.encode(assertion.signature),
+                        userHandle: assertion.userID.map(Base64URL.encode),
+                        clientDataJSON: Base64URL.encode(assertion.rawClientDataJSON)
+                    )))
+        case let registration as ASAuthorizationPlatformPublicKeyCredentialRegistration:
+            finishRegistration(
+                .success(
+                    RegistrationResult(
+                        credentialID: Base64URL.encode(registration.credentialID),
+                        attestationObject: registration.rawAttestationObject.map(Base64URL.encode) ?? "",
+                        clientDataJSON: Base64URL.encode(registration.rawClientDataJSON)
+                    )))
+        default:
+            failAll(CeremonyError.unexpectedCredentialType)
         }
     }
 
-    nonisolated func authorizationController(
+    func authorizationController(
         controller: ASAuthorizationController,
         didCompleteWithError error: Error
     ) {
-        MainActor.assumeIsolated {
-            log.debug("passkey ceremony failed: \(String(describing: error), privacy: .public)")
-            failAll(error)
-        }
+        log.debug("passkey ceremony failed: \(String(describing: error), privacy: .public)")
+        failAll(error)
     }
 }
 
 @available(macOS 14.0, *)
 extension PasskeyCeremonyController: ASAuthorizationControllerPresentationContextProviding {
-    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        MainActor.assumeIsolated {
-            presentationWindow ?? NSApp.keyWindow ?? NSWindow()
-        }
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        presentationWindow ?? NSApp.keyWindow ?? NSWindow()
     }
 }

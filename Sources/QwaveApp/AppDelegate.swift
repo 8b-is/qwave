@@ -32,13 +32,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Launch
 
-    /// ObjC entry points are `nonisolated` and hop explicitly: Swift 6.2's
-    /// expected-executor check for @MainActor delegate callbacks crashes in
-    /// `swift_task_isMainExecutorImpl` when the executor lookup sees garbage
-    /// (the launch crash). `MainActor.assumeIsolated` runs the body on the
-    /// main thread exactly as the callback arrived — no hop, no check.
-    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { didFinishLaunching() }
+    /// ObjC entry points are plain `@MainActor` methods and must stay that way.
+    /// AppKit already delivers these callbacks on the main thread, so no hop
+    /// is needed. Both of the explicit ways to re-assert that — the Swift 6
+    /// expected-executor thunk check and `MainActor.assumeIsolated` — funnel
+    /// into the executor comparison (`swift_task_isMainExecutorImpl` /
+    /// `SerialExecutor._isSameExecutor`) whose `swift_getObjectType` call
+    /// segfaults on macOS 26 (the launch and menu-validation crash family).
+    /// The app targets therefore build in Swift 5 language mode (project.yml),
+    /// which emits no thunk check, and no `assumeIsolated` remains.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        didFinishLaunching()
     }
 
     func didFinishLaunching() {
@@ -80,8 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         QwaveLog.browser.info("Qwave launched")
     }
 
-    nonisolated func applicationDidBecomeActive(_ notification: Notification) {
-        MainActor.assumeIsolated { didBecomeActive() }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        didBecomeActive()
     }
 
     func didBecomeActive() {
@@ -188,8 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// macOS delivers URL opens (qwave://, and http(s) when Qwave is the
     /// default browser) through this delegate method.
-    nonisolated func application(_ application: NSApplication, open urls: [URL]) {
-        MainActor.assumeIsolated { didOpen(urls) }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        didOpen(urls)
     }
 
     func didOpen(_ urls: [URL]) {
@@ -317,12 +321,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Termination
 
-    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    nonisolated func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { willTerminate() }
+    func applicationWillTerminate(_ notification: Notification) {
+        willTerminate()
     }
 
     func willTerminate() {
@@ -341,8 +345,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// being cut short leaves the previous good snapshot intact rather than a
     /// half-written file. `reply` is called on every path, including when
     /// `self` is already gone.
-    nonisolated func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        MainActor.assumeIsolated { shouldTerminate(sender) }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        shouldTerminate(sender)
     }
 
     func shouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -353,8 +357,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return .terminateLater
     }
 
-    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        MainActor.assumeIsolated { shouldHandleReopen(sender, hasVisibleWindows: flag) }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        shouldHandleReopen(sender, hasVisibleWindows: flag)
     }
 
     func shouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

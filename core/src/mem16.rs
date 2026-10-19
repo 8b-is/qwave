@@ -28,6 +28,18 @@ pub fn verified(step_index: u32) -> bool {
     matches!(step_index, 4 | 5)
 }
 
+/// NUL-terminated C strings for the governing sequence, matching
+/// [`GOVERNING_SEQUENCE_NAMES`] entry for entry so `qw_mem16_step_name` never
+/// hands a non-NUL-terminated Rust `&str` slice to C or Swift.
+const GOVERNING_SEQUENCE_CSTRS: [&core::ffi::CStr; 6] = [
+    c"POP",
+    c"REFUSE",
+    c"BIND",
+    c"TRANSFORM",
+    c"VERIFY",
+    c"COLLAPSE",
+];
+
 /// C ABI: the governing sequence's `i`-th step name, or null out of range.
 /// The returned string is NUL-terminated, immutable, and valid for the process lifetime.
 ///
@@ -35,17 +47,10 @@ pub fn verified(step_index: u32) -> bool {
 /// `i` may be any value; null is returned for out-of-range indices.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qw_mem16_step_name(i: u32) -> *const core::ffi::c_char {
-    const C_NAMES: [&core::ffi::CStr; 6] = [
-        c"POP",
-        c"REFUSE",
-        c"BIND",
-        c"TRANSFORM",
-        c"VERIFY",
-        c"COLLAPSE",
-    ];
-    C_NAMES
-        .get(i as usize)
-        .map_or(core::ptr::null(), |name| name.as_ptr())
+    match GOVERNING_SEQUENCE_CSTRS.get(i as usize) {
+        Some(name) => name.as_ptr(),
+        None => core::ptr::null(),
+    }
 }
 
 /// The verification gate, over the C ABI.
