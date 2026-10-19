@@ -347,6 +347,29 @@ final class OmniboxSuggesterParityTests: XCTestCase {
         }
     }
 
+    func testBorrowedPlainHostMatchesFoundationAndRejectsComplexAuthorities() {
+        for spelling in [
+            "https://example.com", "https://site96.example/page/499",
+            "http://www.example.com/path", "https://example.com?next=https://other.example/",
+            "https://example.com#other.example", "https://localhost/path",
+        ] {
+            let url = URL(string: spelling)!
+            let host = OmniboxSuggester.plainASCIIHTTPHost(in: url.absoluteString)
+            XCTAssertNotNil(host, spelling)
+            XCTAssertEqual(host.map(String.init), url.host, spelling)
+        }
+        for spelling in [
+            "https://user:pass@example.com/path", "https://example.com:8443/path",
+            "https://[::1]/", "https://127.0.0.1/", "https://xn--bcher-kva.example/",
+            "https://%65xample.com/", "https://foo%2Ebar.example/", "ftp://example.com/",
+            "file:///tmp/example", "/relative/path", "https://EXAMPLE.com/",
+        ] {
+            // Test the guard's conservative boundary directly; Foundation can
+            // normalize some of these spellings before the real call site.
+            XCTAssertNil(OmniboxSuggester.plainASCIIHTTPHost(in: spelling), spelling)
+        }
+    }
+
     // MARK: - Parity
 
     func testHistoryOnlyPathMatchesLegacyForEveryQuery() {

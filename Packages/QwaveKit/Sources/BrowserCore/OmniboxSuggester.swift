@@ -106,7 +106,7 @@ public enum OmniboxSuggester {
             let urlString = entry.url.absoluteString
             guard
                 let base = matchScore(
-                    trimmed, host: hostForMatching(entry.url), urlString: urlString, title: entry.title)
+                    trimmed, url: entry.url, urlString: urlString, title: entry.title)
             else { continue }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
@@ -157,7 +157,7 @@ public enum OmniboxSuggester {
         // higher value than reloading it.
         for tab in openTabs {
             let urlString = tab.url.absoluteString
-            guard let base = matchScore(trimmed, host: hostForMatching(tab.url), urlString: urlString, title: tab.title)
+            guard let base = matchScore(trimmed, url: tab.url, urlString: urlString, title: tab.title)
             else {
                 continue
             }
@@ -174,7 +174,7 @@ public enum OmniboxSuggester {
             let urlString = entry.url.absoluteString
             guard
                 let base = matchScore(
-                    trimmed, host: hostForMatching(entry.url), urlString: urlString, title: entry.title)
+                    trimmed, url: entry.url, urlString: urlString, title: entry.title)
             else {
                 continue
             }
@@ -193,7 +193,7 @@ public enum OmniboxSuggester {
             let urlString = bookmark.url.absoluteString
             guard
                 let base = matchScore(
-                    trimmed, host: hostForMatching(bookmark.url), urlString: urlString, title: bookmark.title)
+                    trimmed, url: bookmark.url, urlString: urlString, title: bookmark.title)
             else { continue }
             consider(
                 base + 8,
@@ -282,6 +282,36 @@ public enum OmniboxSuggester {
         case action(String)
     }
 
+    /// Borrow the common HTTP(S) host from Foundation's existing absolute URL
+    /// spelling. Other authorities keep Foundation's host semantics below.
+    static func plainASCIIHTTPHost(in absoluteString: String) -> Substring? {
+        let remainder: Substring
+        if absoluteString.hasPrefix("https://") {
+            remainder = absoluteString.dropFirst(8)
+        } else if absoluteString.hasPrefix("http://") {
+            remainder = absoluteString.dropFirst(7)
+        } else {
+            return nil
+        }
+        let host = remainder.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        guard let first = host.utf8.first, first >= 0x61, first <= 0x7A,
+            host.utf8.allSatisfy({
+                ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2D || $0 == 0x2E
+            }),
+            !asciiContains(host.utf8, "xn--".utf8)
+        else { return nil }
+        return host
+    }
+
+    private static func matchScore(_ query: String, url: URL, urlString: String, title: String) -> Double? {
+        if isASCIIFoldable(query), isASCIIFoldable(urlString), isASCIIFoldable(title),
+            let host = plainASCIIHTTPHost(in: urlString)
+        {
+            return asciiMatchScore(query, host: host, urlString: urlString, title: title)
+        }
+        return matchScore(query, host: hostForMatching(url), urlString: urlString, title: title)
+    }
+
     /// Avoid legacy host decoding allocations for an already-plain ASCII host.
     /// Encoded international names, percent escapes, and IPv6 zones retain the
     /// legacy accessor so match tiers and canonical host spelling stay intact.
@@ -321,8 +351,8 @@ public enum OmniboxSuggester {
     /// candidate. Those three strings were the omnibox's hottest allocation
     /// site: they were rebuilt for every history row on every keystroke, over
     /// data that had not changed.
-    private static func asciiMatchScore(
-        _ query: String, host rawHost: String, urlString rawURL: String, title rawTitle: String
+    private static func asciiMatchScore<Host: StringProtocol>(
+        _ query: String, host rawHost: Host, urlString rawURL: String, title rawTitle: String
     ) -> Double? {
         let needle = query.utf8
         let host = rawHost.utf8
