@@ -21,6 +21,11 @@ public final class NavigationCoordinator: NSObject {
     private let httpsUpgrader: HTTPSFirstUpgrader
     private let history: HistoryStore?
     private let downloads: DownloadManager
+    private let permissions: WebPermissionStore
+    private let ephemeralPermissions: WebPermissionStore
+    private weak var attachedWebView: WKWebView?
+    private(set) var internalActionGeneration = UUID()
+    private(set) var markdownRememberDocument: MarkdownRememberDocument?
 
     /// (url, activate) — open a link in a new tab in the same container.
     public var onOpenNewTab: ((URL?, Bool) -> Void)?
@@ -34,7 +39,22 @@ public final class NavigationCoordinator: NSObject {
     public var onMainFrameFinished: ((WKWebView, Tab) -> Void)?
 
     private var observations: [NSKeyValueObservation] = []
-    private let session: URLSession
+    // Test transports may replace the wire, but cannot inject shared storage.
+    var markdownProtocolClasses: [AnyClass]?
+    private struct MarkdownFetch {
+        let id: UUID
+        let tabID: UUID
+        let task: Task<(Data, URLResponse), Error>
+    }
+    private var markdownFetch: MarkdownFetch?
+    private var isDetached = false
+    private struct LocalDocumentLoad {
+        let token: String
+        let url: URL
+        let webView: ObjectIdentifier
+    }
+    private var localDocumentLoad: LocalDocumentLoad?
+    private static let localDocumentHeader = "X-Qwave-Local-Document"
 
     public init(
         tab: Tab,
@@ -42,23 +62,36 @@ public final class NavigationCoordinator: NSObject {
         httpsUpgrader: HTTPSFirstUpgrader,
         history: HistoryStore?,
         downloads: DownloadManager,
-        session: URLSession = .shared
+        permissions: WebPermissionStore = .shared
     ) {
         self.tab = tab
         self.shields = shields
         self.httpsUpgrader = httpsUpgrader
         self.history = history
         self.downloads = downloads
-        self.session = session
+        self.permissions = permissions
+        ephemeralPermissions = WebPermissionStore(invalidationSource: permissions, containerID: tab.containerID)
         super.init()
     }
 
     /// Wire this coordinator to the tab's freshly built web view.
     public func attach(to webView: WKWebView) {
+        removeInternalHandlers(from: attachedWebView)
+        internalActionGeneration = UUID()
+        markdownRememberDocument = nil
+        cancelMarkdownFetch()
+        localDocumentLoad = nil
+        isDetached = false
+        if attachedWebView !== webView { ephemeralPermissions.reset() }
+        attachedWebView = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
         webView.configuration.userContentController.add(self, name: "qwave")
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: MarkdownRememberBridge.name, contentWorld: MarkdownRememberBridge.world)
+        webView.configuration.userContentController.add(
+            self, contentWorld: MarkdownRememberBridge.world, name: MarkdownRememberBridge.name)
 
         observations = [
             webView.observe(\.title) { [weak self] webView, _ in
@@ -100,9 +133,41 @@ public final class NavigationCoordinator: NSObject {
     }
 
     public func detach() {
+        isDetached = true
+        internalActionGeneration = UUID()
+        markdownRememberDocument = nil
+        removeInternalHandlers(from: attachedWebView)
+        cancelMarkdownFetch()
+        localDocumentLoad = nil
+        attachedWebView = nil
+        ephemeralPermissions.reset()
         observations.forEach { $0.invalidate() }
         observations = []
-        tab?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+
+    }
+
+    private func removeInternalHandlers(from webView: WKWebView?) {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "qwave")
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: MarkdownRememberBridge.name, contentWorld: MarkdownRememberBridge.world)
+    }
+
+    public func captureInternalActionSource() -> InternalActionSource? {
+        guard !isDetached, let tab, let webView = attachedWebView, tab.webView === webView else { return nil }
+        return InternalActionSource(coordinator: self, tab: tab, webView: webView, generation: internalActionGeneration)
+    }
+
+    private func cancelMarkdownFetch() {
+        markdownFetch?.task.cancel()
+        markdownFetch = nil
+    }
+
+    /// Follow the actual storage lifetime, including custom nonpersistent
+    /// profiles. The shared burner profile ID is not a consent boundary.
+    func permissionStore(for webView: WKWebView) -> WebPermissionStore? {
+        guard let tab, tab.webView === webView, attachedWebView === webView else { return nil }
+        return tab.isEphemeral || !webView.configuration.websiteDataStore.isPersistent
+            ? ephemeralPermissions : permissions
     }
 }
 
@@ -136,6 +201,59 @@ extension NavigationCoordinator: WKNavigationDelegate {
             }
         #endif
 
+        // Only our one pending simulated file load may skip file resolution.
+        // Consume its nonce on the next main-frame intent, including a
+        // mismatching one; reloads/back/forward and ordinary file requests
+        // must resolve and sanitise the source again.
+        var isGeneratedLocalDocument = false
+        if navigationAction.targetFrame?.isMainFrame == true {
+            if let pending = localDocumentLoad {
+                isGeneratedLocalDocument =
+                    !isDetached && pending.url == url
+                    && pending.webView == ObjectIdentifier(webView) && tab?.webView === webView
+                    && navigationAction.navigationType == .other
+                    && navigationAction.request.value(forHTTPHeaderField: Self.localDocumentHeader) == pending.token
+            }
+            localDocumentLoad = nil
+        }
+
+        // A fragment jump keeps the same reader document and isolated
+        // listener. It must not silently disable the toolbar. Reloads still
+        // consume the old capability and resolve the document again.
+        if navigationAction.targetFrame?.isMainFrame == true, attachedWebView === webView,
+            let document = markdownRememberDocument, document.ready,
+            navigationAction.navigationType != .reload, url?.fragment != nil,
+            url?.fragment != webView.url?.fragment, document.owns(url), document.owns(webView.url)
+        {
+            internalActionGeneration = UUID()
+            decisionHandler(.allow, preferences)
+            return
+        }
+
+        // Every main-frame intent invalidates async shell work, even when a
+        // same-URL reload never changes the observable URL. Only the reader's
+        // one pending simulated intent can retain its new remember capability.
+        if navigationAction.targetFrame?.isMainFrame == true, attachedWebView === webView {
+            internalActionGeneration = UUID()
+            if var document = markdownRememberDocument,
+                document.awaitingIntent, document.url == url,
+                navigationAction.navigationType == .other,
+                navigationAction.request.value(forHTTPHeaderField: MarkdownRememberBridge.header) == document.token
+            {
+                document.awaitingIntent = false
+                markdownRememberDocument = document
+            } else {
+                markdownRememberDocument = nil
+            }
+        }
+
+        // A new main-frame intent supersedes the reader's re-fetch, even if
+        // the next navigation is later cancelled or redirected by policy.
+        // Popups and subframes do not replace this tab's document.
+        if navigationAction.targetFrame?.isMainFrame == true, tab?.webView === webView {
+            cancelMarkdownFetch()
+        }
+
         if isMainFrame, let url, url.scheme == QwaveSchemeHandler.scheme {
             preferences.allowsContentJavaScript = true
             decisionHandler(.allow, preferences)
@@ -144,6 +262,10 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
         if isMainFrame, let url, url.isFileURL {
             preferences.allowsContentJavaScript = true
+            if isGeneratedLocalDocument {
+                decisionHandler(.allow, preferences)
+                return
+            }
             switch LocalDocumentResolver.resolve(url) {
             case .file:
                 decisionHandler(.allow, preferences)
@@ -162,11 +284,17 @@ extension NavigationCoordinator: WKNavigationDelegate {
                 presentMarkdown(markdown, at: directory, trust: .compilerOutputOnly, in: webView)
             case .missing:
                 decisionHandler(.cancel, preferences)
-                webView.loadHTMLString(
+                loadGeneratedHTML(
                     InternalPages.httpErrorHTML(status: 404, host: url.lastPathComponent),
-                    baseURL: url
+                    at: url, in: webView
                 )
             }
+            return
+        }
+
+        if url?.scheme == "qwave", url?.host == "arcade" {
+            preferences.allowsContentJavaScript = true
+            decisionHandler(.allow, preferences)
             return
         }
 
@@ -195,6 +323,14 @@ extension NavigationCoordinator: WKNavigationDelegate {
             return
         }
 
+        if let request = ReadingLanguageRequest.adapted(
+            navigationAction.request, mainFrame: isMainFrame, currentURL: webView.url)
+        {
+            decisionHandler(.cancel, preferences)
+            webView.load(request)
+            return
+        }
+
         // Reconcile rule lists for the destination site, THEN allow the load.
         // On a cold launch this waits for the first rule-list compile, so a
         // network page never loads with shields on but no lists attached — the
@@ -215,7 +351,11 @@ extension NavigationCoordinator: WKNavigationDelegate {
             let url = navigationResponse.response.url
             if let url, LocalDocumentResolver.isMarkdownURL(url) || LocalDocumentResolver.isMarkdownMIME(mime) {
                 decisionHandler(.cancel)
-                Task { await self.fetchAndPresentMarkdown(url, in: webView) }
+                // Allocate the identity synchronously: a later navigation can
+                // invalidate this request before the presentation task starts.
+                if let fetch = beginMarkdownFetch(url, in: webView) {
+                    Task { await self.presentMarkdownResponse(fetch, requestedURL: url, in: webView) }
+                }
                 return
             }
             if let http = navigationResponse.response as? HTTPURLResponse,
@@ -223,9 +363,9 @@ extension NavigationCoordinator: WKNavigationDelegate {
             {
                 decisionHandler(.cancel)
                 let host = http.url.flatMap(CanonicalHost.host(of:)) ?? http.url?.host ?? ""
-                webView.loadHTMLString(
+                loadGeneratedHTML(
                     InternalPages.httpErrorHTML(status: http.statusCode, host: host),
-                    baseURL: http.url
+                    at: http.url, in: webView
                 )
                 return
             }
@@ -247,7 +387,18 @@ extension NavigationCoordinator: WKNavigationDelegate {
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let tab, let url = webView.url else { return }
+        guard !isDetached, let tab, tab.webView === webView, attachedWebView === webView,
+            let url = webView.url
+        else { return }
+        if var document = markdownRememberDocument, !document.ready, let navigation,
+            document.navigation === navigation, document.url == url, !document.awaitingIntent
+        {
+            document.ready = true
+            markdownRememberDocument = document
+            webView.evaluateJavaScript(
+                MarkdownRememberBridge.script(token: document.token), in: nil, in: MarkdownRememberBridge.world,
+                completionHandler: nil)
+        }
         httpsUpgrader.noteSuccessfulNavigation(to: url)
 
         if !tab.isEphemeral, let scheme = url.scheme, scheme == "http" || scheme == "https" {
@@ -289,6 +440,12 @@ extension NavigationCoordinator: WKNavigationDelegate {
     /// the current back/forward item — never leave the user staring at a blank
     /// tab.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if tab?.webView === webView {
+            internalActionGeneration = UUID()
+            markdownRememberDocument = nil
+            cancelMarkdownFetch()
+            localDocumentLoad = nil
+        }
         QwaveLog.browser.warning("WebContent process terminated; restoring tab")
         if let state = webView.interactionState as? Data {
             webView.interactionState = state
@@ -320,6 +477,11 @@ extension NavigationCoordinator: WKNavigationDelegate {
 
         // HTTPS-first fallback: retry the original http URL once.
         let failingURL = (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url
+        if let arcade = OfflineArcade.pageURL(error: nsError, failingURL: failingURL) {
+            webView.load(URLRequest(url: arcade))
+            onStateChange?()
+            return
+        }
         if let fallback = httpsUpgrader.fallbackURL(afterFailureOf: failingURL, errorCode: nsError.code) {
             QwaveLog.shields.info("HTTPS-first fallback to \(fallback.host ?? "?", privacy: .public)")
             webView.load(URLRequest(url: fallback))
@@ -333,11 +495,11 @@ extension NavigationCoordinator: WKNavigationDelegate {
     private func showErrorPage(in webView: WKWebView, error: NSError, url: URL?) {
         let host = url.flatMap(CanonicalHost.host(of:)) ?? url?.host ?? ""
         let html = InternalPages.connectionLostHTML(host: host, message: error.localizedDescription)
-        webView.loadHTMLString(html, baseURL: url)
+        loadGeneratedHTML(html, at: url, in: webView)
     }
 
     /// - Parameter trust: which origin the compiled page will end up in.
-    ///   `loadHTMLString(_:baseURL:)` below adopts `url`'s origin, so this is
+    ///   The HTML load below adopts `url`'s origin, so this is
     ///   the caller's answer to "would script in this document be running as
     ///   the document's own site, or as the user's `file://` origin?" — see
     ///   `MarkdownTrust` and issue #131.
@@ -348,44 +510,135 @@ extension NavigationCoordinator: WKNavigationDelegate {
         let body = MarkdownCompiler.compile(source, trust: trust)
         let html = InternalPages.markdownHTML(
             title: title, bodyHTML: body, source: source, allowRemember: tab?.isEphemeral != true)
-        webView.loadHTMLString(html, baseURL: url)
+        let document = MarkdownRememberDocument(url: url, source: source)
+        // Install before load, so the policy callback can consume its intent.
+        markdownRememberDocument = tab?.isEphemeral == true ? nil : document
+        let navigation = loadGeneratedHTML(html, at: url, in: webView, rememberToken: document.token)
+        if markdownRememberDocument?.token == document.token {
+            markdownRememberDocument?.navigation = navigation
+        }
         tab?.url = url
         tab?.title = title
         onStateChange?()
+    }
+
+    @discardableResult
+    private func loadGeneratedHTML(
+        _ html: String, at url: URL?, in webView: WKWebView, rememberToken: String? = nil
+    ) -> WKNavigation? {
+        localDocumentLoad = nil
+        guard let url else {
+            return webView.loadHTMLString(html, baseURL: nil)
+        }
+        let scheme = url.scheme?.lowercased()
+        guard url.isFileURL || scheme == "http" || scheme == "https" else {
+            return webView.loadHTMLString(html, baseURL: url)
+        }
+        // loadHTMLString synthesizes a headerless request. The normal reading
+        // language policy would replay it over the network, losing our HTML
+        // and fetching the failed URL or Markdown again. A simulated response
+        // retains the request's language policy without sending it again.
+        var request = URLRequest(url: url)
+        if url.isFileURL {
+            let token = UUID().uuidString
+            localDocumentLoad = LocalDocumentLoad(token: token, url: url, webView: ObjectIdentifier(webView))
+            // This request is simulated and never sent to the URL. The nonce
+            // distinguishes compiled/sanitised HTML from a fresh file load,
+            // which otherwise recursively resolves the same Markdown again.
+            request.setValue(token, forHTTPHeaderField: Self.localDocumentHeader)
+        }
+        if let rememberToken { request.setValue(rememberToken, forHTTPHeaderField: MarkdownRememberBridge.header) }
+        let adapted = ReadingLanguageRequest.adapted(request, mainFrame: true) ?? request
+        return webView.loadSimulatedRequest(adapted, responseHTML: html)
     }
 
     /// Re-fetches the markdown document WebKit just started loading (we
     /// cancelled that navigation in `decidePolicyFor navigationResponse`) and
     /// renders it in the reader.
     ///
-    /// The request is marked page-driven: `session` defaults to
-    /// `URLSession.shared`, which is the one session the process-wide
-    /// `URLProtocol.registerClass(EgressGuard.self)` in `main.swift` reaches,
-    /// so without the marker this fetch is checked against `EgressAllowlist` —
-    /// four hosts Qwave chose — and every `.md` URL outside them fails. The
-    /// host here is whichever one the user navigated to, and WebKit has
-    /// already fetched a response from it; the allowlist has nothing to say
-    /// about it. See `EgressGuard.markPageDriven(_:)`.
+    /// Each request uses a fresh ephemeral session seeded from this web view's
+    /// cookie store. No shared cache or credentials, and no response-cookie
+    /// writeback: the original WebKit navigation owns browser cookie updates.
+    /// The explicit page-driven marker exempts this navigated document from
+    /// EgressGuard, which is installed in the disposable session.
     ///
     /// Internal rather than private so `EgressGuardTests` can drive the real
-    /// fetch — including the real default `session` — instead of restating it.
+    /// fetch and its storage configuration instead of restating them.
     func fetchAndPresentMarkdown(_ url: URL, in webView: WKWebView) async {
+        guard let fetch = beginMarkdownFetch(url, in: webView) else { return }
+        await presentMarkdownResponse(fetch, requestedURL: url, in: webView)
+    }
+
+    private func beginMarkdownFetch(_ url: URL, in webView: WKWebView) -> MarkdownFetch? {
+        guard !isDetached, let tab, tab.webView === webView else { return nil }
+        cancelMarkdownFetch()
+        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+        let protocols = markdownProtocolClasses
+        let fetch = MarkdownFetch(
+            id: UUID(), tabID: tab.id,
+            task: Task {
+                let cookies = await cookieStore.allCookies()
+                try Task.checkCancellation()
+                return try await MarkdownDocumentLoader.fetch(url, cookies: cookies, protocols: protocols)
+            })
+        markdownFetch = fetch
+        return fetch
+    }
+
+    private func isCurrentMarkdownFetch(_ fetch: MarkdownFetch, in webView: WKWebView) -> Bool {
+        !Task.isCancelled && !isDetached && markdownFetch?.id == fetch.id
+            && tab?.id == fetch.tabID && tab?.webView === webView
+    }
+
+    private func presentMarkdownResponse(_ fetch: MarkdownFetch, requestedURL url: URL, in webView: WKWebView) async {
+        defer {
+            // An older completion must not clear the newer request's handle.
+            if markdownFetch?.id == fetch.id { markdownFetch = nil }
+        }
+        guard isCurrentMarkdownFetch(fetch, in: webView) else {
+            fetch.task.cancel()
+            return
+        }
         do {
-            let (data, _) = try await session.data(for: EgressGuard.markPageDriven(URLRequest(url: url)))
+            let task = fetch.task
+            let (data, response) = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            guard isCurrentMarkdownFetch(fetch, in: webView) else { return }
+            guard let http = response as? HTTPURLResponse,
+                let responseURL = http.url,
+                let scheme = responseURL.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                CanonicalHost.host(of: responseURL) != nil
+            else { throw URLError(.badServerResponse) }
+
+            guard (200..<300).contains(http.statusCode) else {
+                // An error body is not the Markdown document the user requested.
+                loadGeneratedHTML(
+                    InternalPages.httpErrorHTML(status: http.statusCode, host: responseURL.host ?? ""),
+                    at: responseURL, in: webView
+                )
+                tab?.url = responseURL
+                tab?.title = String(http.statusCode)
+                onStateChange?()
+                return
+            }
             let source = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            // Remote markdown renders at its own URL, so raw HTML in it runs as
-            // that site's origin and gains nothing over the site serving HTML.
-            // The `isFileURL` arm is unreachable today — file:// markdown is
-            // intercepted in `decidePolicyFor navigationAction` above — but the
-            // trust level is decided by the URL we are about to hand
-            // `loadHTMLString`, not by which caller we happen to be in.
+            // URLSession follows redirects. Raw HTML must run as the FINAL
+            // response's origin, never as the site that redirected to it.
+            // Local files use the separate compiler-only path above; a remote
+            // response cannot opt into a file or internal-page origin here.
             presentMarkdown(
-                source, at: url, trust: url.isFileURL ? .compilerOutputOnly : .rawHTMLAllowed, in: webView)
+                source, at: responseURL, trust: .rawHTMLAllowed, in: webView)
         } catch {
-            webView.loadHTMLString(
+            guard isCurrentMarkdownFetch(fetch, in: webView),
+                !(error is CancellationError), (error as NSError).code != NSURLErrorCancelled
+            else { return }
+            loadGeneratedHTML(
                 InternalPages.connectionLostHTML(
                     host: url.host ?? url.lastPathComponent, message: error.localizedDescription),
-                baseURL: url
+                at: url, in: webView
             )
         }
     }
@@ -395,22 +648,36 @@ extension NavigationCoordinator: WKScriptMessageHandler {
     public func userContentController(
         _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
     ) {
-        guard message.name == "qwave", let body = message.body as? [String: Any],
-            let type = body["type"] as? String
+        guard !isDetached, let webView = message.webView, attachedWebView === webView,
+            tab?.webView === webView, message.frameInfo.isMainFrame,
+            let body = message.body as? [String: Any]
+        else { return }
+        if message.name == MarkdownRememberBridge.name {
+            guard message.world.name == MarkdownRememberBridge.world.name,
+                tab?.isEphemeral != true, let document = markdownRememberDocument,
+                document.owns(webView.url), document.owns(message.frameInfo.request.url),
+                let action = document.action(body: body)
+            else { return }
+            onInternalAction?(action)
+            return
+        }
+        guard message.name == "qwave", message.world == .page,
+            let type = body["type"] as? String,
+            message.frameInfo.securityOrigin.protocol == QwaveSchemeHandler.scheme
         else { return }
         switch type {
         case "submit":
-            if let query = body["query"] as? String {
-                onInternalAction?(.submit(query))
-            }
-        case "remember":
-            let scope = body["scope"] as? String ?? "page"
-            let text = body["text"] as? String ?? ""
-            onInternalAction?(.remember(scope: scope, text: text))
+            guard InternalPages.isStartURL(webView.url), InternalPages.isStartURL(message.frameInfo.request.url),
+                message.frameInfo.securityOrigin.host == "start",
+                let query = body["query"] as? String, !query.isEmpty, query.count <= 4096
+            else { return }
+            onInternalAction?(.submit(query))
         case "summarize":
-            if let range = body["range"] as? String {
-                onInternalAction?(.summarize(range))
-            }
+            guard InternalPages.isTimelineURL(webView.url), InternalPages.isTimelineURL(message.frameInfo.request.url),
+                message.frameInfo.securityOrigin.host == "timeline",
+                let range = body["range"] as? String, ["today", "week", "all"].contains(range)
+            else { return }
+            onInternalAction?(.summarize(range))
         default:
             break
         }
@@ -505,11 +772,20 @@ extension NavigationCoordinator: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
+        guard let store = permissionStore(for: webView), let tab else {
+            decisionHandler(.deny); return
+        }
         WebPermissionArbiter.decideMediaCapture(
-            host: origin.host,
+            origin: WebPermissionOrigin(origin),
             type: type,
-            containerID: tab?.containerID,
-            completion: decisionHandler)
+            containerID: tab.containerID,
+            store: store
+        ) { [weak self, weak webView] decision in
+            guard let self, let webView, self.permissionStore(for: webView) === store else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(decision)
+        }
     }
 
     public func webView(
@@ -518,10 +794,19 @@ extension NavigationCoordinator: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
+        guard let store = permissionStore(for: webView), let tab else {
+            decisionHandler(.deny); return
+        }
         WebPermissionArbiter.decideGeolocation(
-            host: origin.host,
-            containerID: tab?.containerID,
-            completion: decisionHandler)
+            origin: WebPermissionOrigin(origin),
+            containerID: tab.containerID,
+            store: store
+        ) { [weak self, weak webView] decision in
+            guard let self, let webView, self.permissionStore(for: webView) === store else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(decision)
+        }
     }
 
     public func webViewDidClose(_ webView: WKWebView) {

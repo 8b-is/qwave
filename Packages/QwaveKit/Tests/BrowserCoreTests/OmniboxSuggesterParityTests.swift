@@ -292,6 +292,84 @@ final class OmniboxSuggesterParityTests: XCTestCase {
         "dotted", "i\u{0307}dotted", "\u{0130}dotted",
     ]
 
+    /// A modern encoded host can differ from the legacy host for IDNs,
+    /// percent escapes and IPv6 zone identifiers. Exercise every scoring source
+    /// independently so deduplication cannot hide a mismatched host tier.
+    func testEncodedHostsPreserveLegacyRankingAcrossSources() {
+        let spellings = [
+            "https://%65xample.com/", "https://foo%2Ebar.example/",
+            "https://foo%20bar.example/", "https://foo%25bar.example/",
+            "https://bücher.example/", "https://xn--bcher-kva.example/",
+            "https://例え.テスト/", "http://[fe80::1%25en0]/",
+            "https://[::1]/", "https://user%40name:pass@EXAMPLE.com:8080/path",
+            "//relative.example/path", "/relative/path", "file:///tmp/example",
+        ]
+        // Older supported Foundation versions reject some unusual URLs;
+        // only successfully parsed URLs can reach the production suggester.
+        let urls = spellings.compactMap { URL(string: $0) }
+        XCTAssertGreaterThanOrEqual(urls.count, 8)
+        let history = urls.enumerated().map { index, url in
+            HistoryEntry(
+                id: Int64(index), url: url, title: "", visitCount: index % 4 + 1,
+                lastVisit: now.addingTimeInterval(-Double(index) * 86_400), containerID: nil)
+        }
+        let bookmarks = urls.enumerated().map { index, url in
+            Bookmark(id: Int64(index), title: "", url: url, folder: nil, created: now)
+        }
+        let tabs = urls.enumerated().map { index, url in
+            OpenTabInfo(
+                id: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", index))!,
+                title: "", url: url)
+        }
+        let queries = [
+            "example", "foo.bar", "foo bar", "foo%bar", "%65", "xn--", "bücher",
+            "例え", "fe80::1%en0", "::1", "relative", "zzzz", "", "  EXAMPLE  ",
+        ]
+        for query in queries {
+            for limit in [0, 1, 6, 20] {
+                XCTAssertEqual(
+                    OmniboxSuggester.suggestions(for: query, history: history, now: now, limit: limit),
+                    LegacyOmniboxSuggester.suggestions(for: query, history: history, now: now, limit: limit),
+                    "history query=\(query) limit=\(limit)")
+                for (entries, saved, open) in [
+                    (history, [Bookmark](), [OpenTabInfo]()),
+                    ([HistoryEntry](), bookmarks, [OpenTabInfo]()),
+                    ([HistoryEntry](), [Bookmark](), tabs),
+                ] {
+                    XCTAssertEqual(
+                        OmniboxSuggester.onDeviceSuggestions(
+                            for: query, history: entries, bookmarks: saved, openTabs: open, now: now, limit: limit),
+                        LegacyOmniboxSuggester.onDeviceSuggestions(
+                            for: query, history: entries, bookmarks: saved, openTabs: open, now: now, limit: limit),
+                        "on-device query=\(query) limit=\(limit)")
+                }
+            }
+        }
+    }
+
+    func testBorrowedPlainHostMatchesFoundationAndRejectsComplexAuthorities() {
+        for spelling in [
+            "https://example.com", "https://site96.example/page/499",
+            "http://www.example.com/path", "https://example.com?next=https://other.example/",
+            "https://example.com#other.example", "https://localhost/path",
+        ] {
+            let url = URL(string: spelling)!
+            let host = OmniboxSuggester.plainASCIIHTTPHost(in: url.absoluteString)
+            XCTAssertNotNil(host, spelling)
+            XCTAssertEqual(host.map(String.init), url.host, spelling)
+        }
+        for spelling in [
+            "https://user:pass@example.com/path", "https://example.com:8443/path",
+            "https://[::1]/", "https://127.0.0.1/", "https://xn--bcher-kva.example/",
+            "https://%65xample.com/", "https://foo%2Ebar.example/", "ftp://example.com/",
+            "file:///tmp/example", "/relative/path", "https://EXAMPLE.com/",
+        ] {
+            // Test the guard's conservative boundary directly; Foundation can
+            // normalize some of these spellings before the real call site.
+            XCTAssertNil(OmniboxSuggester.plainASCIIHTTPHost(in: spelling), spelling)
+        }
+    }
+
     // MARK: - Parity
 
     func testHistoryOnlyPathMatchesLegacyForEveryQuery() {

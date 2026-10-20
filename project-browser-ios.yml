@@ -1,0 +1,11 @@
+# Opt-in capability configuration. Use only AFTER Apple approves the managed
+# default-browser entitlement for is.8b.q-wave and profiles are regenerated.
+# This is not the default Store build and does not claim passkey readiness.
+include: project-app-store.yml
+name: QwaveBrowserIOS
+targets:
+  QwaveIOS:
+    entitlements:
+      path: Resources/AppStore/IOSBrowser.entitlements
+      properties:
+        com.apple.developer.web-browser: true

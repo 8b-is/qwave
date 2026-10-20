@@ -7,6 +7,7 @@
 //   qwave-inspect scrub <url>
 
 use std::env;
+use std::fmt::Write;
 use std::process::ExitCode;
 
 use qwave_core::badge::{Badge, Channel, Tier, decide_channel};
@@ -44,12 +45,36 @@ fn cmd_egress(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
     let permitted = egress::permits(host);
-    println!("{{\"host\":\"{host}\",\"permitted\":{permitted}}}");
+    println!(
+        "{{\"host\":{},\"permitted\":{permitted}}}",
+        json_string(host)
+    );
     if permitted {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
+}
+
+/// Quote arbitrary input as a JSON string without changing its contents.
+fn json_string(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() + 2);
+    encoded.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => encoded.push_str("\\\""),
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            ch if ch <= '\u{1f}' => {
+                write!(encoded, "\\u{:04x}", ch as u32).expect("writing to a String cannot fail");
+            }
+            ch => encoded.push(ch),
+        }
+    }
+    encoded.push('"');
+    encoded
 }
 
 fn cmd_quanttern(args: &[String]) -> ExitCode {
@@ -173,4 +198,23 @@ fn print_usage() {
          \x20 badge <member_hash_hex> <tier> <since_epoch> <until_epoch> [now_epoch]\n\
          \x20 scrub <url>"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_string;
+
+    #[test]
+    fn json_strings_escape_quotes_backslashes_and_control_characters() {
+        assert_eq!(
+            json_string("a\"\\\n\r\t\u{0}\u{8}\u{c}\u{1f}"),
+            "\"a\\\"\\\\\\n\\r\\t\\u0000\\u0008\\u000c\\u001f\""
+        );
+    }
+
+    #[test]
+    fn json_strings_preserve_unicode_and_empty_input() {
+        assert_eq!(json_string("東京.example"), "\"東京.example\"");
+        assert_eq!(json_string(""), "\"\"");
+    }
 }

@@ -66,6 +66,13 @@ public final class QwaveSchemeHandler: NSObject, WKURLSchemeHandler {
         let host = url.host ?? ""
         let path = url.path
 
+        if host == "arcade" {
+            let retry = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "retry" })?.value
+            finish(urlSchemeTask, url: url, mime: "text/html", body: Data(OfflineArcade.html(retry: retry).utf8))
+            return
+        }
+
         if host == "start" || (host.isEmpty && path == "/start") {
             finish(urlSchemeTask, url: url, mime: "text/html", body: Data(QwaveInternal.startPageHTML().utf8))
             return

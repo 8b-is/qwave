@@ -296,6 +296,44 @@ final class NibbleVaultResealTests: XCTestCase {
             "forget-all left a stranded re-seal temp file behind")
     }
 
+    func testDeleteAllReportsFileRemovalFailureAndCanRetry() async throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let file = try writeLegacyPlaintext()
+        let vault = try NibbleVault(directory: directory, key: key)
+        let folder = file.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        do {
+            try await vault.deleteAll()
+            XCTFail("Deletion must report a non-writable parent directory")
+        } catch {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        try await vault.deleteAll()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testDeleteAllReportsStrandedTempRemovalFailure() async throws {
+        let key = try MemoryCipher.loadOrCreateKey(in: InMemorySecretStore())
+        let vault = try NibbleVault(directory: directory, key: key)
+        let folder = directory.appendingPathComponent("blocked", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("memory.md.reseal-tmp")
+        try Data("synthetic sealed remnant".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        do {
+            try await vault.deleteAll()
+            XCTFail("Stranded memory removal failure must propagate")
+        } catch {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        try await vault.deleteAll()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     /// A file sealed under a *different* key is not ours to rewrite. It must be
     /// counted and left alone, never deleted and never re-sealed from a decode
     /// that did not happen.

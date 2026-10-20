@@ -3,7 +3,8 @@ import Foundation
 /// A persistent, container-isolated SQLite store for website favicons.
 ///
 /// Stores compressed image data (PNG/WebP) keyed by `(host, container_id)`.
-/// Non-persistent/ephemeral containers are kept in-memory and never written to disk.
+/// Callers must exclude private/nonpersistent requests: this store persists
+/// every entry it receives and does not infer privacy from container IDs.
 public actor FaviconStore {
     private let database: SQLiteDatabase
 

@@ -250,8 +250,10 @@ final class ExtensionStorageServiceTests: XCTestCase {
 @MainActor
 private final class RecordingResponder: ExtensionMessageResponding {
     var responses: [(id: Int, success: Bool, value: Any?)] = []
+    var onResponse: (() -> Void)?
     func respond(id: Int, success: Bool, value: Any?) {
         responses.append((id, success, value))
+        onResponse?()
     }
 }
 
@@ -348,10 +350,11 @@ final class ExtensionMessageRouterTests: XCTestCase {
 
     func testRuntimeSendMessageWithDelayedReply() async throws {
         let (router, responder, extensionID) = try makeRouter()
+        let responseReceived = expectation(description: "delayed runtime reply received")
+        responder.onResponse = { responseReceived.fulfill() }
         router.runtimeMessageHandler = { payload, reply in
             XCTAssertEqual(payload as? String, "ping")
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 10_000_000)
                 reply("pong")
             }
         }
@@ -360,7 +363,7 @@ final class ExtensionMessageRouterTests: XCTestCase {
             ExtensionBridgeCall(id: 10, method: "runtime.sendMessage", args: ["ping"]), extensionID: extensionID)
         XCTAssertTrue(responder.responses.isEmpty)
 
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await fulfillment(of: [responseReceived], timeout: 2)
         XCTAssertEqual(responder.responses.count, 1)
         XCTAssertEqual(responder.responses.first?.id, 10)
         XCTAssertEqual(responder.responses.first?.value as? String, "pong")
@@ -431,9 +434,10 @@ final class ExtensionMessageRouterTests: XCTestCase {
     func testAsyncReplyGoesToTheCallingSurface() async throws {
         let (router, sharedSlot, extensionID) = try makeRouter()
         let callingSurface = RecordingResponder()
+        let responseReceived = expectation(description: "calling surface reply received")
+        callingSurface.onResponse = { responseReceived.fulfill() }
         router.runtimeMessageHandler = { _, reply in
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 10_000_000)
                 reply("pong")
             }
         }
@@ -442,7 +446,10 @@ final class ExtensionMessageRouterTests: XCTestCase {
             extensionID: extensionID,
             replyTo: callingSurface
         )
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(callingSurface.responses.isEmpty)
+        await fulfillment(of: [responseReceived], timeout: 2)
+        XCTAssertEqual(callingSurface.responses.count, 1)
+        XCTAssertEqual(callingSurface.responses.first?.id, 12)
         XCTAssertEqual(callingSurface.responses.first?.value as? String, "pong")
         XCTAssertTrue(sharedSlot.responses.isEmpty)
     }

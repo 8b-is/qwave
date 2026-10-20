@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -56,7 +56,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -97,7 +97,7 @@ jobs:
     timeout-minutes: 45
     needs: unit-tests
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -127,16 +127,11 @@ jobs:
         # the preBuildScript requires the matching rust std for each.
         run: |
           brew install xcodegen xcbeautify rustup
+          rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
-      - name: Cache SPM checkouts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/QwaveKit/Package.swift') }}
-          restore-keys: |
-            spm-${{ runner.os }}-
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix rustup)/bin/cargo" --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
@@ -149,6 +144,7 @@ jobs:
             -scheme Qwave \
             -configuration Release \
             -destination 'platform=macOS' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
             build | xcbeautify
@@ -185,7 +181,7 @@ jobs:
 
       - name: Upload app artifact
         if: steps.locate.outputs.app_path != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: Qwave-v${{ steps.locate.outputs.version }}-unsigned
           path: Qwave-v${{ steps.locate.outputs.version }}-unsigned.zip
@@ -196,23 +192,41 @@ jobs:
   # signing team, which lives in the release lane, not CI.
   ios-build:
     name: Build QwaveIOS.app (unsigned, iOS Simulator)
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     needs: unit-tests
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.4.app
+        run: |
+          # GitHub-hosted macos-15 defaults to Xcode 16.4; select 26.3
+          # explicitly. Assert the pin instead of globbing "latest" so an
+          # image update cannot change build behaviour without a commit.
+          if ls -d /Applications/Xcode_26.3*.app >/dev/null 2>&1; then
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_26.3*.app | sort -V | tail -n1)/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcodebuild -version | grep -q "Xcode 26.3" || {
+            echo "❌ CI image drifted from pinned Xcode 26.3 — update the pin deliberately"
+            exit 1
+          }
+          # CI validates Swift 6 language-mode gates with Xcode 26.3's Swift
+          # 6.2 compiler; local migration diagnostics use Swift 6.3.1.
+          swift --version
+          swift --version | grep -Eq 'Apple Swift version 6\.2(\.| )' || {
+            echo "❌ Xcode 26.3 must provide a Swift 6.2 compiler"
+            exit 1
+          }
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify
-
-      - name: Cache SPM checkouts
-        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4
-        with:
-          path: Packages/QwaveKit/.build
-          key: ${{ runner.os }}-spm-qwavekit-ios-${{ hashFiles('Packages/QwaveKit/Package.resolved') }}
+        run: |
+          brew install xcodegen xcbeautify rustup
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios-sim
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix rustup)/bin/cargo" --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
@@ -225,6 +239,7 @@ jobs:
             -scheme QwaveIOS \
             -configuration Release \
             -destination 'generic/platform=iOS Simulator' \
+            QWAVE_RUST_BIN="$(brew --prefix rustup)/bin" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY= \
             IPHONEOS_DEPLOYMENT_TARGET=15.0 \
@@ -240,7 +255,7 @@ jobs:
     needs: unit-tests
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -270,7 +285,7 @@ jobs:
     timeout-minutes: 30
     needs: unit-tests
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Pin Xcode
         run: |
@@ -294,6 +309,13 @@ jobs:
       - name: Install jemalloc
         run: brew install jemalloc
 
+      # Isolate primitive URL costs on the same pinned compiler and OS.
+      # Informational only: this cannot replace or skip the threshold gate.
+      - name: Diagnose Omnibox allocations
+        continue-on-error: true
+        timeout-minutes: 3
+        run: bash scripts/diagnostics/omnibox-allocations.sh
+
       # Only mallocCountTotal is checked (deterministic per code path);
       # see Benchmarks/README.md.
       - name: Check benchmark thresholds
@@ -316,7 +338,7 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Select newest Xcode
         run: |
@@ -347,7 +369,7 @@ jobs:
     timeout-minutes: 5
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Ensure node
         run: command -v node >/dev/null 2>&1 || brew install node

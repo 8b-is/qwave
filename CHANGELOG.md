@@ -47,6 +47,24 @@ All notable changes to Qwave will be documented in this file.
   (`zoneinn.vaked.dev` · `radio.vaked.dev`), enthea (the engine door), marqant,
   and crush-love-dev.
 
+## [2.0.7] — 2026-10-15
+
+### Added
+- Native iPad layouts and accessible Memory Wave toolbar controls.
+- Preferred reading languages, reversible on-device page translation, and an offline arcade.
+- Shared Mac/iPhone App Store configurations and clearer platform-specific privacy documentation.
+
+### Fixed
+- Isolate permission decisions by origin, container, and private-tab lifetime.
+- Keep private favicons and Markdown refetches out of shared persistent caches.
+- Reject stale or untrusted internal-page messages and stale Markdown navigation results.
+- Respect live Reduce Motion changes and redraw static Memory Wave scenes after resizing.
+- Report incomplete Memory Wave deletion and preserve collaborator credits.
+
+### Build
+- Use organization-approved GitHub actions and standard macOS runners for CI.
+- Run optional paid AI review only through an explicit manual dispatch.
+
 ## [2.0.4] — 2026-10-04
 
 ### Fixed

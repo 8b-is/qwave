@@ -91,7 +91,10 @@ public enum InternalPages {
     public static func startHTML(
         memories: [StartMemoryChip],
         providerLabel: String,
-        rememberEverything: Bool = false
+        rememberEverything: Bool = false,
+        deviceLabel: String = "this Mac only",
+        showsTimeline: Bool = true,
+        prompt: String = "Ask, search, or enter a path…"
     ) -> String {
         let chips: String
         if memories.isEmpty {
@@ -115,12 +118,12 @@ public enum InternalPages {
                     <h1>qwave</h1>
                     <p class="lead">Memory Wave</p>
                     <form id="start-form" autocomplete="off">
-                      <input id="start-q" type="text" placeholder="Ask, search, or enter a path…" autofocus>
+                      <input id="start-q" type="text" placeholder="\(MarkdownCompiler.escape(prompt))">
                       <button class="escape-btn" type="submit">Initialize</button>
                     </form>
                     <div class="chips">\(chips)</div>
-                    <p class="foot">\(MarkdownCompiler.escape(providerLabel)) · \(mode) · this Mac only</p>
-                    <a class="escape-btn" href="qwave://timeline">Open timeline</a>
+                    <p class="foot">\(MarkdownCompiler.escape(providerLabel)) · \(mode) · \(MarkdownCompiler.escape(deviceLabel))</p>
+                    \(showsTimeline ? "<a class=\"escape-btn\" href=\"qwave://timeline\">Open timeline</a>" : "")
                   </div>
                 </div>
                 """,
@@ -322,7 +325,7 @@ public enum InternalPages {
                 </div>
                 """,
             extraHead: markdownHead,
-            extraScripts: markdownScript,
+            extraScripts: "",
             markdownSource: source
         )
     }
@@ -397,20 +400,21 @@ public enum InternalPages {
 
     private static let startExtraCSS = """
         .glass {
-            background: linear-gradient(165deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.07) 38%, rgba(8,22,32,0.32) 100%);
-            backdrop-filter: blur(42px) saturate(190%);
-            -webkit-backdrop-filter: blur(42px) saturate(190%);
+            background: linear-gradient(165deg, rgba(18,35,45,0.92) 0%, rgba(9,24,34,0.90) 38%, rgba(4,14,23,0.94) 100%);
+            backdrop-filter: blur(28px) saturate(110%) brightness(65%);
+            -webkit-backdrop-filter: blur(28px) saturate(110%) brightness(65%);
             border: 1px solid rgba(255,255,255,0.32);
             box-shadow: 0 24px 80px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -1px 0 rgba(255,255,255,0.06);
             border-radius: 28px;
         }
         .slate { pointer-events: auto; padding: 36px 40px 32px; margin: 0 auto; }
-        .start-slate { max-width: 720px; }
-        .overlay.interactive { width: min(880px, 94vw); }
+        .start-slate { max-width: 720px; max-height: 82vh; overflow: auto; box-sizing: border-box; }
+        .overlay.interactive { width: min(880px, 94vw); mix-blend-mode: normal; color: #edf6f8; }
+        .slate :is(a, button, input):focus-visible { outline: 2px solid #a5efff; outline-offset: 3px; }
         h1 { font-size: clamp(3.2rem, 11vw, 7rem); }
         #start-form { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
         #start-q {
-            min-width: min(420px, 80vw); padding: 14px 18px; font: inherit; font-size: 1.05rem;
+            min-width: 0; width: min(420px, 100%); box-sizing: border-box; padding: 14px 18px; font: inherit; font-size: 1.05rem;
             color: #fff; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.35);
             backdrop-filter: blur(12px); letter-spacing: 1px; border-radius: 14px;
         }
@@ -444,10 +448,10 @@ public enum InternalPages {
         .row {
             display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; margin: 0 0 6px;
             color: inherit; text-decoration: none; border-radius: 12px;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(24,43,55,0.88); border: 1px solid rgba(255,255,255,0.18);
             font-family: ui-sans-serif, system-ui, sans-serif; text-transform: none; letter-spacing: 0;
         }
-        .row:hover { background: rgba(255,255,255,0.14); }
+        .row:hover { background: rgba(38,61,75,0.96); }
         .row-title { font-weight: 600; }
         .row-detail { font-size: 0.82rem; opacity: 0.7; }
         """
@@ -524,25 +528,4 @@ public enum InternalPages {
         .md-body .math-display { margin: 1em 0; overflow-x: auto; }
         """
 
-    private static let markdownScript = """
-        (function () {
-          function send(payload) {
-            try { window.webkit.messageHandlers.qwave.postMessage(payload); } catch (e) {}
-          }
-          document.querySelectorAll('[data-remember]').forEach(function (el) {
-            el.addEventListener('click', function () {
-              const scope = el.getAttribute('data-remember') || 'page';
-              let text = '';
-              if (scope === 'selection') {
-                text = window.getSelection() ? window.getSelection().toString() : '';
-              }
-              if (!text) {
-                text = \(markdownSourceExpression)
-                  || (document.querySelector('.md-body') || document.body).innerText;
-              }
-              send({ type: 'remember', scope: scope, text: text });
-            });
-          });
-        })();
-        """
 }

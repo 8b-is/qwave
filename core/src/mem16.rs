@@ -41,6 +41,7 @@ const GOVERNING_SEQUENCE_CSTRS: [&core::ffi::CStr; 6] = [
 ];
 
 /// C ABI: the governing sequence's `i`-th step name, or null out of range.
+/// The returned string is NUL-terminated, immutable, and valid for the process lifetime.
 ///
 /// # Safety
 /// `i` may be any value; null is returned for out-of-range indices.
@@ -95,14 +96,17 @@ mod tests {
     }
 
     #[test]
-    fn c_abi_step_names_are_nul_terminated() {
+    fn c_step_names_are_terminated_and_match_the_sequence() {
         for (i, expected) in GOVERNING_SEQUENCE_NAMES.iter().enumerate() {
+            // SAFETY: the API now returns process-lifetime C string literals.
             let ptr = unsafe { qw_mem16_step_name(i as u32) };
             assert!(!ptr.is_null());
-            let actual = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
-            assert_eq!(actual, *expected);
+            let name = unsafe { core::ffi::CStr::from_ptr(ptr) };
+            assert_eq!(name.to_str().unwrap(), *expected);
+            assert_eq!(name.to_bytes_with_nul().last(), Some(&0));
         }
         assert!(unsafe { qw_mem16_step_name(6) }.is_null());
+        assert!(unsafe { qw_mem16_step_name(u32::MAX) }.is_null());
     }
 
     #[cfg(feature = "mem16")]

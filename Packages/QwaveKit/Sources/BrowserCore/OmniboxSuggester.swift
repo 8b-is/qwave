@@ -104,7 +104,9 @@ public enum OmniboxSuggester {
             // dedup key, and building it twice cost an allocation per entry
             // on every keystroke.
             let urlString = entry.url.absoluteString
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title)
+            guard
+                let base = matchScore(
+                    trimmed, url: entry.url, urlString: urlString, title: entry.title)
             else { continue }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
             let age = now.timeIntervalSince(entry.lastVisit)
@@ -155,7 +157,8 @@ public enum OmniboxSuggester {
         // higher value than reloading it.
         for tab in openTabs {
             let urlString = tab.url.absoluteString
-            guard let base = matchScore(trimmed, host: tab.url.host, urlString: urlString, title: tab.title) else {
+            guard let base = matchScore(trimmed, url: tab.url, urlString: urlString, title: tab.title)
+            else {
                 continue
             }
             consider(
@@ -169,7 +172,10 @@ public enum OmniboxSuggester {
         // history-only path).
         for entry in history {
             let urlString = entry.url.absoluteString
-            guard let base = matchScore(trimmed, host: entry.url.host, urlString: urlString, title: entry.title) else {
+            guard
+                let base = matchScore(
+                    trimmed, url: entry.url, urlString: urlString, title: entry.title)
+            else {
                 continue
             }
             let frequency = 5.0 * log2(Double(entry.visitCount) + 1)
@@ -185,7 +191,9 @@ public enum OmniboxSuggester {
         // Bookmarks: a small bonus over a bare history match — the user chose to save them.
         for bookmark in bookmarks {
             let urlString = bookmark.url.absoluteString
-            guard let base = matchScore(trimmed, host: bookmark.url.host, urlString: urlString, title: bookmark.title)
+            guard
+                let base = matchScore(
+                    trimmed, url: bookmark.url, urlString: urlString, title: bookmark.title)
             else { continue }
             consider(
                 base + 8,
@@ -274,6 +282,49 @@ public enum OmniboxSuggester {
         case action(String)
     }
 
+    /// Borrow the common HTTP(S) host from Foundation's existing absolute URL
+    /// spelling. Other authorities keep Foundation's host semantics below.
+    static func plainASCIIHTTPHost(in absoluteString: String) -> Substring? {
+        let remainder: Substring
+        if absoluteString.hasPrefix("https://") {
+            remainder = absoluteString.dropFirst(8)
+        } else if absoluteString.hasPrefix("http://") {
+            remainder = absoluteString.dropFirst(7)
+        } else {
+            return nil
+        }
+        let host = remainder.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        guard let first = host.utf8.first, first >= 0x61, first <= 0x7A,
+            host.utf8.allSatisfy({
+                ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2D || $0 == 0x2E
+            }),
+            !asciiContains(host.utf8, "xn--".utf8)
+        else { return nil }
+        return host
+    }
+
+    private static func matchScore(_ query: String, url: URL, urlString: String, title: String) -> Double? {
+        if isASCIIFoldable(query), isASCIIFoldable(urlString), isASCIIFoldable(title),
+            let host = plainASCIIHTTPHost(in: urlString)
+        {
+            return asciiMatchScore(query, host: host, urlString: urlString, title: title)
+        }
+        return matchScore(query, host: hostForMatching(url), urlString: urlString, title: title)
+    }
+
+    /// Avoid legacy host decoding allocations for an already-plain ASCII host.
+    /// Encoded international names, percent escapes, and IPv6 zones retain the
+    /// legacy accessor so match tiers and canonical host spelling stay intact.
+    private static func hostForMatching(_ url: URL) -> String? {
+        if #available(macOS 13.0, iOS 16.0, tvOS 16.0, watchOS 9.0, *),
+            let encoded = url.host(percentEncoded: true),
+            !encoded.utf8.contains(where: { $0 == 0x25 || $0 >= 0x80 })
+        {
+            return encoded
+        }
+        return url.host
+    }
+
     /// Scores a candidate (history entry, bookmark, or open tab) against the
     /// query. Higher is a better match; nil means no match at all.
     ///
@@ -300,8 +351,8 @@ public enum OmniboxSuggester {
     /// candidate. Those three strings were the omnibox's hottest allocation
     /// site: they were rebuilt for every history row on every keystroke, over
     /// data that had not changed.
-    private static func asciiMatchScore(
-        _ query: String, host rawHost: String, urlString rawURL: String, title rawTitle: String
+    private static func asciiMatchScore<Host: StringProtocol>(
+        _ query: String, host rawHost: Host, urlString rawURL: String, title rawTitle: String
     ) -> Double? {
         let needle = query.utf8
         let host = rawHost.utf8

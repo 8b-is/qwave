@@ -78,10 +78,10 @@ targets:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
         QWAVE_CHANNEL: $(QWAVE_CHANNEL)
-        CFBundleShortVersionString: "2.0.4"
+        CFBundleShortVersionString: "2.0.7"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "20004"
+        CFBundleVersion: "20007"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -141,6 +141,22 @@ targets:
         keychain-access-groups:
           - $(TeamIdentifierPrefix)is.8b.qwave.shared
 
+  # AppKit regression checks compile the actual tab strip without starting a
+  # browser session or accessing the user's persisted browsing state.
+  QwaveTabBarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Sources/QwaveApp/TabBarView.swift
+      - path: Tests/QwaveTabBarTests
+    dependencies:
+      - package: QwaveKit
+        product: QwaveKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.qwave.tabbar-tests
+
   # Read-only MCP server over Qwave's persisted state, spoken over stdio.
   #
   # Deliberately NOT a dependency of the Qwave app and NOT embedded in its
@@ -182,8 +198,8 @@ targets:
       properties:
         CFBundleName: CredentialProvider
         CFBundleDisplayName: Qwave Passwords
-        CFBundleShortVersionString: "2.0.4"
-        CFBundleVersion: "20004"
+        CFBundleShortVersionString: "2.0.7"
+        CFBundleVersion: "20007"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
@@ -237,8 +253,8 @@ targets:
         # weak stubs at link time.
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)"
         OTHER_LDFLAGS: "$(inherited) -force_load $(SRCROOT)/core/target/apple/$(PLATFORM_NAME)/libqwave_core.a"
-        GENERATE_INFOPLIST_FILE: YES
-        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
@@ -249,11 +265,37 @@ targets:
     info:
       path: Resources/QwaveIOS/Info.plist
       properties:
-        CFBundleShortVersionString: "2.0.4"
-        CFBundleVersion: "20004"
+        CFBundleShortVersionString: "2.0.7"
+        CFBundleVersion: "20007"
         LSRequiresIPhoneOS: true
+        # Required for Apple-managed default-browser eligibility. The managed
+        # entitlement is enabled separately after Apple approves the request.
+        CFBundleURLTypes:
+          - CFBundleURLName: is.8b.qwave.ios.web
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [http, https]
+        CFBundleDisplayName: Qwave
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
 
 schemes:
+  QwaveTabBarTests:
+    build:
+      targets:
+        QwaveTabBarTests: [test]
+    test:
+      config: Debug
+      targets:
+        - QwaveTabBarTests
   Qwave:
     build:
       targets:

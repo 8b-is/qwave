@@ -179,6 +179,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         window?.addTitlebarAccessoryViewController(accessory)
     }
 
+    private let readingLanguageHost = NSHostingView(rootView: AnyView(EmptyView()))
+
     private func setupContent() {
         guard let contentView = window?.contentView else { return }
 
@@ -186,7 +188,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         findBar.translatesAutoresizingMaskIntoConstraints = false
         containerView.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [findBar, containerView])
+        let stack = NSStackView(views: [findBar, readingLanguageHost, containerView])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.distribution = .fill
@@ -431,8 +433,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             self?.setChromeNeedsRefresh()
             self?.onSessionChange?()
         }
-        coordinator.onInternalAction = { [weak self] action in
-            self?.handleInternalAction(action)
+        coordinator.onInternalAction = { [weak self, weak coordinator] action in
+            guard let self, let source = coordinator?.captureInternalActionSource(),
+                source.isCurrent(selectedTab: self.tabManager.selectedTab)
+            else { return }
+            self.handleInternalAction(action, source: source)
         }
         coordinator.onMainFrameFinished = { [weak self] webView, finishedTab in
             self?.autoRememberIfNeeded(webView: webView, tab: finishedTab)
@@ -442,7 +447,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             self.faviconLoader.load(
                 iconURL: iconURL,
                 pageHost: tab.url.flatMap(CanonicalHost.host(of:)),
-                containerID: tab.containerID
+                containerID: tab.containerID,
+                cachePolicy: self.faviconCachePolicy(for: tab)
             ) { [weak self, weak tab] image in
                 guard let image, let tab else { return }
                 tab.favicon = image
@@ -477,6 +483,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func faviconCachePolicy(for tab: BrowserCore.Tab) -> FaviconLoader.CachePolicy {
+        FaviconLoader.CachePolicy(
+            isPrivateWindow: isPrivate,
+            isEphemeralTab: tab.isEphemeral,
+            isEphemeralContainer: environment.containers.profile(withID: tab.containerID)?.isEphemeral == true,
+            dataStoreIsPersistent: tab.webView?.configuration.websiteDataStore.isPersistent
+        )
+    }
+
     // MARK: - Rendering
 
     /// Builds display models for a set of tabs, shared by the horizontal strip
@@ -493,7 +508,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 containerColorHex: environment.containers.profile(withID: tab.containerID)?.colorHex,
                 favicon: tab.favicon
                     ?? faviconLoader.cachedIcon(
-                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID)
+                        forHost: tab.url.flatMap(CanonicalHost.host(of:)), containerID: tab.containerID,
+                        cachePolicy: faviconCachePolicy(for: tab))
             )
         }
     }
@@ -511,6 +527,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         if let selected = tabManager.selectedTab {
             let webView = ensureWebView(for: selected)
             containerView.show(webView)
+            readingLanguageHost.rootView = AnyView(ReadingLanguageBar(webView: webView))
         }
         refreshChromeState()
     }
@@ -660,6 +677,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(containerView)
     }
 
+    @objc private func toggleReadingLanguage(_ sender: Any?) {
+        guard let tab = tabManager.selectedTab else { return }
+        ReadingLanguageControls.show(for: ensureWebView(for: tab))
+    }
+
     // MARK: - Menu / toolbar actions
 
     @objc func newTab(_ sender: Any?) { appendFreshTab(activate: true) }
@@ -780,21 +802,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         Task { await rememberCurrentSelection() }
     }
 
-    private func handleInternalAction(_ action: QwaveInternalAction) {
+    private func handleInternalAction(_ action: QwaveInternalAction, source: InternalActionSource) {
+        guard source.isCurrent(selectedTab: tabManager.selectedTab), let webView = source.webView else { return }
         switch action {
         case .submit(let query):
             let parsed = OmniboxParser.parse(query)
             switch parsed {
             case .url(let url):
-                guard let selected = tabManager.selectedTab else { return }
-                ensureWebView(for: selected).load(URLRequest(url: url))
+                webView.load(URLRequest(url: url))
             case .search(let text):
-                Task { await askStartQuery(text) }
+                Task { await askStartQuery(text, source: source) }
             }
         case .remember(let scope, let text):
-            Task { await rememberText(text, scope: scope) }
+            Task { await rememberText(text, scope: scope, source: source) }
         case .summarize(let range):
-            Task { await summarizeTimeline(range) }
+            Task { await summarizeTimeline(range, source: source) }
         }
     }
 
@@ -842,7 +864,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func summarizeTimeline(_ raw: String) async {
+    private func summarizeTimeline(_ raw: String, source: InternalActionSource) async {
+        guard source.isCurrent(selectedTab: tabManager.selectedTab), let webView = source.webView else { return }
         let range = TimelineRange(rawValue: raw) ?? .today
         memoryBusy = true
         showMemoryWaveIfNeeded()
@@ -854,24 +877,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         do {
             let answer = try await environment.memoryWave.summarizeTimeline(
                 range: range, inferenceAllowed: inferenceAllowed(), persist: true)
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             QwaveInternal.lastTimelineSummary = answer.text
             memoryPanelTitle = "Timeline · \(range.displayName)"
             memoryPanelBody = answer.text
             memoryPanelFootnote = "Local slate · \(answer.provider.rawValue)"
-            if let tab = tabManager.selectedTab {
-                ensureWebView(for: tab).load(URLRequest(url: InternalPages.timelineURL))
-            }
+            webView.load(URLRequest(url: InternalPages.timelineURL))
         } catch MemoryProviderError.denied(let reason) {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = denialMessage(reason)
         } catch MemoryProviderError.unavailable {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = "Pick a provider in Settings → Memory Wave to write the slate."
         } catch {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = "Could not summarize the timeline."
         }
     }
 
-    private func askStartQuery(_ text: String) async {
-        guard let tab = tabManager.selectedTab else { return }
+    private func askStartQuery(_ text: String, source: InternalActionSource) async {
+        guard source.isCurrent(selectedTab: tabManager.selectedTab), let tab = source.tab,
+            let webView = source.webView
+        else { return }
         memoryAskDraft = text
         memoryBusy = true
         showMemoryWaveIfNeeded()
@@ -888,24 +915,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 isEphemeral: tab.isEphemeral,
                 inferenceAllowed: inferenceAllowed()
             )
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelTitle = "Ask"
             memoryPanelBody = answer.text
             memoryPanelFootnote = "Start page · memories stay local"
         } catch MemoryProviderError.denied(let reason) {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = denialMessage(reason)
         } catch MemoryProviderError.unavailable {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             if let search = environment.settings.searchEngine.searchURL(for: text) {
-                ensureWebView(for: tab).load(URLRequest(url: search))
+                webView.load(URLRequest(url: search))
                 return
             }
             memoryPanelBody = "No inference provider. Settings → Memory Wave, or search from the omnibox."
         } catch {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = "Ask failed."
         }
     }
 
-    private func rememberText(_ text: String, scope: String) async {
-        guard let tab = tabManager.selectedTab else { return }
+    private func rememberText(_ text: String, scope: String, source: InternalActionSource) async {
+        guard source.isCurrent(selectedTab: tabManager.selectedTab), let tab = source.tab else { return }
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
             memoryPanelBody = "Nothing selected."
@@ -930,14 +961,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
                 // The user picked this text and asked for it to be kept.
                 provenance: .authored
             )
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelTitle = title
             memoryPanelBody =
                 scope == "selection"
                 ? "Remembered the selection as a Cognitive wave." : "Remembered the page as a Cognitive wave."
             memoryPanelFootnote = "Odd lane · encrypted · this Mac only."
         } catch MemoryProviderError.denied(.ephemeral) {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = "Ephemeral and private tabs never write to Memory Wave."
         } catch {
+            guard source.isCurrent(selectedTab: tabManager.selectedTab) else { return }
             memoryPanelBody = "Could not store that memory."
         }
         showMemoryWaveIfNeeded()
@@ -945,7 +979,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func rememberCurrentSelection() async {
-        guard let webView = tabManager.selectedTab?.webView else { return }
+        guard let tab = tabManager.selectedTab, let webView = tab.webView,
+            let source = coordinators[tab.id]?.captureInternalActionSource()
+        else { return }
         // The source block is a JSON literal, not escaped HTML: `script` is a
         // raw-text element, so `.textContent` used to hand back the escaped
         // spelling of the document and Memory Wave stored that (issue #138).
@@ -959,7 +995,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
             """
         let value = try? await webView.evaluateJavaScript(script)
         let text = value as? String ?? ""
-        await rememberText(text, scope: "selection")
+        await rememberText(text, scope: "selection", source: source)
     }
 
     @objc func rememberThisPage(_ sender: Any?) {
@@ -1573,6 +1609,7 @@ extension BrowserWindowController: NSToolbarDelegate {
     private static let memoryItem = NSToolbarItem.Identifier("qwave.memory")
     private static let summarizeItem = NSToolbarItem.Identifier("qwave.summarize")
     private static let downloadsItem = NSToolbarItem.Identifier("qwave.downloads")
+    private static let readingLanguageItem = NSToolbarItem.Identifier("qwave.readingLanguage")
     private static let extensionsItem = NSToolbarItem.Identifier("qwave.extensions")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -1582,7 +1619,8 @@ extension BrowserWindowController: NSToolbarDelegate {
     func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         [
             Self.backItem, Self.forwardItem, Self.reloadItem, .flexibleSpace, Self.omniboxItem, .flexibleSpace,
-            Self.memoryItem, Self.summarizeItem, Self.shieldsItem, Self.downloadsItem, Self.extensionsItem,
+            Self.memoryItem, Self.summarizeItem, Self.readingLanguageItem, Self.shieldsItem, Self.downloadsItem,
+            Self.extensionsItem,
         ]
     }
 
@@ -1630,6 +1668,10 @@ extension BrowserWindowController: NSToolbarDelegate {
                 symbol: "text.badge.star", label: "Summarize Page", action: #selector(summarizeThisPage(_:)))
             item.view = summarizeButton
             item.label = "Summarize Page"
+        case Self.readingLanguageItem:
+            item.view = makeToolbarButton(
+                symbol: "character.bubble", label: "Translation", action: #selector(toggleReadingLanguage(_:)))
+            item.label = "Translation"
         case Self.shieldsItem:
             shieldsButton = makeToolbarButton(
                 symbol: "shield.fill", label: "Shields", action: #selector(toggleShields(_:)))

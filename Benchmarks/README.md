@@ -49,6 +49,15 @@ runners (the job is pinned to GitHub-hosted `macos-15`);
 wall-clock is collected locally but never checked. Threshold updates are
 reviewed like code — a jump in allocations is a diff someone must own.
 
+The checker also fails when allocations improve beyond the tolerance, prompting
+a tighter baseline. CI run [411](https://github.com/8b-is/qwave/actions/runs/39286078504)
+at `f543505276e15f773c56cc14ad609e96be157dda` reported only improvements:
+both 40-tab session round-trips measured 33 allocations (previously 65), and
+the 50k-row history query measured 273 (previously 374). These three thresholds
+now record those observed p90 values. The Omnibox threshold remains 11,000;
+benchmark inputs, the 25% tolerance and the mandatory check are unchanged.
+The next pinned CI run must validate the tighter baselines.
+
 **Scope limit:** these benchmarks measure in-process work ONLY. The
 hibernation memory claim lives in WebKit's out-of-process WebContent
 processes, which no in-process metric can see — that claim is proven by
