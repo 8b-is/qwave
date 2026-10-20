@@ -225,7 +225,7 @@ the Rust core's, not Swift's — on the iPhone exactly as on the Mac.
  core/  (Rust, zero deps)
    ├── egress.rs     Category-A allowlist — permits(host), subdomain-aware
    ├── wave.rs       the 79-byte WaveInt frame: encode, validate, grid coord
-   ├── phoenix.rs    the Phoenix protocol — marine gate, custodian, verdict
+   ├── phoenix.rs    the Phoenix protocol — marine gate, custodian, verdict, Catmull-Rom dropout restoration (12.18 dB → 58.35 dB SNR)
    ├── mem16.rs      governing/recovery sequences (mem|16-10 under `nightly`)
    ├── telemetry.rs  the PII scrubber + histogram aggregator (qwave-agg)
    ├── quanttern.rs  the emotional ternary code (VAD → {−1,0,+1}) → WaveInt fields

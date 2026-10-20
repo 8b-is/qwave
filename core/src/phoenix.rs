@@ -472,6 +472,102 @@ pub fn md5(input: &[u8]) -> [u8; 16] {
     out
 }
 
+// ── Phoenix Acoustic Dropout & Click Restoration (Catmull-Rom Spline) ─────
+
+/// Catmull-Rom cubic spline evaluation for normalized parameter `t` in `0.0..=1.0`
+/// given four control samples `(p0, p1, p2, p3)`.
+#[inline]
+pub fn catmull_rom_sample(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
+/// Restore corrupted/dropped-out audio samples (`corrupted[i] == true`) using
+/// local Catmull-Rom cubic Hermite spline continuation anchored on intact
+/// neighbors `(p0, p1)` before the gap and `(p2, p3)` after the gap.
+///
+/// Compared to zero-fill or sample-and-hold across burst dropouts, cubic
+/// phase-continuous spline interpolation preserves slope across gap boundaries.
+pub fn restore_dropouts_catmull_rom(samples: &[f32], corrupted: &[bool]) -> Vec<f32> {
+    let n = samples.len();
+    assert_eq!(n, corrupted.len(), "samples and corrupted mask must match length");
+    let mut out = samples.to_vec();
+    let mut i = 0;
+    while i < n {
+        if !corrupted[i] {
+            i += 1;
+            continue;
+        }
+        let gap_start = i;
+        while i < n && corrupted[i] {
+            i += 1;
+        }
+        let gap_end = i; // exclusive
+
+        let p1_idx = gap_start.saturating_sub(1);
+        let p0_idx = p1_idx.saturating_sub(1);
+        let p2_idx = gap_end.min(n.saturating_sub(1));
+        let p3_idx = (gap_end + 1).min(n.saturating_sub(1));
+
+        let p1 = out[p1_idx];
+        let p0 = out[p0_idx];
+        let p2 = samples[p2_idx];
+        let p3 = samples[p3_idx];
+
+        // Scale tangents proportionally to span length so multi-sample gaps
+        // maintain boundary derivatives `(p1 - p0)` and `(p3 - p2)` per sample step.
+        let span = (gap_end - gap_start + 1) as f32;
+        let eff_p0 = p1 - (p1 - p0) * span;
+        let eff_p3 = p2 + (p3 - p2) * span;
+
+        let gap_len = gap_end - gap_start;
+        for offset in 0..gap_len {
+            let t = (offset + 1) as f32 / span;
+            out[gap_start + offset] = catmull_rom_sample(eff_p0, p1, p2, eff_p3, t).clamp(-1.0, 1.0);
+        }
+    }
+    out
+}
+
+/// Mean squared error between a reference waveform and a candidate waveform.
+pub fn waveform_mse(reference: &[f32], candidate: &[f32]) -> f64 {
+    assert_eq!(reference.len(), candidate.len());
+    if reference.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = reference
+        .iter()
+        .zip(candidate.iter())
+        .map(|(&r, &c)| {
+            let d = (r as f64) - (c as f64);
+            d * d
+        })
+        .sum();
+    sum_sq / (reference.len() as f64)
+}
+
+/// Signal-to-Noise Ratio in decibels (dB) of `candidate` relative to `reference`.
+pub fn waveform_snr_db(reference: &[f32], candidate: &[f32]) -> f64 {
+    assert_eq!(reference.len(), candidate.len());
+    let sig_power: f64 = reference.iter().map(|&r| (r as f64) * (r as f64)).sum();
+    let noise_power: f64 = reference
+        .iter()
+        .zip(candidate.iter())
+        .map(|(&r, &c)| {
+            let d = (r as f64) - (c as f64);
+            d * d
+        })
+        .sum();
+    if noise_power <= 1e-18 {
+        return 120.0;
+    }
+    10.0 * (sig_power / noise_power).log10()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +658,64 @@ mod tests {
         assert_eq!(decay(1000.0, 0), 1.0); // precious never decays
         assert!(decay(86_400.0, 86_400) < 0.37); // e^-1
         assert!(decay(86_400.0, 86_400) > 0.36);
+    }
+
+    #[test]
+    fn phoenix_catmull_rom_restoration_improves_mse_and_snr() {
+        // 512-sample composite harmonic wave (440 Hz + 880 Hz at 48 kHz)
+        let n = 512usize;
+        let reference: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / 48_000.0;
+                let f1 = (2.0 * core::f32::consts::PI * 440.0 * t).sin();
+                let f2 = 0.35 * (2.0 * core::f32::consts::PI * 880.0 * t).cos();
+                0.7 * (f1 + f2)
+            })
+            .collect();
+
+        // Inject 8 burst dropouts / impulsive clicks (spans of 3 to 5 samples)
+        let mut degraded = reference.clone();
+        let mut corrupted = vec![false; n];
+        for &start in &[32usize, 88, 144, 205, 268, 330, 395, 452] {
+            for offset in 0..4 {
+                corrupted[start + offset] = true;
+                degraded[start + offset] = 0.0; // dropout to zero
+            }
+        }
+
+        // Baseline: zero-order sample-and-hold across gaps
+        let mut zero_hold = degraded.clone();
+        for i in 1..n {
+            if corrupted[i] {
+                zero_hold[i] = zero_hold[i - 1];
+            }
+        }
+
+        let restored = restore_dropouts_catmull_rom(&degraded, &corrupted);
+
+        let mse_degraded = waveform_mse(&reference, &degraded);
+        let mse_hold = waveform_mse(&reference, &zero_hold);
+        let mse_restored = waveform_mse(&reference, &restored);
+
+        let snr_degraded = waveform_snr_db(&reference, &degraded);
+        let snr_hold = waveform_snr_db(&reference, &zero_hold);
+        let snr_restored = waveform_snr_db(&reference, &restored);
+
+        eprintln!(
+            "PHOENIX_RESTORE_RECEIPT: degraded_mse={mse_degraded:.8} ({snr_degraded:.2} dB) | zero_hold_mse={mse_hold:.8} ({snr_hold:.2} dB) | catmull_rom_mse={mse_restored:.8} ({snr_restored:.2} dB)"
+        );
+
+        assert!(
+            mse_restored < mse_degraded * 0.01,
+            "Catmull-Rom MSE ({mse_restored:.8}) must beat degraded MSE ({mse_degraded:.8}) by >100x"
+        );
+        assert!(
+            mse_restored < mse_hold * 0.05,
+            "Catmull-Rom MSE ({mse_restored:.8}) must beat zero-hold MSE ({mse_hold:.8}) by >20x"
+        );
+        assert!(
+            snr_restored > snr_degraded + 25.0 && snr_restored > snr_hold + 15.0,
+            "SNR must improve substantially: degraded={snr_degraded:.2} dB, hold={snr_hold:.2} dB, restored={snr_restored:.2} dB"
+        );
     }
 }
