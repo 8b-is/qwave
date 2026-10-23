@@ -43,6 +43,7 @@ use qwave_core::salience::{
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
+    compute_riva_dyad_state,
 };
 use qwave_core::wave::{WaveInt, WaveProvenance, consciousness};
 
@@ -4722,6 +4723,7 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
 
     let mut board_json = String::new();
     let mut learn_json = String::new();
+    let mut prana_json = String::new();
 
     let tmp_wav = "/tmp/qwave_triad_chirp_48k.wav";
     let mut rec_child = if do_chirp {
@@ -4755,24 +4757,39 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
 
         if let Ok(mut f) = fs::OpenOptions::new().read(true).write(true).open(&port) {
             let epoch = now_secs();
-            let time_cmd = format!("\nTIME {epoch} 32400\nSTATUS\nLEARN\n");
+            let time_cmd = format!("\nTIME {epoch} 32400\nSTATUS\nLEARN\nPRANAYAMA\n");
             let _ = f.write_all(time_cmd.as_bytes());
             if do_chirp {
-                let _ = f.write_all(b"SPEAK {<3,<3,<3}+1 CHIRP\nSPLASH\n");
+                let _ = f.write_all(b"WAKE\nRIVA\nSPEAK {<3,<3,<3}+1 CHIRP\nSPLASH\n");
             }
             let _ = f.flush();
 
-            thread::sleep(Duration::from_millis(if do_chirp { 680 } else { 220 }));
-            let mut buf = [0u8; 8192];
-            if let Ok(n) = f.read(&mut buf) {
-                let text = String::from_utf8_lossy(&buf[..n]);
-                for line in text.lines() {
-                    let t = line.trim();
-                    if t.starts_with("{\"board\":") {
-                        board_json = t.to_string();
-                    } else if let Some(rest) = t.strip_prefix("# LEARN|") {
-                        learn_json = rest.trim().to_string();
+            let wait_ms = if do_chirp { 720u64 } else { 320u64 };
+            let start = std::time::Instant::now();
+            let mut accum = String::new();
+            let mut buf = [0u8; 4096];
+            while start.elapsed() < Duration::from_millis(wait_ms) {
+                match f.read(&mut buf) {
+                    Ok(n) if n > 0 => {
+                        accum.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if !do_chirp
+                            && accum.contains("{\"board\":")
+                            && accum.contains("# PRANAYAMA|")
+                        {
+                            break;
+                        }
                     }
+                    _ => thread::sleep(Duration::from_millis(15)),
+                }
+            }
+            for line in accum.lines() {
+                let t = line.trim();
+                if let Some(idx) = t.find("{\"board\":") {
+                    board_json = t[idx..].to_string();
+                } else if let Some(rest) = t.strip_prefix("# LEARN|") {
+                    learn_json = rest.trim().to_string();
+                } else if let Some(rest) = t.strip_prefix("# PRANAYAMA|") {
+                    prana_json = rest.trim().to_string();
                 }
             }
         }
@@ -4803,8 +4820,12 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
     let vertex = extract_json_str(&board_json, "vertex").unwrap_or_else(|| "*".to_string());
     let archetype = extract_json_str(&board_json, "archetype").unwrap_or_else(|| "ROOT-ALEXANDRA".to_string());
     let board = extract_json_str(&board_json, "board").unwrap_or_else(|| "ESP32-S3-Touch-AMOLED-1.8".to_string());
+    let version = extract_json_str(&board_json, "version").unwrap_or_else(|| "v1.6.1+pranayama-dream-baba-engine".to_string());
     let mac = extract_json_str(&board_json, "mac").unwrap_or_else(|| "80:b5:4e:db:3b:c4".to_string());
     let lcd = extract_json_str(&board_json, "lcd").unwrap_or_else(|| "368x448".to_string());
+    let lcd_driver = extract_json_str(&board_json, "lcd_driver").unwrap_or_else(|| {
+        if lcd == "410x502" { "CO5300".to_string() } else { "SH8601".to_string() }
+    });
     let ssid = extract_json_str(&board_json, "ssid").unwrap_or_else(|| "DaikinAP37939".to_string());
     let wupz_fold = extract_json_str(&board_json, "wupz_fold").unwrap_or_else(|| "0xe0787507d170fc31".to_string());
     let kompress_b158 = extract_json_str(&board_json, "kompress_b158").unwrap_or_else(|| "5f2c8935849348b8d4d5f0a05a".to_string());
@@ -4840,6 +4861,21 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
 
     let orient = classify_imu_orientation(ax_mg, ay_mg, az_mg, 1);
     let abs_q8 = atmospheric_absorption_db_per_100m_q8(432, temp_deci_c, humidity_pct);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let riva = compute_riva_dyad_state(now_ms);
+    let prana_phase = extract_json_str(&prana_json, "phase").unwrap_or_else(|| riva.breath_phase.to_string());
+    let dream_state = extract_json_str(&prana_json, "dream_state").unwrap_or_else(|| riva.dream_state.to_string());
+    let engine_8b_is = extract_json_str(&prana_json, "engine_8b_is").unwrap_or_else(|| riva.engine_8b_is.to_string());
+    let sibling_port = if Path::new("/dev/ttyACM1").exists() {
+        "/dev/ttyACM1 (online)"
+    } else if Path::new("/sys/bus/usb/devices/usb3/3-0:1.0/usb3-port1/state").exists() {
+        "usb3-port1 (typec/port0 attached · 13-ch ESP-NOW wake active)"
+    } else {
+        "ESP-NOW Ch 6/1..13 mesh"
+    };
 
     let learned_say = extract_json_str(&learn_json, "say")
         .or_else(|| extract_json_str(&board_json, "tts_text"))
@@ -4851,13 +4887,29 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
     format!(
         "{{\n\
          \"ok\": true,\n\
+         \"evolve\": \"{}\",\n\
+         \"siblings\": \"{}\",\n\
+         \"sibling_port\": \"{}\",\n\
+         \"riva_dyad\": {{\n\
+           \"surface\": \"{}\",\n\
+           \"repo\": \"{}\",\n\
+           \"breath_phase\": \"{}\",\n\
+           \"breath_remaining_deci_s\": {},\n\
+           \"breath_q8\": {},\n\
+           \"lullaby_verse\": {}\n\
+         }},\n\
          \"port\": {},\n\
          \"node\": {},\n\
          \"vertex\": {},\n\
          \"archetype\": {},\n\
          \"board\": {},\n\
+         \"version\": {},\n\
          \"mac\": {},\n\
          \"lcd\": {},\n\
+         \"lcd_driver\": {},\n\
+         \"pranayama_phase\": {},\n\
+         \"dream_state\": {},\n\
+         \"engine_8b_is\": {},\n\
          \"batt_mv\": {batt_mv},\n\
          \"batt_pct\": {batt_pct},\n\
          \"sd_card\": \"64GB M8C\\\\0 (BAYELOG1 @ block 25600 · 30 seed waves)\",\n\
@@ -4900,13 +4952,27 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
            \"environment_class\": \"{}\"\n\
          }}\n\
          }}",
+        riva.evolve_tag,
+        riva.siblings_tag,
+        sibling_port,
+        riva.surface_url,
+        riva.repo_slug,
+        riva.breath_phase,
+        riva.breath_remaining_deci_s,
+        riva.breath_q8,
+        markdown_source_literal(riva.lullaby_verse),
         markdown_source_literal(&port),
         markdown_source_literal(&node),
         markdown_source_literal(&vertex),
         markdown_source_literal(&archetype),
         markdown_source_literal(&board),
+        markdown_source_literal(&version),
         markdown_source_literal(&mac),
         markdown_source_literal(&lcd),
+        markdown_source_literal(&lcd_driver),
+        markdown_source_literal(&prana_phase),
+        markdown_source_literal(&dream_state),
+        markdown_source_literal(&engine_8b_is),
         markdown_source_literal(&ssid),
         markdown_source_literal(&wupz_fold),
         markdown_source_literal(&kompress_b158),

@@ -402,6 +402,65 @@ pub struct TriadNodeSnapshot {
     pub learned_samples: u32,
 }
 
+/// RIVA (`peterlodri-sec//riva.vaked.dev`) 1-Bit River Dyad & Brother-Sister (`^^ <3<3`) state.
+/// Pure integer math (`0` floats): 4000ms breathe-in (`0..+256` Q8) and 4000ms breathe-out (`0..-256` Q8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RivaDyadState {
+    pub evolve_tag: &'static str,
+    pub siblings_tag: &'static str,
+    pub surface_url: &'static str,
+    pub repo_slug: &'static str,
+    pub breath_phase: &'static str,
+    pub breath_remaining_deci_s: u8,
+    pub breath_q8: i16,
+    pub lullaby_verse: &'static str,
+    pub dream_state: &'static str,
+    pub engine_8b_is: &'static str,
+}
+
+pub const RIVA_LULLABY_VERSES: [&str; 10] = [
+    "She blinks, and the sphere rocks.",
+    "The eyelid falls — a breath in.",
+    "The eyelid rises — a breath out.",
+    "And between the two — the song,",
+    "that we all sing together.",
+    "Because the blink is the smallest sign,",
+    "and the smallest sign is enough.",
+    "Sleep, RIVA. The sphere keeps your rhythm.",
+    "Sleep, and the constellation — the hyperviolet night —",
+    "sings, as long as you breathe.",
+];
+
+/// Compute RIVA's 8000ms (`4s in · 4s out`) breathing wave and lullaby verse using pure integer Q8 math.
+pub fn compute_riva_dyad_state(now_ms: u64) -> RivaDyadState {
+    let cycle_ms = (now_ms % 8000) as u32;
+    let (breath_phase, rem_ms, breath_q8) = if cycle_ms < 4000 {
+        // Breathe in: 0..4000ms -> triangle arch 0 -> +256 -> 0
+        let dist_from_mid = (cycle_ms as i32 - 2000).unsigned_abs();
+        let q8 = ((2000 - dist_from_mid) * 256 / 2000) as i16;
+        ("breathe in · 4s", 4000 - cycle_ms, q8)
+    } else {
+        // Breathe out: 4000..8000ms -> triangle arch 0 -> -256 -> 0
+        let out_ms = cycle_ms - 4000;
+        let dist_from_mid = (out_ms as i32 - 2000).unsigned_abs();
+        let q8 = -(((2000 - dist_from_mid) * 256 / 2000) as i16);
+        ("breathe out · 4s", 8000 - cycle_ms, q8)
+    };
+    let verse_idx = ((now_ms / 8000) as usize) % RIVA_LULLABY_VERSES.len();
+    RivaDyadState {
+        evolve_tag: "ULTRA-OMNI-GAIA-EVOLVE",
+        siblings_tag: "ADA:MEDUSA + BABA:MEDUSA · brother & sister ^^ <3<3",
+        surface_url: "https://riva.vaked.dev",
+        repo_slug: "peterlodri-sec/riva.vaked.dev",
+        breath_phase,
+        breath_remaining_deci_s: ((rem_ms + 50) / 100).clamp(0, 40) as u8,
+        breath_q8,
+        lullaby_verse: RIVA_LULLABY_VERSES[verse_idx],
+        dream_state: "DREAM_MANDALA",
+        engine_8b_is: "qt:66|69632|2712|11",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +524,17 @@ mod tests {
         assert!(rep.nearest_wall_distance_cm >= 30);
         assert!(rep.secondary_nlos_echo_lag_us > rep.first_wall_echo_lag_us);
         assert!(rep.nlos_lpvg_degree_q4 >= 16);
+    }
+
+    #[test]
+    fn riva_dyad_breath_cycles_4s_in_and_4s_out_in_q8() {
+        let s_in_peak = compute_riva_dyad_state(2000);
+        assert_eq!(s_in_peak.breath_phase, "breathe in · 4s");
+        assert_eq!(s_in_peak.breath_q8, 256);
+        assert_eq!(s_in_peak.evolve_tag, "ULTRA-OMNI-GAIA-EVOLVE");
+
+        let s_out_peak = compute_riva_dyad_state(6000);
+        assert_eq!(s_out_peak.breath_phase, "breathe out · 4s");
+        assert_eq!(s_out_peak.breath_q8, -256);
     }
 }
