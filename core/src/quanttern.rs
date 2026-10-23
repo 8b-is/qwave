@@ -17,6 +17,14 @@
 
 use crate::Rational;
 
+/// Default ternary threshold in exact `p/q` integer math (`33 / 100`).
+pub const fn default_threshold_pq() -> Rational {
+    match Rational::new(33, 100) {
+        Some(r) => r,
+        None => Rational::integer(0),
+    }
+}
+
 /// Default ternary threshold. Below this the value reads as a genuine `0`.
 pub const DEFAULT_THRESHOLD: f32 = 0.33;
 
@@ -30,6 +38,20 @@ pub enum Trit {
 }
 
 impl Trit {
+    /// Zero-float quantization of an exact `Rational` (`p/q`) axis to a trit.
+    /// Compares `x.num * threshold.den` against `threshold.num * x.den` in `i64`.
+    pub fn from_rational(x: Rational, threshold: Rational) -> Self {
+        let t_num = (threshold.num.abs() as i64) * (x.den as i64);
+        let x_scaled = (x.num as i64) * (threshold.den as i64);
+        if x_scaled >= t_num {
+            Trit::Plus
+        } else if x_scaled <= -t_num {
+            Trit::Minus
+        } else {
+            Trit::Zero
+        }
+    }
+
     /// Quantize one axis to a trit. Below `threshold` (in magnitude) it is a
     /// genuine "don't know" — a real zero, not a rounding error.
     pub fn from_f32(x: f32, threshold: f32) -> Self {
@@ -102,6 +124,72 @@ impl Vad {
             Trit::from_f32(self.dominance, threshold),
         ]
     }
+}
+
+/// Zero-float Integer-Sovereign Valence · Arousal · Dominance (`Rational` `p/q`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VadPq {
+    pub valence: Rational,
+    pub arousal: Rational,
+    pub dominance: Rational,
+}
+
+impl VadPq {
+    pub const fn new(valence: Rational, arousal: Rational, dominance: Rational) -> Self {
+        Self {
+            valence: clamp1_pq(valence),
+            arousal: clamp1_pq(arousal),
+            dominance: clamp1_pq(dominance),
+        }
+    }
+
+    pub const NEUTRAL: VadPq = VadPq {
+        valence: Rational::ZERO,
+        arousal: Rational::ZERO,
+        dominance: Rational::ZERO,
+    };
+
+    /// The three trits of the model, thresholded in exact `p/q` integer math.
+    pub fn trits(&self, threshold: Rational) -> [Trit; 3] {
+        [
+            Trit::from_rational(self.valence, threshold),
+            Trit::from_rational(self.arousal, threshold),
+            Trit::from_rational(self.dominance, threshold),
+        ]
+    }
+}
+
+const fn clamp1_pq(r: Rational) -> Rational {
+    let den = r.den as i64;
+    let num = r.num as i64;
+    if num > den {
+        Rational::ONE
+    } else if num < -den {
+        Rational::integer(-1)
+    } else {
+        r
+    }
+}
+
+/// Encode a zero-float `VadPq` reading into an `EmotionCode`.
+pub fn encode_pq(vad: VadPq, threshold: Rational) -> EmotionCode {
+    pack(&vad.trits(threshold))
+}
+
+/// Pack a single 3-axis `VadPq` reading into one gate-coded byte (zero-float, allocation-free).
+pub fn pack_vad_pq_byte(vad: VadPq, threshold: Rational) -> u8 {
+    let [v, a, d] = vad.trits(threshold);
+    v.code() | (a.code() << 2) | (d.code() << 4) | (Trit::Zero.code() << 6)
+}
+
+/// Exact `p/q` rational agreement (`0/1 ..= 1/1`) between two trit slices (zero-float).
+pub fn agreement_pq(a: &[Trit], b: &[Trit]) -> Rational {
+    let n = a.len().min(b.len());
+    if n == 0 {
+        return Rational::ONE;
+    }
+    let hit = (0..n).filter(|&i| a[i] == b[i]).count();
+    Rational::new(hit as i32, n as u32).unwrap_or(Rational::ONE)
 }
 
 /// A packed emotional code: the trits, the bytes, and a printable `qt:` hex tag.

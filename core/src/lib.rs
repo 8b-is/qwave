@@ -14,6 +14,7 @@ pub mod mem16;
 pub mod phoenix;
 pub mod quanttern;
 pub mod rational;
+pub mod salience;
 pub mod telemetry;
 pub mod wave;
 

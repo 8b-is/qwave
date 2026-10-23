@@ -31,7 +31,10 @@ use qwave_core::markdown::{
     CompiledMarkdown, MarkdownTrust, WAVE_CANVAS_SCRIPT, WAVE_FRAGMENT_SHADER, compile_full,
     escape, markdown_source_literal,
 };
-use qwave_core::quanttern::{DEFAULT_THRESHOLD, Vad, pack_vad_byte};
+use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
+use qwave_core::salience::{
+    SpeakerSalienceProfile, combine_salient_speech_wav, decode_wav_i16, extract_salient_grains,
+};
 use qwave_core::wave::{WaveInt, WaveProvenance, consciousness};
 
 const KATEX_CSS: &str =
@@ -63,6 +66,7 @@ struct AppState {
     current_file: Mutex<PathBuf>,
     last_activity: AtomicU64,
     active_sse: AtomicU64,
+    salience_profile: Mutex<SpeakerSalienceProfile>,
 }
 
 fn now_secs() -> u64 {
@@ -85,6 +89,44 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print_usage();
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--mcp") {
+        run_mcp_server();
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--speak") {
+        let voice = args
+            .iter()
+            .position(|a| a == "--voice" || a == "-V")
+            .and_then(|vpos| args.get(vpos + 1))
+            .map(String::as_str)
+            .unwrap_or("af_heart");
+        let text = args
+            .get(pos + 1)
+            .map(String::as_str)
+            .unwrap_or("Qwave sovereign voice online.");
+        let msg = speak_out_loud(text, voice, true, true);
+        println!("{msg}");
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--listen") {
+        let arg = args.get(pos + 1).map(String::as_str).unwrap_or("5");
+        let json = listen_and_learn(arg);
+        println!("{json}");
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--surf") {
+        let Some(target) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --surf <url-or-markdown>");
+            return ExitCode::from(2);
+        };
+        let msg = surf_with_qwave(target, "window", None);
+        println!("{msg}");
         return ExitCode::SUCCESS;
     }
 
@@ -140,6 +182,7 @@ fn main() -> ExitCode {
         current_file: Mutex::new(initial_path.clone()),
         last_activity: AtomicU64::new(now_secs()),
         active_sse: AtomicU64::new(0),
+        salience_profile: Mutex::new(load_salience_profile()),
     });
 
     if server_only {
@@ -180,6 +223,10 @@ fn print_usage() {
          \n\
          Usage:\n\
            qwave <file.md | file:///path/to/file.md[#L10-L20]>\n\
+           qwave --mcp                   Run MCP server over stdio (for agy, claude, codex)\n\
+           qwave --speak <text>          Speak out loud with zero-float MEM|8 salience modulation\n\
+           qwave --listen [secs|wav]     Record/transcribe & learn salient vocal grains into MEM|8\n\
+           qwave --surf <url>            Open URL or Markdown in native Qwave window\n\
            qwave --compile <file.md>     Emit self-contained HTML to stdout\n\
            qwave --server-only <file.md> Run sovereign loopback server and print URL"
     );
@@ -415,13 +462,18 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             send_response(&mut stream, "200 OK", "application/json", style_json.as_bytes())
         }
         ("POST", "/api/alexiai/stt") => {
-            let json = handle_alexiai_stt(&body);
+            let json = handle_alexiai_stt(&body, &state);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/api/salience") | ("GET", "/api/alexiai/salience") => {
+            let prof = state.salience_profile.lock().unwrap().clone();
+            let json = format_salience_profile_json(&prof);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/alexiai/tts") => {
             let text = get_query_param(query, "text").unwrap_or_else(|| "Alexiai online.".to_string());
             let voice = get_query_param(query, "voice").unwrap_or_else(|| "af_heart".to_string());
-            let wav_bytes = synthesize_alexiai_tts(&text, &voice);
+            let wav_bytes = synthesize_alexiai_tts(&text, &voice, &state);
             send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes)
         }
         ("POST", "/api/alexiai/chat") => {
@@ -563,11 +615,72 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
 }
 
 /// Transcribe 16kHz PCM WAV recorded in Qwave using pure-Rust `liquid-rust` (`LFM2.5-Audio` +
-/// Phoenix Speaker Recognition + `MEM|8` wave bridge) with fallback to `kokoro-speak stt`.
-fn handle_alexiai_stt(wav_bytes: &[u8]) -> String {
+/// Phoenix Speaker Recognition + `MEM|8` wave bridge) with fallback to `kokoro-speak stt`,
+/// AND extract Top-K Highest-Salience Vocal Grains into `MEM|8` via zero-float `qwave_core::salience`.
+fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     if wav_bytes.len() < 64 {
         return "{\"ok\":false,\"error\":\"audio buffer too short\"}".to_string();
     }
+
+    // 0. Zero-Float Integer Marine Salience & MEM|8 Vocal Grain Imprinting
+    let mut salience_json = "null".to_string();
+    if let Some((sr, pcm_samples)) = decode_wav_i16(wav_bytes) {
+        let now = now_secs();
+        let report = extract_salient_grains(&pcm_samples, sr, 3, now);
+        let mut prof = state.salience_profile.lock().unwrap();
+        prof.absorb_report(&report);
+        save_salience_profile(&prof);
+        let total_learned = prof.grains_learned;
+        let f0_num = report.overall_f0_hz.num;
+        let f0_den = report.overall_f0_hz.den.max(1);
+        let f0_int = f0_num / (f0_den as i32);
+        let sal_num = report.overall_salience_pq.num;
+        let sal_den = report.overall_salience_pq.den;
+        let vad_b = report.overall_vad_byte;
+        let top_count = report.top_grains.len();
+
+        // Persist the 79-byte WaveInt frames of the highest-salience vocal grains into MEM|8
+        if let Ok(home) = env::var("HOME") {
+            let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
+            let _ = fs::create_dir_all(&dir);
+            if let Ok(mut bin_f) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("speech_salience_waves.bin"))
+            {
+                for g in &report.top_grains {
+                    let _ = bin_f.write_all(&g.wave.to_frame());
+                }
+            }
+            if let Ok(mut jsonl_f) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("speech_salience_waves.jsonl"))
+            {
+                for g in &report.top_grains {
+                    let frame = g.wave.to_frame();
+                    let mut hex = String::with_capacity(158);
+                    for b in &frame {
+                        hex.push_str(&format!("{b:02x}"));
+                    }
+                    let _ = writeln!(
+                        jsonl_f,
+                        "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"frame_hex\":\"{hex}\"}}",
+                        g.f0_hz.num,
+                        g.f0_hz.den,
+                        g.salience_pq.num,
+                        g.salience_pq.den,
+                        g.vad_byte
+                    );
+                }
+            }
+        }
+
+        salience_json = format!(
+            "{{\"f0_hz\":{f0_int},\"f0_pq\":\"{f0_num}/{f0_den}\",\"salience_pq\":\"{sal_num}/{sal_den}\",\"vad_byte\":\"0x{vad_b:02x}\",\"grains_extracted\":{top_count},\"total_grains_learned\":{total_learned}}}"
+        );
+    }
+
     let wav_path = format!("/tmp/qwave_mic_{}.wav", std::process::id());
     if let Err(e) = fs::write(&wav_path, wav_bytes) {
         return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e.to_string()));
@@ -577,11 +690,12 @@ fn handle_alexiai_stt(wav_bytes: &[u8]) -> String {
     for lfm_bin in ["/usr/local/bin/liquid-rust", "/home/hue/.cargo/target/release/liquid-rust"] {
         if Path::new(lfm_bin).exists() {
             if let Ok(out) = Command::new(lfm_bin)
-                .args(["transcribe", "-i", &wav_path, "--store-mem8"])
+                .env("RUST_LOG", "error")
+                .args(["transcribe", "-i", &wav_path])
                 .output()
             {
                 if out.status.success() {
-                    let raw = String::from_utf8_lossy(&out.stdout);
+                    let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
                     let cleaned: String = raw
                         .lines()
                         .map(str::trim)
@@ -590,13 +704,16 @@ fn handle_alexiai_stt(wav_bytes: &[u8]) -> String {
                                 && !l.starts_with('═')
                                 && !l.starts_with('🎤')
                                 && !l.starts_with("✓")
+                                && !l.contains(" WARN ")
+                                && !l.contains(" INFO ")
+                                && !l.contains("Failed storing MEM|8")
                         })
                         .collect::<Vec<_>>()
                         .join(" ");
                     if !cleaned.is_empty() {
                         let _ = fs::remove_file(&wav_path);
                         return format!(
-                            "{{\"ok\":true,\"text\":{},\"backend\":\"liquid-rust (LFM2.5-Audio + Phoenix)\"}}",
+                            "{{\"ok\":true,\"text\":{},\"backend\":\"liquid-rust (LFM2.5-Audio + Phoenix)\",\"salience\":{salience_json}}}",
                             markdown_source_literal(&cleaned)
                         );
                     }
@@ -613,7 +730,7 @@ fn handle_alexiai_stt(wav_bytes: &[u8]) -> String {
         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
         let _ = fs::remove_file(&wav_path);
         return format!(
-            "{{\"ok\":true,\"text\":{},\"backend\":\"kokoro-speak-stt\"}}",
+            "{{\"ok\":true,\"text\":{},\"backend\":\"kokoro-speak-stt\",\"salience\":{salience_json}}}",
             markdown_source_literal(&raw)
         );
     }
@@ -622,8 +739,10 @@ fn handle_alexiai_stt(wav_bytes: &[u8]) -> String {
     "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
 }
 
-/// Synthesize speech via `kokoro-speak` / `liquid-rust speak` (with fallback to `espeak-ng --stdout`).
-fn synthesize_alexiai_tts(text: &str, voice: &str) -> Vec<u8> {
+/// Synthesize speech via `kokoro-speak` / `liquid-rust speak` (with fallback to `espeak-ng --stdout`),
+/// then modulate the outgoing `16-bit PCM` WAV with the user's learned `MEM|8` highest-salience
+/// vocal profile (`combine_salient_speech_wav`) using 100% integer DSP.
+fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec<u8> {
     let clean: String = text
         .chars()
         .filter(|&c| !matches!(c, '`' | '*' | '#' | '<' | '>'))
@@ -636,6 +755,7 @@ fn synthesize_alexiai_tts(text: &str, voice: &str) -> Vec<u8> {
     };
 
     let wav_path = format!("/tmp/qwave_tts_{}_{}.wav", std::process::id(), now_secs());
+    let profile = state.salience_profile.lock().unwrap().clone();
 
     // If user selected an LFM native voice (`lfm_aye`, `lfm_omnimom`), try `liquid-rust speak` first
     if let Some(lfm_voice) = voice.strip_prefix("lfm_") {
@@ -651,7 +771,7 @@ fn synthesize_alexiai_tts(text: &str, voice: &str) -> Vec<u8> {
                         if let Ok(bytes) = fs::read(&wav_path) {
                             let _ = fs::remove_file(&wav_path);
                             if bytes.len() > 1024 {
-                                return bytes;
+                                return combine_salient_speech_wav(&bytes, &profile);
                             }
                         }
                     }
@@ -683,7 +803,7 @@ fn synthesize_alexiai_tts(text: &str, voice: &str) -> Vec<u8> {
                 let _ = fs::remove_file(&wav_path);
                 let _ = fs::remove_file(format!("{wav_path}.stt.json"));
                 if !bytes.is_empty() {
-                    return bytes;
+                    return combine_salient_speech_wav(&bytes, &profile);
                 }
             }
         }
@@ -695,7 +815,7 @@ fn synthesize_alexiai_tts(text: &str, voice: &str) -> Vec<u8> {
         .output()
     {
         if !out.stdout.is_empty() {
-            return out.stdout;
+            return combine_salient_speech_wav(&out.stdout, &profile);
         }
     }
 
@@ -1098,8 +1218,9 @@ fn crystallize_mem8_wave(path_str: &str, scope: &str, text: &str) -> String {
         hex.push_str(&format!("{b:02x}"));
     }
 
-    let vad = Vad::new(valence_num as f32 / 100.0, arousal_num as f32 / 100.0, 0.42);
-    let vad_byte = pack_vad_byte(vad, DEFAULT_THRESHOLD);
+    let dominance = Rational::new(42, 100).unwrap_or_else(|| Rational::integer(0));
+    let vad_pq = VadPq::new(valence, arousal, dominance);
+    let vad_byte = pack_vad_pq_byte(vad_pq, default_threshold_pq());
 
     if let Ok(home) = env::var("HOME") {
         let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
@@ -2011,10 +2132,22 @@ fn render_full_page(
           headers: {{'Content-Type': 'audio/wav'}},
           body: wavBuf
         }}).then(r => r.json()).then(d => {{
+          if (d.salience) {{
+            const hud = document.getElementById('mem8-hud');
+            if (hud) {{
+              hud.classList.add('visible');
+              hud.innerHTML =
+                '<strong>🧬 MEM|8 Salience Speech Learner (Zero-Float p/q DSP)</strong> · ' +
+                'Speaker F0: <code>' + d.salience.f0_hz + ' Hz (' + d.salience.f0_pq + ')</code> · ' +
+                'Marine Salience: <code>' + d.salience.salience_pq + '</code> · ' +
+                'VadPq: <code>' + d.salience.vad_byte + '</code> · ' +
+                'Top Salient Grains Imprinted: <code>+' + d.salience.grains_extracted + ' (total ' + d.salience.total_grains_learned + ' in MEM|8)</code>';
+            }}
+          }}
           if (d.ok && d.text && d.text.trim()) {{
             sendToAlexiai(d.text.trim());
           }} else {{
-            if (statusEl) statusEl.textContent = '💜 Could not catch that — click 🎙️ to try again or type below.';
+            if (statusEl) statusEl.textContent = '💜 Salience grains learned in MEM|8 — click 🎙️ to speak again or type below.';
           }}
         }});
         return;
@@ -2273,3 +2406,526 @@ fn extract_json_str(json: &str, field: &str) -> Option<String> {
     }
     None
 }
+
+fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                let _ = chars.next();
+                while let Some(nc) = chars.next() {
+                    if nc.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn salience_profile_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".local/share/qwave/mem8/speaker_salience_profile.bin")
+}
+
+fn load_salience_profile() -> SpeakerSalienceProfile {
+    let path = salience_profile_path();
+    if let Ok(bytes) = fs::read(path) {
+        if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+            return prof;
+        }
+    }
+    SpeakerSalienceProfile::default()
+}
+
+fn save_salience_profile(prof: &SpeakerSalienceProfile) {
+    let path = salience_profile_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, prof.to_bytes());
+}
+
+fn format_salience_profile_json(prof: &SpeakerSalienceProfile) -> String {
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+    let mut env_str = String::from("[");
+    for (i, &v) in prof.prosody_envelope_q15.iter().enumerate() {
+        if i > 0 {
+            env_str.push(',');
+        }
+        env_str.push_str(&v.to_string());
+    }
+    env_str.push(']');
+    format!(
+        "{{\"ok\":true,\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"avg_salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"best_grain_samples\":{},\"prosody_envelope_q15\":{env_str}}}",
+        prof.f0_hz.num,
+        prof.f0_hz.den,
+        prof.avg_salience.num,
+        prof.avg_salience.den,
+        prof.vad_byte,
+        prof.grains_learned,
+        prof.best_grain_pcm.len()
+    )
+}
+
+/// Ensure PipeWire/PulseAudio default sink (e.g. Soundcore Select 4 Go Bluetooth speaker) is unmuted,
+/// synthesize speech via `kokoro-speak` / `liquid-rust`, modulate it in 100% integer DSP with the
+/// user's `MEM|8` `SpeakerSalienceProfile` (`combine_salient_speech_wav`), and play it out loud.
+fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) -> String {
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let _ = Command::new("sh")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args([
+            "-c",
+            "BT_SINK=$(pactl list sinks short 2>/dev/null | awk '/bluez_output/{print $2; exit}'); \
+             if [ -n \"$BT_SINK\" ]; then \
+               pactl set-default-sink \"$BT_SINK\" 2>/dev/null || true; \
+               pactl set-sink-mute \"$BT_SINK\" 0 2>/dev/null || true; \
+             else \
+               wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true; \
+             fi",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let state = Arc::new(AppState {
+        current_file: Mutex::new(PathBuf::from("/home/hue/8b-is/qwave/README.md")),
+        last_activity: AtomicU64::new(now_secs()),
+        active_sse: AtomicU64::new(0),
+        salience_profile: Mutex::new(if salience_modulate {
+            load_salience_profile()
+        } else {
+            SpeakerSalienceProfile::default()
+        }),
+    });
+
+    let wav_bytes = synthesize_alexiai_tts(text, voice, &state);
+    if wav_bytes.is_empty() {
+        return "{\"ok\":false,\"error\":\"TTS synthesis returned empty audio\"}".to_string();
+    }
+
+    let play_path = format!("/tmp/qwave_speak_{}_{}.wav", std::process::id(), now_secs());
+    let _ = fs::write(&play_path, &wav_bytes);
+
+    let prof = load_salience_profile();
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+
+    if wait {
+        let played = Command::new("pw-play")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .arg(&play_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+            || Command::new("paplay")
+                .env("XDG_RUNTIME_DIR", &xdg_runtime)
+                .arg(&play_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            || Command::new("aplay")
+                .arg("-q")
+                .arg(&play_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+        let _ = fs::remove_file(&play_path);
+        format!(
+            "{{\"ok\":true,\"played\":{played},\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
+            markdown_source_literal(voice),
+            wav_bytes.len(),
+            salience_modulate && prof.grains_learned > 0,
+            prof.grains_learned
+        )
+    } else {
+        let p = play_path.clone();
+        let _ = Command::new("setsid")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "sh",
+                "-c",
+                &format!("(pw-play '{p}' || paplay '{p}' || aplay -q '{p}') >/dev/null 2>&1; rm -f '{p}'"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        format!(
+            "{{\"ok\":true,\"played\":true,\"async\":true,\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
+            markdown_source_literal(voice),
+            wav_bytes.len(),
+            salience_modulate && prof.grains_learned > 0,
+            prof.grains_learned
+        )
+    }
+}
+
+/// Record from microphone (if `target` is a duration in seconds) OR read an existing `.wav` file,
+/// extract the Top-K highest-salience vocal grains via zero-float `MarineIntDetector`, store their
+/// 79-byte `WaveInt` frames into `MEM|8`, update `~/.local/share/qwave/mem8/speaker_salience_profile.bin`,
+/// and transcribe with `liquid-rust` (`LFM2.5-Audio + Phoenix`).
+fn listen_and_learn(target: &str) -> String {
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let mut temp_rec: Option<String> = None;
+
+    let wav_path = if Path::new(target).exists() {
+        target.to_string()
+    } else {
+        let secs: u64 = target.parse().unwrap_or(5).clamp(1, 30);
+        let rec_file = format!("/tmp/qwave_listen_{}_{}.wav", std::process::id(), now_secs());
+        let _ = Command::new("sh")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "-c",
+                &format!(
+                    "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{{print $2; exit}}'); \
+                     if [ -n \"$MIC_SRC\" ]; then pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; fi; \
+                     timeout {secs}s pw-record --rate=16000 --channels=1 --format=s16 '{rec_file}' >/dev/null 2>&1 || arecord -f S16_LE -r 16000 -c 1 -d {secs} '{rec_file}' >/dev/null 2>&1"
+                ),
+            ])
+            .status();
+        temp_rec = Some(rec_file.clone());
+        rec_file
+    };
+
+    let Ok(wav_bytes) = fs::read(&wav_path) else {
+        if let Some(t) = temp_rec {
+            let _ = fs::remove_file(t);
+        }
+        return "{\"ok\":false,\"error\":\"could not read or record WAV audio\"}".to_string();
+    };
+
+    let state = Arc::new(AppState {
+        current_file: Mutex::new(PathBuf::from("/home/hue/8b-is/qwave/README.md")),
+        last_activity: AtomicU64::new(now_secs()),
+        active_sse: AtomicU64::new(0),
+        salience_profile: Mutex::new(load_salience_profile()),
+    });
+
+    let result = handle_alexiai_stt(&wav_bytes, &state);
+    if let Some(t) = temp_rec {
+        let _ = fs::remove_file(t);
+    }
+    result
+}
+
+/// Show a Markdown file (or raw Markdown content) in the native Qwave Sovereign Studio window,
+/// optionally applying a style preset and speaking an introduction out loud!
+fn show_markdown_in_qwave(
+    path_opt: Option<String>,
+    markdown_opt: Option<String>,
+    style_opt: Option<String>,
+    speak_opt: Option<String>,
+) -> String {
+    if let Some(ref preset) = style_opt {
+        if !preset.trim().is_empty() {
+            let style_json = build_qwave_style_json(preset.trim(), preset.trim());
+            save_style_json(&style_json);
+        }
+    }
+
+    let target_path = if let Some(raw_md) = markdown_opt {
+        let p = if let Some(ref user_p) = path_opt {
+            resolve_input_target(user_p).0
+        } else {
+            PathBuf::from(format!("/tmp/qwave_live_{}.md", now_secs()))
+        };
+        let _ = fs::write(&p, raw_md.as_bytes());
+        p
+    } else if let Some(ref user_p) = path_opt {
+        resolve_input_target(user_p).0
+    } else {
+        PathBuf::from("/home/hue/8b-is/qwave/README.md")
+    };
+
+    if let Some(ref spoken) = speak_opt {
+        if !spoken.trim().is_empty() {
+            let _ = speak_out_loud(spoken, "af_heart", true, false);
+        }
+    }
+
+    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
+    let _ = Command::new(exe)
+        .arg(&target_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+
+    format!(
+        "{{\"ok\":true,\"opened\":{},\"style\":{},\"spoken\":{}}}",
+        markdown_source_literal(&target_path.to_string_lossy()),
+        markdown_source_literal(style_opt.as_deref().unwrap_or("saved")),
+        markdown_source_literal(speak_opt.as_deref().unwrap_or(""))
+    )
+}
+
+/// Surf to a URL or Markdown file inside Qwave (`window` mode opens native `qwave-qt`;
+/// `markdown` mode fetches & compiles to Sovereign Markdown in Qwave Studio).
+fn surf_with_qwave(target: &str, mode: &str, speak_opt: Option<&str>) -> String {
+    if let Some(spoken) = speak_opt {
+        if !spoken.trim().is_empty() {
+            let _ = speak_out_loud(spoken, "af_heart", true, false);
+        }
+    }
+
+    let trimmed = target.trim();
+    if trimmed.ends_with(".md")
+        || trimmed.starts_with("file://")
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+    {
+        return show_markdown_in_qwave(Some(trimmed.to_string()), None, None, None);
+    }
+
+    if mode == "markdown" {
+        if let Ok(out) = Command::new("curl")
+            .args(["-sL", "--max-time", "10", trimmed])
+            .output()
+        {
+            let body = String::from_utf8_lossy(&out.stdout);
+            let md = format!(
+                "# Qwave Sovereign Surf: `{trimmed}`\n\n> [!NOTE] Rendered via Qwave Sovereign Surf\n\n```html\n{}\n```\n",
+                body.chars().take(6000).collect::<String>()
+            );
+            return show_markdown_in_qwave(None, Some(md), None, None);
+        }
+    }
+
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-1".to_string());
+    let x11_display = env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
+
+    for qt_bin in [
+        "/usr/local/lib/qwave/qwave-qt",
+        "/home/hue/8b-is/qwave/qt/qwave-qt",
+    ] {
+        if Path::new(qt_bin).exists() {
+            let _ = Command::new(qt_bin)
+                .arg(trimmed)
+                .env("XDG_RUNTIME_DIR", &xdg_runtime)
+                .env("WAYLAND_DISPLAY", &wayland_display)
+                .env("DISPLAY", &x11_display)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            return format!(
+                "{{\"ok\":true,\"surfed\":{},\"engine\":\"qwave-qt\"}}",
+                markdown_source_literal(trimmed)
+            );
+        }
+    }
+
+    let _ = launch_native_window(trimmed);
+    format!(
+        "{{\"ok\":true,\"surfed\":{},\"engine\":\"native-window\"}}",
+        markdown_source_literal(trimmed)
+    )
+}
+
+/// Run the Sovereign Qwave MCP Server over `stdin`/`stdout` (JSON-RPC 2.0) for Antigravity (`agy`),
+/// Claude Code (`claude`), OpenAI Codex (`codex`), and any MCP-compatible host.
+fn run_mcp_server() {
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut stdout = std::io::stdout();
+
+    loop {
+        let mut line = String::new();
+        let Ok(n) = reader.read_line(&mut line) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Support both Content-Length framed MCP and newline-delimited JSON-RPC 2.0
+        let (payload, use_content_length) = if trimmed
+            .to_ascii_lowercase()
+            .starts_with("content-length:")
+        {
+            let len: usize = trimmed
+                .split_once(':')
+                .and_then(|(_, v)| v.trim().parse().ok())
+                .unwrap_or(0);
+            loop {
+                let mut hdr = String::new();
+                if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut buf = vec![0u8; len];
+            if reader.read_exact(&mut buf).is_err() {
+                break;
+            }
+            (String::from_utf8_lossy(&buf).into_owned(), true)
+        } else {
+            (trimmed.to_string(), false)
+        };
+
+        if let Some(resp) = handle_mcp_request(&payload) {
+            if use_content_length {
+                let _ = write!(stdout, "Content-Length: {}\r\n\r\n{}", resp.len(), resp);
+            } else {
+                let _ = writeln!(stdout, "{resp}");
+            }
+            let _ = stdout.flush();
+        }
+    }
+}
+
+fn extract_json_id(json: &str) -> Option<String> {
+    let needle = "\"id\":";
+    let start = json.find(needle)? + needle.len();
+    let rest = json[start..].trim_start();
+    if rest.starts_with('"') {
+        let s = extract_json_str(json, "id")?;
+        return Some(markdown_source_literal(&s));
+    }
+    let end = rest
+        .find(|c: char| matches!(c, ',' | '}' | ' ' | '\t' | '\r' | '\n'))
+        .unwrap_or(rest.len());
+    let token = &rest[..end];
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+fn extract_json_bool(json: &str, field: &str) -> Option<bool> {
+    let needle = format!("\"{field}\":");
+    let start = json.find(&needle)? + needle.len();
+    let rest = json[start..].trim_start();
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn extract_json_u64(json: &str, field: &str) -> Option<u64> {
+    let needle = format!("\"{field}\":");
+    let start = json.find(&needle)? + needle.len();
+    let rest = json[start..].trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+fn handle_mcp_request(req: &str) -> Option<String> {
+    let method = extract_json_str(req, "method")?;
+    let id_raw = extract_json_id(req);
+
+    // Notifications (no `id`) do not expect a response
+    if method.starts_with("notifications/") || id_raw.is_none() {
+        return None;
+    }
+    let id = id_raw.unwrap_or_else(|| "1".to_string());
+
+    match method.as_str() {
+        "initialize" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"qwave\",\"version\":\"0.2.0\"}}}}}}"
+        )),
+        "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}")),
+        "tools/list" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[\
+             {{\"name\":\"speak\",\"description\":\"🔊 Speak out loud to the user immediately through the default/Bluetooth speaker using Kokoro/LFM2.5 neural voice + zero-float MEM|8 SpeakerSalienceProfile integer prosody & harmonic modulation.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"text\":{{\"type\":\"string\",\"description\":\"Text to speak out loud to the user\"}},\"voice\":{{\"type\":\"string\",\"description\":\"Voice persona (af_heart, af_sky, af_bella, af_nicole, bf_emma, am_adam, am_michael, lfm_aye, lfm_omnimom)\",\"default\":\"af_heart\"}},\"salience_modulate\":{{\"type\":\"boolean\",\"description\":\"Modulate speech with user's learned MEM|8 vocal salience profile (default: true)\",\"default\":true}},\"wait\":{{\"type\":\"boolean\",\"description\":\"Wait for audio playback to finish before returning (default: false)\",\"default\":false}}}},\"required\":[\"text\"]}}}},\
+             {{\"name\":\"listen\",\"description\":\"🎙️ Listen to the user's microphone or a WAV file, extract the Top-K highest-salience vocal grains via zero-float MarineIntDetector into 79-byte MEM|8 WaveInt frames, update the persistent SpeakerSalienceProfile, and transcribe with Liquid-Rust (LFM2.5-Audio + Phoenix).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"duration_secs\":{{\"type\":\"integer\",\"description\":\"Seconds to record from microphone (1..30, default: 5)\",\"default\":5}},\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional path to an existing WAV file instead of recording live\"}}}}}}}},\
+             {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
+             {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown file (file:///.../*.md) or live Markdown snippet inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, 3D MEM|8 Wave canvas, Ghostwriter bridge, and optional live theme preset & voice narration.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the Markdown document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens\"}}}}}}}},\
+             {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}}\
+             ]}}}}"
+        )),
+        "tools/call" => {
+            let params_slice = req
+                .find("\"params\":")
+                .map(|idx| &req[idx + 9..])
+                .unwrap_or(req);
+            let tool_name = extract_json_str(params_slice, "name").unwrap_or_default();
+            let args_slice = params_slice
+                .find("\"arguments\":")
+                .map(|idx| &params_slice[idx + 12..])
+                .unwrap_or(params_slice);
+
+            let out_text = match tool_name.as_str() {
+                "speak" | "qwave_speak" => {
+                    let text = extract_json_str(args_slice, "text")
+                        .unwrap_or_else(|| "Hello from Qwave!".to_string());
+                    let voice = extract_json_str(args_slice, "voice")
+                        .unwrap_or_else(|| "af_heart".to_string());
+                    let salience_mod =
+                        extract_json_bool(args_slice, "salience_modulate").unwrap_or(true);
+                    let wait = extract_json_bool(args_slice, "wait").unwrap_or(false);
+                    speak_out_loud(&text, &voice, salience_mod, wait)
+                }
+                "listen" | "qwave_listen" => {
+                    if let Some(wav_p) = extract_json_str(args_slice, "wav_path") {
+                        listen_and_learn(&wav_p)
+                    } else {
+                        let secs = extract_json_u64(args_slice, "duration_secs").unwrap_or(5);
+                        listen_and_learn(&secs.to_string())
+                    }
+                }
+                "salience" | "qwave_salience" => {
+                    if let Some(wav_p) = extract_json_str(args_slice, "wav_path") {
+                        if let Ok(bytes) = fs::read(&wav_p) {
+                            if let Some((sr, pcm)) = decode_wav_i16(&bytes) {
+                                let report = extract_salient_grains(&pcm, sr, 3, now_secs());
+                                let mut prof = load_salience_profile();
+                                prof.absorb_report(&report);
+                                save_salience_profile(&prof);
+                            }
+                        }
+                    }
+                    let prof = load_salience_profile();
+                    format_salience_profile_json(&prof)
+                }
+                "show_markdown" | "qwave_show_markdown" => {
+                    let path_opt = extract_json_str(args_slice, "path");
+                    let md_opt = extract_json_str(args_slice, "markdown");
+                    let style_opt = extract_json_str(args_slice, "style");
+                    let speak_opt = extract_json_str(args_slice, "speak");
+                    show_markdown_in_qwave(path_opt, md_opt, style_opt, speak_opt)
+                }
+                "surf" | "qwave_surf" => {
+                    let url = extract_json_str(args_slice, "url")
+                        .unwrap_or_else(|| "/home/hue/8b-is/qwave/README.md".to_string());
+                    let mode = extract_json_str(args_slice, "mode")
+                        .unwrap_or_else(|| "window".to_string());
+                    let speak_opt = extract_json_str(args_slice, "speak");
+                    surf_with_qwave(&url, &mode, speak_opt.as_deref())
+                }
+                other => format!("{{\"ok\":false,\"error\":\"unknown tool: {other}\"}}"),
+            };
+
+            Some(format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}}}",
+                markdown_source_literal(&out_text)
+            ))
+        }
+        _ => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}}}"
+        )),
+    }
+}
+

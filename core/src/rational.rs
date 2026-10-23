@@ -11,7 +11,7 @@ pub struct Rational {
 
 impl Rational {
     /// Reduced construction; `None` when `den == 0`.
-    pub fn new(num: i32, den: u32) -> Option<Self> {
+    pub const fn new(num: i32, den: u32) -> Option<Self> {
         if den == 0 {
             return None;
         }
@@ -65,7 +65,7 @@ impl Rational {
     }
 }
 
-fn gcd(mut a: u32, mut b: u32) -> u32 {
+const fn gcd(mut a: u32, mut b: u32) -> u32 {
     while b != 0 {
         let t = a % b;
         a = b;
