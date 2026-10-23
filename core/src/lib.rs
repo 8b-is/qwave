@@ -9,6 +9,7 @@
 
 pub mod badge;
 pub mod egress;
+pub mod markdown;
 pub mod mem16;
 pub mod phoenix;
 pub mod quanttern;
