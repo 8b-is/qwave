@@ -3,7 +3,7 @@ title: "Zero-Allocation Text Handling on the Keystroke Path"
 status: draft
 date: 2026-08-13
 updated: 2026-08-13
-site: pocoo.vaked.dev
+site: pocoo.8b.is
 tags: [swift, performance, string, allocation, macos, sqlite, profiling]
 repo: https://github.com/8b-is/qwave
 commit: 15c1389aa0e2ccff5bf80cb85b62d7dcc6a2b6a9

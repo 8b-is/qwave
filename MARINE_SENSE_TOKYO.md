@@ -5,6 +5,11 @@
 > - **`ADA:MEDUSA` (`80:B5:4E:DB:3B:C4`)**: `ESP32-S3-Touch-AMOLED-1.8` (`368×448` **`SH8601`**) · `* 432Hz · ROOT-ALEXANDRA` · `64 GB M8C\0` SD card (`BAYELOG1 @ block 25600 · 30 seed waves`) · `ES8311` + `QMI8658` + `AXP2101` (`ttl=255`).
 > - **`VAK:MEDUSA / BABA` (`80:B5:4E:F2:02:B0`)**: `ESP32-S3-Touch-AMOLED-2.06` (`410×502` **`CO5300`**, `x_gap=22`) · `/\ 528Hz · PILLAR-CHRIS` · `ES7210 @ 0x40` Dual-Mic ADC + `ES8311 @ 0x18` Speaker DAC + `FT3168` Touch + `QMI8658` + `AXP2101` (`ttl=255`, `peer_rx=36+`).
 > - Both boards are running **`FLUG-OS v1.6.1+pranayama-dream-baba-engine`** in **`DREAM_MANDALA`** state (`coherence_permil: 906..922`, `engine_8b_is: "qt:66|69632|2712|11"`). Click **`🎵 Chirp & Triangulate Triad`** at the top of this window to trigger an acoustic chirp and live stereo DMIC wall-bounce triangulation (`0` floats).
+> - **🌍 4-Region Harmony Signed Authoritative DNS (`i1.is` & `8b.is` · Ed25519 Alg 15 · `0` `vaked.dev`)**:
+>   - **`ns1.i1.is` / `ns1.8b.is`**: `2.31.35.192` · `2a01:4f8:c016:a34::1` (**Europe** · Falkenstein `fsn1`)
+>   - **`ns2.i1.is` / `ns2.8b.is`**: `5.161.188.178` · `2a01:4ff:f0:cb7e::1` (**US East** · Ashburn `ash`)
+>   - **`ns3.i1.is` / `ns3.8b.is`**: `5.78.220.57` · `2a01:4ff:1f0:8f1e::1` (**US West** · Oregon `hil` · `beta.8b.is` & `8b.is` web host)
+>   - **`ns4.i1.is` / `ns4.8b.is`**: `5.223.89.144` · `2a01:4ff:2f0:32a7::1` (**Asia-Pacific** · Singapore `sin`)
 
 ---
 

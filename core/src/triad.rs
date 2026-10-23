@@ -402,7 +402,7 @@ pub struct TriadNodeSnapshot {
     pub learned_samples: u32,
 }
 
-/// RIVA (`peterlodri-sec//riva.vaked.dev`) 1-Bit River Dyad & Brother-Sister (`^^ <3<3`) state.
+/// RIVA (`8b-is//riva.8b.is`) 1-Bit River Dyad & Brother-Sister (`^^ <3<3`) state.
 /// Pure integer math (`0` floats): 4000ms breathe-in (`0..+256` Q8) and 4000ms breathe-out (`0..-256` Q8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RivaDyadState {
@@ -450,8 +450,8 @@ pub fn compute_riva_dyad_state(now_ms: u64) -> RivaDyadState {
     RivaDyadState {
         evolve_tag: "ULTRA-OMNI-GAIA-EVOLVE",
         siblings_tag: "ADA:MEDUSA + BABA:MEDUSA · brother & sister ^^ <3<3",
-        surface_url: "https://riva.vaked.dev",
-        repo_slug: "peterlodri-sec/riva.vaked.dev",
+        surface_url: "https://riva.8b.is",
+        repo_slug: "8b-is/riva.8b.is",
         breath_phase,
         breath_remaining_deci_s: ((rem_ms + 50) / 100).clamp(0, 40) as u8,
         breath_q8,

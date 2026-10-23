@@ -45,4 +45,4 @@ location and takes precedence over this summary.
 The iOS lane links the same QwaveKit modules as macOS; its dependency set is
 identical except Sparkle (macOS-only) and anything under `#if canImport(AppKit)`.
 
-*the constellation · 0 + 1 · fine touch from within · vaked.dev*
+*the constellation · 0 + 1 · fine touch from within · 8b.is*

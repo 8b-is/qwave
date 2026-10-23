@@ -74,7 +74,7 @@ rules: `8b-kit/docs/ADR-001-abi-contract.md`.
 | telemetry | `8b-is/qwave-telemetry` (private) — scrubbed JSONL + histograms |
 | quanttern | `core/src/quanttern.rs` — the emotional ternary code (sibling of `qultrakotoro` + `crush-love-dev/quanttern.rs`), exported over C ABI (`qw_quanttern_*`) |
 | sphered + badge | `core/src/badge.rs` — `<(? ~ ! @ >)>` admissible witnessed transitions (`#Commit = #ValidWitness`) + P1 membership channel gate (`Stable` unconditionally free) |
-| zoneInn | `8b-is/zoneInn` (`zoneinn.vaked.dev` · `radio.vaked.dev`) — Web & Bluetooth Radio Studio, 14 Favourite Musics Crate, and Ultrawhale NAND Oscillator Refeed |
+| zoneInn | `8b-is/zoneInn` (`zoneinn.8b.is` · `radio.8b.is`) — Web & Bluetooth Radio Studio, 14 Favourite Musics Crate, and Ultrawhale NAND Oscillator Refeed |
 | enthea | the engine door — MCP servers + personas, armed by `crush-love-dev --enthea` |
 
 ## The recent wire-in (2026-10-18)
@@ -100,7 +100,7 @@ The near constellation, wired rather than copied — each points at its home rep
   `Beta`/`Nightly` require an unexpired witnessed badge (or return the plain
   one-line notice: *"nightly is a member channel — stable is yours, free."*).
 - **zoneInn — the radio & Bluetooth dial.** [`8b-is/zoneInn`](https://github.com/8b-is/zoneInn)
-  ([`zoneinn.vaked.dev`](https://zoneinn.vaked.dev) · `radio.vaked.dev`), the
+  ([`zoneinn.8b.is`](https://zoneinn.8b.is) · `radio.8b.is`), the
   sovereign Web Radio & Bluetooth Studio with the 14 Favourite Musics Crate,
   live `rodio 0.23` + CoreAudio Bluetooth routing, and the 7-stage Ultrawhale
   NAND ring oscillator feeding `peetpedro/ultrawhale-oscillator`.
@@ -116,4 +116,4 @@ The near constellation, wired rather than copied — each points at its home rep
   the e2e launcher (`--loop`, `--quanttern`, `--lsp`, `--enthea`). The dev
   surface qwave is built on.
 
-*the constellation · 0 + 1 · fine touch from within · vaked.dev*
+*the constellation · 0 + 1 · fine touch from within · 8b.is*

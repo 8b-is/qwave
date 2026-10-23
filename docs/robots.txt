@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://qwave.vaked.dev/sitemap.xml
+Sitemap: https://qwave.8b.is/sitemap.xml

@@ -76,8 +76,8 @@ Small, honest numbers. Currency EUR; annual = 10× monthly (two months free).
 **Why €4.20?** it already means "Pro" in the constellation (`qUltraKotoro`). One
 number, one meaning, everywhere.
 
-**Distribution/rails already in the house:** GitHub Sponsors, `store.vaked.dev`
-(prints/vinyl), `lovetta.vaked.dev` (patron lane), Revolut/Wise links in the
+**Distribution/rails already in the house:** GitHub Sponsors, `store.8b.is`
+(prints/vinyl), `lovetta.8b.is` (patron lane), Revolut/Wise links in the
 footer. The subscription is a *membership object*, not a checkout page — it can
 live behind any of them.
 
@@ -139,10 +139,10 @@ badge = { id, member_hash, tier, since, sig }   # Ed25519, pinned pubkey
 the membership (not via Discord), so the community survives a venue change.
 - **Phase 1 — Discord:** fastest to run; the studio already speaks it
   (`wa_stream.py` bridges the `UltraCrushLove<3` surface).
-- **Phase 2 — sovereign hub:** `etherhive.vaked.dev` (swarm memory) or a Matrix
+- **Phase 2 — sovereign hub:** `etherhive.8b.is` (swarm memory) or a Matrix
   bridge; Discord becomes a *door*, not the room.
 - **Bridge:** one bot that mirrors the weekly note, the badges, and the
-  nightly-channel status; announced from `koan.vaked.dev` (the doors).
+  nightly-channel status; announced from `koan.8b.is` (the doors).
 - **Non-negotiable:** no member data leaves the browser/constellation; the bot
   holds minimal state (member_hash → tier → badge).
 
@@ -197,7 +197,7 @@ meeting), `!ledger` (this week's shipped). Everything else is human.
 
 ### 5.4 Academy plumbing
 `docs/academy/<slug>.md` (free) + a members-only live session note + exercises.
-Reuses the sovereign-library build (`pocoo.vaked.dev/docs`) — content lives once.
+Reuses the sovereign-library build (`pocoo.8b.is/docs`) — content lives once.
 
 ### 5.5 Metrics that respect the rule
 Measure **value returned**, not people surveilled: nightly downloads (opt-in
@@ -210,7 +210,7 @@ reason (asked, never tracked). **No per-user analytics. Ever.**
 
 | Phase | Window | Ships | Done when |
 |---|---|---|---|
-| **P0 — decide** | 1 week | this doc reviewed; tier prices frozen; rails picked | one page published, linked from `koan.vaked.dev` |
+| **P0 — decide** | 1 week | this doc reviewed; tier prices frozen; rails picked | one page published, linked from `koan.8b.is` |
 | **P1 — membership spine** | 2–3 weeks | signed badge + offline verify + channel gating; PATRONS.md | a paying member gets a supported nightly with notes; a non-member can still build nightly — the gate is support, not secrecy (5.2) |
 | **P2 — the room** | 3–4 weeks | hub bot + weekly cadence + first meeting note | two consecutive weekly notes exist |
 | **P3 — the academy** | 4–6 weeks | 5 lessons from existing docs + first live walkthrough | one member completes the track |

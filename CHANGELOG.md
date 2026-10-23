@@ -44,7 +44,7 @@ All notable changes to Qwave will be documented in this file.
   decision stays allocation-free.
 - **`docs/constellation.md` wires in the near ring:** quanttern / qUltraKotoro,
   sphered + `badge.rs` (`#Commit = #ValidWitness`), `zoneInn`
-  (`zoneinn.vaked.dev` · `radio.vaked.dev`), enthea (the engine door), marqant,
+  (`zoneinn.8b.is` · `radio.8b.is`), enthea (the engine door), marqant,
   and crush-love-dev.
 
 ## [2.0.7] — 2026-10-15
