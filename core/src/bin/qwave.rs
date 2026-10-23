@@ -2562,9 +2562,10 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     let _ = fs::write(&play_path, &wav_bytes);
 
     // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
-    // and mark TTS active so the parallel ear daemon suppresses system echo!
-    let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 30) + 3;
+    // and mark TTS active + save last spoken text so the parallel ear daemon suppresses laptop speaker bleed!
+    let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 120) + 4;
     mark_tts_active_secs(est_secs);
+    let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
 
     let prof = load_salience_profile();
     let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
@@ -3021,6 +3022,32 @@ fn read_tts_active_until() -> u64 {
         .unwrap_or(0)
 }
 
+/// Detect laptop-speaker acoustic bleed into the laptop mic by checking word-overlap
+/// against the most recent spoken TTS text.
+fn is_tts_echo(transcript: &str) -> bool {
+    let Ok(last_tts) = fs::read_to_string(mem8_dir().join("last_tts_text.txt")) else {
+        return false;
+    };
+    let tts_low = last_tts.to_ascii_lowercase();
+    let mut total = 0usize;
+    let mut matched = 0usize;
+    for w in transcript.split_whitespace() {
+        let clean: String = w
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if clean.len() < 4 {
+            continue;
+        }
+        total += 1;
+        if tts_low.contains(&clean) {
+            matched += 1;
+        }
+    }
+    total >= 3 && matched * 2 >= total
+}
+
 /// Ensure the background parallel always-on acoustic ear (`qwave --ear-daemon`) is running.
 fn ensure_ear_daemon_running() {
     let pid_file = mem8_dir().join("ear_daemon.pid");
@@ -3273,6 +3300,7 @@ fn process_parallel_ear_utterance(
             trimmed_tx.to_ascii_lowercase().as_str(),
             "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh."
         )
+        || is_tts_echo(trimmed_tx)
     {
         return;
     }
