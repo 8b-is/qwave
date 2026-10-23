@@ -2589,6 +2589,7 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
+        mark_tts_active_secs(2);
         let _ = fs::remove_file(&play_path);
         format!(
             "{{\"ok\":true,\"played\":{played},\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",

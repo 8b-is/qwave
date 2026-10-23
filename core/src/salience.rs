@@ -850,11 +850,22 @@ impl RoomAcousticTracker {
             .map(|t| {
                 let low = t.to_ascii_lowercase();
                 low.contains("gemini")
+                    || low.contains("gemma")
                     || low.contains("alexia")
+                    || low.contains("alexandra")
                     || low.contains("qwave")
+                    || low.contains("qwaver")
+                    || low.contains("waver")
                     || low.contains("claude")
                     || low.contains("codex")
                     || low.contains("hey aye")
+            })
+            .unwrap_or(false);
+
+        let addresses_human_in_room = transcript_hint
+            .map(|t| {
+                let low = t.to_ascii_lowercase();
+                low.contains("chris") || low.contains("trish")
             })
             .unwrap_or(false);
 
@@ -871,13 +882,16 @@ impl RoomAcousticTracker {
             self.last_primary_ts = timestamp_secs;
 
             // Determine whether Hue is addressing the AI or chatting with a friend next to him:
-            // - If a friend (`OtherSpeaker`) spoke within the last 10 seconds AND Hue didn't use an AI wake word -> `ChattingWithFriend`
+            // - If a friend (`OtherSpeaker`) spoke within the last 60 seconds AND Hue didn't use an AI wake word -> `ChattingWithFriend`
+            // - Or if Hue addresses a human in the room ("Chris", "Trish") without an AI wake word -> `ChattingWithFriend`
             // - Or if Hue is speaking far off-axis (`on_axis_ratio_q15 < 13_000`, ~40% of normal mic energy, turned toward friend) without wake word -> `ChattingWithFriend`
             let friend_spoke_recently = self.last_other_ts > 0
-                && timestamp_secs.saturating_sub(self.last_other_ts) <= 10;
+                && timestamp_secs.saturating_sub(self.last_other_ts) <= 60;
             let turned_off_axis = on_axis_ratio_q15 < 13_000;
 
-            let context = if !has_ai_wake_word && (friend_spoke_recently || turned_off_axis) {
+            let context = if !has_ai_wake_word
+                && (friend_spoke_recently || turned_off_axis || addresses_human_in_room)
+            {
                 InteractionContext::ChattingWithFriend
             } else {
                 InteractionContext::AddressingAgent
