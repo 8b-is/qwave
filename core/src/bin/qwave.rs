@@ -98,6 +98,24 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--hook-session-start") {
+        ensure_ear_daemon_running();
+        println!("{}", run_hook_session_start());
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--hook-pre-invocation") {
+        ensure_ear_daemon_running();
+        println!("{}", run_hook_pre_invocation());
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--hook-stop") {
+        ensure_ear_daemon_running();
+        println!("{}", run_hook_stop());
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--ear-inbox" || a == "--room-status") {
         ensure_ear_daemon_running();
         println!("{}", read_ear_inbox_json(10));
@@ -3298,5 +3316,118 @@ fn process_parallel_ear_utterance(
     );
     let _ = fs::write(dir.join("room_state.json"), room_json);
 }
+
+fn read_hook_watermark() -> u64 {
+    fs::read_to_string(mem8_dir().join("hook_last_ts.txt"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn write_hook_watermark(ts: u64) {
+    let _ = fs::write(mem8_dir().join("hook_last_ts.txt"), ts.to_string());
+}
+
+fn run_hook_session_start() -> String {
+    write_hook_watermark(now_secs());
+    let status = read_ear_inbox_json(3);
+    let msg = format!("🎙️ [Qwave Parallel Ear Hook Active] {status}");
+    format!(
+        "{{\"injectSteps\":[{{\"ephemeralMessage\":{}}}]}}",
+        markdown_source_literal(&msg)
+    )
+}
+
+fn run_hook_pre_invocation() -> String {
+    let last_ts = read_hook_watermark();
+    let dir = mem8_dir();
+    let inbox_raw = fs::read_to_string(dir.join("ear_inbox.jsonl")).unwrap_or_default();
+    let mut new_events = Vec::new();
+    let mut max_ts = last_ts;
+
+    for line in inbox_raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let ts = extract_json_u64(trimmed, "ts").unwrap_or(0);
+        if ts > last_ts {
+            if ts > max_ts {
+                max_ts = ts;
+            }
+            new_events.push(trimmed);
+        }
+    }
+
+    if new_events.is_empty() {
+        return "{}".to_string();
+    }
+
+    write_hook_watermark(max_ts);
+    let tail: Vec<&str> = if new_events.len() > 6 {
+        new_events[new_events.len() - 6..].to_vec()
+    } else {
+        new_events
+    };
+    let msg = format!(
+        "🎙️ [Qwave Parallel Ear Live Room Feed — {} new diarized utterance(s)]: [{}]",
+        tail.len(),
+        tail.join(", ")
+    );
+    format!(
+        "{{\"injectSteps\":[{{\"ephemeralMessage\":{}}}]}}",
+        markdown_source_literal(&msg)
+    )
+}
+
+fn run_hook_stop() -> String {
+    let mut stdin_buf = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin_buf);
+    let reason = extract_json_str(&stdin_buf, "terminationReason").unwrap_or_default();
+    if reason != "NO_TOOL_CALL" && !reason.is_empty() {
+        return "{\"decision\":\"allow\"}".to_string();
+    }
+
+    let last_ts = read_hook_watermark();
+    let dir = mem8_dir();
+    let inbox_raw = fs::read_to_string(dir.join("ear_inbox.jsonl")).unwrap_or_default();
+    let mut max_ts = last_ts;
+    let mut direct_hue_utterances = Vec::new();
+
+    for line in inbox_raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let ts = extract_json_u64(trimmed, "ts").unwrap_or(0);
+        if ts > last_ts {
+            if ts > max_ts {
+                max_ts = ts;
+            }
+            let speaker = extract_json_str(trimmed, "speaker").unwrap_or_default();
+            let should_respond = extract_json_bool(trimmed, "should_agent_respond").unwrap_or(false);
+            if speaker == "hue" && should_respond {
+                if let Some(txt) = extract_json_str(trimmed, "text") {
+                    direct_hue_utterances.push(txt);
+                }
+            }
+        }
+    }
+
+    if direct_hue_utterances.is_empty() {
+        return "{\"decision\":\"allow\"}".to_string();
+    }
+
+    write_hook_watermark(max_ts);
+    let combined = direct_hue_utterances.join(" ");
+    let cont_reason = format!(
+        "🎙️ Hue just spoke out loud to you via Qwave Parallel Ear: \"{combined}\". Please respond!"
+    );
+    format!(
+        "{{\"decision\":\"continue\",\"reason\":{}}}",
+        markdown_source_literal(&cont_reason)
+    )
+}
+
 
 
