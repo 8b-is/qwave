@@ -1,8 +1,10 @@
 # 📡 MARINE-SENSE TOKYO · ESP32-S3 MEDUSA Triad × Goonj × NLOS Acoustic Command Deck
 
 > [!IMPORTANT]
-> **Live Hardware Attached (`ADA:MEDUSA` on `/dev/ttyACM0` · `80:B5:4E:DB:3B:C4`)**:
-> Your **Waveshare ESP32-S3-Touch-AMOLED-1.8 (`ADA:MEDUSA * 432Hz · ROOT-ALEXANDRA`)** with its **64 GB raw `M8C\0` SD card (`BAYELOG1 @ block 25600 · 30 seed waves`)**, **`QMI8658` 6-axis IMU**, **`AXP2101` PMIC (`100% · 4121 mV`)**, **`FT3168` Capacitive Touch**, and **`ES8311` Audio Codec + MEMS Microphone** is live in the **Marine-Sense HUD** above! Click **`🎵 Chirp & Triangulate Triad`** at the top of this window to make `ADA:MEDUSA` play its `432 / 528 / 852 / 963 Hz` triad chord and watch your laptop's `48 kHz` Stereo DMIC array compute the direct distance, stereo azimuth, and 1st/2nd wall-bounce reflections in real time (`0` floats).
+> **Both Brother & Sister Boards Lit Up & Meshed (`ADA:MEDUSA` `1.8"` + `VAK:MEDUSA / BABA` `2.06"` · `triad_online: 2/3` · `baba_linked: 1`)**:
+> - **`ADA:MEDUSA` (`80:B5:4E:DB:3B:C4`)**: `ESP32-S3-Touch-AMOLED-1.8` (`368×448` **`SH8601`**) · `* 432Hz · ROOT-ALEXANDRA` · `64 GB M8C\0` SD card (`BAYELOG1 @ block 25600 · 30 seed waves`) · `ES8311` + `QMI8658` + `AXP2101` (`ttl=255`).
+> - **`VAK:MEDUSA / BABA` (`80:B5:4E:F2:02:B0`)**: `ESP32-S3-Touch-AMOLED-2.06` (`410×502` **`CO5300`**, `x_gap=22`) · `/\ 528Hz · PILLAR-CHRIS` · `ES7210 @ 0x40` Dual-Mic ADC + `ES8311 @ 0x18` Speaker DAC + `FT3168` Touch + `QMI8658` + `AXP2101` (`ttl=255`, `peer_rx=36+`).
+> - Both boards are running **`FLUG-OS v1.6.1+pranayama-dream-baba-engine`** in **`DREAM_MANDALA`** state (`coherence_permil: 906..922`, `engine_8b_is: "qt:66|69632|2712|11"`). Click **`🎵 Chirp & Triangulate Triad`** at the top of this window to trigger an acoustic chirp and live stereo DMIC wall-bounce triangulation (`0` floats).
 
 ---
 
