@@ -17,6 +17,7 @@ pub mod quanttern;
 pub mod rational;
 pub mod salience;
 pub mod telemetry;
+pub mod triad;
 pub mod wave;
 
 pub use rational::Rational;
