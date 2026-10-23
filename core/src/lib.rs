@@ -11,6 +11,7 @@ pub mod badge;
 pub mod egress;
 pub mod markdown;
 pub mod mem16;
+pub mod mesh;
 pub mod phoenix;
 pub mod quanttern;
 pub mod rational;
