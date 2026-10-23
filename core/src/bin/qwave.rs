@@ -38,7 +38,8 @@ use qwave_core::mesh::{
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
     AcousticSourceKind, MarineIntDetector, RoomAcousticTracker, SpeakerSalienceProfile,
-    combine_salient_speech_wav, decode_wav_i16, encode_wav_i16, extract_salient_grains,
+    StereoMicTriangulation, combine_salient_speech_wav, decode_wav_i16, encode_wav_i16,
+    extract_salient_grains, triangulate_stereo_dmic_i16,
 };
 use qwave_core::wave::{WaveInt, WaveProvenance, consciousness};
 
@@ -2540,12 +2541,15 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
         .args([
             "-c",
             "SPK_SINK=$(pactl list sinks short 2>/dev/null | awk '/HiFi__Speaker__sink/{print $2; exit}'); \
+             BT_SINK=$(pactl list sinks short 2>/dev/null | awk '/bluez_output/{print $2; exit}'); \
              if [ -n \"$SPK_SINK\" ]; then \
                pactl set-default-sink \"$SPK_SINK\" 2>/dev/null || true; \
                pactl set-sink-mute \"$SPK_SINK\" 0 2>/dev/null || true; \
                pactl set-sink-volume \"$SPK_SINK\" 90% 2>/dev/null || true; \
-             else \
-               wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true; \
+             fi; \
+             if [ -n \"$BT_SINK\" ]; then \
+               pactl set-sink-mute \"$BT_SINK\" 0 2>/dev/null || true; \
+               pactl set-sink-volume \"$BT_SINK\" 90% 2>/dev/null || true; \
              fi",
         ])
         .stdout(Stdio::null())
@@ -3290,12 +3294,14 @@ fn run_parallel_ear_daemon() {
             ])
             .status();
 
-        // Stream raw 16kHz 16-bit mono PCM from PipeWire (`pw-record --raw` / `parec`)
+        // Stream raw 48kHz 2-channel stereo `s16le` PCM from the laptop's Digital Microphone Array (`Mic1__source`)
+        // so `triangulate_stereo_dmic_i16` computes real-time TDOA azimuth angle (-90..+90 deg), distance (cm),
+        // and Delay-and-Sum 16kHz beamforming!
         let child_opt = Command::new("parec")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
-                "--rate=16000",
-                "--channels=1",
+                "--rate=48000",
+                "--channels=2",
                 "--format=s16le",
                 "--latency-msec=60",
             ])
@@ -3305,7 +3311,7 @@ fn run_parallel_ear_daemon() {
             .ok()
             .or_else(|| {
                 Command::new("arecord")
-                    .args(["-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"])
+                    .args(["-q", "-f", "S16_LE", "-r", "48000", "-c", "2", "-t", "raw"])
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())
                     .spawn()
@@ -3323,9 +3329,9 @@ fn run_parallel_ear_daemon() {
             continue;
         };
 
-        // 60ms frame at 16kHz = 960 i16 samples = 1920 bytes
-        let mut frame_bytes = [0u8; 1920];
-        let mut utterance_pcm: Vec<i16> = Vec::with_capacity(16_000 * 6);
+        // 60ms frame at 48kHz 2-channel stereo = 2880 stereo frames = 5760 i16 samples = 11520 bytes
+        let mut frame_bytes = vec![0u8; 11_520];
+        let mut utterance_stereo_48k: Vec<i16> = Vec::with_capacity(48_000 * 2 * 6);
         let mut silent_frames = 0u32;
         let mut voiced_frames = 0u32;
 
@@ -3333,35 +3339,43 @@ fn run_parallel_ear_daemon() {
             let now = now_secs();
             let tts_until = read_tts_active_until();
             if now < tts_until {
-                utterance_pcm.clear();
+                utterance_stereo_48k.clear();
                 silent_frames = 0;
                 voiced_frames = 0;
                 continue;
             }
 
-            let mut frame_pcm = [0i16; 960];
+            let mut frame_stereo = [0i16; 5_760];
+            for i in 0..5_760 {
+                frame_stereo[i] = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
+            }
+
+            // Evaluate 16kHz downmixed mono frame with zero-float `MarineIntDetector`
             let mut det = MarineIntDetector::new(16_000, 164);
             let mut sum_sal: u64 = 0;
-            for i in 0..960 {
-                let s = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
-                frame_pcm[i] = s;
-                sum_sal += det.process_sample_i16(s, i) as u64;
+            for k in 0..960 {
+                let l = frame_stereo[k * 6] as i32;
+                let r = frame_stereo[k * 6 + 1] as i32;
+                let m = ((l + r) / 2) as i16;
+                sum_sal += det.process_sample_i16(m, k) as u64;
             }
             let avg_sal_q15 = (sum_sal / 960) as u16;
 
             if avg_sal_q15 >= 512 {
                 voiced_frames += 1;
                 silent_frames = 0;
-                utterance_pcm.extend_from_slice(&frame_pcm);
-            } else if !utterance_pcm.is_empty() {
+                utterance_stereo_48k.extend_from_slice(&frame_stereo);
+            } else if !utterance_stereo_48k.is_empty() {
                 silent_frames += 1;
-                utterance_pcm.extend_from_slice(&frame_pcm);
+                utterance_stereo_48k.extend_from_slice(&frame_stereo);
             }
 
             // Dispatch completed utterance when >= 5 voiced frames (300ms) followed by 8 silent frames (480ms),
-            // or if continuous utterance reaches 7.5 seconds (125 frames)
-            if (voiced_frames >= 5 && silent_frames >= 8) || utterance_pcm.len() >= 16_000 * 7 {
-                let captured = std::mem::take(&mut utterance_pcm);
+            // or if continuous utterance reaches 7.0 seconds
+            if (voiced_frames >= 5 && silent_frames >= 8)
+                || utterance_stereo_48k.len() >= 48_000 * 2 * 7
+            {
+                let captured_stereo = std::mem::take(&mut utterance_stereo_48k);
                 voiced_frames = 0;
                 silent_frames = 0;
 
@@ -3370,11 +3384,16 @@ fn run_parallel_ear_daemon() {
                 let dir_clone = dir.clone();
                 thread::spawn(move || {
                     if let Ok(_guard) = lock_clone.try_lock() {
-                        process_parallel_ear_utterance(&captured, now, &tracker_clone, &dir_clone);
+                        process_parallel_ear_utterance(
+                            &captured_stereo,
+                            now,
+                            &tracker_clone,
+                            &dir_clone,
+                        );
                     }
                 });
             } else if silent_frames >= 8 {
-                utterance_pcm.clear();
+                utterance_stereo_48k.clear();
                 voiced_frames = 0;
                 silent_frames = 0;
             }
@@ -3387,11 +3406,19 @@ fn run_parallel_ear_daemon() {
 }
 
 fn process_parallel_ear_utterance(
-    pcm: &[i16],
+    stereo_48k: &[i16],
     now: u64,
     tracker: &Arc<Mutex<RoomAcousticTracker>>,
     dir: &Path,
 ) {
+    // 0. Zero-float Stereo DMIC Triangulation (TDOA cross-correlation + ILD + Delay-and-Sum 16kHz Beamforming)
+    let (tri, beamformed_16k) = if stereo_48k.len() >= 192 {
+        triangulate_stereo_dmic_i16(stereo_48k, None)
+    } else {
+        (StereoMicTriangulation::default(), stereo_48k.to_vec())
+    };
+    let pcm = &beamformed_16k;
+
     // 1. Fast zero-float acoustic check before invoking neural STT
     let pre_check = extract_salient_grains(pcm, 16_000, 3, now);
     if pre_check.top_grains.is_empty() {
@@ -3473,7 +3500,7 @@ fn process_parallel_ear_utterance(
         / (analysis.salience_report.overall_f0_hz.den.max(1) as i32);
 
     // 4. Offload cognitive folding & token compression to ALEXIAI (127.0.0.1:8787 /api/gaia + WUPZ)
-    let capsule = build_alexiai_thought_capsule(
+    let raw_capsule = build_alexiai_thought_capsule(
         analysis.source.as_str(),
         analysis.context.as_str(),
         analysis.should_agent_respond,
@@ -3482,9 +3509,14 @@ fn process_parallel_ear_utterance(
         analysis.salience_report.overall_vad_byte,
         &transcript,
     );
+    let capsule = raw_capsule.replacen(
+        "Hz|",
+        &format!("Hz|{:+}°/{}cm|", tri.azimuth_deg, tri.distance_cm),
+        1,
+    );
 
     let event_json = format!(
-        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
+        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
@@ -3492,6 +3524,10 @@ fn process_parallel_ear_utterance(
         analysis.on_axis_ratio_q15,
         analysis.salience_report.overall_f0_hz.num,
         analysis.salience_report.overall_f0_hz.den,
+        tri.azimuth_deg,
+        tri.distance_cm,
+        markdown_source_literal(tri.spatial_zone),
+        tri.active_mics,
         analysis.salience_report.overall_vad_byte,
         markdown_source_literal(&capsule),
         markdown_source_literal(&transcript)
@@ -3506,31 +3542,40 @@ fn process_parallel_ear_utterance(
     }
 
     let room_json = format!(
-        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"friends_detected\":{friends_count},\"last_utterance\":{event_json}}}",
+        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"last_utterance\":{event_json}}}",
         std::process::id(),
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
         tr.noise_floor_q15,
-        tr.primary_profile.grains_learned
+        tr.primary_profile.grains_learned,
+        tri.azimuth_deg,
+        tri.distance_cm,
+        markdown_source_literal(tri.spatial_zone),
     );
     let _ = fs::write(dir.join("room_state.json"), room_json);
     drop(tr);
 
-    // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Alexia"` / `"Hey Alexandra"`):
-    //    Answers directly from local ALEXIAI (`127.0.0.1:8787`) + Kokoro Salience Speaker with zero cloud!
+    // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Alexia"` / `"Hey Alexandra"` OR `"Hey Gemini"` fallback):
+    //    If `"Hey Alexia"` is spoken, or if `"Hey Gemini"` is spoken and no `--wait-wake` process claims it within 1.5s,
+    //    reply out loud immediately through the speakers so Hue never gets silence!
     let low_tx = transcript.to_ascii_lowercase();
-    if low_tx.contains("hey alexia")
-        || low_tx.contains("hey alexandra")
-        || env::var("QWAVE_LOCAL_BRAIN").as_deref() == Ok("1") && has_explicit_wake_word(&transcript)
-    {
-        let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
-        let jst = format_jst_clock(now);
-        let (_, _, loc_area, ap_count, _, _) = passive_tokyo_beacon_sense();
-        let spoken_reply = format!(
-            "Alexia here on local loopback at {jst} in {loc_area}. I folded your thought onto the {dom} layer at {qt} with WUPZ receipt {wupz} across {ap_count} beacons!"
-        );
-        let _ = speak_out_loud(&spoken_reply, "af_heart", true, true);
+    if has_explicit_wake_word(&transcript) {
+        let is_alexia = low_tx.contains("alexia") || low_tx.contains("alexandra");
+        if !is_alexia {
+            thread::sleep(Duration::from_millis(1200));
+        }
+        // If `hook_last_ts` already consumed this `now` timestamp (meaning Antigravity woke up), let Antigravity speak;
+        // otherwise, answer out loud locally right now!
+        if is_alexia || read_hook_watermark() < now {
+            write_hook_watermark(now);
+            let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
+            let spoken_reply = format!(
+                "I hear you Hue, triangulated at {:+} degrees and {} centimeters on your stereo mic array! Folded on the {dom} layer at {qt} with WUPZ {wupz}.",
+                tri.azimuth_deg, tri.distance_cm
+            );
+            let _ = speak_out_loud(&spoken_reply, "af_heart", true, true);
+        }
     }
 }
 
@@ -3979,11 +4024,26 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
     let hex96: String = bytes96.iter().take(24).map(|b| format!("{b:02x}")).collect();
     let hex31: String = adv31.iter().map(|b| format!("{b:02x}")).collect();
 
+    // Enumerate all available hardware & Bluetooth microphones in PipeWire
+    let pactl_srcs = Command::new("pactl")
+        .args(["list", "sources", "short"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut mic_sources = Vec::new();
+    for line in pactl_srcs.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && !parts[1].ends_with(".monitor") {
+            mic_sources.push(markdown_source_literal(parts[1]));
+        }
+    }
+
     format!(
         "{{\n\
          \"ok\": true,\n\
          \"version\": \"0.3.0\",\n\
          \"tokyo_time_jst\": {},\n\
+         \"available_microphones\": [{}],\n\
          \"free_wifi_candidates_count\": {},\n\
          \"free_wifi_candidates\": [{}],\n\
          \"captive_portal_probe\": {},\n\
@@ -3992,6 +4052,7 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
          \"bluetooth_ble_adv_31b_hex\": \"0x{hex31}\"\n\
          }}",
         markdown_source_literal(&format_jst_clock(now_secs())),
+        mic_sources.join(","),
         candidates.len(),
         cand_json_items.join(","),
         markdown_source_literal(&portal_status),

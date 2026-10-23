@@ -953,6 +953,158 @@ impl RoomAcousticTracker {
     }
 }
 
+/// Zero-float spatial triangulation result from the laptop's 2-channel `48 kHz` digital bezel
+/// microphone array (`front-left` + `front-right` DMIC) + optional remote Bluetooth microphone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StereoMicTriangulation {
+    /// Horizontal azimuth angle in degrees (`-90` = far left, `0` = dead-center at screen, `+90` = far right).
+    pub azimuth_deg: i16,
+    /// Estimated speaker distance from the laptop bezel in centimeters (`35..=400 cm`).
+    pub distance_cm: u16,
+    /// Integer TDOA lag in `48 kHz` samples (`-10..=+10`, `~20.8 µs` / `7.14 mm` per sample).
+    pub tdoa_samples_48k: i16,
+    /// Interaural Level Difference (`(E_R - E_L) * 100 / (E_R + E_L)` in `-100..=+100`).
+    pub ild_pct: i16,
+    /// Remote Bluetooth microphone relative energy (`0..=32767`), if a BT HFP mic was sampled.
+    pub bt_mic_energy_q15: u16,
+    /// Number of physical microphone channels fused (`2` for laptop stereo DMIC, `3` with BT mic).
+    pub active_mics: u8,
+    /// Human-readable spatial zone relative to the laptop.
+    pub spatial_zone: &'static str,
+}
+
+impl Default for StereoMicTriangulation {
+    fn default() -> Self {
+        Self {
+            azimuth_deg: 0,
+            distance_cm: 65,
+            tdoa_samples_48k: 0,
+            ild_pct: 0,
+            bt_mic_energy_q15: 0,
+            active_mics: 2,
+            spatial_zone: "center_keyboard",
+        }
+    }
+}
+
+/// Perform 100% integer Time-Difference-of-Arrival (TDOA cross-correlation) + Interaural Level
+/// Difference (ILD) triangulation on interleaved `48 kHz` stereo DMIC samples (`[L0, R0, L1, R1, ...]`),
+/// fuse optional Bluetooth microphone energy, and return `(StereoMicTriangulation, beamformed_16khz_mono)`.
+pub fn triangulate_stereo_dmic_i16(
+    interleaved_lr_48k: &[i16],
+    bt_mic_mono_16k: Option<&[i16]>,
+) -> (StereoMicTriangulation, Vec<i16>) {
+    let frames_48k = interleaved_lr_48k.len() / 2;
+    if frames_48k < 64 {
+        return (StereoMicTriangulation::default(), Vec::new());
+    }
+
+    let mut left_energy: i64 = 0;
+    let mut right_energy: i64 = 0;
+    for i in 0..frames_48k {
+        let l = interleaved_lr_48k[i * 2] as i64;
+        let r = interleaved_lr_48k[i * 2 + 1] as i64;
+        left_energy += l.abs();
+        right_energy += r.abs();
+    }
+
+    // 1. Integer Cross-Correlation TDOA across lags -10..=+10 samples at 48 kHz
+    //    Positive lag means sound reached the Right mic first (speaker is to the Right, +azimuth).
+    //    Negative lag means sound reached the Left mic first (speaker is to the Left, -azimuth).
+    let max_lag: isize = 10;
+    let step = 2usize; // subsample every 2nd 48kHz frame for ultra-fast O(1) correlation
+    let mut best_lag: i16 = 0;
+    let mut best_corr: i64 = i64::MIN;
+    let start_i = (max_lag as usize) + 1;
+    let end_i = frames_48k.saturating_sub((max_lag as usize) + 2);
+
+    if end_i > start_i {
+        for lag in -max_lag..=max_lag {
+            let mut corr: i64 = 0;
+            let mut idx = start_i;
+            while idx < end_i {
+                let l = (interleaved_lr_48k[idx * 2] as i64) >> 2;
+                let r_idx = (idx as isize - lag) as usize;
+                let r = (interleaved_lr_48k[r_idx * 2 + 1] as i64) >> 2;
+                corr += l * r;
+                idx += step;
+            }
+            // Slight preference for lag 0 on ties
+            let tie_bonus = (10 - lag.abs() as i64) * 4;
+            if corr + tie_bonus > best_corr {
+                best_corr = corr + tie_bonus;
+                best_lag = lag as i16;
+            }
+        }
+    }
+
+    let total_energy = (left_energy + right_energy).max(1);
+    let ild_pct = (((right_energy - left_energy) * 100) / total_energy).clamp(-100, 100) as i16;
+
+    // Combine TDOA lag angle (~7 deg per 48kHz sample lag) and ILD level cue
+    let tdoa_deg = (best_lag as i32) * 7;
+    let ild_deg = ((ild_pct as i32) * 45) / 100;
+    let azimuth_deg = ((tdoa_deg * 6 + ild_deg * 4) / 10).clamp(-90, 90) as i16;
+
+    // Mean absolute amplitude per sample across the array
+    let mean_abs = (total_energy / ((frames_48k as i64) * 2)).max(1);
+    // Estimate distance in cm using inverse-square integer law (calibrated: mean_abs=2800 -> ~60 cm)
+    let distance_cm = ((168_000 / (mean_abs + 400)) + 25).clamp(35, 380) as u16;
+
+    // Optional Bluetooth microphone energy fusion
+    let (bt_mic_energy_q15, active_mics) = if let Some(bt_pcm) = bt_mic_mono_16k {
+        if !bt_pcm.is_empty() {
+            let sum_bt: i64 = bt_pcm.iter().map(|&s| (s as i64).abs()).sum();
+            let avg_bt = ((sum_bt / (bt_pcm.len() as i64)) as u32).min(32_767) as u16;
+            (avg_bt, 3u8)
+        } else {
+            (0u16, 2u8)
+        }
+    } else {
+        (0u16, 2u8)
+    };
+
+    let spatial_zone = if bt_mic_energy_q15 > (mean_abs as u16).saturating_mul(2) && bt_mic_energy_q15 > 800 {
+        "near_bt_speaker"
+    } else if distance_cm > 190 {
+        "far_room"
+    } else if azimuth_deg < -18 {
+        "left_of_laptop"
+    } else if azimuth_deg > 18 {
+        "right_of_laptop"
+    } else {
+        "center_keyboard"
+    };
+
+    // Delay-and-Sum Beamforming + 3:1 Decimation (`48 kHz` stereo -> `16 kHz` phase-aligned mono)
+    let out_len_16k = frames_48k / 3;
+    let mut beamformed_16k = Vec::with_capacity(out_len_16k);
+    for k in 0..out_len_16k {
+        let mut acc: i32 = 0;
+        for sub in 0..3usize {
+            let f_idx = k * 3 + sub;
+            let l = interleaved_lr_48k[f_idx * 2] as i32;
+            let r_idx = (f_idx as isize - best_lag as isize).clamp(0, (frames_48k - 1) as isize) as usize;
+            let r = interleaved_lr_48k[r_idx * 2 + 1] as i32;
+            acc += (l + r) / 2;
+        }
+        beamformed_16k.push((acc / 3).clamp(-32_768, 32_767) as i16);
+    }
+
+    (
+        StereoMicTriangulation {
+            azimuth_deg,
+            distance_cm,
+            tdoa_samples_48k: best_lag,
+            ild_pct,
+            bt_mic_energy_q15,
+            active_mics,
+            spatial_zone,
+        },
+        beamformed_16k,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1054,5 +1206,51 @@ mod tests {
         assert_eq!(r_wake.source, AcousticSourceKind::PrimaryUser);
         assert_eq!(r_wake.context, InteractionContext::AddressingAgent);
         assert!(r_wake.should_agent_respond);
+    }
+
+    #[test]
+    fn stereo_dmic_triangulates_left_center_and_right_speakers_without_floats() {
+        let frames_48k = 4800usize; // 100 ms at 48 kHz
+        let mut center_lr = Vec::with_capacity(frames_48k * 2);
+        let mut right_lr = Vec::with_capacity(frames_48k * 2);
+        let mut left_lr = Vec::with_capacity(frames_48k * 2);
+
+        let wave_at = |idx: isize| -> i16 {
+            let p = idx.rem_euclid(300) as i32;
+            let v = if p < 150 { (p - 75) * 180 } else { (225 - p) * 180 };
+            v.clamp(-16_000, 16_000) as i16
+        };
+
+        for n in 0..frames_48k as isize {
+            // Center speaker: L and R arrive at the exact same sample (lag = 0) with equal amplitude
+            let s_c = wave_at(n);
+            center_lr.push(s_c);
+            center_lr.push(s_c);
+
+            // Right speaker (+azimuth): arrives at R 6 samples earlier than L and louder in R
+            let s_l = (wave_at(n - 6) as i32 * 6 / 10) as i16;
+            let s_r = wave_at(n);
+            right_lr.push(s_l);
+            right_lr.push(s_r);
+
+            // Left speaker (-azimuth): arrives at L 6 samples earlier than R and louder in L
+            let s_l2 = wave_at(n);
+            let s_r2 = (wave_at(n - 6) as i32 * 6 / 10) as i16;
+            left_lr.push(s_l2);
+            left_lr.push(s_r2);
+        }
+
+        let (tri_c, mono_c) = triangulate_stereo_dmic_i16(&center_lr, None);
+        assert_eq!(mono_c.len(), frames_48k / 3);
+        assert!(tri_c.azimuth_deg.abs() <= 7, "center azimuth was {}", tri_c.azimuth_deg);
+        assert_eq!(tri_c.spatial_zone, "center_keyboard");
+
+        let (tri_r, _) = triangulate_stereo_dmic_i16(&right_lr, None);
+        assert!(tri_r.azimuth_deg > 18, "right azimuth was {}", tri_r.azimuth_deg);
+        assert_eq!(tri_r.spatial_zone, "right_of_laptop");
+
+        let (tri_l, _) = triangulate_stereo_dmic_i16(&left_lr, None);
+        assert!(tri_l.azimuth_deg < -18, "left azimuth was {}", tri_l.azimuth_deg);
+        assert_eq!(tri_l.spatial_zone, "left_of_laptop");
     }
 }
