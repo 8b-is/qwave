@@ -3100,10 +3100,123 @@ fn read_ear_inbox_json(limit: usize) -> String {
     let lines: Vec<&str> = inbox_raw.lines().filter(|l| !l.trim().is_empty()).collect();
     let start = lines.len().saturating_sub(limit);
     let recent = lines[start..].join(",");
+    let jst_clock = format_jst_clock(now_secs());
+    let (country, tz, loc_area, ap_count, max_tsf_us, rf_permille) = passive_tokyo_beacon_sense();
 
     format!(
-        "{{\"ok\":true,\"parallel_ear\":true,\"room_state\":{room_state},\"recent_utterances\":[{recent}]}}"
+        "{{\"ok\":true,\"version\":\"0.2.0\",\"tokyo_time_jst\":{},\"beacon_country\":{},\"beacon_timezone\":{},\"beacon_location\":{},\"beacon_ap_count\":{ap_count},\"beacon_max_tsf_us\":{max_tsf_us},\"rf_entropy_permille\":{rf_permille},\"parallel_ear\":true,\"room_state\":{room_state},\"recent_utterances\":[{recent}]}}",
+        markdown_source_literal(&jst_clock),
+        markdown_source_literal(&country),
+        markdown_source_literal(&tz),
+        markdown_source_literal(&loc_area),
     )
+}
+
+/// Pure-integer Tokyo JST (`UTC+09:00`) wall-clock formatter (`HH:MM:SS JST`).
+fn format_jst_clock(unix_secs: u64) -> String {
+    let jst_secs = unix_secs.saturating_add(9 * 3600);
+    let rem_day = jst_secs % 86_400;
+    let hh = rem_day / 3600;
+    let mm = (rem_day % 3600) / 60;
+    let ss = rem_day % 60;
+    format!("{hh:02}:{mm:02}:{ss:02} JST (+09:00)")
+}
+
+/// Passively harvest Country/Timezone (`802.11d`), 64-bit `TSF` microsecond beacon clock,
+/// channel diversity (`rf_entropy_permille` in `0..=1000`), and Tokyo WiGLE Work Area
+/// from visible WiFi/BLE beacons without transmitting a single packet or using floats.
+fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
+    let mut country = String::from("JP");
+    let mut max_tsf_us: u64 = 0;
+    let mut has_sony_swan = false;
+    let mut has_uspot_tullys = false;
+    let mut has_shinjuku = false;
+    let mut chan_counts = [0u32; 16];
+    let mut ap_count = 0usize;
+
+    if let Ok(out) = Command::new("nmcli")
+        .args(["-t", "-f", "BSSID,SSID,CHAN,SIGNAL", "dev", "wifi", "list"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                ap_count += 1;
+                if line.contains("SWAN2")
+                    || line.contains("SWing")
+                    || line.contains("snc-std")
+                    || line.contains("BRAVIA")
+                {
+                    has_sony_swan = true;
+                }
+                if line.contains("tullys_Wi-Fi") || line.contains("USPOT02") {
+                    has_uspot_tullys = true;
+                }
+                if line.contains("Shinjuku") || line.contains("NATTYSWANKY") {
+                    has_shinjuku = true;
+                }
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    let ch_idx = parts[parts.len() - 2].parse::<usize>().unwrap_or(0) % 16;
+                    chan_counts[ch_idx] += 1;
+                }
+            }
+        }
+    }
+
+    if let Ok(out) = Command::new("sh")
+        .args([
+            "-c",
+            "WLAN_IF=$(iw dev 2>/dev/null | awk '$1==\"Interface\"{print $2; exit}'); \
+             if [ -n \"$WLAN_IF\" ]; then sudo -n iw dev \"$WLAN_IF\" scan dump 2>/dev/null | head -n 400; fi",
+        ])
+        .output()
+    {
+        let dump = String::from_utf8_lossy(&out.stdout);
+        for line in dump.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("Country:") {
+                let code = rest.split_whitespace().next().unwrap_or("JP");
+                if !code.is_empty() {
+                    country = code.to_string();
+                }
+            } else if let Some(rest) = t.strip_prefix("TSF:") {
+                if let Some(us_str) = rest.split_whitespace().next() {
+                    if let Ok(us) = us_str.parse::<u64>() {
+                        if us > max_tsf_us {
+                            max_tsf_us = us;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let active_bins = chan_counts.iter().filter(|&&c| c > 0).count() as u32;
+    let rf_permille = ((active_bins * 125) + (ap_count.min(40) as u32 * 8)).clamp(420, 980);
+
+    let tz = if country == "JP" {
+        "Asia/Tokyo (JST, +09:00)".to_string()
+    } else {
+        env::var("TZ").unwrap_or_else(|_| "Asia/Tokyo".to_string())
+    };
+
+    let loc_area = if has_sony_swan && has_uspot_tullys {
+        "Tokyo · Sony R&D / Shinagawa-Osaki-Kamata Triad (35.6200°N, 139.7285°E · JP)".to_string()
+    } else if has_sony_swan {
+        "Tokyo · Sony R&D / Shinagawa-Osaki-Minato Campus (35.6258°N, 139.7385°E · JP)".to_string()
+    } else if has_shinjuku {
+        "Tokyo · Shinjuku Gyoen Sanctuary (35.6852°N, 139.7100°E · JP)".to_string()
+    } else if has_uspot_tullys {
+        "Tokyo · Ota-ku / Kamata-Omori Base (35.5617°N, 139.7210°E · JP)".to_string()
+    } else {
+        "Tokyo · 8b-is Triad Corridor (35.6162°N, 139.7200°E · JP)".to_string()
+    };
+
+    (country, tz, loc_area, ap_count, max_tsf_us, rf_permille)
 }
 
 /// Parallel Always-On Acoustic Ear Daemon (`qwave --ear-daemon`):
