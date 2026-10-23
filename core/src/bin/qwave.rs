@@ -98,6 +98,12 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--wait-wake") {
+        ensure_ear_daemon_running();
+        println!("{}", run_wait_wake());
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--hook-session-start") {
         ensure_ear_daemon_running();
         println!("{}", run_hook_session_start());
@@ -3255,7 +3261,13 @@ fn process_parallel_ear_utterance(
     }
     let _ = fs::remove_file(&tmp_wav);
 
-    if transcript.trim().is_empty() {
+    let trimmed_tx = transcript.trim();
+    if trimmed_tx.len() < 4
+        || matches!(
+            trimmed_tx.to_ascii_lowercase().as_str(),
+            "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh."
+        )
+    {
         return;
     }
 
@@ -3326,6 +3338,41 @@ fn read_hook_watermark() -> u64 {
 
 fn write_hook_watermark(ts: u64) {
     let _ = fs::write(mem8_dir().join("hook_last_ts.txt"), ts.to_string());
+}
+
+/// Block until the user speaks a direct-address / wake-word utterance to the parallel ear daemon,
+/// then print the diarized utterance JSON and exit `0` so Antigravity's Reactive Wakeup triggers
+/// hands-free!
+fn run_wait_wake() -> String {
+    let dir = mem8_dir();
+    let inbox_path = dir.join("ear_inbox.jsonl");
+    let start_ts = now_secs();
+
+    loop {
+        thread::sleep(Duration::from_millis(250));
+        let Ok(raw) = fs::read_to_string(&inbox_path) else {
+            continue;
+        };
+        for line in raw.lines().rev() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let ts = extract_json_u64(trimmed, "ts").unwrap_or(0);
+            if ts < start_ts {
+                break;
+            }
+            let speaker = extract_json_str(trimmed, "speaker").unwrap_or_default();
+            let should_respond = extract_json_bool(trimmed, "should_agent_respond").unwrap_or(false);
+            let text = extract_json_str(trimmed, "text").unwrap_or_default();
+            if speaker == "hue" && should_respond && text.split_whitespace().count() >= 2 {
+                write_hook_watermark(ts);
+                return format!(
+                    "🎙️ [Qwave Voice Wakeup — Hue Spoke]: \"{text}\" | raw={trimmed}"
+                );
+            }
+        }
+    }
 }
 
 fn run_hook_session_start() -> String {
