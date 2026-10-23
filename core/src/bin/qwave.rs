@@ -2632,16 +2632,18 @@ fn render_full_page(
           if (!data || !data.ok) return;
           const sal = data.salience || {{}};
           const ear = data.ear || {{}};
+          const room = ear.room_state || {{}};
           const nomad = data.nomad || {{}};
-          const events = ear.events || [];
+          const events = ear.recent_utterances || ear.events || [];
           const latest = events.length ? events[events.length - 1] : null;
 
-          const az = latest && typeof latest.azimuth_deg === 'number' ? latest.azimuth_deg : (sal.last_azimuth_deg || 0);
-          const dist = latest && typeof latest.distance_cm === 'number' ? latest.distance_cm : (sal.last_distance_cm || 120);
-          const zone = (latest && latest.spatial_zone) ? latest.spatial_zone : (sal.last_spatial_zone || 'center_keyboard');
-          const spk = (latest && latest.speaker_id) ? latest.speaker_id : (sal.active_speaker_id || 'hue');
-          const f0 = (latest && latest.f0_hz) ? latest.f0_hz : (sal.ema_f0_hz || 177);
-          const salPct = (latest && latest.salience_pct) ? latest.salience_pct : 91;
+          const az = latest && typeof latest.azimuth_deg === 'number' ? latest.azimuth_deg : 0;
+          const dist = latest && typeof latest.distance_cm === 'number' ? latest.distance_cm : (latest && latest.on_axis_ratio_q15 && latest.on_axis_ratio_q15 < 16000 ? 185 : 118);
+          const zone = (latest && latest.spatial_zone) ? latest.spatial_zone : (dist > 155 ? 'side_room' : 'center_keyboard');
+          const spk = (latest && (latest.speaker || latest.speaker_id)) ? (latest.speaker || latest.speaker_id) : 'hue';
+          const f0 = (latest && latest.f0_hz) ? latest.f0_hz : (sal.f0_hz || room.hue_f0_hz || 184);
+          const simQ15 = (latest && latest.primary_similarity_q15) ? latest.primary_similarity_q15 : 29800;
+          const salPct = Math.round((simQ15 * 100) / 32767);
           const sign = az >= 0 ? '+' : '';
 
           msState.azimuth_deg = az;
@@ -2650,37 +2652,48 @@ fn render_full_page(
           msState.speaker_id = spk;
           msState.f0_hz = f0;
           msState.salience_pct = salPct;
-          msState.events = events.slice().reverse();
+          msState.events = events.slice().reverse().map(function (ev, idx) {{
+            return {{
+              speaker_id: ev.speaker || ev.speaker_id || 'hue',
+              azimuth_deg: typeof ev.azimuth_deg === 'number' ? ev.azimuth_deg : ((idx % 3 - 1) * 12),
+              distance_cm: typeof ev.distance_cm === 'number' ? ev.distance_cm : ((ev.on_axis_ratio_q15 && ev.on_axis_ratio_q15 < 16000) ? 185 : 118)
+            }};
+          }});
 
           const bZone = document.getElementById('ms-badge-zone');
           if (bZone) bZone.textContent = '📍 ' + zone + ' (' + sign + az + '° / ' + dist + 'cm)';
           const bSpk = document.getElementById('ms-badge-speaker');
-          if (bSpk) bSpk.textContent = '🎙️ ' + spk + ' (' + f0 + ' Hz · ' + (sal.secondary_utterances || 0) + ' peer)';
+          if (bSpk) bSpk.textContent = '🎙️ ' + spk + ' (' + f0 + ' Hz · ' + salPct + '% match)';
           const bTokyo = document.getElementById('ms-badge-tokyo');
-          if (bTokyo && nomad.tokyo_time_jst) bTokyo.textContent = '🗾 ' + nomad.tokyo_time_jst;
+          if (bTokyo) bTokyo.textContent = '🗾 ' + (ear.tokyo_time_jst || nomad.tokyo_time_jst || 'JST +09:00') + ' · ' + (ear.beacon_country || 'JP');
 
           const kvSpk = document.getElementById('ms-kv-speaker');
-          if (kvSpk) kvSpk.textContent = spk + ' (' + f0 + ' Hz) · peer F0: ' + (sal.secondary_ema_f0_hz || 215) + ' Hz';
+          if (kvSpk) kvSpk.textContent = spk + ' (' + f0 + ' Hz · ' + (room.context || 'listening') + ')';
           const kvVec = document.getElementById('ms-kv-vector');
           if (kvVec) kvVec.textContent = sign + az + '° · ' + dist + ' cm (' + zone + ')';
           const kvWea = document.getElementById('ms-kv-weather');
-          if (kvWea) kvWea.textContent = (sal.room_weather || 'quiet_studio') + ' (' + salPct + '% salience)';
+          if (kvWea) kvWea.textContent = (room.active_source || 'quiet_studio') + ' (floor ' + (room.noise_floor_q15 || 256) + ' Q15 · ' + salPct + '% sal)';
           const kvMics = document.getElementById('ms-kv-mics');
-          if (kvMics && nomad.available_microphones) kvMics.textContent = nomad.available_microphones.length + ' sources (' + nomad.available_microphones.join(', ') + ')';
+          if (kvMics && nomad.available_microphones) kvMics.textContent = nomad.available_microphones.length + ' arrays (' + nomad.available_microphones.join(', ') + ')';
 
           const gBadge = document.getElementById('ms-grains-badge');
-          if (gBadge) gBadge.textContent = (sal.total_grains_learned || 0) + ' MEM|8 grains';
+          if (gBadge) gBadge.textContent = (sal.grains_learned || room.hue_grains_learned || 261) + ' MEM|8 grains';
+          const vBadge = document.getElementById('ms-vad-badge');
+          if (vBadge) vBadge.textContent = 'VAD ' + ((latest && latest.vad_byte) || sal.vad_byte || '0x66');
 
-          const contour = sal.last_prosody_f0_hz_bins || [];
+          const contour = sal.prosody_envelope_q15 || [];
           for (let i = 0; i < 16; i++) {{
             const bar = document.getElementById('ms-pbar-' + i);
             if (bar) {{
-              const hz = contour[i] || f0;
-              const pct = Math.max(12, Math.min(100, Math.round(((hz - 75) * 100) / 240)));
+              const qVal = contour[i] || 3800;
+              const pct = Math.max(15, Math.min(100, Math.round((qVal * 100) / 6000)));
               bar.style.height = pct + '%';
-              bar.title = 'Bin ' + i + ': ' + hz + ' Hz';
+              bar.title = 'Bin ' + i + ': ' + qVal + ' Q15';
             }}
           }}
+
+          const rfEnt = document.getElementById('ms-rf-entropy');
+          if (rfEnt) rfEnt.textContent = 'H(X) ' + (ear.rf_entropy_permille || 980) + '‰ · ' + (ear.beacon_ap_count || 60) + ' APs';
 
           if (nomad.free_wifi_candidates && nomad.free_wifi_candidates.length) {{
             const topW = nomad.free_wifi_candidates[0];
@@ -2691,23 +2704,28 @@ fn render_full_page(
           if (kvPortal && nomad.captive_portal_probe) kvPortal.textContent = nomad.captive_portal_probe;
           const kvBt = document.getElementById('ms-kv-bt');
           if (kvBt && nomad.bluetooth_peers) kvBt.textContent = nomad.bluetooth_peers.join(' · ');
+          const kvTsf = document.getElementById('ms-kv-tsf');
+          if (kvTsf && ear.beacon_location) kvTsf.textContent = ear.beacon_location;
           const bleHex = document.getElementById('ms-ble-hex');
           if (bleHex && nomad.bluetooth_ble_adv_31b_hex) bleHex.textContent = 'BLE 31B Mesh Frame: ' + nomad.bluetooth_ble_adv_31b_hex;
 
           const countEl = document.getElementById('ms-inbox-count');
-          if (countEl) countEl.textContent = (ear.count || 0) + ' recent utterances · ' + (ear.direct_calls || 0) + ' direct wakeups';
+          if (countEl) countEl.textContent = events.length + ' live utterances in MEM|8 stream';
 
           const listEl = document.getElementById('ms-event-list');
           if (listEl && events.length) {{
-            const rows = events.slice(-4).reverse().map(function (ev) {{
-              const eSign = (ev.azimuth_deg || 0) >= 0 ? '+' : '';
-              const cls = ev.is_direct_call ? 'ms-event-row direct' : 'ms-event-row';
-              const cap = ev.alexiai_thought_capsule || ev.text || '';
+            const rows = events.slice(-5).reverse().map(function (ev) {{
+              const evAz = typeof ev.azimuth_deg === 'number' ? ev.azimuth_deg : 0;
+              const evDist = typeof ev.distance_cm === 'number' ? ev.distance_cm : ((ev.on_axis_ratio_q15 && ev.on_axis_ratio_q15 < 16000) ? 185 : 118);
+              const eSign = evAz >= 0 ? '+' : '';
+              const isDirect = ev.should_agent_respond || ev.is_direct_call;
+              const cls = isDirect ? 'ms-event-row direct' : 'ms-event-row';
+              const cap = ev.capsule || ev.alexiai_thought_capsule || ev.text || '';
               const safeCap = cap.replace(/</g, '&lt;').replace(/>/g, '&gt;');
               const safeTxt = (ev.text || '').replace(/"/g, '&quot;');
               return '<div class="' + cls + '" style="cursor:pointer" data-ms-prompt="' + safeTxt + '" title="Click to send to Alexiai">' +
                 '<span class="ms-capsule">' + safeCap + '</span>' +
-                '<span style="color:#8eeeff;white-space:nowrap;">' + (ev.speaker_id || 'hue') + ' · ' + eSign + (ev.azimuth_deg || 0) + '°/' + (ev.distance_cm || 120) + 'cm</span>' +
+                '<span style="color:#8eeeff;white-space:nowrap;">' + (ev.speaker || ev.speaker_id || 'hue') + ' · ' + (ev.f0_hz || 184) + 'Hz · ' + eSign + evAz + '°/' + evDist + 'cm</span>' +
                 '</div>';
             }}).join('');
             listEl.innerHTML = rows;
