@@ -9,7 +9,7 @@ source = "git+https://github.com/peterlodri-sec/mem-16-10.git#c1e0baef36d8223064
 
 [[package]]
 name = "qwave-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "mem16-10",
 ]

@@ -525,8 +525,13 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/salience") | ("GET", "/api/alexiai/salience") => {
-            let prof = state.salience_profile.lock().unwrap().clone();
+            let prof = load_salience_profile();
+            *state.salience_profile.lock().unwrap() = prof.clone();
             let json = format_salience_profile_json(&prof);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/api/marine-sense") => {
+            let json = build_marine_sense_json(&state);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/alexiai/tts") => {
@@ -1588,6 +1593,107 @@ fn render_full_page(
       word-break: break-all; font-size: 0.72rem;
     }}
 
+    /* Marine-Sense Live Acoustic & RF Triangulation Sonar HUD */
+    .marine-sense-hud {{
+      margin: 0 0 22px; padding: 18px 20px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(2, 16, 28, 0.90), rgba(14, 6, 26, 0.88));
+      border: 1px solid rgba(0, 240, 255, 0.42);
+      box-shadow: 0 12px 38px rgba(0, 240, 255, 0.14), inset 0 0 24px rgba(0, 240, 255, 0.06);
+    }}
+    .marine-sense-hud.collapsed .ms-grid,
+    .marine-sense-hud.collapsed .ms-stream {{ display: none; }}
+    .ms-head {{
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+    }}
+    .ms-title {{
+      font-family: ui-monospace, 'JetBrains Mono', monospace;
+      font-size: 0.86rem; font-weight: 800; letter-spacing: 1.4px;
+      color: #00f0ff; display: flex; align-items: center; gap: 10px;
+    }}
+    .ms-badges {{
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      font-family: ui-monospace, monospace; font-size: 0.73rem;
+    }}
+    .ms-badge {{
+      padding: 4px 10px; border-radius: 999px;
+      background: rgba(0, 240, 255, 0.12);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      color: #dffcff;
+    }}
+    .ms-badge.pink {{
+      background: rgba(255, 42, 133, 0.15);
+      border-color: rgba(255, 42, 133, 0.45);
+      color: #ffd1e8;
+    }}
+    .ms-badge.green {{
+      background: rgba(0, 255, 159, 0.14);
+      border-color: rgba(0, 255, 159, 0.42);
+      color: #ccffeb;
+    }}
+    .ms-grid {{
+      display: grid; grid-template-columns: 300px 1fr 1fr;
+      gap: 16px; align-items: stretch;
+    }}
+    @media (max-width: 980px) {{
+      .ms-grid {{ grid-template-columns: 1fr; }}
+    }}
+    .ms-card {{
+      background: rgba(1, 8, 16, 0.72);
+      border: 1px solid rgba(110, 247, 247, 0.22);
+      border-radius: 12px; padding: 12px 14px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }}
+    .ms-card-title {{
+      font-family: ui-monospace, monospace; font-size: 0.72rem;
+      letter-spacing: 1.2px; text-transform: uppercase;
+      color: #8eeeff; margin-bottom: 8px;
+      display: flex; justify-content: space-between; align-items: center;
+    }}
+    #marine-radar-canvas {{
+      width: 100%; height: 185px; border-radius: 10px;
+      background: radial-gradient(circle at 50% 88%, rgba(0, 240, 255, 0.16), rgba(1, 6, 12, 0.92));
+      border: 1px solid rgba(0, 240, 255, 0.24);
+    }}
+    .ms-kv-list {{
+      display: grid; grid-template-columns: auto 1fr;
+      gap: 5px 10px; font-family: ui-monospace, monospace; font-size: 0.75rem;
+      align-items: baseline;
+    }}
+    .ms-k {{ color: rgba(232, 247, 247, 0.62); }}
+    .ms-v {{ color: #ffffff; font-weight: 600; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .ms-prosody-bars {{
+      display: grid; grid-template-columns: repeat(16, 1fr);
+      gap: 4px; height: 54px; align-items: end;
+      margin-top: 10px; padding: 6px 8px;
+      border-radius: 8px; background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .ms-bar {{
+      background: linear-gradient(180deg, #ff2a85, #00f0ff);
+      border-radius: 3px 3px 0 0; min-height: 4px;
+      transition: height 0.25s ease;
+    }}
+    .ms-stream {{
+      margin-top: 14px; padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.10);
+      font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 0.76rem;
+    }}
+    .ms-event-row {{
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; padding: 6px 10px; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03); margin-top: 5px;
+      border-left: 3px solid #00f0ff;
+    }}
+    .ms-event-row.direct {{
+      background: rgba(255, 42, 133, 0.11);
+      border-left-color: #ff2a85;
+    }}
+    .ms-capsule {{
+      color: #a8ffcf; font-weight: 600; word-break: break-word;
+    }}
+
     .studio-grid {{ display: block; }}
     body.split-editor .studio-grid {{
       display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start;
@@ -1793,6 +1899,7 @@ fn render_full_page(
       </section>
 
       <div class="md-toolbar">
+        <button type="button" class="escape-btn" id="btn-marine-sense" title="Toggle Live Marine-Sense Sonar & RF Triangulation HUD">📡 Marine-Sense HUD</button>
         <button type="button" class="escape-btn" id="btn-toc" title="Toggle Table of Contents">📑 TOC</button>
         <button type="button" class="escape-btn" id="btn-style-drawer" title="Change Webpage Style & Theme">🎨 Page Style</button>
         <button type="button" class="escape-btn btn-ghostwriter" id="btn-ghostwriter" title="Open in Ghostwriter (Ctrl+E)">✍️ Edit in Ghostwriter</button>
@@ -1821,6 +1928,75 @@ fn render_full_page(
       </div>
 
       <div class="mem8-hud" id="mem8-hud"></div>
+
+      <!-- Live Marine-Sense Acoustic & RF Triangulation Sonar HUD -->
+      <section class="marine-sense-hud" id="marine-sense-hud">
+        <div class="ms-head">
+          <div class="ms-title">
+            <span class="pulse-dot"></span>
+            📡 MARINE-SENSE LIVE SONAR · STEREO DMIC TDOA + TOKYO RF TRIAD
+          </div>
+          <div class="ms-badges">
+            <span class="ms-badge green" id="ms-badge-zone">📍 center_keyboard (+0° / 123cm)</span>
+            <span class="ms-badge pink" id="ms-badge-speaker">🎙️ hue (177 Hz)</span>
+            <span class="ms-badge" id="ms-badge-tokyo">🗾 Tokyo · Sony R&amp;D Triad · JST</span>
+          </div>
+        </div>
+        <div class="ms-grid">
+          <div class="ms-card">
+            <div class="ms-card-title">
+              <span>🧭 2D Polar Acoustic &amp; Beacon Sonar</span>
+              <span id="ms-radar-sub">48kHz Stereo TDOA</span>
+            </div>
+            <canvas id="marine-radar-canvas" width="320" height="185"></canvas>
+          </div>
+          <div class="ms-card">
+            <div>
+              <div class="ms-card-title">
+                <span>🧬 Zero-Float Marine-Sense DSP &amp; Prosody</span>
+                <span id="ms-grains-badge">MEM|8 WaveInt</span>
+              </div>
+              <div class="ms-kv-list">
+                <span class="ms-k">Active Speaker</span><span class="ms-v" id="ms-kv-speaker">hue (177 Hz)</span>
+                <span class="ms-k">Azimuth / Dist</span><span class="ms-v" id="ms-kv-vector">+0° · 123 cm (center_keyboard)</span>
+                <span class="ms-k">Room Weather</span><span class="ms-v" id="ms-kv-weather">quiet_studio (91% salience)</span>
+                <span class="ms-k">Stereo Mics</span><span class="ms-v" id="ms-kv-mics">HiFi__Mic1 (FL+FR) + Soundcore BT</span>
+              </div>
+            </div>
+            <div>
+              <div class="ms-card-title" style="margin-top:8px;margin-bottom:2px;">
+                <span>16-Bin IntProsody F0 Contour (Hz)</span>
+                <span id="ms-vad-badge">VAD 0x66</span>
+              </div>
+              <div class="ms-prosody-bars" id="ms-prosody-bars"></div>
+            </div>
+          </div>
+          <div class="ms-card">
+            <div>
+              <div class="ms-card-title">
+                <span>📶 Tokyo Nomad Mesh &amp; Passive RF</span>
+                <span id="ms-rf-entropy">H(X) 980‰</span>
+              </div>
+              <div class="ms-kv-list">
+                <span class="ms-k">Top Free Wi-Fi</span><span class="ms-v" id="ms-kv-wifi">tullys_Wi-Fi (5680 MHz · 82%)</span>
+                <span class="ms-k">Captive Portal</span><span class="ms-v" id="ms-kv-portal">internet_open (HTTP 204)</span>
+                <span class="ms-k">BT Mesh Peers</span><span class="ms-v" id="ms-kv-bt">soundcore Select 4 Go + BLE 31B</span>
+                <span class="ms-k">802.11d / TSF</span><span class="ms-v" id="ms-kv-tsf">JP (DFS-JP) · 35.6200°N, 139.7285°E</span>
+              </div>
+            </div>
+            <div style="margin-top:8px;font-family:ui-monospace,monospace;font-size:0.71rem;color:#a8ffcf;background:rgba(0,0,0,0.42);padding:7px 9px;border-radius:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="ms-ble-hex">
+              BLE 31B: 0x0201061bff5338424d58...
+            </div>
+          </div>
+        </div>
+        <div class="ms-stream">
+          <div class="ms-card-title" style="margin-bottom:4px;">
+            <span>⚡ Live ALEXIAI Thought Capsule &amp; Voice Interaction Stream (click any event to replay/send)</span>
+            <span id="ms-inbox-count">Listening live...</span>
+          </div>
+          <div id="ms-event-list"></div>
+        </div>
+      </section>
       <div class="studio-grid">
         <div class="editor-pane">
           <textarea id="md-editor-textarea" spellcheck="false"></textarea>
@@ -2323,6 +2499,230 @@ fn render_full_page(
           }});
       }});
     }}
+
+    // Marine-Sense Live Sonar & Triangulation HUD
+    const msHud = document.getElementById('marine-sense-hud');
+    document.getElementById('btn-marine-sense')?.addEventListener('click', function () {{
+      msHud?.classList.toggle('collapsed');
+    }});
+
+    const prosodyContainer = document.getElementById('ms-prosody-bars');
+    if (prosodyContainer) {{
+      let barsHtml = '';
+      for (let i = 0; i < 16; i++) {{
+        barsHtml += '<div class="ms-bar" id="ms-pbar-' + i + '" style="height:18%"></div>';
+      }}
+      prosodyContainer.innerHTML = barsHtml;
+    }}
+
+    let msState = {{
+      azimuth_deg: 0,
+      distance_cm: 120,
+      spatial_zone: 'center_keyboard',
+      speaker_id: 'hue',
+      f0_hz: 177,
+      salience_pct: 91,
+      events: [],
+      wifi_count: 6,
+      sweep_deg: 0
+    }};
+
+    function drawMarineRadar() {{
+      const canvas = document.getElementById('marine-radar-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const cx = Math.floor(w / 2);
+      const cy = h - 18;
+      const maxR = Math.min(cx - 16, h - 28);
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Range rings (1m, 2m, 3m)
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.22)';
+      ctx.lineWidth = 1;
+      [0.33, 0.66, 1.0].forEach(function (frac, idx) {{
+        const r = maxR * frac;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, Math.PI, 0, false);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(142, 238, 255, 0.55)';
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.fillText((idx + 1) + 'm', cx + r - 18, cy - 4);
+      }});
+
+      // Azimuth spokes (-60, -30, 0, +30, +60 deg)
+      [-60, -30, 0, 30, 60].forEach(function (deg) {{
+        const rad = (deg - 90) * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(rad) * maxR, cy + Math.sin(rad) * maxR);
+        ctx.stroke();
+      }});
+
+      // Animated sonar sweep line
+      msState.sweep_deg = (msState.sweep_deg + 2) % 180;
+      const sweepAz = msState.sweep_deg - 90;
+      const sweepRad = (sweepAz - 90) * Math.PI / 180;
+      const grad = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweepRad) * maxR, cy + Math.sin(sweepRad) * maxR);
+      grad.addColorStop(0, 'rgba(0, 255, 159, 0.05)');
+      grad.addColorStop(1, 'rgba(0, 240, 255, 0.55)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(sweepRad) * maxR, cy + Math.sin(sweepRad) * maxR);
+      ctx.stroke();
+
+      // Laptop Stereo DMIC base node
+      ctx.fillStyle = '#00ff9f';
+      ctx.beginPath();
+      ctx.arc(cx - 10, cy, 4, 0, Math.PI * 2);
+      ctx.arc(cx + 10, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#e8f7f7';
+      ctx.font = '10px ui-monospace, monospace';
+      ctx.fillText('FL', cx - 24, cy + 12);
+      ctx.fillText('FR', cx + 10, cy + 12);
+
+      // Recent utterance trail blips
+      const evs = msState.events || [];
+      evs.slice(0, 5).forEach(function (ev, i) {{
+        const az = typeof ev.azimuth_deg === 'number' ? ev.azimuth_deg : 0;
+        const dist = typeof ev.distance_cm === 'number' ? ev.distance_cm : 120;
+        const rFrac = Math.max(0.15, Math.min(0.95, dist / 300));
+        const rad = (az - 90) * Math.PI / 180;
+        const bx = cx + Math.cos(rad) * (maxR * rFrac);
+        const by = cy + Math.sin(rad) * (maxR * rFrac);
+        const isPrimary = (ev.speaker_id || 'hue') === 'hue';
+        ctx.fillStyle = isPrimary ? 'rgba(0, 240, 255, ' + (0.85 - i * 0.14) + ')' : 'rgba(255, 42, 133, ' + (0.85 - i * 0.14) + ')';
+        ctx.beginPath();
+        ctx.arc(bx, by, i === 0 ? 7 : 4, 0, Math.PI * 2);
+        ctx.fill();
+      }});
+
+      // Active primary speaker target vector
+      const az = typeof msState.azimuth_deg === 'number' ? msState.azimuth_deg : 0;
+      const dist = typeof msState.distance_cm === 'number' ? msState.distance_cm : 120;
+      const rFrac = Math.max(0.18, Math.min(0.92, dist / 300));
+      const rad = (az - 90) * Math.PI / 180;
+      const tx = cx + Math.cos(rad) * (maxR * rFrac);
+      const ty = cy + Math.sin(rad) * (maxR * rFrac);
+
+      ctx.strokeStyle = msState.speaker_id === 'hue' ? '#00f0ff' : '#ff2a85';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 12, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px ui-monospace, monospace';
+      const sign = az >= 0 ? '+' : '';
+      ctx.fillText(msState.speaker_id + ' (' + sign + az + '°/' + dist + 'cm)', Math.max(8, Math.min(w - 125, tx - 42)), Math.max(14, ty - 14));
+
+      requestAnimationFrame(drawMarineRadar);
+    }}
+    requestAnimationFrame(drawMarineRadar);
+
+    function pollMarineSense() {{
+      fetch('/api/marine-sense')
+        .then(r => r.json())
+        .then(data => {{
+          if (!data || !data.ok) return;
+          const sal = data.salience || {{}};
+          const ear = data.ear || {{}};
+          const nomad = data.nomad || {{}};
+          const events = ear.events || [];
+          const latest = events.length ? events[events.length - 1] : null;
+
+          const az = latest && typeof latest.azimuth_deg === 'number' ? latest.azimuth_deg : (sal.last_azimuth_deg || 0);
+          const dist = latest && typeof latest.distance_cm === 'number' ? latest.distance_cm : (sal.last_distance_cm || 120);
+          const zone = (latest && latest.spatial_zone) ? latest.spatial_zone : (sal.last_spatial_zone || 'center_keyboard');
+          const spk = (latest && latest.speaker_id) ? latest.speaker_id : (sal.active_speaker_id || 'hue');
+          const f0 = (latest && latest.f0_hz) ? latest.f0_hz : (sal.ema_f0_hz || 177);
+          const salPct = (latest && latest.salience_pct) ? latest.salience_pct : 91;
+          const sign = az >= 0 ? '+' : '';
+
+          msState.azimuth_deg = az;
+          msState.distance_cm = dist;
+          msState.spatial_zone = zone;
+          msState.speaker_id = spk;
+          msState.f0_hz = f0;
+          msState.salience_pct = salPct;
+          msState.events = events.slice().reverse();
+
+          const bZone = document.getElementById('ms-badge-zone');
+          if (bZone) bZone.textContent = '📍 ' + zone + ' (' + sign + az + '° / ' + dist + 'cm)';
+          const bSpk = document.getElementById('ms-badge-speaker');
+          if (bSpk) bSpk.textContent = '🎙️ ' + spk + ' (' + f0 + ' Hz · ' + (sal.secondary_utterances || 0) + ' peer)';
+          const bTokyo = document.getElementById('ms-badge-tokyo');
+          if (bTokyo && nomad.tokyo_time_jst) bTokyo.textContent = '🗾 ' + nomad.tokyo_time_jst;
+
+          const kvSpk = document.getElementById('ms-kv-speaker');
+          if (kvSpk) kvSpk.textContent = spk + ' (' + f0 + ' Hz) · peer F0: ' + (sal.secondary_ema_f0_hz || 215) + ' Hz';
+          const kvVec = document.getElementById('ms-kv-vector');
+          if (kvVec) kvVec.textContent = sign + az + '° · ' + dist + ' cm (' + zone + ')';
+          const kvWea = document.getElementById('ms-kv-weather');
+          if (kvWea) kvWea.textContent = (sal.room_weather || 'quiet_studio') + ' (' + salPct + '% salience)';
+          const kvMics = document.getElementById('ms-kv-mics');
+          if (kvMics && nomad.available_microphones) kvMics.textContent = nomad.available_microphones.length + ' sources (' + nomad.available_microphones.join(', ') + ')';
+
+          const gBadge = document.getElementById('ms-grains-badge');
+          if (gBadge) gBadge.textContent = (sal.total_grains_learned || 0) + ' MEM|8 grains';
+
+          const contour = sal.last_prosody_f0_hz_bins || [];
+          for (let i = 0; i < 16; i++) {{
+            const bar = document.getElementById('ms-pbar-' + i);
+            if (bar) {{
+              const hz = contour[i] || f0;
+              const pct = Math.max(12, Math.min(100, Math.round(((hz - 75) * 100) / 240)));
+              bar.style.height = pct + '%';
+              bar.title = 'Bin ' + i + ': ' + hz + ' Hz';
+            }}
+          }}
+
+          if (nomad.free_wifi_candidates && nomad.free_wifi_candidates.length) {{
+            const topW = nomad.free_wifi_candidates[0];
+            const kvWifi = document.getElementById('ms-kv-wifi');
+            if (kvWifi) kvWifi.textContent = topW.ssid + ' (' + topW.freq_mhz + ' MHz · sig ' + topW.signal_pct + '% · +' + nomad.free_wifi_candidates.length + ' free)';
+          }}
+          const kvPortal = document.getElementById('ms-kv-portal');
+          if (kvPortal && nomad.captive_portal_probe) kvPortal.textContent = nomad.captive_portal_probe;
+          const kvBt = document.getElementById('ms-kv-bt');
+          if (kvBt && nomad.bluetooth_peers) kvBt.textContent = nomad.bluetooth_peers.join(' · ');
+          const bleHex = document.getElementById('ms-ble-hex');
+          if (bleHex && nomad.bluetooth_ble_adv_31b_hex) bleHex.textContent = 'BLE 31B Mesh Frame: ' + nomad.bluetooth_ble_adv_31b_hex;
+
+          const countEl = document.getElementById('ms-inbox-count');
+          if (countEl) countEl.textContent = (ear.count || 0) + ' recent utterances · ' + (ear.direct_calls || 0) + ' direct wakeups';
+
+          const listEl = document.getElementById('ms-event-list');
+          if (listEl && events.length) {{
+            const rows = events.slice(-4).reverse().map(function (ev) {{
+              const eSign = (ev.azimuth_deg || 0) >= 0 ? '+' : '';
+              const cls = ev.is_direct_call ? 'ms-event-row direct' : 'ms-event-row';
+              const cap = ev.alexiai_thought_capsule || ev.text || '';
+              const safeCap = cap.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              const safeTxt = (ev.text || '').replace(/"/g, '&quot;');
+              return '<div class="' + cls + '" style="cursor:pointer" data-ms-prompt="' + safeTxt + '" title="Click to send to Alexiai">' +
+                '<span class="ms-capsule">' + safeCap + '</span>' +
+                '<span style="color:#8eeeff;white-space:nowrap;">' + (ev.speaker_id || 'hue') + ' · ' + eSign + (ev.azimuth_deg || 0) + '°/' + (ev.distance_cm || 120) + 'cm</span>' +
+                '</div>';
+            }}).join('');
+            listEl.innerHTML = rows;
+            listEl.querySelectorAll('[data-ms-prompt]').forEach(function (row) {{
+              row.addEventListener('click', function () {{
+                const p = row.getAttribute('data-ms-prompt');
+                if (p) sendToAlexiai(p);
+              }});
+            }});
+          }}
+        }})
+        .catch(function () {{}});
+    }}
+    pollMarineSense();
+    setInterval(pollMarineSense, 1100);
   }})();
   </script>
 </body>
@@ -4116,6 +4516,33 @@ fn probe_and_traverse_captive_portal(
         "offline_mesh_ready (BLE 31B + BNEP 96B standby)".to_string()
     }
 }
+
+fn build_marine_sense_json(state: &Arc<AppState>) -> String {
+    static NOMAD_CACHE: std::sync::OnceLock<Mutex<(u64, String)>> = std::sync::OnceLock::new();
+    let cache = NOMAD_CACHE.get_or_init(|| Mutex::new((0, String::new())));
+
+    let now = now_secs();
+    let nomad_json = {
+        let mut guard = cache.lock().unwrap();
+        if guard.1.is_empty() || now.saturating_sub(guard.0) >= 15 {
+            let fresh = run_nomad_mesh(false);
+            *guard = (now, fresh.clone());
+            fresh
+        } else {
+            guard.1.clone()
+        }
+    };
+
+    let prof = load_salience_profile();
+    *state.salience_profile.lock().unwrap() = prof.clone();
+    let salience_json = format_salience_profile_json(&prof);
+    let ear_json = read_ear_inbox_json(12);
+
+    format!(
+        "{{\"ok\":true,\"salience\":{salience_json},\"ear\":{ear_json},\"nomad\":{nomad_json}}}"
+    )
+}
+
 
 
 
