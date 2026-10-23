@@ -33,7 +33,8 @@ use qwave_core::markdown::{
 };
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
-    SpeakerSalienceProfile, combine_salient_speech_wav, decode_wav_i16, extract_salient_grains,
+    AcousticSourceKind, MarineIntDetector, RoomAcousticTracker, SpeakerSalienceProfile,
+    combine_salient_speech_wav, decode_wav_i16, encode_wav_i16, extract_salient_grains,
 };
 use qwave_core::wave::{WaveInt, WaveProvenance, consciousness};
 
@@ -92,12 +93,25 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--ear-daemon") {
+        run_parallel_ear_daemon();
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--ear-inbox" || a == "--room-status") {
+        ensure_ear_daemon_running();
+        println!("{}", read_ear_inbox_json(10));
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--mcp") {
+        ensure_ear_daemon_running();
         run_mcp_server();
         return ExitCode::SUCCESS;
     }
 
     if let Some(pos) = args.iter().position(|a| a == "--speak") {
+        ensure_ear_daemon_running();
         let voice = args
             .iter()
             .position(|a| a == "--voice" || a == "-V")
@@ -114,9 +128,14 @@ fn main() -> ExitCode {
     }
 
     if let Some(pos) = args.iter().position(|a| a == "--listen") {
-        let arg = args.get(pos + 1).map(String::as_str).unwrap_or("5");
-        let json = listen_and_learn(arg);
-        println!("{json}");
+        ensure_ear_daemon_running();
+        let arg = args.get(pos + 1).map(String::as_str).unwrap_or("inbox");
+        if arg == "inbox" || arg == "0" {
+            println!("{}", read_ear_inbox_json(8));
+        } else {
+            let json = listen_and_learn(arg);
+            println!("{json}");
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -2512,6 +2531,11 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     let play_path = format!("/tmp/qwave_speak_{}_{}.wav", std::process::id(), now_secs());
     let _ = fs::write(&play_path, &wav_bytes);
 
+    // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
+    // and mark TTS active so the parallel ear daemon suppresses system echo!
+    let est_secs = ((wav_bytes.len() as u64) / 44_000).clamp(2, 25) + 1;
+    mark_tts_active_secs(est_secs);
+
     let prof = load_salience_profile();
     let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
 
@@ -2850,7 +2874,8 @@ fn handle_mcp_request(req: &str) -> Option<String> {
         "tools/list" => Some(format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[\
              {{\"name\":\"speak\",\"description\":\"🔊 Speak out loud to the user immediately through the default/Bluetooth speaker using Kokoro/LFM2.5 neural voice + zero-float MEM|8 SpeakerSalienceProfile integer prosody & harmonic modulation.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"text\":{{\"type\":\"string\",\"description\":\"Text to speak out loud to the user\"}},\"voice\":{{\"type\":\"string\",\"description\":\"Voice persona (af_heart, af_sky, af_bella, af_nicole, bf_emma, am_adam, am_michael, lfm_aye, lfm_omnimom)\",\"default\":\"af_heart\"}},\"salience_modulate\":{{\"type\":\"boolean\",\"description\":\"Modulate speech with user's learned MEM|8 vocal salience profile (default: true)\",\"default\":true}},\"wait\":{{\"type\":\"boolean\",\"description\":\"Wait for audio playback to finish before returning (default: false)\",\"default\":false}}}},\"required\":[\"text\"]}}}},\
-             {{\"name\":\"listen\",\"description\":\"🎙️ Listen to the user's microphone or a WAV file, extract the Top-K highest-salience vocal grains via zero-float MarineIntDetector into 79-byte MEM|8 WaveInt frames, update the persistent SpeakerSalienceProfile, and transcribe with Liquid-Rust (LFM2.5-Audio + Phoenix).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"duration_secs\":{{\"type\":\"integer\",\"description\":\"Seconds to record from microphone (1..30, default: 5)\",\"default\":5}},\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional path to an existing WAV file instead of recording live\"}}}}}}}},\
+             {{\"name\":\"listen\",\"description\":\"🎙️ Always-on parallel acoustic ear + microphone listener! Reads the live diarized ear inbox (knowing whether it is Hue addressing the AI, Hue chatting with a friend next to him, another friend speaking, or ambient noise) OR records/transcribes live audio.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"mode\":{{\"type\":\"string\",\"description\":\"'inbox' (instant 0ms read from parallel ear daemon) or 'record' (capture live window)\",\"default\":\"inbox\"}},\"duration_secs\":{{\"type\":\"integer\",\"description\":\"Seconds to record if mode=='record' (1..30, default: 5)\"}},\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional path to an existing WAV file to analyze & transcribe\"}}}}}}}},\
+             {{\"name\":\"room_status\",\"description\":\"👥 Instant 0ms snapshot from the parallel always-on acoustic ear: shows whether Hue is addressing the AI or chatting with a friend next to him, active speakers in the room (hue, friend_1..4, ambient_noise), noise floor, and recent diarized utterances.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"limit\":{{\"type\":\"integer\",\"description\":\"Max recent utterances to return (default: 8)\",\"default\":8}}}}}}}},\
              {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
              {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown file (file:///.../*.md) or live Markdown snippet inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, 3D MEM|8 Wave canvas, Ghostwriter bridge, and optional live theme preset & voice narration.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the Markdown document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens\"}}}}}}}},\
              {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}}\
@@ -2879,12 +2904,29 @@ fn handle_mcp_request(req: &str) -> Option<String> {
                     speak_out_loud(&text, &voice, salience_mod, wait)
                 }
                 "listen" | "qwave_listen" => {
+                    ensure_ear_daemon_running();
                     if let Some(wav_p) = extract_json_str(args_slice, "wav_path") {
                         listen_and_learn(&wav_p)
+                    } else if let Some(secs) = extract_json_u64(args_slice, "duration_secs") {
+                        if secs == 0 {
+                            read_ear_inbox_json(8)
+                        } else {
+                            listen_and_learn(&secs.to_string())
+                        }
                     } else {
-                        let secs = extract_json_u64(args_slice, "duration_secs").unwrap_or(5);
-                        listen_and_learn(&secs.to_string())
+                        let mode = extract_json_str(args_slice, "mode")
+                            .unwrap_or_else(|| "inbox".to_string());
+                        if mode == "record" {
+                            listen_and_learn("5")
+                        } else {
+                            read_ear_inbox_json(8)
+                        }
                     }
+                }
+                "room_status" | "ear_inbox" => {
+                    ensure_ear_daemon_running();
+                    let limit = extract_json_u64(args_slice, "limit").unwrap_or(8) as usize;
+                    read_ear_inbox_json(limit)
                 }
                 "salience" | "qwave_salience" => {
                     if let Some(wav_p) = extract_json_str(args_slice, "wav_path") {
@@ -2928,4 +2970,328 @@ fn handle_mcp_request(req: &str) -> Option<String> {
         )),
     }
 }
+
+fn mem8_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn mark_tts_active_secs(duration_secs: u64) {
+    let until = now_secs().saturating_add(duration_secs);
+    let _ = fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
+}
+
+fn read_tts_active_until() -> u64 {
+    fs::read_to_string(mem8_dir().join("tts_active_until.txt"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Ensure the background parallel always-on acoustic ear (`qwave --ear-daemon`) is running.
+fn ensure_ear_daemon_running() {
+    let pid_file = mem8_dir().join("ear_daemon.pid");
+    if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            if Path::new(&format!("/proc/{pid}/cmdline")).exists() {
+                return;
+            }
+        }
+    }
+    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let _ = Command::new("setsid")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .arg(exe)
+        .arg("--ear-daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// Read the latest diarized utterances and live room status from the parallel ear daemon in 0ms.
+fn read_ear_inbox_json(limit: usize) -> String {
+    let dir = mem8_dir();
+    let room_state = fs::read_to_string(dir.join("room_state.json")).unwrap_or_else(|_| {
+        let prof = load_salience_profile();
+        let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+        format!(
+            "{{\"daemon_active\":true,\"active_source\":\"silent_or_noise\",\"context\":\"silent_or_noise\",\"hue_f0_hz\":{f0_int},\"hue_grains_learned\":{},\"friends_detected\":0}}",
+            prof.grains_learned
+        )
+    });
+
+    let inbox_raw = fs::read_to_string(dir.join("ear_inbox.jsonl")).unwrap_or_default();
+    let lines: Vec<&str> = inbox_raw.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(limit);
+    let recent = lines[start..].join(",");
+
+    format!(
+        "{{\"ok\":true,\"parallel_ear\":true,\"room_state\":{room_state},\"recent_utterances\":[{recent}]}}"
+    )
+}
+
+/// Parallel Always-On Acoustic Ear Daemon (`qwave --ear-daemon`):
+/// Continuously streams 16kHz `s16le` mono PCM from the internal microphone (`alsa_input...Mic1__source`),
+/// evaluates every 60ms frame with zero-float `MarineIntDetector`, segments voiced utterances automatically,
+/// and dispatches completed utterances to a parallel diarization + `liquid-rust` transcription worker that
+/// classifies:
+/// - `hue` (`PrimaryUser`) addressing the AI (`addressing_agent`)
+/// - `hue` (`PrimaryUser`) chatting with a friend next to him (`chatting_with_friend`)
+/// - `friend_1..4` (`OtherSpeaker`) speaking in the room (`friend_speaking`)
+/// - `ambient_noise` / `system_echo` (`silent_or_noise`)
+fn run_parallel_ear_daemon() {
+    let dir = mem8_dir();
+    let pid_file = dir.join("ear_daemon.pid");
+    if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            if pid != std::process::id() && Path::new(&format!("/proc/{pid}/cmdline")).exists() {
+                return;
+            }
+        }
+    }
+    let _ = fs::write(&pid_file, std::process::id().to_string());
+
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let tracker = Arc::new(Mutex::new(RoomAcousticTracker {
+        primary_profile: load_salience_profile(),
+        ..RoomAcousticTracker::default()
+    }));
+
+    // Write initial room_state.json immediately
+    {
+        let tr = tracker.lock().unwrap();
+        let f0_int = tr.primary_profile.f0_hz.num / (tr.primary_profile.f0_hz.den.max(1) as i32);
+        let init_state = format!(
+            "{{\"daemon_pid\":{},\"ts\":{},\"active_source\":\"ambient_noise\",\"context\":\"silent_or_noise\",\"noise_floor_q15\":{},\"hue_f0_hz\":{f0_int},\"hue_grains_learned\":{},\"friends_detected\":0}}",
+            std::process::id(),
+            now_secs(),
+            tr.noise_floor_q15,
+            tr.primary_profile.grains_learned
+        );
+        let _ = fs::write(dir.join("room_state.json"), init_state);
+    }
+
+    loop {
+        // Ensure internal digital microphone (`Mic1__source`) is unmuted and selected
+        let _ = Command::new("sh")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "-c",
+                "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{print $2; exit}'); \
+                 if [ -n \"$MIC_SRC\" ]; then \
+                   pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; \
+                   pactl set-source-mute \"$MIC_SRC\" 0 2>/dev/null || true; \
+                 fi",
+            ])
+            .status();
+
+        // Stream raw 16kHz 16-bit mono PCM from PipeWire (`pw-record --raw` / `parec`)
+        let child_opt = Command::new("parec")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "--rate=16000",
+                "--channels=1",
+                "--format=s16le",
+                "--latency-msec=60",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+            .or_else(|| {
+                Command::new("arecord")
+                    .args(["-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .ok()
+            });
+
+        let Some(mut child) = child_opt else {
+            thread::sleep(Duration::from_secs(2));
+            continue;
+        };
+
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            thread::sleep(Duration::from_secs(2));
+            continue;
+        };
+
+        // 60ms frame at 16kHz = 960 i16 samples = 1920 bytes
+        let mut frame_bytes = [0u8; 1920];
+        let mut utterance_pcm: Vec<i16> = Vec::with_capacity(16_000 * 6);
+        let mut silent_frames = 0u32;
+        let mut voiced_frames = 0u32;
+
+        while stdout.read_exact(&mut frame_bytes).is_ok() {
+            let now = now_secs();
+            let tts_until = read_tts_active_until();
+            if now < tts_until {
+                utterance_pcm.clear();
+                silent_frames = 0;
+                voiced_frames = 0;
+                continue;
+            }
+
+            let mut frame_pcm = [0i16; 960];
+            let mut det = MarineIntDetector::new(16_000, 164);
+            let mut sum_sal: u64 = 0;
+            for i in 0..960 {
+                let s = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
+                frame_pcm[i] = s;
+                sum_sal += det.process_sample_i16(s, i) as u64;
+            }
+            let avg_sal_q15 = (sum_sal / 960) as u16;
+
+            if avg_sal_q15 >= 512 {
+                voiced_frames += 1;
+                silent_frames = 0;
+                utterance_pcm.extend_from_slice(&frame_pcm);
+            } else if !utterance_pcm.is_empty() {
+                silent_frames += 1;
+                utterance_pcm.extend_from_slice(&frame_pcm);
+            }
+
+            // Dispatch completed utterance when >= 5 voiced frames (300ms) followed by 8 silent frames (480ms),
+            // or if continuous utterance reaches 7.5 seconds (125 frames)
+            if (voiced_frames >= 5 && silent_frames >= 8) || utterance_pcm.len() >= 16_000 * 7 {
+                let captured = std::mem::take(&mut utterance_pcm);
+                voiced_frames = 0;
+                silent_frames = 0;
+
+                let tracker_clone = Arc::clone(&tracker);
+                let dir_clone = dir.clone();
+                thread::spawn(move || {
+                    process_parallel_ear_utterance(&captured, now, &tracker_clone, &dir_clone);
+                });
+            } else if silent_frames >= 8 {
+                utterance_pcm.clear();
+                voiced_frames = 0;
+                silent_frames = 0;
+            }
+        }
+
+        let _ = child.kill();
+        let _ = child.wait();
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn process_parallel_ear_utterance(
+    pcm: &[i16],
+    now: u64,
+    tracker: &Arc<Mutex<RoomAcousticTracker>>,
+    dir: &Path,
+) {
+    // 1. Fast zero-float acoustic check before invoking neural STT
+    let pre_check = extract_salient_grains(pcm, 16_000, 3, now);
+    if pre_check.top_grains.is_empty() {
+        return;
+    }
+
+    // 2. Encode WAV and transcribe in parallel using `liquid-rust transcribe`
+    let wav_bytes = encode_wav_i16(16_000, pcm);
+    let tmp_wav = format!("/tmp/qwave_ear_{}_{}.wav", std::process::id(), now);
+    if fs::write(&tmp_wav, &wav_bytes).is_err() {
+        return;
+    }
+
+    let mut transcript = String::new();
+    for lfm_bin in ["/usr/local/bin/liquid-rust", "/home/hue/.cargo/target/release/liquid-rust"] {
+        if Path::new(lfm_bin).exists() {
+            if let Ok(out) = Command::new(lfm_bin)
+                .env("RUST_LOG", "error")
+                .args(["transcribe", "-i", &tmp_wav])
+                .output()
+            {
+                if out.status.success() {
+                    let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                    transcript = raw
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| {
+                            !l.is_empty()
+                                && !l.starts_with('═')
+                                && !l.starts_with('🎤')
+                                && !l.starts_with("✓")
+                                && !l.contains(" WARN ")
+                                && !l.contains(" INFO ")
+                                && !l.contains("Failed storing MEM|8")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    break;
+                }
+            }
+        }
+    }
+    let _ = fs::remove_file(&tmp_wav);
+
+    if transcript.trim().is_empty() {
+        return;
+    }
+
+    // 3. Classify speaker (`hue`, `friend_1..4`, `ambient_noise`) and room context
+    //    (`addressing_agent`, `chatting_with_friend`, `friend_speaking`, `silent_or_noise`)
+    let mut tr = tracker.lock().unwrap();
+    tr.tts_active_until_ts = read_tts_active_until();
+    let analysis = tr.classify_and_learn(pcm, 16_000, now, Some(&transcript));
+
+    // Persist Hue's updated SpeakerSalienceProfile & 79-byte WaveInt frames only when Hue spoke!
+    if analysis.source == AcousticSourceKind::PrimaryUser {
+        save_salience_profile(&tr.primary_profile);
+        if let Ok(mut bin_f) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("speech_salience_waves.bin"))
+        {
+            for g in &analysis.salience_report.top_grains {
+                let _ = bin_f.write_all(&g.wave.to_frame());
+            }
+        }
+    }
+
+    let friends_count = tr.friend_profiles.iter().filter(|p| p.is_some()).count();
+    let hue_f0 = tr.primary_profile.f0_hz.num / (tr.primary_profile.f0_hz.den.max(1) as i32);
+    let utt_f0 = analysis.salience_report.overall_f0_hz.num
+        / (analysis.salience_report.overall_f0_hz.den.max(1) as i32);
+
+    let event_json = format!(
+        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"text\":{}}}",
+        markdown_source_literal(analysis.source.as_str()),
+        markdown_source_literal(analysis.context.as_str()),
+        analysis.should_agent_respond,
+        analysis.primary_similarity_q15,
+        analysis.on_axis_ratio_q15,
+        analysis.salience_report.overall_f0_hz.num,
+        analysis.salience_report.overall_f0_hz.den,
+        analysis.salience_report.overall_vad_byte,
+        markdown_source_literal(&transcript)
+    );
+
+    if let Ok(mut inbox_f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("ear_inbox.jsonl"))
+    {
+        let _ = writeln!(inbox_f, "{event_json}");
+    }
+
+    let room_json = format!(
+        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"friends_detected\":{friends_count},\"last_utterance\":{event_json}}}",
+        std::process::id(),
+        markdown_source_literal(analysis.source.as_str()),
+        markdown_source_literal(analysis.context.as_str()),
+        analysis.should_agent_respond,
+        tr.noise_floor_q15,
+        tr.primary_profile.grains_learned
+    );
+    let _ = fs::write(dir.join("room_state.json"), room_json);
+}
+
 

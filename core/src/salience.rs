@@ -85,7 +85,7 @@ impl MarineIntDetector {
 
         if abs_s >= self.clip_threshold {
             let energy_q15 = abs_s;
-            let is_peak = self.prev_prev_sample < self.prev_sample && self.prev_sample > s;
+            let is_peak = self.prev_prev_sample <= self.prev_sample && self.prev_sample > s && self.prev_sample > 0;
 
             if is_peak {
                 let current_peak_idx = index.saturating_sub(1);
@@ -625,6 +625,314 @@ pub fn combine_salient_speech_wav(tts_wav: &[u8], profile: &SpeakerSalienceProfi
     encode_wav_i16(sample_rate, &samples)
 }
 
+/// Classification of the acoustic source in the room, computed in 100% integer math.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcousticSourceKind {
+    /// Non-vocal background noise, keyboard clicks, fan hum, or silence.
+    AmbientNoise,
+    /// The primary enrolled user ("Hue") matching `primary_profile`.
+    PrimaryUser,
+    /// Another distinct human voice in the room (`0..=3` = Friend 1..4).
+    OtherSpeaker(u8),
+    /// System's own TTS output playing over the speaker.
+    SystemEcho,
+}
+
+impl AcousticSourceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AmbientNoise => "ambient_noise",
+            Self::PrimaryUser => "hue",
+            Self::OtherSpeaker(0) => "friend_1",
+            Self::OtherSpeaker(1) => "friend_2",
+            Self::OtherSpeaker(2) => "friend_3",
+            Self::OtherSpeaker(_) => "friend_4",
+            Self::SystemEcho => "system_echo",
+        }
+    }
+}
+
+/// Conversational context in the room: is the user addressing the AI, or chatting with a friend next to them?
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InteractionContext {
+    /// Silence, ambient noise, or system echo.
+    SilentOrNoise,
+    /// Primary user ("Hue") is addressing the AI (on-axis or using wake/direct address).
+    AddressingAgent,
+    /// Primary user ("Hue") is chatting with a friend next to him (dyadic turn-taking or off-axis side chat).
+    ChattingWithFriend,
+    /// A friend / other person in the room is speaking.
+    FriendSpeaking,
+}
+
+impl InteractionContext {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SilentOrNoise => "silent_or_noise",
+            Self::AddressingAgent => "addressing_agent",
+            Self::ChattingWithFriend => "chatting_with_friend",
+            Self::FriendSpeaking => "friend_speaking",
+        }
+    }
+}
+
+/// Complete zero-float acoustic diarization & room context result for an audio window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomUtteranceAnalysis {
+    pub source: AcousticSourceKind,
+    pub context: InteractionContext,
+    /// Similarity to the primary user (`0..=32767` in Q15).
+    pub primary_similarity_q15: u16,
+    /// Ratio of current utterance peak/envelope energy to primary user's on-axis baseline (`0..=32767` in Q15).
+    pub on_axis_ratio_q15: u16,
+    /// Whether the AI agent should actively respond (`true` only when `AddressingAgent`).
+    pub should_agent_respond: bool,
+    pub salience_report: UtteranceSalienceReport,
+}
+
+/// Compute integer speaker similarity in Q15 (`0..=32767`) between a learned [`SpeakerSalienceProfile`]
+/// and an incoming [`UtteranceSalienceReport`] using:
+/// 1. Fundamental pitch (`f0_hz`) integer distance (`|f0_a - f0_b|`)
+/// 2. 16-bin normalized prosody contour L1 distance
+pub fn speaker_similarity_q15(
+    profile: &SpeakerSalienceProfile,
+    report: &UtteranceSalienceReport,
+) -> u16 {
+    let Some(best) = report.top_grains.first() else {
+        return 0;
+    };
+    if profile.grains_learned == 0 {
+        return 28_000;
+    }
+
+    let prof_f0 = (profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32)).clamp(50, 640);
+    let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
+    let f0_diff = (prof_f0 - utt_f0).abs();
+
+    // Pitch similarity in Q15: 0 Hz diff -> 32767; >= 110 Hz diff -> 0
+    let pitch_sim_q15 = if f0_diff >= 110 {
+        0
+    } else {
+        ((110 - f0_diff) * Q15_ONE) / 110
+    };
+
+    // Normalized 16-bin prosody contour L1 similarity
+    let prof_sum: i32 = profile.prosody_envelope_q15.iter().map(|&x| x as i32).sum::<i32>().max(16);
+    let utt_sum: i32 = best.envelope_q15.iter().map(|&x| x as i32).sum::<i32>().max(16);
+    let mut l1_diff_q12: i32 = 0;
+    for i in 0..16 {
+        let p_norm = (profile.prosody_envelope_q15[i] as i32 * 4096) / prof_sum;
+        let u_norm = (best.envelope_q15[i] as i32 * 4096) / utt_sum;
+        l1_diff_q12 += (p_norm - u_norm).abs();
+    }
+    let env_sim_q15 = ((4096 - l1_diff_q12.min(4096)) * Q15_ONE) / 4096;
+
+    // Weighted combination: 3/4 pitch identity + 1/4 prosodic cadence identity
+    (((pitch_sim_q15 * 3) + env_sim_q15) >> 2).clamp(0, Q15_ONE) as u16
+}
+
+/// Multi-speaker room state & conversational context tracker in 100% integer math.
+/// Distinguishes:
+/// - Primary User ("Hue") addressing the AI (`AddressingAgent`)
+/// - Primary User ("Hue") chatting with a friend next to him (`ChattingWithFriend`)
+/// - Other people in the room (`OtherSpeaker(0..3)` / `FriendSpeaking`)
+/// - Ambient room noise / silence (`AmbientNoise` / `SilentOrNoise`)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomAcousticTracker {
+    pub primary_profile: SpeakerSalienceProfile,
+    pub friend_profiles: [Option<SpeakerSalienceProfile>; 4],
+    pub noise_floor_q15: u16,
+    pub primary_on_axis_amp_q15: u16,
+    pub last_primary_ts: u64,
+    pub last_other_ts: u64,
+    pub last_other_slot: u8,
+    pub tts_active_until_ts: u64,
+}
+
+impl Default for RoomAcousticTracker {
+    fn default() -> Self {
+        Self {
+            primary_profile: SpeakerSalienceProfile::default(),
+            friend_profiles: [None, None, None, None],
+            noise_floor_q15: 256,
+            primary_on_axis_amp_q15: 4096,
+            last_primary_ts: 0,
+            last_other_ts: 0,
+            last_other_slot: 0,
+            tts_active_until_ts: 0,
+        }
+    }
+}
+
+impl RoomAcousticTracker {
+    /// Analyze an incoming audio buffer, classify who is speaking (`hue`, `friend_1..4`, `ambient_noise`)
+    /// and the room context (`addressing_agent`, `chatting_with_friend`, `friend_speaking`, `silent_or_noise`),
+    /// and selectively fold only `PrimaryUser` grains into Hue's `MEM|8` profile (and friend grains into friend slots).
+    pub fn classify_and_learn(
+        &mut self,
+        samples: &[i16],
+        sample_rate: u32,
+        timestamp_secs: u64,
+        transcript_hint: Option<&str>,
+    ) -> RoomUtteranceAnalysis {
+        let report = extract_salient_grains(samples, sample_rate, 3, timestamp_secs);
+
+        // 0. Check if system TTS is currently playing
+        if timestamp_secs < self.tts_active_until_ts {
+            return RoomUtteranceAnalysis {
+                source: AcousticSourceKind::SystemEcho,
+                context: InteractionContext::SilentOrNoise,
+                primary_similarity_q15: 0,
+                on_axis_ratio_q15: 0,
+                should_agent_respond: false,
+                salience_report: report,
+            };
+        }
+
+        // 1. Check if this is non-vocal ambient noise or silence
+        let Some(best_grain) = report.top_grains.first() else {
+            let mut mean_abs: u64 = 0;
+            if !samples.is_empty() {
+                for &s in samples {
+                    mean_abs += (s as i32).abs() as u64;
+                }
+                mean_abs /= samples.len() as u64;
+            }
+            self.noise_floor_q15 =
+                (((self.noise_floor_q15 as u64) * 7 + mean_abs) >> 3).min(Q15_ONE as u64) as u16;
+            return RoomUtteranceAnalysis {
+                source: AcousticSourceKind::AmbientNoise,
+                context: InteractionContext::SilentOrNoise,
+                primary_similarity_q15: 0,
+                on_axis_ratio_q15: 0,
+                should_agent_respond: false,
+                salience_report: report,
+            };
+        };
+
+        let grain_avg_env: u32 = best_grain
+            .envelope_q15
+            .iter()
+            .map(|&v| v as u32)
+            .sum::<u32>()
+            / 16;
+
+        // Reject low-salience / transient noise clicks that barely crossed the floor
+        if best_grain.salience_q15 < 512
+            || grain_avg_env <= (self.noise_floor_q15 as u32).saturating_add(64)
+        {
+            return RoomUtteranceAnalysis {
+                source: AcousticSourceKind::AmbientNoise,
+                context: InteractionContext::SilentOrNoise,
+                primary_similarity_q15: 0,
+                on_axis_ratio_q15: 0,
+                should_agent_respond: false,
+                salience_report: report,
+            };
+        }
+
+        // 2. Compare against Primary User ("Hue") profile
+        let primary_sim_q15 = speaker_similarity_q15(&self.primary_profile, &report);
+
+        // Compute on-axis amplitude ratio relative to Hue's normal direct-to-mic speaking level
+        let baseline_amp = (self.primary_on_axis_amp_q15 as u32).max(512);
+        let on_axis_ratio_q15 = ((grain_avg_env * (Q15_ONE as u32)) / baseline_amp)
+            .min(Q15_ONE as u32) as u16;
+
+        // Check if transcript contains an explicit direct-address wake word to the AI
+        let has_ai_wake_word = transcript_hint
+            .map(|t| {
+                let low = t.to_ascii_lowercase();
+                low.contains("gemini")
+                    || low.contains("alexia")
+                    || low.contains("qwave")
+                    || low.contains("claude")
+                    || low.contains("codex")
+                    || low.contains("hey aye")
+            })
+            .unwrap_or(false);
+
+        // Threshold for matching Primary User ("Hue"): >= 19_000 in Q15 (~58% pitch + cadence match)
+        if primary_sim_q15 >= 19_000 || self.primary_profile.grains_learned == 0 {
+            // Update Hue's on-axis amplitude baseline when speaking clearly on-axis
+            if grain_avg_env > (baseline_amp / 2) {
+                self.primary_on_axis_amp_q15 =
+                    (((baseline_amp * 3) + grain_avg_env) >> 2).clamp(512, Q15_ONE as u32) as u16;
+            }
+
+            // Fold Hue's highest-salience grains into his personal MEM|8 SpeakerSalienceProfile!
+            self.primary_profile.absorb_report(&report);
+            self.last_primary_ts = timestamp_secs;
+
+            // Determine whether Hue is addressing the AI or chatting with a friend next to him:
+            // - If a friend (`OtherSpeaker`) spoke within the last 10 seconds AND Hue didn't use an AI wake word -> `ChattingWithFriend`
+            // - Or if Hue is speaking far off-axis (`on_axis_ratio_q15 < 13_000`, ~40% of normal mic energy, turned toward friend) without wake word -> `ChattingWithFriend`
+            let friend_spoke_recently = self.last_other_ts > 0
+                && timestamp_secs.saturating_sub(self.last_other_ts) <= 10;
+            let turned_off_axis = on_axis_ratio_q15 < 13_000;
+
+            let context = if !has_ai_wake_word && (friend_spoke_recently || turned_off_axis) {
+                InteractionContext::ChattingWithFriend
+            } else {
+                InteractionContext::AddressingAgent
+            };
+
+            return RoomUtteranceAnalysis {
+                source: AcousticSourceKind::PrimaryUser,
+                context,
+                primary_similarity_q15: primary_sim_q15,
+                on_axis_ratio_q15,
+                should_agent_respond: context == InteractionContext::AddressingAgent,
+                salience_report: report,
+            };
+        }
+
+        // 3. Another human speaker in the room (`OtherSpeaker(slot)`)!
+        // Match against existing friend slots or allocate a new slot (0..=3)
+        let mut best_slot = 0usize;
+        let mut best_friend_sim = 0u16;
+        let mut empty_slot: Option<usize> = None;
+
+        for (idx, slot_opt) in self.friend_profiles.iter().enumerate() {
+            if let Some(friend_prof) = slot_opt {
+                let sim = speaker_similarity_q15(friend_prof, &report);
+                if sim > best_friend_sim {
+                    best_friend_sim = sim;
+                    best_slot = idx;
+                }
+            } else if empty_slot.is_none() {
+                empty_slot = Some(idx);
+            }
+        }
+
+        let chosen_slot = if best_friend_sim >= 19_000 {
+            best_slot
+        } else if let Some(free_idx) = empty_slot {
+            free_idx
+        } else {
+            best_slot
+        };
+
+        let mut friend_prof = self.friend_profiles[chosen_slot]
+            .take()
+            .unwrap_or_default();
+        friend_prof.absorb_report(&report);
+        self.friend_profiles[chosen_slot] = Some(friend_prof);
+
+        self.last_other_ts = timestamp_secs;
+        self.last_other_slot = chosen_slot as u8;
+
+        RoomUtteranceAnalysis {
+            source: AcousticSourceKind::OtherSpeaker(chosen_slot as u8),
+            context: InteractionContext::FriendSpeaking,
+            primary_similarity_q15: primary_sim_q15,
+            on_axis_ratio_q15,
+            should_agent_respond: has_ai_wake_word,
+            salience_report: report,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,5 +983,56 @@ mod tests {
         let (sr, out_samples) = decode_wav_i16(&modulated).unwrap();
         assert_eq!(sr, 24_000);
         assert_eq!(out_samples.len(), samples.len());
+    }
+
+    #[test]
+    fn room_tracker_distinguishes_primary_user_noise_friend_and_side_chat() {
+        let sr = 16_000u32;
+        let mut tracker = RoomAcousticTracker::default();
+
+        // 1. Ambient room noise -> AmbientNoise / SilentOrNoise
+        let noise = vec![25i16; 3200];
+        let r_noise = tracker.classify_and_learn(&noise, sr, 1000, None);
+        assert_eq!(r_noise.source, AcousticSourceKind::AmbientNoise);
+        assert_eq!(r_noise.context, InteractionContext::SilentOrNoise);
+        assert!(!r_noise.should_agent_respond);
+
+        // 2. Primary user ("Hue") speaking on-axis at ~145 Hz (period = 110 samples at 16kHz)
+        let hue_voice: Vec<i16> = (0..3200)
+            .map(|i| {
+                let p = (i % 110) as i32;
+                let v = if p < 55 { (p - 27) * 520 } else { (82 - p) * 520 };
+                v.clamp(-18_000, 18_000) as i16
+            })
+            .collect();
+        let r_hue = tracker.classify_and_learn(&hue_voice, sr, 1005, Some("Hello Gemini"));
+        assert_eq!(r_hue.source, AcousticSourceKind::PrimaryUser);
+        assert_eq!(r_hue.context, InteractionContext::AddressingAgent);
+        assert!(r_hue.should_agent_respond);
+
+        // 3. Friend next to Hue speaking at ~266 Hz (period = 60 samples at 16kHz)
+        let friend_voice: Vec<i16> = (0..3200)
+            .map(|i| {
+                let p = (i % 60) as i32;
+                let v = if p < 30 { (p - 15) * 700 } else { (45 - p) * 700 };
+                v.clamp(-15_000, 15_000) as i16
+            })
+            .collect();
+        let r_friend = tracker.classify_and_learn(&friend_voice, sr, 1008, Some("Hey Chris check this out"));
+        assert_eq!(r_friend.source, AcousticSourceKind::OtherSpeaker(0));
+        assert_eq!(r_friend.context, InteractionContext::FriendSpeaking);
+        assert!(!r_friend.should_agent_respond);
+
+        // 4. Hue replies to his friend 3 seconds later (dyadic turn-taking, no AI wake word) -> ChattingWithFriend!
+        let r_side = tracker.classify_and_learn(&hue_voice, sr, 1011, Some("Yeah that looks awesome"));
+        assert_eq!(r_side.source, AcousticSourceKind::PrimaryUser);
+        assert_eq!(r_side.context, InteractionContext::ChattingWithFriend);
+        assert!(!r_side.should_agent_respond);
+
+        // 5. Hue addresses Gemini directly during the conversation ("Hey Gemini what do you think?") -> AddressingAgent!
+        let r_wake = tracker.classify_and_learn(&hue_voice, sr, 1014, Some("Hey Gemini what do you think?"));
+        assert_eq!(r_wake.source, AcousticSourceKind::PrimaryUser);
+        assert_eq!(r_wake.context, InteractionContext::AddressingAgent);
+        assert!(r_wake.should_agent_respond);
     }
 }
