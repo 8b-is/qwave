@@ -3016,6 +3016,20 @@ fn mark_tts_active_secs(duration_secs: u64) {
 }
 
 fn read_tts_active_until() -> u64 {
+    // Also detect active `/tmp/qwave_speak_*.wav` playback from any running MCP process
+    if let Ok(entries) = fs::read_dir("/tmp") {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if (name.starts_with("qwave_speak_") || name.starts_with("qwave_tts_"))
+                    && name.ends_with(".wav")
+                {
+                    let until = now_secs().saturating_add(3);
+                    let _ = fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
+                    return until;
+                }
+            }
+        }
+    }
     fs::read_to_string(mem8_dir().join("tts_active_until.txt"))
         .ok()
         .and_then(|s| s.trim().parse().ok())
