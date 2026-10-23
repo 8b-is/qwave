@@ -54,8 +54,8 @@ impl MarineIntDetector {
     /// Create a new detector for the given `sample_rate` (e.g., `16_000` or `24_000` Hz).
     pub fn new(sample_rate: u32, clip_threshold: i32) -> Self {
         let sr = sample_rate.max(8_000) as usize;
-        // Human vocal biometric resonance filter: 50 Hz ..= 640 Hz
-        let min_period_ticks = (sr / 640).max(4);
+        // Human vocal glottal F0 resonance filter: 50 Hz ..= 300 Hz
+        let min_period_ticks = (sr / 300).max(4);
         let max_period_ticks = (sr / 50).max(min_period_ticks + 1);
         Self {
             clip_threshold: clip_threshold.max(1),
@@ -90,13 +90,19 @@ impl MarineIntDetector {
             if is_peak {
                 let current_peak_idx = index.saturating_sub(1);
                 let period_ticks = current_peak_idx.saturating_sub(self.last_peak_index);
+                let amp = self.prev_sample.abs().min(Q15_ONE) as i64;
+                let min_glottal_amp = ((self.ema_amp_q8 >> 8) * 5) >> 3;
 
-                if (self.min_period_ticks..=self.max_period_ticks).contains(&period_ticks) {
-                    let amp = self.prev_sample.abs().min(Q15_ONE) as i64;
+                if self.last_peak_index == 0 || period_ticks > self.max_period_ticks {
+                    // First glottal pulse after silence/consonant: anchor the cycle start
+                    self.last_peak_index = current_peak_idx;
+                    self.ema_amp_q8 = amp << 8;
+                    salience_q15 = (energy_q15 / 6).max(self.vocal_resonance_q15);
+                } else if period_ticks >= self.min_period_ticks && amp >= min_glottal_amp {
                     let amp_q8 = amp << 8;
                     let period_q8 = (period_ticks as i64) << 8;
 
-                    if self.last_peak_index == 0 || self.valid_peaks == 0 {
+                    if self.valid_peaks == 0 {
                         self.ema_amp_q8 = amp_q8;
                         self.ema_period_q8 = period_q8;
                     } else {

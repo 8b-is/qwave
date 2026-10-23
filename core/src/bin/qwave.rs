@@ -2500,10 +2500,11 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
         .env("XDG_RUNTIME_DIR", &xdg_runtime)
         .args([
             "-c",
-            "BT_SINK=$(pactl list sinks short 2>/dev/null | awk '/bluez_output/{print $2; exit}'); \
-             if [ -n \"$BT_SINK\" ]; then \
-               pactl set-default-sink \"$BT_SINK\" 2>/dev/null || true; \
-               pactl set-sink-mute \"$BT_SINK\" 0 2>/dev/null || true; \
+            "SPK_SINK=$(pactl list sinks short 2>/dev/null | awk '/HiFi__Speaker__sink/{print $2; exit}'); \
+             if [ -n \"$SPK_SINK\" ]; then \
+               pactl set-default-sink \"$SPK_SINK\" 2>/dev/null || true; \
+               pactl set-sink-mute \"$SPK_SINK\" 0 2>/dev/null || true; \
+               pactl set-sink-volume \"$SPK_SINK\" 90% 2>/dev/null || true; \
              else \
                wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true; \
              fi",
@@ -2533,7 +2534,7 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
 
     // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
     // and mark TTS active so the parallel ear daemon suppresses system echo!
-    let est_secs = ((wav_bytes.len() as u64) / 44_000).clamp(2, 25) + 1;
+    let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 30) + 3;
     mark_tts_active_secs(est_secs);
 
     let prof = load_salience_profile();
@@ -3060,6 +3061,7 @@ fn run_parallel_ear_daemon() {
         primary_profile: load_salience_profile(),
         ..RoomAcousticTracker::default()
     }));
+    let transcribe_lock = Arc::new(Mutex::new(()));
 
     // Write initial room_state.json immediately
     {
@@ -3165,9 +3167,12 @@ fn run_parallel_ear_daemon() {
                 silent_frames = 0;
 
                 let tracker_clone = Arc::clone(&tracker);
+                let lock_clone = Arc::clone(&transcribe_lock);
                 let dir_clone = dir.clone();
                 thread::spawn(move || {
-                    process_parallel_ear_utterance(&captured, now, &tracker_clone, &dir_clone);
+                    if let Ok(_guard) = lock_clone.try_lock() {
+                        process_parallel_ear_utterance(&captured, now, &tracker_clone, &dir_clone);
+                    }
                 });
             } else if silent_frames >= 8 {
                 utterance_pcm.clear();
