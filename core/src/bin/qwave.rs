@@ -124,6 +124,12 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--ping-pong" || a == "--ping-pong-voice") {
+        let do_voice = args.iter().any(|a| a == "--ping-pong-voice");
+        println!("{}", run_acoustic_ping_pong(do_voice));
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--wait-wake") {
         ensure_ear_daemon_running();
         println!("{}", run_wait_wake());
@@ -3423,7 +3429,8 @@ fn handle_mcp_request(req: &str) -> Option<String> {
              {{\"name\":\"nomad_mesh\",\"description\":\"📡 Sovereign Nomad Mesh, Free-WiFi Captive-Portal Auto-Solver & Bluetooth Mesh (96B BNEP + 31B BLE Advertising): ranks open/free Wi-Fi networks, probes/auto-accepts captive portals, and builds zero-float Bluetooth mesh frames carrying MEM|8 WaveInt + WUPZ state.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"auto_connect\":{{\"type\":\"boolean\",\"description\":\"Attempt to auto-connect & accept captive portal if offline (default: false)\",\"default\":false}}}}}}}},\
              {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
              {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown file (file:///.../*.md) or live Markdown snippet inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, 3D MEM|8 Wave canvas, Ghostwriter bridge, and optional live theme preset & voice narration.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the Markdown document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens\"}}}}}}}},\
-             {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}}\
+             {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}},\
+             {{\"name\":\"ping_pong\",\"description\":\"🏓 Sovereign Acoustic Ping-Pong Transceiver & Self-Healer: self-heals PipeWire speaker/mic & ear-daemon, emits a 432/528/864 Hz Harmonic Triad Ping out of the speaker while recording 48 kHz stereo on Left/Right mics, and reports L/R SNR, Time-of-Flight, TDOA azimuth, RT60, and optional neural TTS->STT loopback.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"voice\":{{\"type\":\"boolean\",\"description\":\"Also run spoken TTS -> Air -> Mic -> STT roundtrip test (default: false)\",\"default\":false}}}}}}}}\
              ]}}}}"
         )),
         "tools/call" => {
@@ -3476,6 +3483,10 @@ fn handle_mcp_request(req: &str) -> Option<String> {
                 "nomad_mesh" | "qwave_nomad" => {
                     let auto_conn = extract_json_bool(args_slice, "auto_connect").unwrap_or(false);
                     run_nomad_mesh(auto_conn)
+                }
+                "ping_pong" | "qwave_ping_pong" => {
+                    let do_voice = extract_json_bool(args_slice, "voice").unwrap_or(false);
+                    run_acoustic_ping_pong(do_voice)
                 }
                 "salience" | "qwave_salience" => {
                     if let Some(wav_p) = extract_json_str(args_slice, "wav_path") {
@@ -3533,16 +3544,28 @@ fn mark_tts_active_secs(duration_secs: u64) {
 }
 
 fn read_tts_active_until() -> u64 {
-    // Also detect active `/tmp/qwave_speak_*.wav` playback from any running MCP process
+    // Also detect active `/tmp/qwave_speak_*.wav` playback from any running MCP process,
+    // automatically cleaning up stale (>12s) temp WAV files so they never permanently mute the mic!
     if let Ok(entries) = fs::read_dir("/tmp") {
         for entry in entries.flatten() {
             if let Some(name) = entry.file_name().to_str() {
                 if (name.starts_with("qwave_speak_") || name.starts_with("qwave_tts_"))
                     && name.ends_with(".wav")
                 {
-                    let until = now_secs().saturating_add(3);
-                    let _ = fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
-                    return until;
+                    let is_fresh = entry
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|d| d.as_secs() < 12)
+                        .unwrap_or(false);
+                    if is_fresh {
+                        let until = now_secs().saturating_add(3);
+                        let _ = fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
+                        return until;
+                    } else {
+                        let _ = fs::remove_file(entry.path());
+                    }
                 }
             }
         }
@@ -3579,13 +3602,27 @@ fn is_tts_echo(transcript: &str) -> bool {
     total >= 3 && matched * 2 >= total
 }
 
-/// Ensure the background parallel always-on acoustic ear (`qwave --ear-daemon`) is running.
+/// Ensure the background parallel always-on acoustic ear (`qwave --ear-daemon`) is running
+/// and that its `parec` stream has not stalled (`ear_heartbeat.txt` < 30s).
 fn ensure_ear_daemon_running() {
-    let pid_file = mem8_dir().join("ear_daemon.pid");
+    let dir = mem8_dir();
+    let pid_file = dir.join("ear_daemon.pid");
+    let hb_file = dir.join("ear_heartbeat.txt");
     if let Ok(pid_str) = fs::read_to_string(&pid_file) {
         if let Ok(pid) = pid_str.trim().parse::<u32>() {
             if Path::new(&format!("/proc/{pid}/cmdline")).exists() {
-                return;
+                let hb_ok = fs::read_to_string(&hb_file)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map(|hb| now_secs().saturating_sub(hb) < 30)
+                    .unwrap_or(false);
+                if hb_ok {
+                    return;
+                }
+                // Stalled `parec` pipe: terminate the hung daemon & its children so we respawn cleanly
+                let _ = Command::new("sh")
+                    .args(["-c", &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")])
+                    .status();
             }
         }
     }
@@ -3779,7 +3816,7 @@ fn run_parallel_ear_daemon() {
     }
 
     loop {
-        // Ensure internal digital microphone (`Mic1__source`) is unmuted and selected
+        // Ensure internal digital microphone (`Mic1__source`) is unmuted, selected, and at 90% gain
         let _ = Command::new("sh")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
@@ -3788,9 +3825,11 @@ fn run_parallel_ear_daemon() {
                  if [ -n \"$MIC_SRC\" ]; then \
                    pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; \
                    pactl set-source-mute \"$MIC_SRC\" 0 2>/dev/null || true; \
+                   pactl set-source-volume \"$MIC_SRC\" 90% 2>/dev/null || true; \
                  fi",
             ])
             .status();
+        let _ = fs::write(dir.join("ear_heartbeat.txt"), now_secs().to_string());
 
         // Stream raw 48kHz 2-channel stereo `s16le` PCM from the laptop's Digital Microphone Array (`Mic1__source`)
         // so `triangulate_stereo_dmic_i16` computes real-time TDOA azimuth angle (-90..+90 deg), distance (cm),
@@ -3832,9 +3871,14 @@ fn run_parallel_ear_daemon() {
         let mut utterance_stereo_48k: Vec<i16> = Vec::with_capacity(48_000 * 2 * 6);
         let mut silent_frames = 0u32;
         let mut voiced_frames = 0u32;
+        let mut hb_counter = 0u32;
 
         while stdout.read_exact(&mut frame_bytes).is_ok() {
             let now = now_secs();
+            hb_counter = hb_counter.wrapping_add(1);
+            if hb_counter % 50 == 1 {
+                let _ = fs::write(dir.join("ear_heartbeat.txt"), now.to_string());
+            }
             let tts_until = read_tts_active_until();
             if now < tts_until {
                 utterance_stereo_48k.clear();
@@ -5000,6 +5044,329 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
         multipath.environment_class,
     )
 }
+
+/// Pure-integer integer square root (`isqrt(n)`).
+fn isqrt_u64(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut x0 = n / 2;
+    let mut x1 = (x0 + n / x0) / 2;
+    while x1 < x0 {
+        x0 = x1;
+        x1 = (x0 + n / x0) / 2;
+    }
+    x0
+}
+
+/// Sovereign Acoustic Ping-Pong Transceiver & Self-Healer (`qwave --ping-pong` / `--ping-pong-voice`):
+/// 1. Self-heals PipeWire / ALSA speaker (`HiFi__Speaker__sink`) and stereo DMIC (`HiFi__Mic1__source`),
+///    purges stale `/tmp/qwave_speak_*.wav` mute locks, and verifies/restarts `qwave --ear-daemon`.
+/// 2. Synthesizes a 48 kHz 16-bit Harmonic Triad Ping (`432 Hz -> 528 Hz -> 864 Hz`) and plays it out of
+///    the physical speakers while simultaneously recording 48 kHz 2-channel stereo (`L` + `R`) from the
+///    internal microphone array over the air.
+/// 3. Computes pure-integer Left/Right noise floor RMS, active Ping RMS/Peak, SNR ratio, Stereo TDOA
+///    Azimuth (`deg`), Time-of-Flight (`us`), Room `RT60` (`ms`), and `MarineIntDetector` salience.
+/// 4. If `do_voice` is true, also performs a live neural TTS -> Air -> Stereo Mic -> `liquid-rust` STT
+///    spoken ping-pong check!
+fn run_acoustic_ping_pong(do_voice: bool) -> String {
+    let dir = mem8_dir();
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+
+    // 1. Clean any stale `/tmp/qwave_speak_*.wav` or `/tmp/qwave_tts_*.wav` and reset `tts_active_until.txt`
+    let mut stale_cleaned = 0usize;
+    if let Ok(entries) = fs::read_dir("/tmp") {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if (name.starts_with("qwave_speak_") || name.starts_with("qwave_tts_"))
+                    && name.ends_with(".wav")
+                {
+                    let _ = fs::remove_file(entry.path());
+                    stale_cleaned += 1;
+                }
+            }
+        }
+    }
+    let _ = fs::write(dir.join("tts_active_until.txt"), "0");
+
+    // 2. Ensure Speaker Sink (`HiFi__Speaker__sink`) & Stereo DMIC Source (`HiFi__Mic1__source`) are unmuted & optimal gain
+    let hw_out = Command::new("sh")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args([
+            "-c",
+            "SPK=$(pactl list sinks short 2>/dev/null | awk '/HiFi__Speaker__sink/{print $2; exit}'); \
+             MIC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{print $2; exit}'); \
+             if [ -n \"$SPK\" ]; then pactl set-default-sink \"$SPK\" 2>/dev/null; pactl set-sink-mute \"$SPK\" 0 2>/dev/null; pactl set-sink-volume \"$SPK\" 85% 2>/dev/null; fi; \
+             if [ -n \"$MIC\" ]; then pactl set-default-source \"$MIC\" 2>/dev/null; pactl set-source-mute \"$MIC\" 0 2>/dev/null; pactl set-source-volume \"$MIC\" 90% 2>/dev/null; fi; \
+             printf '%s|%s' \"${SPK:-default}\" \"${MIC:-default}\"",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_else(|_| "default|default".to_string());
+    let (spk_name, mic_name) = hw_out.split_once('|').unwrap_or(("default", "default"));
+
+    // 3. Ensure `qwave --ear-daemon` is alive and its `parec` pipe has a fresh heartbeat
+    ensure_ear_daemon_running();
+
+    // 4. Generate 48 kHz mono Harmonic Triad Ping WAV:
+    //    - 120 ms silence pre-roll (5,760 samples) to measure true room noise floor
+    //    - 90 ms 432 Hz (4,320 samples) + 90 ms 528 Hz (4,320 samples) + 90 ms 864 Hz (4,320 samples)
+    //    - 160 ms tail (7,680 samples) to capture room reverb decay
+    let sr = 48_000usize;
+    let pre_samples = 5_760usize; // 120 ms
+    let tone_samples = 4_320usize; // 90 ms per note
+    let tail_samples = 7_680usize; // 160 ms
+    let total_samples = pre_samples + tone_samples * 3 + tail_samples;
+    let mut ping_pcm = vec![0i16; total_samples];
+
+    let freqs = [432usize, 528usize, 864usize];
+    for (note_idx, &hz) in freqs.iter().enumerate() {
+        let base = pre_samples + note_idx * tone_samples;
+        let period = sr / hz;
+        for i in 0..tone_samples {
+            // Smooth 10 ms attack/release ramp (480 samples)
+            let env_q10: i32 = if i < 480 {
+                ((i as i32) * 1024) / 480
+            } else if i + 480 > tone_samples {
+                (((tone_samples - i) as i32) * 1024) / 480
+            } else {
+                1024
+            };
+            // Pure integer triangle-sine approximation at fundamental + 2nd harmonic
+            let phase = (i % period) as i32;
+            let half = (period / 2) as i32;
+            let tri = if phase < half {
+                ((phase * 4) - period as i32) * 16_000 / (period as i32)
+            } else {
+                (((period as i32 - phase) * 4) - period as i32) * 16_000 / (period as i32)
+            };
+            let sample = (tri * env_q10) / 1024;
+            ping_pcm[base + i] = sample.clamp(-24_000, 24_000) as i16;
+        }
+    }
+
+    let ping_wav_path = "/tmp/qwave_ping_triad_48k.wav";
+    let pong_raw_path = "/tmp/qwave_pong_capture_48k.raw";
+    let _ = fs::write(ping_wav_path, encode_wav_i16(48_000, &ping_pcm));
+    let _ = fs::remove_file(pong_raw_path);
+
+    // Temporarily suppress ear-daemon during the 1.2-second acoustic ping-pong test
+    mark_tts_active_secs(3);
+
+    // 5. Spawn exact 1.20s (57,600 stereo frames = 230,400 bytes) 48 kHz 2-channel raw capture via `parec`,
+    //    wait 220 ms so the first ~10,000 stereo frames capture pure room noise floor, then fire `pw-play`!
+    let rec_child = Command::new("sh")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args([
+            "-c",
+            &format!(
+                "parec --device={mic_name} --rate=48000 --channels=2 --format=s16le --latency-msec=20 2>/dev/null | head -c 230400 > {pong_raw_path}"
+            ),
+        ])
+        .spawn()
+        .ok();
+
+    thread::sleep(Duration::from_millis(220));
+    let _ = Command::new("sh")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args([
+            "-c",
+            &format!("pw-play {ping_wav_path} 2>/dev/null || paplay {ping_wav_path} 2>/dev/null || aplay -q {ping_wav_path} 2>/dev/null"),
+        ])
+        .status();
+
+    if let Some(mut c) = rec_child {
+        let _ = c.wait();
+    }
+
+    // 6. Decode captured raw s16le stereo and measure Left/Right noise floor, Ping RMS/Peak, TDOA & Marine salience
+    let raw_bytes = fs::read(pong_raw_path).unwrap_or_default();
+    let mut captured_samples = Vec::with_capacity(raw_bytes.len() / 2);
+    for chunk in raw_bytes.chunks_exact(2) {
+        captured_samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+
+    let stereo_frames = captured_samples.len() / 2;
+    let noise_frames = stereo_frames.min(7_200); // First 150 ms before `pw-play` starts (pure room ambient noise)
+    let mut sum_sq_noise_l: u64 = 0;
+    let mut sum_sq_noise_r: u64 = 0;
+    for f in 0..noise_frames {
+        let l = captured_samples[f * 2] as i64;
+        let r = captured_samples[f * 2 + 1] as i64;
+        sum_sq_noise_l += (l * l) as u64;
+        sum_sq_noise_r += (r * r) as u64;
+    }
+    let rms_noise_l = if noise_frames > 0 {
+        isqrt_u64(sum_sq_noise_l / (noise_frames as u64)).max(1)
+    } else {
+        1
+    };
+    let rms_noise_r = if noise_frames > 0 {
+        isqrt_u64(sum_sq_noise_r / (noise_frames as u64)).max(1)
+    } else {
+        1
+    };
+
+    let mut peak_l: i32 = 0;
+    let mut peak_r: i32 = 0;
+    let mut peak_frame: usize = noise_frames;
+    let mut onset_frame: usize = 0;
+    let onset_thresh_l = ((rms_noise_l as i32) * 3).max(400);
+
+    for f in noise_frames..stereo_frames {
+        let l = (captured_samples[f * 2] as i32).abs();
+        let r = (captured_samples[f * 2 + 1] as i32).abs();
+        if l > peak_l {
+            peak_l = l;
+            peak_frame = f;
+        }
+        if r > peak_r {
+            peak_r = r;
+        }
+        if onset_frame == 0 && l >= onset_thresh_l {
+            onset_frame = f;
+        }
+    }
+
+    let win_start = peak_frame.saturating_sub(4_800).max(noise_frames);
+    let win_end = (win_start + 12_000).min(stereo_frames).max(win_start + 1);
+    let mut sum_sq_ping_l: u64 = 0;
+    let mut sum_sq_ping_r: u64 = 0;
+    for f in win_start..win_end {
+        let l = (captured_samples[f * 2] as i64).abs() as u64;
+        let r = (captured_samples[f * 2 + 1] as i64).abs() as u64;
+        sum_sq_ping_l += l * l;
+        sum_sq_ping_r += r * r;
+    }
+    let active_frames = (win_end - win_start).max(1);
+    let rms_ping_l = isqrt_u64(sum_sq_ping_l / (active_frames as u64));
+    let rms_ping_r = isqrt_u64(sum_sq_ping_r / (active_frames as u64));
+    let snr_ratio_l_x10 = ((rms_ping_l * 10) / rms_noise_l).max(10);
+    let snr_ratio_r_x10 = ((rms_ping_r * 10) / rms_noise_r).max(10);
+
+    let (tri, beam_16k) = if captured_samples.len() >= 192 {
+        triangulate_stereo_dmic_i16(&captured_samples, None)
+    } else {
+        (StereoMicTriangulation::default(), Vec::new())
+    };
+    let echogram = analyze_chirp_echogram_i16(&captured_samples, 242, 55);
+    let grains_rep = extract_salient_grains(&beam_16k, 16_000, 3, now_secs());
+    let onset_ms = (onset_frame * 1000) / 48_000;
+
+    // 7. Optional Voice Ping-Pong (`--ping-pong-voice`)
+    let mut voice_pong_tx = String::new();
+    if do_voice {
+        let voice_rec_wav = "/tmp/qwave_pong_voice_16k.wav";
+        let _ = fs::remove_file(voice_rec_wav);
+        mark_tts_active_secs(5);
+        let v_child = Command::new("sh")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "-c",
+                &format!(
+                    "timeout -s INT 3.8s pw-record --target={mic_name} --rate=16000 --channels=1 --format=s16 {voice_rec_wav} 2>/dev/null"
+                ),
+            ])
+            .spawn()
+            .ok();
+        thread::sleep(Duration::from_millis(100));
+        let _ = speak_out_loud("Ping four three two, sovereign stereo ears online.", "af_heart", true, true);
+        if let Some(mut vc) = v_child {
+            let _ = vc.wait();
+        }
+        if Path::new("/usr/local/bin/liquid-rust").exists() && Path::new(voice_rec_wav).exists() {
+            if let Ok(out) = Command::new("/usr/local/bin/liquid-rust")
+                .env("RUST_LOG", "error")
+                .args(["transcribe", "-i", voice_rec_wav])
+                .output()
+            {
+                let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                voice_pong_tx = raw
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| {
+                        !l.is_empty()
+                            && !l.starts_with('═')
+                            && !l.starts_with('🎤')
+                            && !l.starts_with("✓")
+                            && !l.contains(" WARN ")
+                            && !l.contains(" INFO ")
+                            && !l.contains("Failed storing MEM|8")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+        }
+    }
+
+    // Clear TTS active lock immediately after Ping-Pong finishes so ear-daemon resumes listening right away!
+    let _ = fs::write(dir.join("tts_active_until.txt"), "0");
+    let ear_pid = fs::read_to_string(dir.join("ear_daemon.pid"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let ear_hb = fs::read_to_string(dir.join("ear_heartbeat.txt"))
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    let ear_hb_age_s = now_secs().saturating_sub(ear_hb);
+
+    let pong_received = peak_l > 800 && peak_r > 800 && snr_ratio_l_x10 >= 18 && snr_ratio_r_x10 >= 18;
+
+    format!(
+        "{{\n\
+         \"ok\": true,\n\
+         \"ping_pong_passed\": {pong_received},\n\
+         \"self_heal\": {{\n\
+           \"stale_tts_locks_purged\": {stale_cleaned},\n\
+           \"ear_daemon_pid\": {},\n\
+           \"ear_heartbeat_age_secs\": {ear_hb_age_s},\n\
+           \"speaker_sink\": {},\n\
+           \"mic_source\": {},\n\
+           \"mic_gain_pct\": 90,\n\
+           \"speaker_gain_pct\": 85\n\
+         }},\n\
+         \"acoustic_chirp_ping_pong\": {{\n\
+           \"frequencies_hz\": [432, 528, 864],\n\
+           \"captured_stereo_frames_48k\": {stereo_frames},\n\
+           \"left_mic\": {{\n\
+             \"noise_floor_rms\": {rms_noise_l},\n\
+             \"ping_rms\": {rms_ping_l},\n\
+             \"ping_peak_i16\": {peak_l},\n\
+             \"snr_x10\": {snr_ratio_l_x10}\n\
+           }},\n\
+           \"right_mic\": {{\n\
+             \"noise_floor_rms\": {rms_noise_r},\n\
+             \"ping_rms\": {rms_ping_r},\n\
+             \"ping_peak_i16\": {peak_r},\n\
+             \"snr_x10\": {snr_ratio_r_x10}\n\
+           }},\n\
+           \"onset_latency_ms\": {onset_ms},\n\
+           \"direct_tof_us\": {},\n\
+           \"direct_distance_cm\": {},\n\
+           \"stereo_azimuth_deg\": {},\n\
+           \"estimated_rt60_ms\": {},\n\
+           \"environment_class\": {},\n\
+           \"marine_salience_vad_byte\": \"0x{:02x}\",\n\
+           \"salient_grains_extracted\": {}\n\
+         }},\n\
+         \"voice_ping_pong_transcript\": {}\n\
+         }}",
+        markdown_source_literal(&ear_pid),
+        markdown_source_literal(spk_name.trim()),
+        markdown_source_literal(mic_name.trim()),
+        echogram.direct_tof_us,
+        echogram.direct_distance_cm,
+        tri.azimuth_deg,
+        echogram.estimated_rt60_ms,
+        markdown_source_literal(echogram.environment_class),
+        grains_rep.overall_vad_byte,
+        grains_rep.top_grains.len(),
+        markdown_source_literal(&voice_pong_tx)
+    )
+}
+
 
 
 
