@@ -224,8 +224,9 @@ pub fn extract_salient_grains(
         };
     }
 
+    let k_cap = top_k.clamp(1, 32);
     let mut global_detector = MarineIntDetector::new(sr, DEFAULT_CLIP_THRESHOLD_Q15);
-    let mut all_grains: Vec<SalientGrain> = Vec::new();
+    let mut top_grains: Vec<SalientGrain> = Vec::with_capacity(k_cap);
     let mut salient_count = 0u32;
     let mut total_chunks = 0u32;
     let mut sum_salience_q15: u64 = 0;
@@ -257,6 +258,25 @@ pub fn extract_salient_grains(
         // Salience gate: >= 16 / 32767 (~0.0005 in Marine units) and at least 1 valid vocal pitch peak
         if avg_sal_q15 >= 16 && local_detector.valid_peaks > 0 {
             salient_count += 1;
+
+            // Bounded Top-K slot check: only allocate `chunk.to_vec()` when this grain enters the Top-K ring!
+            let mut replace_idx: Option<usize> = None;
+            if top_grains.len() >= k_cap {
+                let mut min_idx = 0usize;
+                for i in 1..top_grains.len() {
+                    let cur = &top_grains[i];
+                    let min_g = &top_grains[min_idx];
+                    if (cur.salience_q15, cur.peak_amp_q15) < (min_g.salience_q15, min_g.peak_amp_q15) {
+                        min_idx = i;
+                    }
+                }
+                let min_g = &top_grains[min_idx];
+                if (avg_sal_q15, peak_amp) <= (min_g.salience_q15, min_g.peak_amp_q15) {
+                    continue;
+                }
+                replace_idx = Some(min_idx);
+            }
+
             let envelope_q15 = compute_16bin_envelope_q15(chunk);
             let f0_hz = local_detector.f0_hz_pq();
             let salience_pq =
@@ -295,7 +315,7 @@ pub fn extract_salient_grains(
                 provenance: WaveProvenance::Cognitive,
             };
 
-            all_grains.push(SalientGrain {
+            let grain = SalientGrain {
                 start_sample,
                 duration_ms: 60,
                 salience_q15: avg_sal_q15,
@@ -307,17 +327,22 @@ pub fn extract_salient_grains(
                 vad_byte,
                 wave,
                 pcm: chunk.to_vec(),
-            });
+            };
+
+            if let Some(idx) = replace_idx {
+                top_grains[idx] = grain;
+            } else {
+                top_grains.push(grain);
+            }
         }
     }
 
     // Sort highest salience first (tie-breaking on peak vocal amplitude)
-    all_grains.sort_by(|a, b| {
+    top_grains.sort_by(|a, b| {
         b.salience_q15
             .cmp(&a.salience_q15)
             .then_with(|| b.peak_amp_q15.cmp(&a.peak_amp_q15))
     });
-    all_grains.truncate(top_k.max(1));
 
     let overall_f0_hz = global_detector.f0_hz_pq();
     let avg_overall_sal = if total_chunks > 0 {
@@ -329,7 +354,7 @@ pub fn extract_salient_grains(
         Rational::new(avg_overall_sal, Q15_ONE as u32).unwrap_or(Rational::ZERO);
     let salient_frame_ratio_pq =
         Rational::new(salient_count as i32, total_chunks.max(1)).unwrap_or(Rational::ZERO);
-    let overall_vad_byte = all_grains.first().map(|g| g.vad_byte).unwrap_or(0x55);
+    let overall_vad_byte = top_grains.first().map(|g| g.vad_byte).unwrap_or(0x55);
 
     UtteranceSalienceReport {
         sample_rate: sr,
@@ -339,7 +364,7 @@ pub fn extract_salient_grains(
         overall_salience_pq,
         overall_vad_byte,
         salient_frame_ratio_pq,
-        top_grains: all_grains,
+        top_grains,
     }
 }
 
@@ -847,25 +872,17 @@ impl RoomAcousticTracker {
 
         // Check if transcript contains an explicit direct-address wake word to the AI
         let has_ai_wake_word = transcript_hint
-            .map(|t| {
-                let low = t.to_ascii_lowercase();
-                low.contains("gemini")
-                    || low.contains("gemma")
-                    || low.contains("alexia")
-                    || low.contains("alexandra")
-                    || low.contains("qwave")
-                    || low.contains("qwaver")
-                    || low.contains("waver")
-                    || low.contains("claude")
-                    || low.contains("codex")
-                    || low.contains("hey aye")
-            })
+            .map(is_hey_aye_wake_phrase)
             .unwrap_or(false);
 
         let addresses_human_in_room = transcript_hint
             .map(|t| {
                 let low = t.to_ascii_lowercase();
-                low.contains("chris") || low.contains("trish")
+                low.contains("chris")
+                    || low.contains("trish")
+                    || low.contains("peter")
+                    || low.contains("chesney")
+                    || low.contains("bence")
             })
             .unwrap_or(false);
 
@@ -1105,6 +1122,293 @@ pub fn triangulate_stereo_dmic_i16(
     )
 }
 
+/// Detect `"Hey Aye"` and all its phonetic neural-STT spellings (`"hey aye"`, `"hey, aye"`,
+/// `"hey i"`, `"hey, i"`, `"hey eye"`, `"hey, eye"`, `"hey ai"`, `"hey agy"`, `"aye,"`, etc.)
+/// alongside sovereign companion names (`"alexia"`, `"alexandra"`, `"gemini"`, `"qwave"`),
+/// while rejecting side-chat greetings to humans (`"Hey Chesney"`, `"Hey Peter"`, `"Hey Chris"`).
+pub fn is_hey_aye_wake_phrase(text: &str) -> bool {
+    let low = text.trim().to_ascii_lowercase();
+    if low.is_empty() {
+        return false;
+    }
+    low.contains("hey aye")
+        || low.contains("hey, aye")
+        || low.contains("hey i ")
+        || low.contains("hey, i ")
+        || low.ends_with("hey i")
+        || low.ends_with("hey, i")
+        || low.contains("hey i,")
+        || low.contains("hey i!")
+        || low.contains("hey i?")
+        || low.contains("hey eye")
+        || low.contains("hey, eye")
+        || low.contains("hey ai")
+        || low.contains("hey, ai")
+        || low.contains("hey agy")
+        || low.contains("hey, agy")
+        || low.contains("hey a ")
+        || low.contains("hey, a ")
+        || low.starts_with("aye ")
+        || low.starts_with("aye,")
+        || low.starts_with("aye!")
+        || low.starts_with("aye?")
+        || low == "aye"
+        || low.contains("gemini")
+        || low.contains("gemma")
+        || low.contains("alexia")
+        || low.contains("alexandra")
+        || low.contains("qwave")
+        || low.contains("qwaver")
+        || low.contains("waver")
+        || low.contains("claude")
+        || low.contains("codex")
+}
+
+/// Fixed-capacity `O(1)` circular Ring Buffer (`[Option<T>; N]`).
+///
+/// Zero heap allocations after construction; overwrites the oldest slot when full.
+#[derive(Clone, Debug)]
+pub struct RingBuffer<T, const N: usize> {
+    slots: [Option<T>; N],
+    head: usize,
+    len: usize,
+}
+
+impl<T, const N: usize> Default for RingBuffer<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T, const N: usize> RingBuffer<T, N> {
+    /// Construct an empty ring buffer of capacity `N`.
+    pub const fn new() -> Self {
+        Self {
+            slots: [const { None }; N],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    /// Maximum number of items the ring buffer can hold.
+    #[inline]
+    pub const fn capacity(&self) -> usize {
+        N
+    }
+
+    /// Current number of items stored (`0..=N`).
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the ring buffer is empty.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Clear all items without reallocating.
+    pub fn clear(&mut self) {
+        for slot in &mut self.slots {
+            *slot = None;
+        }
+        self.head = 0;
+        self.len = 0;
+    }
+
+    /// Push `item` into the ring buffer in `O(1)`.
+    /// If full (`self.len == N`), overwrites and returns the evicted oldest item.
+    pub fn push_overwrite(&mut self, item: T) -> Option<T> {
+        if N == 0 {
+            return Some(item);
+        }
+        if self.len < N {
+            let write_idx = (self.head + self.len) % N;
+            self.slots[write_idx] = Some(item);
+            self.len += 1;
+            None
+        } else {
+            let write_idx = self.head;
+            let evicted = self.slots[write_idx].replace(item);
+            self.head = (self.head + 1) % N;
+            evicted
+        }
+    }
+
+    /// Pop the oldest item from the ring buffer in `O(1)` (FIFO order).
+    pub fn pop_oldest(&mut self) -> Option<T> {
+        if self.len == 0 || N == 0 {
+            return None;
+        }
+        let item = self.slots[self.head].take();
+        self.head = (self.head + 1) % N;
+        self.len -= 1;
+        item
+    }
+
+    /// Iterate from oldest to newest (`0..len`).
+    pub fn iter_oldest_first(&self) -> impl Iterator<Item = &T> {
+        (0..self.len).filter_map(move |offset| {
+            let idx = (self.head + offset) % N.max(1);
+            self.slots[idx].as_ref()
+        })
+    }
+
+    /// Iterate from newest to oldest (`(0..len).rev()`).
+    pub fn iter_newest_first(&self) -> impl Iterator<Item = &T> {
+        (0..self.len).rev().filter_map(move |offset| {
+            let idx = (self.head + offset) % N.max(1);
+            self.slots[idx].as_ref()
+        })
+    }
+}
+
+/// Pre-allocated circular `48 kHz` Stereo PCM Ring Buffer with automatic pre-roll capture.
+///
+/// Why this fixes `"Hey Aye"` AND eliminates memory growth:
+/// 1. **Zero heap reallocation during streaming**: A single flat `Vec<i16>` of `cap_frames * frame_samples`
+///    is allocated once at daemon startup and written circularly in `O(1)` (`write_frame_idx = (write_frame_idx + 1) % cap_frames`).
+/// 2. **Automatic pre-roll (`pre_roll_frames`, e.g., `6` frames = `360 ms`)**: Every incoming `60 ms` frame is
+///    written into the ring even during silence. The instant VAD crosses threshold (`is_voiced == true` on frame `0`),
+///    the ring buffer retroactively includes the preceding `pre_roll_frames` (`360 ms`) already sitting in the ring,
+///    so the initial `"Hey"` in `"Hey Aye"` is never clipped!
+/// 3. **Strict memory ceiling**: Even during continuous speech or background music, `captured_frames` is bounded
+///    by `max_utterance_frames <= cap_frames`.
+#[derive(Clone, Debug)]
+pub struct StereoPcmRingBuffer {
+    data: Vec<i16>,
+    frame_samples: usize,
+    cap_frames: usize,
+    pre_roll_frames: usize,
+    max_utterance_frames: usize,
+    write_frame_idx: usize,
+    total_frames_written: u64,
+    captured_frames: usize,
+    voiced_frames: u32,
+    silent_frames: u32,
+}
+
+impl StereoPcmRingBuffer {
+    /// Create a pre-allocated stereo PCM ring buffer.
+    ///
+    /// Typical parameters for `48 kHz` stereo (`60 ms` frames = `5_760` `i16` samples):
+    /// - `frame_samples = 5_760`
+    /// - `cap_frames = 136` (`8.16 s` ring capacity = `783,360` `i16` samples = `1,566,720` bytes)
+    /// - `pre_roll_frames = 6` (`360 ms` pre-roll before VAD onset)
+    /// - `max_utterance_frames = 120` (`7.20 s` max utterance before forced dispatch)
+    pub fn new(
+        frame_samples: usize,
+        cap_frames: usize,
+        pre_roll_frames: usize,
+        max_utterance_frames: usize,
+    ) -> Self {
+        let fs = frame_samples.max(2);
+        let cf = cap_frames.max(16);
+        let pr = pre_roll_frames.min(cf / 2);
+        let mu = max_utterance_frames.clamp(8, cf);
+        Self {
+            data: vec![0i16; fs * cf],
+            frame_samples: fs,
+            cap_frames: cf,
+            pre_roll_frames: pr,
+            max_utterance_frames: mu,
+            write_frame_idx: 0,
+            total_frames_written: 0,
+            captured_frames: 0,
+            voiced_frames: 0,
+            silent_frames: 0,
+        }
+    }
+
+    /// Push one `frame` (`frame_samples` `i16` values) into the circular buffer in `O(1)`.
+    pub fn push_frame(&mut self, frame: &[i16], is_voiced: bool) {
+        let copy_len = frame.len().min(self.frame_samples);
+        let dst_start = self.write_frame_idx * self.frame_samples;
+        self.data[dst_start..dst_start + copy_len].copy_from_slice(&frame[..copy_len]);
+        if copy_len < self.frame_samples {
+            self.data[dst_start + copy_len..dst_start + self.frame_samples].fill(0);
+        }
+
+        let history_before = (self.total_frames_written as usize).min(self.cap_frames.saturating_sub(1));
+        self.write_frame_idx = (self.write_frame_idx + 1) % self.cap_frames;
+        self.total_frames_written = self.total_frames_written.wrapping_add(1);
+
+        if is_voiced {
+            if self.voiced_frames == 0 {
+                // First voiced frame of a new utterance: claim up to `pre_roll_frames` from the ring!
+                let pre_roll = self.pre_roll_frames.min(history_before);
+                self.captured_frames = (pre_roll + 1).min(self.cap_frames);
+            } else {
+                self.captured_frames = (self.captured_frames + 1).min(self.cap_frames);
+            }
+            self.voiced_frames += 1;
+            self.silent_frames = 0;
+        } else if self.voiced_frames > 0 {
+            self.silent_frames += 1;
+            self.captured_frames = (self.captured_frames + 1).min(self.cap_frames);
+            // If fewer than 4 voiced frames (< 240ms click/cough) followed by 7 silent frames, reset
+            if self.voiced_frames < 4 && self.silent_frames >= 7 {
+                self.voiced_frames = 0;
+                self.silent_frames = 0;
+                self.captured_frames = 0;
+            }
+        }
+    }
+
+    /// Reset active utterance state (e.g., while TTS is speaking) and zero pre-roll history.
+    pub fn reset_active(&mut self) {
+        self.captured_frames = 0;
+        self.voiced_frames = 0;
+        self.silent_frames = 0;
+        self.total_frames_written = 0;
+    }
+
+    /// Whether a complete utterance is ready to dispatch (`>= 4` voiced frames + `>= 7` silent frames,
+    /// or `captured_frames >= max_utterance_frames`).
+    #[inline]
+    pub fn should_dispatch(&self) -> bool {
+        (self.voiced_frames >= 4 && self.silent_frames >= 7)
+            || (self.voiced_frames >= 4 && self.captured_frames >= self.max_utterance_frames)
+    }
+
+    /// Extract the chronologically ordered stereo PCM samples for the current utterance
+    /// (including pre-roll) from the circular ring buffer and reset the utterance counters.
+    pub fn take_utterance(&mut self) -> Vec<i16> {
+        let frames = self.captured_frames.min(self.cap_frames);
+        self.captured_frames = 0;
+        self.voiced_frames = 0;
+        self.silent_frames = 0;
+
+        if frames == 0 {
+            return Vec::new();
+        }
+
+        let mut out = Vec::with_capacity(frames * self.frame_samples);
+        let start_frame = (self.write_frame_idx + self.cap_frames - frames) % self.cap_frames;
+
+        if start_frame + frames <= self.cap_frames {
+            let s = start_frame * self.frame_samples;
+            let e = (start_frame + frames) * self.frame_samples;
+            out.extend_from_slice(&self.data[s..e]);
+        } else {
+            let first_frames = self.cap_frames - start_frame;
+            let second_frames = frames - first_frames;
+            let s1 = start_frame * self.frame_samples;
+            out.extend_from_slice(&self.data[s1..]);
+            let e2 = second_frames * self.frame_samples;
+            out.extend_from_slice(&self.data[..e2]);
+        }
+        out
+    }
+
+    /// Number of voiced frames accumulated in the current utterance.
+    #[inline]
+    pub fn voiced_frames(&self) -> u32 {
+        self.voiced_frames
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1252,5 +1556,49 @@ mod tests {
         let (tri_l, _) = triangulate_stereo_dmic_i16(&left_lr, None);
         assert!(tri_l.azimuth_deg < -18, "left azimuth was {}", tri_l.azimuth_deg);
         assert_eq!(tri_l.spatial_zone, "left_of_laptop");
+    }
+
+    #[test]
+    fn ring_buffer_and_stereo_pcm_ring_preserve_preroll_and_bound_memory() {
+        // 1. Generic RingBuffer<T, 4> overwrites oldest in O(1)
+        let mut rb: RingBuffer<u32, 4> = RingBuffer::new();
+        assert!(rb.is_empty());
+        for v in 1..=6 {
+            rb.push_overwrite(v);
+        }
+        assert_eq!(rb.len(), 4);
+        let items: Vec<u32> = rb.iter_oldest_first().copied().collect();
+        assert_eq!(items, vec![3, 4, 5, 6]);
+        assert_eq!(rb.pop_oldest(), Some(3));
+        assert_eq!(rb.len(), 3);
+
+        // 2. StereoPcmRingBuffer preserves pre-roll across wrap-around boundary
+        let mut pcm_ring = StereoPcmRingBuffer::new(4, 16, 3, 12);
+        // Push 14 silent frames so write_frame_idx is at 14 (near wrap-around at 16)
+        for f in 0..14i16 {
+            pcm_ring.push_frame(&[f, f, f, f], false);
+        }
+        // Now push 4 voiced frames (frames 14, 15, 16(wrap->0), 17(wrap->1))
+        for f in 14..18i16 {
+            pcm_ring.push_frame(&[f, f, f, f], true);
+        }
+        // Push 7 trailing silent frames (18..25) to trigger dispatch
+        for f in 18..25i16 {
+            pcm_ring.push_frame(&[f, f, f, f], false);
+        }
+        assert!(pcm_ring.should_dispatch());
+        let captured = pcm_ring.take_utterance();
+        // Should contain 3 pre-roll frames (11, 12, 13) + 4 voiced (14..17) + 7 trailing (18..24) = 14 frames * 4 samples = 56 samples
+        assert_eq!(captured.len(), 14 * 4);
+        assert_eq!(captured[0], 11); // First sample of pre-roll frame 11 preserved!
+        assert_eq!(captured[3 * 4], 14); // First voiced frame 14
+
+        // 3. Verify "Hey Aye" wake phrase phonetic detector rejects side-chat
+        assert!(is_hey_aye_wake_phrase("Hey Aye, good morning!"));
+        assert!(is_hey_aye_wake_phrase("Hey, I need a ring buffer"));
+        assert!(is_hey_aye_wake_phrase("Hey eye can you hear me?"));
+        assert!(is_hey_aye_wake_phrase("Aye, check the logs"));
+        assert!(!is_hey_aye_wake_phrase("Hey Chesney! You're getting out of the house"));
+        assert!(!is_hey_aye_wake_phrase("Hey Peter how did you sleep?"));
     }
 }

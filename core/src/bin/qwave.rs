@@ -22,7 +22,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -37,9 +37,9 @@ use qwave_core::mesh::{
 };
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
-    AcousticSourceKind, MarineIntDetector, RoomAcousticTracker, SpeakerSalienceProfile,
-    StereoMicTriangulation, combine_salient_speech_wav, decode_wav_i16, encode_wav_i16,
-    extract_salient_grains, triangulate_stereo_dmic_i16,
+    AcousticSourceKind, MarineIntDetector, RingBuffer, RoomAcousticTracker, SpeakerSalienceProfile,
+    StereoMicTriangulation, StereoPcmRingBuffer, combine_salient_speech_wav, decode_wav_i16,
+    encode_wav_i16, extract_salient_grains, is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
@@ -727,41 +727,30 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
         let vad_b = report.overall_vad_byte;
         let top_count = report.top_grains.len();
 
-        // Persist the 79-byte WaveInt frames of the highest-salience vocal grains into MEM|8
+        // Persist the 79-byte WaveInt frames of the highest-salience vocal grains into MEM|8 bounded ring buffers
         if let Ok(home) = env::var("HOME") {
             let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
             let _ = fs::create_dir_all(&dir);
-            if let Ok(mut bin_f) = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("speech_salience_waves.bin"))
-            {
-                for g in &report.top_grains {
-                    let _ = bin_f.write_all(&g.wave.to_frame());
+            let mut frames = Vec::with_capacity(report.top_grains.len());
+            let mut json_lines = Vec::with_capacity(report.top_grains.len());
+            for g in &report.top_grains {
+                let frame = g.wave.to_frame();
+                frames.push(frame);
+                let mut hex = String::with_capacity(158);
+                for b in &frame {
+                    hex.push_str(&format!("{b:02x}"));
                 }
+                json_lines.push(format!(
+                    "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"frame_hex\":\"{hex}\"}}",
+                    g.f0_hz.num,
+                    g.f0_hz.den,
+                    g.salience_pq.num,
+                    g.salience_pq.den,
+                    g.vad_byte
+                ));
             }
-            if let Ok(mut jsonl_f) = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("speech_salience_waves.jsonl"))
-            {
-                for g in &report.top_grains {
-                    let frame = g.wave.to_frame();
-                    let mut hex = String::with_capacity(158);
-                    for b in &frame {
-                        hex.push_str(&format!("{b:02x}"));
-                    }
-                    let _ = writeln!(
-                        jsonl_f,
-                        "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"frame_hex\":\"{hex}\"}}",
-                        g.f0_hz.num,
-                        g.f0_hz.den,
-                        g.salience_pq.num,
-                        g.salience_pq.den,
-                        g.vad_byte
-                    );
-                }
-            }
+            append_wave_bin_ring_file(&dir.join("speech_salience_waves.bin"), &frames, 512);
+            append_jsonl_ring_file(&dir.join("speech_salience_waves.jsonl"), &json_lines, 512);
         }
 
         salience_json = format!(
@@ -3626,8 +3615,20 @@ fn ensure_ear_daemon_running() {
             }
         }
     }
-    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    // Prefer systemd user unit `qwave-ear.service` if active/installed so systemd manages the single daemon
+    if let Ok(st) = Command::new("systemctl")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args(["--user", "restart", "qwave-ear.service"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        if st.success() {
+            return;
+        }
+    }
+    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
     let _ = Command::new("setsid")
         .env("XDG_RUNTIME_DIR", &xdg_runtime)
         .arg(exe)
@@ -3636,6 +3637,71 @@ fn ensure_ear_daemon_running() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+}
+
+/// Bounded JSONL Ring File writer: keeps at most `max_lines` entries on disk (`O(N)` bounded to `N <= 64` or `512`)
+/// using an atomic rename so readers (`--wait-wake`, hooks) never observe partial writes or unbounded file growth.
+fn append_jsonl_ring_file(path: &Path, new_lines: &[String], max_lines: usize) {
+    let cap = max_lines.max(8);
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let mut kept: Vec<&str> = existing.lines().filter(|l| !l.trim().is_empty()).collect();
+    let total = kept.len() + new_lines.len();
+    let drop_n = total.saturating_sub(cap);
+    if drop_n >= kept.len() {
+        kept.clear();
+    } else if drop_n > 0 {
+        kept.drain(0..drop_n);
+    }
+    let mut out = String::with_capacity((kept.len() + new_lines.len()) * 256);
+    for l in kept {
+        out.push_str(l);
+        out.push('\n');
+    }
+    for l in new_lines {
+        let t = l.trim();
+        if !t.is_empty() {
+            out.push_str(t);
+            out.push('\n');
+        }
+    }
+    let tmp_path = path.with_extension("jsonl.tmp");
+    if fs::write(&tmp_path, out.as_bytes()).is_ok() {
+        let _ = fs::rename(&tmp_path, path);
+    }
+}
+
+/// Bounded 79-byte `WaveInt` binary Ring File writer: keeps at most `max_frames` (`512` * `79` = `40,448` bytes)
+/// on disk so `speech_salience_waves.bin` never grows unboundedly.
+fn append_wave_bin_ring_file(path: &Path, new_frames: &[[u8; 79]], max_frames: usize) {
+    if new_frames.is_empty() {
+        return;
+    }
+    let max_bytes = max_frames.max(16) * 79;
+    let existing = fs::read(path).unwrap_or_default();
+    let valid_existing_len = (existing.len() / 79) * 79;
+    let existing_slice = &existing[..valid_existing_len];
+    let add_bytes = new_frames.len() * 79;
+    let total_bytes = existing_slice.len() + add_bytes;
+    let keep_start = if total_bytes > max_bytes {
+        let excess = total_bytes - max_bytes;
+        let aligned_excess = ((excess + 78) / 79) * 79;
+        aligned_excess.min(existing_slice.len())
+    } else {
+        0
+    };
+    let mut out = Vec::with_capacity(max_bytes);
+    out.extend_from_slice(&existing_slice[keep_start..]);
+    for f in new_frames {
+        out.extend_from_slice(f);
+    }
+    if out.len() > max_bytes {
+        let trim = out.len() - max_bytes;
+        out.drain(0..trim);
+    }
+    let tmp_path = path.with_extension("bin.tmp");
+    if fs::write(&tmp_path, &out).is_ok() {
+        let _ = fs::rename(&tmp_path, path);
+    }
 }
 
 /// Read the latest diarized utterances and live room status from the parallel ear daemon in 0ms.
@@ -3784,22 +3850,79 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
 /// - `ambient_noise` / `system_echo` (`silent_or_noise`)
 fn run_parallel_ear_daemon() {
     let dir = mem8_dir();
+    let _ = fs::create_dir_all(&dir);
     let pid_file = dir.join("ear_daemon.pid");
     if let Ok(pid_str) = fs::read_to_string(&pid_file) {
         if let Ok(pid) = pid_str.trim().parse::<u32>() {
             if pid != std::process::id() && Path::new(&format!("/proc/{pid}/cmdline")).exists() {
-                return;
+                // If we were started by systemd (`INVOCATION_ID` set), replace any orphan manual process
+                if env::var_os("INVOCATION_ID").is_some() {
+                    let _ = Command::new("sh")
+                        .args(["-c", &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")])
+                        .status();
+                } else {
+                    return;
+                }
             }
         }
     }
     let _ = fs::write(&pid_file, std::process::id().to_string());
+
+    // Trim any legacy unbounded files down to their ring-buffer caps at startup (`64` JSONL lines, `512` WaveInt frames)
+    append_jsonl_ring_file(&dir.join("ear_inbox.jsonl"), &[], 64);
+    append_jsonl_ring_file(&dir.join("speech_salience_waves.jsonl"), &[], 512);
+    if let Ok(raw_bin) = fs::read(dir.join("speech_salience_waves.bin")) {
+        if raw_bin.len() > 512 * 79 {
+            let keep_from = raw_bin.len() - (512 * 79);
+            let _ = fs::write(dir.join("speech_salience_waves.bin"), &raw_bin[keep_from..]);
+        }
+    }
 
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
     let tracker = Arc::new(Mutex::new(RoomAcousticTracker {
         primary_profile: load_salience_profile(),
         ..RoomAcousticTracker::default()
     }));
-    let transcribe_lock = Arc::new(Mutex::new(()));
+
+    // Seed in-memory 64-slot `ear_inbox` RingBuffer from existing bounded file
+    let mut init_inbox_ring: RingBuffer<String, 64> = RingBuffer::new();
+    if let Ok(existing_inbox) = fs::read_to_string(dir.join("ear_inbox.jsonl")) {
+        for line in existing_inbox.lines() {
+            let t = line.trim();
+            if !t.is_empty() {
+                init_inbox_ring.push_overwrite(t.to_string());
+            }
+        }
+    }
+    let inbox_ring = Arc::new(Mutex::new(init_inbox_ring));
+
+    // Single persistent worker thread fed by a 2-slot Utterance RingBuffer (`RingBuffer<(Vec<i16>, u64), 2>`).
+    // Guarantees at most ONE `liquid-rust` transcription runs at any instant and zero thread/RAM pileup!
+    let utterance_queue: Arc<(Mutex<RingBuffer<(Vec<i16>, u64), 2>>, Condvar)> =
+        Arc::new((Mutex::new(RingBuffer::new()), Condvar::new()));
+    {
+        let q_clone = Arc::clone(&utterance_queue);
+        let tracker_clone = Arc::clone(&tracker);
+        let inbox_ring_clone = Arc::clone(&inbox_ring);
+        let dir_clone = dir.clone();
+        thread::spawn(move || loop {
+            let (captured_stereo, now) = {
+                let (lock, cvar) = &*q_clone;
+                let mut q = lock.lock().unwrap();
+                while q.is_empty() {
+                    q = cvar.wait(q).unwrap();
+                }
+                q.pop_oldest().unwrap()
+            };
+            process_parallel_ear_utterance(
+                &captured_stereo,
+                now,
+                &tracker_clone,
+                &inbox_ring_clone,
+                &dir_clone,
+            );
+        });
+    }
 
     // Write initial room_state.json immediately
     {
@@ -3814,6 +3937,15 @@ fn run_parallel_ear_daemon() {
         );
         let _ = fs::write(dir.join("room_state.json"), init_state);
     }
+
+    // Pre-allocate the circular 48kHz Stereo PCM Ring Buffer ONCE for the entire daemon lifetime:
+    // - 5,760 i16 samples per 60ms stereo frame
+    // - 136 frames ring capacity (8.16 seconds = 783,360 i16 samples = 1,566,720 bytes fixed)
+    // - 6 frames (360ms) automatic pre-roll before VAD onset so "Hey Aye" is never clipped
+    // - 120 frames (7.20 seconds) max continuous utterance before dispatch
+    let mut pcm_ring = StereoPcmRingBuffer::new(5_760, 136, 6, 120);
+    let mut frame_bytes = [0u8; 11_520];
+    let mut frame_stereo = [0i16; 5_760];
 
     loop {
         // Ensure internal digital microphone (`Mic1__source`) is unmuted, selected, and at 90% gain
@@ -3831,9 +3963,6 @@ fn run_parallel_ear_daemon() {
             .status();
         let _ = fs::write(dir.join("ear_heartbeat.txt"), now_secs().to_string());
 
-        // Stream raw 48kHz 2-channel stereo `s16le` PCM from the laptop's Digital Microphone Array (`Mic1__source`)
-        // so `triangulate_stereo_dmic_i16` computes real-time TDOA azimuth angle (-90..+90 deg), distance (cm),
-        // and Delay-and-Sum 16kHz beamforming!
         let child_opt = Command::new("parec")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
@@ -3866,11 +3995,7 @@ fn run_parallel_ear_daemon() {
             continue;
         };
 
-        // 60ms frame at 48kHz 2-channel stereo = 2880 stereo frames = 5760 i16 samples = 11520 bytes
-        let mut frame_bytes = vec![0u8; 11_520];
-        let mut utterance_stereo_48k: Vec<i16> = Vec::with_capacity(48_000 * 2 * 6);
-        let mut silent_frames = 0u32;
-        let mut voiced_frames = 0u32;
+        pcm_ring.reset_active();
         let mut hb_counter = 0u32;
 
         while stdout.read_exact(&mut frame_bytes).is_ok() {
@@ -3881,13 +4006,10 @@ fn run_parallel_ear_daemon() {
             }
             let tts_until = read_tts_active_until();
             if now < tts_until {
-                utterance_stereo_48k.clear();
-                silent_frames = 0;
-                voiced_frames = 0;
+                pcm_ring.reset_active();
                 continue;
             }
 
-            let mut frame_stereo = [0i16; 5_760];
             for i in 0..5_760 {
                 frame_stereo[i] = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
             }
@@ -3902,42 +4024,20 @@ fn run_parallel_ear_daemon() {
                 sum_sal += det.process_sample_i16(m, k) as u64;
             }
             let avg_sal_q15 = (sum_sal / 960) as u16;
+            let is_voiced = avg_sal_q15 >= 480;
 
-            if avg_sal_q15 >= 512 {
-                voiced_frames += 1;
-                silent_frames = 0;
-                utterance_stereo_48k.extend_from_slice(&frame_stereo);
-            } else if !utterance_stereo_48k.is_empty() {
-                silent_frames += 1;
-                utterance_stereo_48k.extend_from_slice(&frame_stereo);
-            }
+            // Push into circular StereoPcmRingBuffer (with automatic 6-frame / 360ms pre-roll on VAD onset)
+            pcm_ring.push_frame(&frame_stereo, is_voiced);
 
-            // Dispatch completed utterance when >= 5 voiced frames (300ms) followed by 8 silent frames (480ms),
-            // or if continuous utterance reaches 7.0 seconds
-            if (voiced_frames >= 5 && silent_frames >= 8)
-                || utterance_stereo_48k.len() >= 48_000 * 2 * 7
-            {
-                let captured_stereo = std::mem::take(&mut utterance_stereo_48k);
-                voiced_frames = 0;
-                silent_frames = 0;
-
-                let tracker_clone = Arc::clone(&tracker);
-                let lock_clone = Arc::clone(&transcribe_lock);
-                let dir_clone = dir.clone();
-                thread::spawn(move || {
-                    if let Ok(_guard) = lock_clone.try_lock() {
-                        process_parallel_ear_utterance(
-                            &captured_stereo,
-                            now,
-                            &tracker_clone,
-                            &dir_clone,
-                        );
+            if pcm_ring.should_dispatch() {
+                let captured_stereo = pcm_ring.take_utterance();
+                if !captured_stereo.is_empty() {
+                    let (lock, cvar) = &*utterance_queue;
+                    if let Ok(mut q) = lock.lock() {
+                        q.push_overwrite((captured_stereo, now));
+                        cvar.notify_one();
                     }
-                });
-            } else if silent_frames >= 8 {
-                utterance_stereo_48k.clear();
-                voiced_frames = 0;
-                silent_frames = 0;
+                }
             }
         }
 
@@ -3951,6 +4051,7 @@ fn process_parallel_ear_utterance(
     stereo_48k: &[i16],
     now: u64,
     tracker: &Arc<Mutex<RoomAcousticTracker>>,
+    inbox_ring: &Arc<Mutex<RingBuffer<String, 64>>>,
     dir: &Path,
 ) {
     // 0. Zero-float Stereo DMIC Triangulation (TDOA cross-correlation + ILD + Delay-and-Sum 16kHz Beamforming)
@@ -3967,7 +4068,7 @@ fn process_parallel_ear_utterance(
         return;
     }
 
-    // 2. Encode WAV and transcribe in parallel using `liquid-rust transcribe`
+    // 2. Encode WAV and transcribe in parallel using `liquid-rust transcribe` (bounded `--max-tokens 32`)
     let wav_bytes = encode_wav_i16(16_000, pcm);
     let tmp_wav = format!("/tmp/qwave_ear_{}_{}.wav", std::process::id(), now);
     if fs::write(&tmp_wav, &wav_bytes).is_err() {
@@ -3979,7 +4080,7 @@ fn process_parallel_ear_utterance(
         if Path::new(lfm_bin).exists() {
             if let Ok(out) = Command::new(lfm_bin)
                 .env("RUST_LOG", "error")
-                .args(["transcribe", "-i", &tmp_wav])
+                .args(["transcribe", "-i", &tmp_wav, "--max-tokens", "32"])
                 .output()
             {
                 if out.status.success() {
@@ -4006,7 +4107,7 @@ fn process_parallel_ear_utterance(
     let _ = fs::remove_file(&tmp_wav);
 
     let trimmed_tx = transcript.trim();
-    if trimmed_tx.len() < 4
+    if trimmed_tx.len() < 3
         || matches!(
             trimmed_tx.to_ascii_lowercase().as_str(),
             "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh."
@@ -4022,18 +4123,16 @@ fn process_parallel_ear_utterance(
     tr.tts_active_until_ts = read_tts_active_until();
     let analysis = tr.classify_and_learn(pcm, 16_000, now, Some(&transcript));
 
-    // Persist Hue's updated SpeakerSalienceProfile & 79-byte WaveInt frames only when Hue spoke!
+    // Persist Hue's updated SpeakerSalienceProfile & 79-byte WaveInt frames into bounded 512-slot ring!
     if analysis.source == AcousticSourceKind::PrimaryUser {
         save_salience_profile(&tr.primary_profile);
-        if let Ok(mut bin_f) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("speech_salience_waves.bin"))
-        {
-            for g in &analysis.salience_report.top_grains {
-                let _ = bin_f.write_all(&g.wave.to_frame());
-            }
-        }
+        let frames: Vec<[u8; 79]> = analysis
+            .salience_report
+            .top_grains
+            .iter()
+            .map(|g| g.wave.to_frame())
+            .collect();
+        append_wave_bin_ring_file(&dir.join("speech_salience_waves.bin"), &frames, 512);
     }
 
     let friends_count = tr.friend_profiles.iter().filter(|p| p.is_some()).count();
@@ -4075,12 +4174,18 @@ fn process_parallel_ear_utterance(
         markdown_source_literal(&transcript)
     );
 
-    if let Ok(mut inbox_f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("ear_inbox.jsonl"))
-    {
-        let _ = writeln!(inbox_f, "{event_json}");
+    // Push into the in-memory 64-slot `ear_inbox` RingBuffer and atomically flush to `ear_inbox.jsonl`
+    if let Ok(mut ring) = inbox_ring.lock() {
+        ring.push_overwrite(event_json.clone());
+        let mut buf = String::with_capacity(ring.len() * 256);
+        for item in ring.iter_oldest_first() {
+            buf.push_str(item);
+            buf.push('\n');
+        }
+        let tmp_inbox = dir.join("ear_inbox.jsonl.tmp");
+        if fs::write(&tmp_inbox, buf.as_bytes()).is_ok() {
+            let _ = fs::rename(&tmp_inbox, dir.join("ear_inbox.jsonl"));
+        }
     }
 
     let room_json = format!(
@@ -4098,8 +4203,8 @@ fn process_parallel_ear_utterance(
     let _ = fs::write(dir.join("room_state.json"), room_json);
     drop(tr);
 
-    // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Alexia"` / `"Hey Alexandra"` OR `"Hey Gemini"` fallback):
-    //    If `"Hey Alexia"` is spoken, or if `"Hey Gemini"` is spoken and no `--wait-wake` process claims it within 1.5s,
+    // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Aye"` / `"Hey Alexia"` / `"Hey Alexandra"` / `"Hey Gemini"`):
+    //    If `"Hey Alexia"` is spoken, or if `"Hey Aye"` / `"Hey Gemini"` is spoken and no `--wait-wake` process claims it within 1.2s,
     //    reply out loud immediately through the speakers so Hue never gets silence!
     let low_tx = transcript.to_ascii_lowercase();
     if has_explicit_wake_word(&transcript) {
@@ -4107,8 +4212,6 @@ fn process_parallel_ear_utterance(
         if !is_alexia {
             thread::sleep(Duration::from_millis(1200));
         }
-        // If `hook_last_ts` already consumed this `now` timestamp (meaning Antigravity woke up), let Antigravity speak;
-        // otherwise, answer out loud locally right now!
         if is_alexia || read_hook_watermark() < now {
             write_hook_watermark(now);
             let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
@@ -4133,17 +4236,7 @@ fn write_hook_watermark(ts: u64) {
 }
 
 fn has_explicit_wake_word(text: &str) -> bool {
-    let low = text.to_ascii_lowercase();
-    low.contains("gemini")
-        || low.contains("gemma")
-        || low.contains("alexia")
-        || low.contains("alexandra")
-        || low.contains("qwave")
-        || low.contains("qwaver")
-        || low.contains("waver")
-        || low.contains("claude")
-        || low.contains("codex")
-        || low.contains("hey aye")
+    is_hey_aye_wake_phrase(text)
 }
 
 /// Fold utterance through ALEXIAI loopback (`127.0.0.1:8787/api/gaia`) and compress into a dense
@@ -4247,9 +4340,23 @@ fn run_wait_wake() -> String {
     let dir = mem8_dir();
     let inbox_path = dir.join("ear_inbox.jsonl");
     let start_ts = now_secs();
+    let mut last_mtime: Option<SystemTime> = None;
+    let mut last_len: u64 = 0;
 
     loop {
         thread::sleep(Duration::from_millis(250));
+        // Zero-allocation metadata check: only read `ear_inbox.jsonl` when mtime or byte length changes!
+        if let Ok(meta) = fs::metadata(&inbox_path) {
+            let mtime = meta.modified().ok();
+            let len = meta.len();
+            if mtime == last_mtime && len == last_len {
+                continue;
+            }
+            last_mtime = mtime;
+            last_len = len;
+        } else {
+            continue;
+        }
         let Ok(raw) = fs::read_to_string(&inbox_path) else {
             continue;
         };
@@ -4263,7 +4370,13 @@ fn run_wait_wake() -> String {
                 break;
             }
             let text = extract_json_str(trimmed, "text").unwrap_or_default();
-            if has_explicit_wake_word(&text) && text.split_whitespace().count() >= 2 {
+            let speaker = extract_json_str(trimmed, "speaker").unwrap_or_default();
+            let should_resp = extract_json_bool(trimmed, "should_agent_respond").unwrap_or(false);
+            let low = text.to_ascii_lowercase();
+            let direct_req = speaker == "hue"
+                && should_resp
+                && (low.contains("could you") || low.contains("can you"));
+            if (has_explicit_wake_word(&text) || direct_req) && !text.trim().is_empty() {
                 write_hook_watermark(ts);
                 let capsule = extract_json_str(trimmed, "capsule").unwrap_or_else(|| text.clone());
                 return format!("🎙️ [ALEXIAI×Qwave Wakeup]: {capsule}");
