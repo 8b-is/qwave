@@ -1123,45 +1123,74 @@ pub fn triangulate_stereo_dmic_i16(
 }
 
 /// Detect `"Hey Aye"` and all its phonetic neural-STT spellings (`"hey aye"`, `"hey, aye"`,
-/// `"hey i"`, `"hey, i"`, `"hey eye"`, `"hey, eye"`, `"hey ai"`, `"hey agy"`, `"aye,"`, etc.)
-/// alongside sovereign companion names (`"alexia"`, `"alexandra"`, `"gemini"`, `"qwave"`),
+/// `"hey i"`, `"hey, i."`, `"hey eye"`, `"hey, eye"`, `"hey ai"`, `"hey a."`, `"hey hi"`, `"aye,"`, etc.)
+/// alongside sovereign companion names (`"alex"`, `"alexia"`, `"alexandra"`, `"gemini"`, `"qwave"`),
 /// while rejecting side-chat greetings to humans (`"Hey Chesney"`, `"Hey Peter"`, `"Hey Chris"`).
 pub fn is_hey_aye_wake_phrase(text: &str) -> bool {
     let low = text.trim().to_ascii_lowercase();
     if low.is_empty() {
         return false;
     }
-    low.contains("hey aye")
-        || low.contains("hey, aye")
-        || low.contains("hey i ")
-        || low.contains("hey, i ")
-        || low.ends_with("hey i")
-        || low.ends_with("hey, i")
-        || low.contains("hey i,")
-        || low.contains("hey i!")
-        || low.contains("hey i?")
+
+    // Normalize punctuation into clean alphanumeric lowercase tokens
+    let words: Vec<String> = low
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect();
+    if words.is_empty() {
+        return false;
+    }
+
+    // 1. Direct companion name or wake token anywhere in the utterance
+    for w in &words {
+        if matches!(
+            w.as_str(),
+            "aye"
+                | "alex"
+                | "alexia"
+                | "alexandra"
+                | "alexiai"
+                | "gemini"
+                | "gemma"
+                | "qwave"
+                | "qwaver"
+                | "waver"
+                | "agy"
+                | "agi"
+                | "claude"
+                | "codex"
+        ) {
+            return true;
+        }
+    }
+
+    // 2. Standalone short wake call ("Hey!", "Hey.", "Aye!", "Hello?")
+    if words.len() == 1 && matches!(words[0].as_str(), "hey" | "aye" | "hi" | "yo") {
+        return true;
+    }
+
+    // 3. Two-word phonetic wake pairs ("Hey Aye" -> "hey i", "hey a", "hey eye", "hey ai", "hey hi", "hey ay", "hey there", "hi i")
+    for pair in words.windows(2) {
+        let w0 = pair[0].as_str();
+        let w1 = pair[1].as_str();
+        if matches!(w0, "hey" | "hi" | "hello" | "yo" | "ok" | "okay" | "oi")
+            && matches!(
+                w1,
+                "aye" | "i" | "eye" | "ai" | "a" | "hi" | "high" | "ay" | "eh" | "there"
+            )
+        {
+            return true;
+        }
+    }
+
+    // 4. Direct acoustic check questions ("can you hear me", "do you hear me", "are you there")
+    low.contains("can you hear me")
+        || low.contains("do you hear me")
+        || low.contains("you hear me")
+        || low.contains("hey aye")
         || low.contains("hey eye")
-        || low.contains("hey, eye")
         || low.contains("hey ai")
-        || low.contains("hey, ai")
-        || low.contains("hey agy")
-        || low.contains("hey, agy")
-        || low.contains("hey a ")
-        || low.contains("hey, a ")
-        || low.starts_with("aye ")
-        || low.starts_with("aye,")
-        || low.starts_with("aye!")
-        || low.starts_with("aye?")
-        || low == "aye"
-        || low.contains("gemini")
-        || low.contains("gemma")
-        || low.contains("alexia")
-        || low.contains("alexandra")
-        || low.contains("qwave")
-        || low.contains("qwaver")
-        || low.contains("waver")
-        || low.contains("claude")
-        || low.contains("codex")
 }
 
 /// Fixed-capacity `O(1)` circular Ring Buffer (`[Option<T>; N]`).
@@ -1347,8 +1376,8 @@ impl StereoPcmRingBuffer {
         } else if self.voiced_frames > 0 {
             self.silent_frames += 1;
             self.captured_frames = (self.captured_frames + 1).min(self.cap_frames);
-            // If fewer than 4 voiced frames (< 240ms click/cough) followed by 7 silent frames, reset
-            if self.voiced_frames < 4 && self.silent_frames >= 7 {
+            // If fewer than 3 voiced frames (< 180ms click/cough) followed by 5 silent frames, reset
+            if self.voiced_frames < 3 && self.silent_frames >= 5 {
                 self.voiced_frames = 0;
                 self.silent_frames = 0;
                 self.captured_frames = 0;
@@ -1364,12 +1393,12 @@ impl StereoPcmRingBuffer {
         self.total_frames_written = 0;
     }
 
-    /// Whether a complete utterance is ready to dispatch (`>= 4` voiced frames + `>= 7` silent frames,
+    /// Whether a complete utterance is ready to dispatch (`>= 3` voiced frames + `>= 5` silent frames,
     /// or `captured_frames >= max_utterance_frames`).
     #[inline]
     pub fn should_dispatch(&self) -> bool {
-        (self.voiced_frames >= 4 && self.silent_frames >= 7)
-            || (self.voiced_frames >= 4 && self.captured_frames >= self.max_utterance_frames)
+        (self.voiced_frames >= 3 && self.silent_frames >= 5)
+            || (self.voiced_frames >= 3 && self.captured_frames >= self.max_utterance_frames)
     }
 
     /// Extract the chronologically ordered stereo PCM samples for the current utterance

@@ -763,12 +763,91 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
         return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e.to_string()));
     }
 
-    // 1. Primary: Pure-Rust `liquid-rust transcribe` (LiquidAI LFM2.5-Audio + Phoenix Protocol)
+    if let Some((cleaned, backend)) = transcribe_wav_fast_offline(&wav_path) {
+        let _ = fs::remove_file(&wav_path);
+        return format!(
+            "{{\"ok\":true,\"text\":{},\"backend\":{},\"salience\":{salience_json}}}",
+            markdown_source_literal(&cleaned),
+            markdown_source_literal(backend)
+        );
+    }
+
+    let _ = fs::remove_file(&wav_path);
+    "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
+}
+
+/// Fast, 100% offline speech-to-text transcription with vocabulary conditioning for `"Hey Aye"`.
+///
+/// Order of preference:
+/// 1. `/usr/sbin/whisper-cli` (`ggml-base.en.bin`, CPU SIMD `-ng -t 6 -bo 1 -bs 1`, `~500 ms`, `165 MB` RAM,
+///    conditioned with `--prompt "Hey Aye, Hey Alexia, Hey Alexandra, Hue, Qwave"`).
+/// 2. `/usr/local/bin/liquid-rust transcribe` (LiquidAI LFM2.5-Audio).
+/// 3. `/usr/local/bin/kokoro-speak stt` (Pure-Rust acoustic fallback).
+fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let model_candidates = [
+        format!("{home}/.local/share/qwave/models/ggml-base.en.bin"),
+        "/home/hue/.local/share/qwave/models/ggml-base.en.bin".to_string(),
+    ];
+    if let Some(model_path) = model_candidates.iter().find(|p| Path::new(p.as_str()).exists()) {
+        for w_bin in ["/usr/sbin/whisper-cli", "/usr/bin/whisper-cli", "/usr/local/bin/whisper-cli"] {
+            if Path::new(w_bin).exists() {
+                if let Ok(out) = Command::new(w_bin)
+                    .current_dir("/tmp")
+                    .env("FONTCONFIG_FILE", "/dev/null")
+                    .env("GIO_USE_VFS", "local")
+                    .env("OCL_ICD_VENDORS", "/dev/null")
+                    .env("CUDA_VISIBLE_DEVICES", "")
+                    .args([
+                        "-ng",
+                        "-t",
+                        "6",
+                        "-bo",
+                        "1",
+                        "-bs",
+                        "1",
+                        "-nt",
+                        "-np",
+                        "--no-speech-thold",
+                        "0.55",
+                        "--prompt",
+                        "Hey Aye, Hey Alexia, Hey Alexandra, Hue, Qwave",
+                        "-m",
+                        model_path,
+                        "-f",
+                        wav_path,
+                    ])
+                    .output()
+                {
+                    if out.status.success() {
+                        let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                        let cleaned: String = raw
+                            .lines()
+                            .map(str::trim)
+                            .filter(|l| {
+                                !l.is_empty()
+                                    && !l.starts_with('[')
+                                    && !l.starts_with('(')
+                                    && !l.starts_with('*')
+                                    && !l.contains("BLANK_AUDIO")
+                                    && !l.contains("blank audio")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if !cleaned.is_empty() {
+                            return Some((cleaned, "whisper-cli (ggml-base.en + Hey Aye prompt)"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for lfm_bin in ["/usr/local/bin/liquid-rust", "/home/hue/.cargo/target/release/liquid-rust"] {
         if Path::new(lfm_bin).exists() {
             if let Ok(out) = Command::new(lfm_bin)
                 .env("RUST_LOG", "error")
-                .args(["transcribe", "-i", &wav_path])
+                .args(["transcribe", "-i", wav_path, "--max-tokens", "32"])
                 .output()
             {
                 if out.status.success() {
@@ -788,32 +867,28 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
                         .collect::<Vec<_>>()
                         .join(" ");
                     if !cleaned.is_empty() {
-                        let _ = fs::remove_file(&wav_path);
-                        return format!(
-                            "{{\"ok\":true,\"text\":{},\"backend\":\"liquid-rust (LFM2.5-Audio + Phoenix)\",\"salience\":{salience_json}}}",
-                            markdown_source_literal(&cleaned)
-                        );
+                        return Some((cleaned, "liquid-rust (LFM2.5-Audio + Phoenix)"));
                     }
                 }
             }
         }
     }
 
-    // 2. Fallback: Pure-Rust `kokoro-speak stt`
-    if let Ok(out) = Command::new("/usr/local/bin/kokoro-speak")
-        .args(["stt", &wav_path, "--lang", "en"])
-        .output()
-    {
-        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let _ = fs::remove_file(&wav_path);
-        return format!(
-            "{{\"ok\":true,\"text\":{},\"backend\":\"kokoro-speak-stt\",\"salience\":{salience_json}}}",
-            markdown_source_literal(&raw)
-        );
+    for k_bin in ["/home/hue/.local/bin/kokoro-speak", "/usr/local/bin/kokoro-speak"] {
+        if Path::new(k_bin).exists() {
+            if let Ok(out) = Command::new(k_bin)
+                .args(["stt", wav_path, "--lang", "en"])
+                .output()
+            {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !raw.is_empty() {
+                    return Some((raw, "kokoro-speak-stt"));
+                }
+            }
+        }
     }
 
-    let _ = fs::remove_file(&wav_path);
-    "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
+    None
 }
 
 /// Synthesize speech via `kokoro-speak` / `liquid-rust speak` (with fallback to `espeak-ng --stdout`),
@@ -3942,8 +4017,8 @@ fn run_parallel_ear_daemon() {
     // - 5,760 i16 samples per 60ms stereo frame
     // - 136 frames ring capacity (8.16 seconds = 783,360 i16 samples = 1,566,720 bytes fixed)
     // - 6 frames (360ms) automatic pre-roll before VAD onset so "Hey Aye" is never clipped
-    // - 120 frames (7.20 seconds) max continuous utterance before dispatch
-    let mut pcm_ring = StereoPcmRingBuffer::new(5_760, 136, 6, 120);
+    // - 60 frames (3.60 seconds) max continuous utterance before dispatch
+    let mut pcm_ring = StereoPcmRingBuffer::new(5_760, 136, 6, 60);
     let mut frame_bytes = [0u8; 11_520];
     let mut frame_stereo = [0i16; 5_760];
 
@@ -3997,6 +4072,9 @@ fn run_parallel_ear_daemon() {
 
         pcm_ring.reset_active();
         let mut hb_counter = 0u32;
+        let mut det = MarineIntDetector::new(16_000, 164);
+        let mut sample_counter: usize = 0;
+        let mut noise_ema_abs: u32 = 160;
 
         while stdout.read_exact(&mut frame_bytes).is_ok() {
             let now = now_secs();
@@ -4014,17 +4092,26 @@ fn run_parallel_ear_daemon() {
                 frame_stereo[i] = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
             }
 
-            // Evaluate 16kHz downmixed mono frame with zero-float `MarineIntDetector`
-            let mut det = MarineIntDetector::new(16_000, 164);
+            // Evaluate 16kHz downmixed mono frame with persistent zero-float `MarineIntDetector`
+            // plus an adaptive room noise-floor gate so background AC/fan doesn't glue utterances into 7.2s blocks!
             let mut sum_sal: u64 = 0;
+            let mut sum_abs: u64 = 0;
             for k in 0..960 {
                 let l = frame_stereo[k * 6] as i32;
                 let r = frame_stereo[k * 6 + 1] as i32;
                 let m = ((l + r) / 2) as i16;
-                sum_sal += det.process_sample_i16(m, k) as u64;
+                sum_abs += (m as i32).unsigned_abs() as u64;
+                sum_sal += det.process_sample_i16(m, sample_counter) as u64;
+                sample_counter = sample_counter.wrapping_add(1);
             }
+            let mean_abs = (sum_abs / 960) as u32;
             let avg_sal_q15 = (sum_sal / 960) as u16;
-            let is_voiced = avg_sal_q15 >= 480;
+            let is_voiced = mean_abs >= (noise_ema_abs * 15 / 8).max(160) && avg_sal_q15 >= 900;
+            if !is_voiced || mean_abs < noise_ema_abs {
+                noise_ema_abs = ((noise_ema_abs * 15) + mean_abs.max(40)) / 16;
+            } else {
+                noise_ema_abs = ((noise_ema_abs * 63) + mean_abs.min(noise_ema_abs * 2)) / 64;
+            }
 
             // Push into circular StereoPcmRingBuffer (with automatic 6-frame / 360ms pre-roll on VAD onset)
             pcm_ring.push_frame(&frame_stereo, is_voiced);
@@ -4068,49 +4155,23 @@ fn process_parallel_ear_utterance(
         return;
     }
 
-    // 2. Encode WAV and transcribe in parallel using `liquid-rust transcribe` (bounded `--max-tokens 32`)
+    // 2. Encode WAV and transcribe via fast offline STT (`whisper-cli` ggml-base.en in ~500ms -> `liquid-rust` -> `kokoro-speak`)
     let wav_bytes = encode_wav_i16(16_000, pcm);
     let tmp_wav = format!("/tmp/qwave_ear_{}_{}.wav", std::process::id(), now);
     if fs::write(&tmp_wav, &wav_bytes).is_err() {
         return;
     }
 
-    let mut transcript = String::new();
-    for lfm_bin in ["/usr/local/bin/liquid-rust", "/home/hue/.cargo/target/release/liquid-rust"] {
-        if Path::new(lfm_bin).exists() {
-            if let Ok(out) = Command::new(lfm_bin)
-                .env("RUST_LOG", "error")
-                .args(["transcribe", "-i", &tmp_wav, "--max-tokens", "32"])
-                .output()
-            {
-                if out.status.success() {
-                    let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
-                    transcript = raw
-                        .lines()
-                        .map(str::trim)
-                        .filter(|l| {
-                            !l.is_empty()
-                                && !l.starts_with('═')
-                                && !l.starts_with('🎤')
-                                && !l.starts_with("✓")
-                                && !l.contains(" WARN ")
-                                && !l.contains(" INFO ")
-                                && !l.contains("Failed storing MEM|8")
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    break;
-                }
-            }
-        }
-    }
+    let transcript = transcribe_wav_fast_offline(&tmp_wav)
+        .map(|(tx, _)| tx)
+        .unwrap_or_default();
     let _ = fs::remove_file(&tmp_wav);
 
     let trimmed_tx = transcript.trim();
     if trimmed_tx.len() < 3
         || matches!(
             trimmed_tx.to_ascii_lowercase().as_str(),
-            "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh."
+            "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh." | "thank you."
         )
         || is_tts_echo(trimmed_tx)
     {
@@ -4204,23 +4265,16 @@ fn process_parallel_ear_utterance(
     drop(tr);
 
     // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Aye"` / `"Hey Alexia"` / `"Hey Alexandra"` / `"Hey Gemini"`):
-    //    If `"Hey Alexia"` is spoken, or if `"Hey Aye"` / `"Hey Gemini"` is spoken and no `--wait-wake` process claims it within 1.2s,
-    //    reply out loud immediately through the speakers so Hue never gets silence!
-    let low_tx = transcript.to_ascii_lowercase();
+    //    Speak out loud immediately through the speakers whenever Hue addresses Aye with a wake phrase,
+    //    while `ear_inbox.jsonl` simultaneously wakes `qwave --wait-wake` in parallel!
     if has_explicit_wake_word(&transcript) {
-        let is_alexia = low_tx.contains("alexia") || low_tx.contains("alexandra");
-        if !is_alexia {
-            thread::sleep(Duration::from_millis(1200));
-        }
-        if is_alexia || read_hook_watermark() < now {
-            write_hook_watermark(now);
-            let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
-            let spoken_reply = format!(
-                "I hear you Hue, triangulated at {:+} degrees and {} centimeters on your stereo mic array! Folded on the {dom} layer at {qt} with WUPZ {wupz}.",
-                tri.azimuth_deg, tri.distance_cm
-            );
-            let _ = speak_out_loud(&spoken_reply, "af_heart", true, true);
-        }
+        write_hook_watermark(now);
+        let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
+        let spoken_reply = format!(
+            "Right here Hue, hearing you clearly at {:+} degrees and {} centimeters! Folded on {dom} at {qt}, WUPZ {wupz}.",
+            tri.azimuth_deg, tri.distance_cm
+        );
+        let _ = speak_out_loud(&spoken_reply, "af_heart", true, true);
     }
 }
 
