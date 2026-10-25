@@ -52,10 +52,10 @@ impl Default for RoomThoughtEntry {
             ts: 0,
             speaker: "hue".to_string(),
             context: "ready".to_string(),
-            f0_hz: 156,
-            f0_pq: Rational::integer(156),
+            f0_hz: 154,
+            f0_pq: Rational::integer(154),
             azimuth_deg: 0,
-            distance_cm: 120,
+            distance_cm: 20,
             spatial_zone: "center_keyboard".to_string(),
             salience_pct: 90,
             salience_pq: Rational::new(9, 10).unwrap_or(Rational::ONE),
@@ -116,6 +116,18 @@ fn main() {
         "boot-session" => {
             println!("{}", run_boot_session(rest));
         }
+        "agy-resume" => {
+            println!("{}", run_agy_resume(rest));
+        }
+        "wifi-menu" => {
+            println!("{}", run_wifi_menu(rest));
+        }
+        "wifi-tui" => {
+            println!("{}", run_wifi_tui(rest));
+        }
+        "wifi-heal" => {
+            println!("{}", run_wifi_heal(rest));
+        }
         "a6000-pulse" => {
             println!("{}", run_a6000_pulse(rest));
         }
@@ -139,6 +151,10 @@ fn print_usage() {
          \x20 qwave-hypr-hud ask-aye               Voice prompt -> loopback alexiai -> qwave --speak\n\
          \x20 qwave-hypr-hud toggle-ear            Toggle qwave-ear.service with spoken confirmation\n\
          \x20 qwave-hypr-hud boot-session          Autostart services, waybar, workspaces & welcome\n\
+         \x20 qwave-hypr-hud agy-resume            Launch Sovereign AGY Studio (All Perms, Zero Sandbox, Resumed)\n\
+         \x20 qwave-hypr-hud wifi-menu             Fuzzel/dmenu Wi-Fi switcher, password updater & healer\n\
+         \x20 qwave-hypr-hud wifi-tui              Launch floating Alacritty nmtui Wi-Fi manager + MTU 1380\n\
+         \x20 qwave-hypr-hud wifi-heal             Auto-reconnect highest-signal saved Wi-Fi + enforce MTU 1380\n\
          \x20 qwave-hypr-hud a6000-pulse           Probe Sovereign stack & A6000 with notification"
     );
 }
@@ -311,7 +327,7 @@ pub fn parse_jsonl_entry(line: &str) -> Option<RoomThoughtEntry> {
         .map(|v| v as i32)
         .unwrap_or_else(|| (f0_pq.num as i64 / (f0_pq.den.max(1) as i64)) as i32);
     let azimuth_deg = extract_json_i64(trimmed, "azimuth_deg").unwrap_or(0) as i32;
-    let distance_cm = extract_json_i64(trimmed, "distance_cm").unwrap_or(120) as i32;
+    let distance_cm = extract_json_i64(trimmed, "distance_cm").unwrap_or(20) as i32;
     let spatial_zone =
         extract_json_str(trimmed, "spatial_zone").unwrap_or_else(|| "center_keyboard".to_string());
 
@@ -535,10 +551,14 @@ fn probe_a6000_cached() -> Trit {
 /// Collect a complete live [`HudSnapshot`] from `~/.local/share/qwave` and loopback services.
 pub fn collect_hud_snapshot() -> HudSnapshot {
     let profile_path = resolve_qwave_file("speaker_salience_profile.bin");
-    let profile = fs::read(&profile_path)
+    let mut profile = fs::read(&profile_path)
         .ok()
         .and_then(|b| SpeakerSalienceProfile::from_bytes(&b))
         .unwrap_or_default();
+    let prof_f0_int = profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32);
+    if prof_f0_int > 175 || prof_f0_int < 85 {
+        profile.f0_hz = Rational::integer(154);
+    }
 
     let waves_path = resolve_qwave_file("speech_salience_waves.jsonl");
     let inbox_path = resolve_qwave_file("ear_inbox.jsonl");
@@ -558,10 +578,10 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
         thoughts = waves_ring.iter_oldest_first().cloned().collect();
     }
 
-    // Pick the newest Hue utterance if available, otherwise newest overall
-    let latest_hue = inbox_ring
+    // Pick the newest active diarized speaker utterance (`hue`, `alex`, `friend_1..3`)
+    let latest_utt = inbox_ring
         .iter_newest_first()
-        .find(|e| e.speaker == "hue")
+        .find(|e| e.speaker != "ambient_noise")
         .or_else(|| inbox_ring.iter_newest_first().next())
         .or_else(|| waves_ring.iter_newest_first().next())
         .cloned()
@@ -571,7 +591,7 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
         .iter_newest_first()
         .next()
         .map(|w| w.salience_pq)
-        .unwrap_or(latest_hue.salience_pq);
+        .unwrap_or(latest_utt.salience_pq);
 
     let mut grains_learned = profile.grains_learned;
     if let Ok(room_json) = fs::read_to_string(&room_path) {
@@ -580,8 +600,8 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
         }
     }
 
-    let salience_pq = if latest_hue.salience_pct > 0 {
-        latest_hue.salience_pq
+    let salience_pq = if latest_utt.salience_pct > 0 {
+        latest_utt.salience_pq
     } else {
         latest_wave_salience
     };
@@ -595,25 +615,25 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
     let a6k_trit = probe_a6000_cached();
 
     HudSnapshot {
-        speaker: if latest_hue.speaker == "ambient_noise" {
+        speaker: if latest_utt.speaker == "ambient_noise" {
             "hue".to_string()
         } else {
-            latest_hue.speaker
+            latest_utt.speaker
         },
-        f0_hz: latest_hue.f0_hz,
-        f0_pq: latest_hue.f0_pq,
+        f0_hz: latest_utt.f0_hz,
+        f0_pq: latest_utt.f0_pq,
         profile_f0_pq: profile.f0_hz,
-        azimuth_deg: latest_hue.azimuth_deg,
-        distance_cm: latest_hue.distance_cm,
-        spatial_zone: latest_hue.spatial_zone,
+        azimuth_deg: latest_utt.azimuth_deg,
+        distance_cm: latest_utt.distance_cm,
+        spatial_zone: latest_utt.spatial_zone,
         salience_pct,
         salience_pq,
         stability_trit,
         detector_f0_pq,
         grains_learned,
         grain_samples: profile.best_grain_pcm.len(),
-        vad_byte: latest_hue.vad_byte,
-        latest_text: latest_hue.text,
+        vad_byte: latest_utt.vad_byte,
+        latest_text: latest_utt.text,
         thoughts,
         ear_trit,
         lqd_trit,
@@ -800,7 +820,9 @@ pub fn render_status_tui_frame(snap: &HudSnapshot) -> String {
          \x20 • \x1b[1;33mSUPER+A\x1b[0m               : Ask Aye    (qwave --listen 5 -> alexiai :8787 -> qwave --speak)\n\
          \x20 • \x1b[1;33mSUPER+M\x1b[0m               : Toggle Ear (arm/pause qwave-ear.service + spoken status)\n\
          \x20 • \x1b[1;33mSUPER+D\x1b[0m               : Qwave Radar Scratchpad (toggle special:qwave HUD)\n\
-         \x20 • \x1b[1;33mSUPER+G\x1b[0m               : A6000 Pulse (probe A6000 + Sovereign stack notification)\n",
+         \x20 • \x1b[1;33mSUPER+G\x1b[0m               : A6000 Pulse (probe A6000 + Sovereign stack notification)\n\
+         \x20 • \x1b[1;33mSUPER+I\x1b[0m / \x1b[1;33mSUPER+S+Ret\x1b[0m : Sovereign AGY Studio (All Perms · Zero Sandbox · Resumed)\n\
+         \x20 • \x1b[1;33mSUPER+W\x1b[0m / \x1b[1;33mSUPER+S+W\x1b[0m   : Wi-Fi Switcher, Password Updater & 1380 MTU Auto-Healer\n",
     );
     out.push_str("\x1b[1;36m└──────────────────────────────────────────────────────────────────────────────┘\x1b[0m");
 
@@ -841,6 +863,17 @@ fn send_desktop_notification(summary: &str, body: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+fn speak_async(text: &str) {
+    let clean = sanitize_no_float(text);
+    let qwave_bin = find_qwave_bin();
+    let _ = Command::new(qwave_bin)
+        .args(["--speak", &clean])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
 }
 
 /// Capture a short voice utterance via `qwave --listen 5` (with fallback to latest `ear_inbox.jsonl` utterance).
@@ -1040,13 +1073,7 @@ pub fn run_toggle_ear(args: &[String]) -> String {
             .stderr(Stdio::null())
             .status();
         send_desktop_notification("Qwave Acoustic Ear", spoken);
-        let qwave_bin = find_qwave_bin();
-        let _ = Command::new(qwave_bin)
-            .args(["--speak", spoken])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+        speak_async(spoken);
     }
 
     format!(
@@ -1064,7 +1091,618 @@ fn is_process_running(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Execute `qwave-hypr-hud boot-session`: start services, waybar, notifications, and speak welcome.
+fn is_cmdline_running(pattern: &str) -> bool {
+    Command::new("pgrep")
+        .args(["-f", pattern])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Execute `qwave-hypr-hud agy-resume`:
+/// Sets Sovereign `PATH`, changes directory to `/home/hue/8b-is`, prints the Sovereign AGY Studio
+/// banner, and launches `/home/hue/.local/bin/agy --dangerously-skip-permissions --sandbox=false --continue`
+/// (keeping an interactive shell open if `agy` ever exits).
+pub fn run_agy_resume(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let sovereign_path = "/home/hue/.local/bin:/home/hue/.cargo/bin:/usr/local/bin:/usr/bin:/bin";
+    let workdir = "/home/hue/8b-is";
+    let header =
+        "=== 8b:is SOVEREIGN AGY STUDIO · ALL PERMISSIONS ENABLED · ZERO SANDBOX · RESUMED ===";
+
+    if dry_run {
+        return format!(
+            "{{\"ok\":true,\"action\":\"agy-resume\",\"trit\":\"+\",\"workdir\":\"{}\",\"header\":\"{}\",\"cmd\":\"/home/hue/.local/bin/agy --dangerously-skip-permissions --sandbox=false --continue\"}}",
+            json_escape(workdir),
+            json_escape(header)
+        );
+    }
+
+    println!("\x1b[1;36m=== 8b.is SOVEREIGN AGY STUDIO · ALL PERMISSIONS ENABLED · ZERO SANDBOX · RESUMED ===\x1b[0m");
+    let _ = io::stdout().flush();
+
+    if Path::new(workdir).exists() {
+        let _ = env::set_current_dir(workdir);
+    }
+
+    let agy_bin = if Path::new("/home/hue/.local/bin/agy").exists() {
+        "/home/hue/.local/bin/agy"
+    } else {
+        "agy"
+    };
+
+    let passthrough: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|&a| a != "--dry-run")
+        .collect();
+
+    let mut cmd_args = vec![
+        "--dangerously-skip-permissions",
+        "--sandbox=false",
+        "--continue",
+    ];
+    cmd_args.extend(passthrough.iter().copied());
+
+    let status = Command::new(agy_bin)
+        .args(&cmd_args)
+        .env("PATH", sovereign_path)
+        .status();
+
+    // If `--continue` exited immediately with an error (e.g. no prior conversation in this workspace),
+    // automatically launch fresh with all permissions & zero sandbox.
+    if status.map(|s| !s.success()).unwrap_or(true) {
+        let mut fallback_args = vec!["--dangerously-skip-permissions", "--sandbox=false"];
+        fallback_args.extend(passthrough);
+        let _ = Command::new(agy_bin)
+            .args(&fallback_args)
+            .env("PATH", sovereign_path)
+            .status();
+    }
+
+    // Keep the terminal window open with an interactive shell if `agy` exits
+    let shell = if Path::new("/bin/fish").exists() {
+        "/bin/fish"
+    } else {
+        "/bin/bash"
+    };
+    let _ = Command::new(shell).env("PATH", sovereign_path).status();
+
+    format!(
+        "{{\"ok\":true,\"action\":\"agy-resume\",\"trit\":\"+\",\"workdir\":\"{}\"}}",
+        json_escape(workdir)
+    )
+}
+
+/// Parsed Wi-Fi scan entry for `qwave-hypr-hud wifi-menu` and `wifi-heal`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiNetworkEntry {
+    pub in_use: bool,
+    pub ssid: String,
+    pub signal: i32,
+    pub security: String,
+    pub saved: bool,
+}
+
+/// Parse `nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY device wifi list` output into deduplicated,
+/// priority-sorted [`WifiNetworkEntry`] items (Zero-Float).
+pub fn parse_nmcli_wifi_list(raw: &str, saved_ssids: &[String]) -> Vec<WifiNetworkEntry> {
+    let mut list: Vec<WifiNetworkEntry> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Format: IN-USE:SSID:SIGNAL:SECURITY
+        let Some((in_use_raw, rest1)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let Some((rest2, security_raw)) = rest1.rsplit_once(':') else {
+            continue;
+        };
+        let Some((ssid_raw, signal_raw)) = rest2.rsplit_once(':') else {
+            continue;
+        };
+
+        let ssid = ssid_raw.replace("\\:", ":").trim().to_string();
+        if ssid.is_empty() || ssid == "--" {
+            continue;
+        }
+        let in_use = in_use_raw.trim() == "*";
+        let signal = signal_raw.trim().parse::<i32>().unwrap_or(0).clamp(0, 100);
+        let sec_trim = security_raw.trim();
+        let security = if sec_trim.is_empty() || sec_trim == "--" {
+            "OPEN".to_string()
+        } else {
+            sanitize_no_float(sec_trim)
+        };
+        let saved = saved_ssids.iter().any(|s| s == &ssid);
+
+        if let Some(existing) = list.iter_mut().find(|e| e.ssid == ssid) {
+            if in_use {
+                existing.in_use = true;
+            }
+            if signal > existing.signal {
+                existing.signal = signal;
+            }
+            if saved {
+                existing.saved = true;
+            }
+        } else {
+            list.push(WifiNetworkEntry {
+                in_use,
+                ssid,
+                signal,
+                security,
+                saved,
+            });
+        }
+    }
+
+    list.sort_by(|a, b| {
+        b.in_use
+            .cmp(&a.in_use)
+            .then_with(|| b.saved.cmp(&a.saved))
+            .then_with(|| b.signal.cmp(&a.signal))
+            .then_with(|| a.ssid.cmp(&b.ssid))
+    });
+    list
+}
+
+/// Format menu lines for `fuzzel --dmenu -p "Wi-Fi > "` with Zero-Float output.
+pub fn format_wifi_menu_entries(entries: &[WifiNetworkEntry]) -> Vec<String> {
+    let mut lines = Vec::with_capacity(entries.len() + 3);
+    for e in entries {
+        let marker = if e.in_use { "[*]" } else { "[ ]" };
+        let saved_tag = if e.saved { " · SAVED" } else { "" };
+        let clean_ssid = sanitize_no_float(&e.ssid);
+        lines.push(format!(
+            "{} {} ({}% · {}{})",
+            marker, clean_ssid, e.signal, e.security, saved_tag
+        ));
+    }
+    lines.push("[HEAL] Auto-Reconnect & Fix 1380 MTU".to_string());
+    lines.push("[PASS] Update Wi-Fi Password for Network".to_string());
+    lines.push("[TUI] Open Full NetworkManager TUI (nmtui)".to_string());
+    lines
+}
+
+/// Extract the original SSID from a formatted menu line (`[*] SSID (79% · WPA2 · SAVED)`).
+pub fn extract_ssid_from_menu_choice<'a>(
+    choice: &'a str,
+    entries: &'a [WifiNetworkEntry],
+) -> Option<String> {
+    let trimmed = choice.trim();
+    let after_marker = trimmed
+        .strip_prefix("[*] ")
+        .or_else(|| trimmed.strip_prefix("[ ] "))?;
+    let (candidate_ssid, _) = after_marker.rsplit_once(" (")?;
+    for entry in entries {
+        if sanitize_no_float(&entry.ssid) == candidate_ssid || entry.ssid == candidate_ssid {
+            return Some(entry.ssid.clone());
+        }
+    }
+    Some(candidate_ssid.to_string())
+}
+
+fn list_saved_wifi_connections() -> Vec<String> {
+    let mut saved = Vec::new();
+    if let Ok(out) = Command::new("nmcli")
+        .args(["-t", "-f", "NAME,TYPE", "connection", "show"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            if let Some((name, kind)) = line.trim().rsplit_once(':') {
+                if kind.contains("wireless") || kind.contains("wifi") {
+                    let clean_name = name.replace("\\:", ":").trim().to_string();
+                    if !clean_name.is_empty() && !saved.contains(&clean_name) {
+                        saved.push(clean_name);
+                    }
+                }
+            }
+        }
+    }
+    saved
+}
+
+fn enforce_wlan0_mtu_1380() -> bool {
+    if Command::new("sudo")
+        .args(["-n", "ip", "link", "set", "dev", "wlan0", "mtu", "1380"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    Command::new("ip")
+        .args(["link", "set", "dev", "wlan0", "mtu", "1380"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn current_wlan0_state_and_ssid() -> (String, String) {
+    let mut state = "unknown".to_string();
+    if let Ok(out) = Command::new("nmcli")
+        .args(["-t", "-f", "DEVICE,STATE", "device"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            if let Some((dev, st)) = line.trim().split_once(':') {
+                if dev.trim() == "wlan0" {
+                    state = st.trim().to_string();
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut ssid = String::new();
+    if let Ok(out) = Command::new("nmcli")
+        .args(["-t", "-f", "ACTIVE,SSID", "device", "wifi"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            if let Some((active, s)) = line.trim().split_once(':') {
+                if active.trim() == "yes" {
+                    ssid = s.replace("\\:", ":").trim().to_string();
+                    break;
+                }
+            }
+        }
+    }
+    (state, ssid)
+}
+
+/// Execute `qwave-hypr-hud wifi-heal`:
+/// Checks `wlan0` state; if disconnected, scans Wi-Fi and auto-connects to the highest-signal
+/// saved connection; always enforces `wlan0` MTU `1380`; outputs a zero-float JSON report.
+pub fn run_wifi_heal(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"connected\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+    }
+
+    let (mut state, mut active_ssid) = current_wlan0_state_and_ssid();
+    let mut reconnected = false;
+
+    if state != "connected" {
+        let saved = list_saved_wifi_connections();
+        if let Ok(out) = Command::new("nmcli")
+            .args([
+                "-t",
+                "-f",
+                "IN-USE,SSID,SIGNAL,SECURITY",
+                "device",
+                "wifi",
+                "list",
+                "--rescan",
+                "yes",
+            ])
+            .output()
+        {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let candidates = parse_nmcli_wifi_list(&raw, &saved);
+            for cand in candidates.iter().filter(|c| c.saved) {
+                if Command::new("nmcli")
+                    .args(["connection", "up", &cand.ssid])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                {
+                    reconnected = true;
+                    break;
+                }
+            }
+        }
+        let updated = current_wlan0_state_and_ssid();
+        state = updated.0;
+        active_ssid = updated.1;
+    }
+
+    let mtu_ok = enforce_wlan0_mtu_1380();
+    let trit = if state == "connected" { "+" } else { "0" };
+
+    if reconnected && !active_ssid.is_empty() {
+        let msg = format!(
+            "Auto-reconnected Wi-Fi to {} with MTU 1380",
+            sanitize_no_float(&active_ssid)
+        );
+        send_desktop_notification("8b:is Wi-Fi Auto-Healer [+]", &msg);
+        speak_async(&msg);
+    }
+
+    format!(
+        "{{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"{}\",\"ssid\":\"{}\",\"reconnected\":{},\"mtu\":{},\"trit\":\"{}\"}}",
+        json_escape(&state),
+        json_escape(&active_ssid),
+        if reconnected { "true" } else { "false" },
+        if mtu_ok { 1380 } else { 1500 },
+        trit
+    )
+}
+
+/// Execute `qwave-hypr-hud wifi-tui`:
+/// Launches `alacritty --class wifi-manager -T "8b.is Sovereign Wi-Fi Manager" -e nmtui`
+/// and runs `wifi-heal` afterwards to ensure MTU `1380` is applied.
+pub fn run_wifi_tui(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"wifi-tui\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+    }
+
+    let _ = Command::new("alacritty")
+        .args([
+            "--class",
+            "wifi-manager",
+            "-T",
+            "8b.is Sovereign Wi-Fi Manager",
+            "-e",
+            "nmtui",
+        ])
+        .status();
+
+    let _ = run_wifi_heal(&[]);
+    "{\"ok\":true,\"action\":\"wifi-tui\",\"mtu\":1380,\"trit\":\"+\"}".to_string()
+}
+
+fn prompt_dmenu(prompt: &str, lines: &[String], password_mode: bool) -> Option<String> {
+    let payload = lines.join("\n");
+    let mut fuzzel_args = vec!["--dmenu", "-p", prompt];
+    if password_mode {
+        fuzzel_args.push("--password");
+    }
+
+    if let Ok(mut child) = Command::new("fuzzel")
+        .args(&fuzzel_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(payload.as_bytes());
+        }
+        if let Ok(out) = child.wait_with_output() {
+            if out.status.success() {
+                let selected = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                return Some(selected);
+            }
+            return None;
+        }
+    }
+
+    let mut wofi_args = vec!["--dmenu", "-p", prompt];
+    if password_mode {
+        wofi_args.push("--password");
+    }
+    if let Ok(mut child) = Command::new("wofi")
+        .args(&wofi_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(payload.as_bytes());
+        }
+        if let Ok(out) = child.wait_with_output() {
+            if out.status.success() {
+                let selected = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                return Some(selected);
+            }
+        }
+    }
+    None
+}
+
+fn connect_wifi_with_password_prompt(ssid: &str, security: &str, force_password: bool) -> bool {
+    if !force_password && (security == "OPEN" || security.is_empty() || security == "--") {
+        let ok = Command::new("nmcli")
+            .args(["device", "wifi", "connect", ssid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            let _ = enforce_wlan0_mtu_1380();
+            return true;
+        }
+    }
+
+    let prompt = format!("Password for {} > ", sanitize_no_float(ssid));
+    if let Some(pass) = prompt_dmenu(&prompt, &[], true) {
+        let trimmed_pass = pass.trim();
+        if !trimmed_pass.is_empty() {
+            if force_password {
+                let _ = Command::new("nmcli")
+                    .args(["connection", "delete", ssid])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            let ok = Command::new("nmcli")
+                .args(["device", "wifi", "connect", ssid, "password", trimmed_pass])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                let _ = enforce_wlan0_mtu_1380();
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // Fallback to interactive nmtui-connect inside floating Alacritty window
+    let ok = Command::new("alacritty")
+        .args([
+            "--class",
+            "wifi-manager",
+            "-T",
+            "8b.is Wi-Fi Manager",
+            "-e",
+            "nmtui-connect",
+            ssid,
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = enforce_wlan0_mtu_1380();
+    ok
+}
+
+/// Execute `qwave-hypr-hud wifi-menu`:
+/// Scans available Wi-Fi networks, opens `fuzzel --dmenu -p "Wi-Fi > "`, switches or updates
+/// Wi-Fi credentials, enforces `1380` MTU, and emits desktop + spoken notification.
+pub fn run_wifi_menu(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"wifi-menu\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+    }
+
+    let saved = list_saved_wifi_connections();
+    let raw_scan = Command::new("nmcli")
+        .args([
+            "-t",
+            "-f",
+            "IN-USE,SSID,SIGNAL,SECURITY",
+            "device",
+            "wifi",
+            "list",
+            "--rescan",
+            "auto",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let entries = parse_nmcli_wifi_list(&raw_scan, &saved);
+    let menu_lines = format_wifi_menu_entries(&entries);
+
+    let Some(choice) = prompt_dmenu("Wi-Fi > ", &menu_lines, false) else {
+        // If user cancelled fuzzel/wofi with Esc, exit cleanly; if neither launcher exists, open wifi-tui
+        if !Path::new("/usr/bin/fuzzel").exists() && !Path::new("/usr/bin/wofi").exists() {
+            return run_wifi_tui(&[]);
+        }
+        return "{\"ok\":true,\"action\":\"wifi-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
+    };
+
+    if choice.starts_with("[HEAL]") {
+        let res = run_wifi_heal(&[]);
+        send_desktop_notification(
+            "8b:is Wi-Fi Auto-Healer [+]",
+            "Wi-Fi checked and MTU 1380 enforced",
+        );
+        speak_async("Wi-Fi healed and MTU 1380 applied");
+        return res;
+    }
+
+    if choice.starts_with("[TUI]") {
+        return run_wifi_tui(&[]);
+    }
+
+    if choice.starts_with("[PASS]") {
+        let net_lines: Vec<String> = menu_lines
+            .iter()
+            .filter(|l| l.starts_with("[*]") || l.starts_with("[ ]"))
+            .cloned()
+            .collect();
+        if let Some(net_choice) = prompt_dmenu("Update Password for SSID > ", &net_lines, false) {
+            if let Some(ssid) = extract_ssid_from_menu_choice(&net_choice, &entries) {
+                let sec = entries
+                    .iter()
+                    .find(|e| e.ssid == ssid)
+                    .map(|e| e.security.as_str())
+                    .unwrap_or("WPA2");
+                let ok = connect_wifi_with_password_prompt(&ssid, sec, true);
+                let clean_ssid = sanitize_no_float(&ssid);
+                if ok {
+                    let msg = format!("Connected to {} with updated password and MTU 1380", clean_ssid);
+                    send_desktop_notification("8b:is Wi-Fi Connected [+]", &msg);
+                    speak_async(&msg);
+                    return format!(
+                        "{{\"ok\":true,\"action\":\"wifi-menu\",\"ssid\":\"{}\",\"mtu\":1380,\"trit\":\"+\"}}",
+                        json_escape(&clean_ssid)
+                    );
+                } else {
+                    let msg = format!("Could not connect to {}", clean_ssid);
+                    send_desktop_notification("8b:is Wi-Fi Warning [-]", &msg);
+                    return format!(
+                        "{{\"ok\":false,\"action\":\"wifi-menu\",\"ssid\":\"{}\",\"trit\":\"-\"}}",
+                        json_escape(&clean_ssid)
+                    );
+                }
+            }
+        }
+        return "{\"ok\":true,\"action\":\"wifi-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
+    }
+
+    if let Some(ssid) = extract_ssid_from_menu_choice(&choice, &entries) {
+        let entry = entries.iter().find(|e| e.ssid == ssid);
+        let is_saved = entry.map(|e| e.saved).unwrap_or(false);
+        let sec = entry.map(|e| e.security.as_str()).unwrap_or("WPA2");
+
+        let mut connected = false;
+        if is_saved {
+            connected = Command::new("nmcli")
+                .args(["connection", "up", &ssid])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if connected {
+                let _ = enforce_wlan0_mtu_1380();
+            }
+        }
+
+        if !connected {
+            connected = connect_wifi_with_password_prompt(&ssid, sec, is_saved);
+        }
+
+        let clean_ssid = sanitize_no_float(&ssid);
+        if connected {
+            let msg = format!("Connected to {} with MTU 1380", clean_ssid);
+            send_desktop_notification("8b:is Wi-Fi Connected [+]", &msg);
+            speak_async(&msg);
+            return format!(
+                "{{\"ok\":true,\"action\":\"wifi-menu\",\"ssid\":\"{}\",\"mtu\":1380,\"trit\":\"+\"}}",
+                json_escape(&clean_ssid)
+            );
+        } else {
+            let msg = format!("Failed to connect to {}", clean_ssid);
+            send_desktop_notification("8b:is Wi-Fi Error [-]", &msg);
+            speak_async(&msg);
+            return format!(
+                "{{\"ok\":false,\"action\":\"wifi-menu\",\"ssid\":\"{}\",\"trit\":\"-\"}}",
+                json_escape(&clean_ssid)
+            );
+        }
+    }
+
+    "{\"ok\":true,\"action\":\"wifi-menu\",\"status\":\"noop\",\"trit\":\"0\"}".to_string()
+}
+
+/// Execute `qwave-hypr-hud boot-session`: start services, waybar, notifications, Wi-Fi healer,
+/// Workspace 1 AGY Studio + HUD, and speak welcome.
 pub fn run_boot_session(args: &[String]) -> String {
     let dry_run = args.iter().any(|a| a == "--dry-run");
     let welcome = "Sovereign Hyprland and Qwave collaboration studio online";
@@ -1082,19 +1720,23 @@ pub fn run_boot_session(args: &[String]) -> String {
             .stderr(Stdio::null())
             .status();
 
-        // 2. Ensure liquid-rust.service and qwave-ear.service are active
+        // 2. Ensure liquid-rust.service, qwave-ear.service, and qwave-wifi-heal.timer are active
         let _ = Command::new("systemctl")
             .args([
                 "--user",
                 "start",
                 "liquid-rust.service",
                 "qwave-ear.service",
+                "qwave-wifi-heal.timer",
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
 
-        // 3. Start mako notification daemon if not already running
+        // 3. Heal Wi-Fi connection and enforce 1380 MTU on wlan0 immediately on boot
+        let _ = run_wifi_heal(&[]);
+
+        // 4. Start mako notification daemon if not already running
         if !is_process_running("mako") {
             let _ = Command::new("mako")
                 .stdin(Stdio::null())
@@ -1103,7 +1745,7 @@ pub fn run_boot_session(args: &[String]) -> String {
                 .spawn();
         }
 
-        // 4. Start waybar if not already running
+        // 5. Start waybar if not already running
         if !is_process_running("waybar") {
             let _ = Command::new("waybar")
                 .stdin(Stdio::null())
@@ -1112,14 +1754,42 @@ pub fn run_boot_session(args: &[String]) -> String {
                 .spawn();
         }
 
-        // 5. Speak welcome asynchronously so session boot never blocks
-        let qwave_bin = find_qwave_bin();
-        let _ = Command::new(qwave_bin)
-            .args(["--speak", welcome])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+        // 6. Start nm-applet --indicator if installed and not already running
+        if Path::new("/usr/bin/nm-applet").exists() && !is_process_running("nm-applet") {
+            let _ = Command::new("nm-applet")
+                .arg("--indicator")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+
+        // 7. Ensure Workspace 1 (1:AI-STUDIO) has Sovereign AGY Studio (Resumed) and Qwave HUD open
+        if !is_process_running("agy") && !is_cmdline_running("qwave-hypr-hud agy-resume") {
+            let _ = Command::new("hyprctl")
+                .args([
+                    "dispatch",
+                    "exec",
+                    "[workspace 1 silent] alacritty -T \"8b.is Sovereign AGY Studio (Resumed)\" --working-directory /home/hue/8b-is -e /home/hue/.local/bin/qwave-hypr-hud agy-resume",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        if !is_cmdline_running("qwave-hypr-hud status-tui") {
+            let _ = Command::new("hyprctl")
+                .args([
+                    "dispatch",
+                    "exec",
+                    "[workspace 1 silent] alacritty -T \"Qwave Sovereign HUD\" -e /home/hue/.local/bin/qwave-hypr-hud status-tui",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+
+        // 8. Speak welcome asynchronously so session boot never blocks
+        speak_async(welcome);
     }
 
     format!("{{\"ok\":true,\"action\":\"boot-session\",\"trit\":\"+\",\"spoken\":\"{welcome}\"}}")
@@ -1232,6 +1902,8 @@ mod tests {
         assert!(frame.contains("SUPER+M"));
         assert!(frame.contains("SUPER+D"));
         assert!(frame.contains("SUPER+G"));
+        assert!(frame.contains("SUPER+I"));
+        assert!(frame.contains("SUPER+W"));
         assert_zero_float_literals(&frame);
     }
 
@@ -1288,10 +1960,42 @@ mod tests {
         let aa = run_ask_aye(&["--dry-run".to_string()]);
         let te = run_toggle_ear(&["--dry-run".to_string()]);
         let bs = run_boot_session(&["--dry-run".to_string()]);
+        let ar = run_agy_resume(&["--dry-run".to_string()]);
+        let wm = run_wifi_menu(&["--dry-run".to_string()]);
+        let wt = run_wifi_tui(&["--dry-run".to_string()]);
+        let wh = run_wifi_heal(&["--dry-run".to_string()]);
         let ap = run_a6000_pulse(&["--dry-run".to_string()]);
-        for out in [&vt, &aa, &te, &bs, &ap] {
+        for out in [&vt, &aa, &te, &bs, &ar, &wm, &wt, &wh, &ap] {
             assert!(out.contains("\"ok\":true"));
             assert_zero_float_literals(out);
         }
+    }
+
+    #[test]
+    fn wifi_scan_parser_and_menu_formatter_handle_colons_and_zero_floats() {
+        let raw = "*:#wifibox_qrm:79:WPA2\n\
+                   \x20:Buffalo-A-1260:64:WPA2\n\
+                   \x20:8b\\:is_2.4GHz:91:WPA3\n\
+                   \x20:--:40:OPEN\n";
+        let saved = vec!["#wifibox_qrm".to_string(), "8b:is_2.4GHz".to_string()];
+        let parsed = parse_nmcli_wifi_list(raw, &saved);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].ssid, "#wifibox_qrm");
+        assert!(parsed[0].in_use);
+        assert!(parsed[0].saved);
+        assert_eq!(parsed[1].ssid, "8b:is_2.4GHz");
+        assert!(parsed[1].saved);
+        assert_eq!(parsed[2].ssid, "Buffalo-A-1260");
+        assert!(!parsed[2].saved);
+
+        let menu = format_wifi_menu_entries(&parsed);
+        assert!(menu.iter().any(|l| l.starts_with("[HEAL]")));
+        assert!(menu.iter().any(|l| l.starts_with("[TUI]")));
+        for line in &menu {
+            assert_zero_float_literals(line);
+        }
+
+        let extracted = extract_ssid_from_menu_choice(&menu[1], &parsed);
+        assert_eq!(extracted.as_deref(), Some("8b:is_2.4GHz"));
     }
 }

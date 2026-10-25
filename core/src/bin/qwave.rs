@@ -3044,7 +3044,12 @@ fn salience_profile_path() -> PathBuf {
 fn load_salience_profile() -> SpeakerSalienceProfile {
     let path = salience_profile_path();
     if let Ok(bytes) = fs::read(path) {
-        if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+        if let Some(mut prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+            let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+            if f0_int > 175 || f0_int < 85 {
+                prof.f0_hz = Rational::integer(154);
+                save_salience_profile(&prof);
+            }
             return prof;
         }
     }

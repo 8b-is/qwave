@@ -487,7 +487,7 @@ pub struct SpeakerSalienceProfile {
 impl Default for SpeakerSalienceProfile {
     fn default() -> Self {
         Self {
-            f0_hz: Rational::integer(156),
+            f0_hz: Rational::integer(154),
             avg_salience: Rational::new(1, 4).unwrap_or(Rational::ZERO),
             vad_byte: 0x55,
             grains_learned: 0,
@@ -584,7 +584,7 @@ impl SpeakerSalienceProfile {
             best_grain_pcm.push(i16::from_le_bytes([bytes[off], bytes[off + 1]]));
         }
         Some(Self {
-            f0_hz: Rational::new(f0_num, f0_den).unwrap_or_else(|| Rational::integer(156)),
+            f0_hz: Rational::new(f0_num, f0_den).unwrap_or_else(|| Rational::integer(154)),
             avg_salience: Rational::new(sal_num, sal_den).unwrap_or(Rational::ZERO),
             vad_byte,
             grains_learned,
@@ -663,7 +663,7 @@ pub enum AcousticSourceKind {
     AmbientNoise,
     /// The primary enrolled user ("Hue") matching `primary_profile`.
     PrimaryUser,
-    /// Another distinct human voice in the room (`0..=3` = Friend 1..4).
+    /// Another distinct human voice in the room (`0` = `"alex"`, `1..=3` = `"friend_1..3"`).
     OtherSpeaker(u8),
     /// System's own TTS output playing over the speaker.
     SystemEcho,
@@ -674,10 +674,10 @@ impl AcousticSourceKind {
         match self {
             Self::AmbientNoise => "ambient_noise",
             Self::PrimaryUser => "hue",
-            Self::OtherSpeaker(0) => "friend_1",
-            Self::OtherSpeaker(1) => "friend_2",
-            Self::OtherSpeaker(2) => "friend_3",
-            Self::OtherSpeaker(_) => "friend_4",
+            Self::OtherSpeaker(0) => "alex",
+            Self::OtherSpeaker(1) => "friend_1",
+            Self::OtherSpeaker(2) => "friend_2",
+            Self::OtherSpeaker(_) => "friend_3",
             Self::SystemEcho => "system_echo",
         }
     }
@@ -712,7 +712,7 @@ impl InteractionContext {
 pub struct RoomUtteranceAnalysis {
     pub source: AcousticSourceKind,
     pub context: InteractionContext,
-    /// Similarity to the primary user (`0..=32767` in Q15).
+    /// Similarity to the diarized speaker's profile (`0..=32767` in Q15).
     pub primary_similarity_q15: u16,
     /// Ratio of current utterance peak/envelope energy to primary user's on-axis baseline (`0..=32767` in Q15).
     pub on_axis_ratio_q15: u16,
@@ -723,7 +723,7 @@ pub struct RoomUtteranceAnalysis {
 
 /// Compute integer speaker similarity in Q15 (`0..=32767`) between a learned [`SpeakerSalienceProfile`]
 /// and an incoming [`UtteranceSalienceReport`] using:
-/// 1. Fundamental pitch (`f0_hz`) integer distance (`|f0_a - f0_b|`)
+/// 1. Fundamental pitch (`f0_hz`) integer distance (`|f0_a - f0_b|`) within a tight `48 Hz` vocal-tract window
 /// 2. 16-bin normalized prosody contour L1 distance
 pub fn speaker_similarity_q15(
     profile: &SpeakerSalienceProfile,
@@ -740,11 +740,11 @@ pub fn speaker_similarity_q15(
     let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
     let f0_diff = (prof_f0 - utt_f0).abs();
 
-    // Pitch similarity in Q15: 0 Hz diff -> 32767; >= 110 Hz diff -> 0
-    let pitch_sim_q15 = if f0_diff >= 110 {
+    // Pitch similarity in Q15: 0 Hz diff -> 32767; >= 48 Hz diff -> 0
+    let pitch_sim_q15 = if f0_diff >= 48 {
         0
     } else {
-        ((110 - f0_diff) * Q15_ONE) / 110
+        ((48 - f0_diff) * Q15_ONE) / 48
     };
 
     // Normalized 16-bin prosody contour L1 similarity
@@ -766,7 +766,7 @@ pub fn speaker_similarity_q15(
 /// Distinguishes:
 /// - Primary User ("Hue") addressing the AI (`AddressingAgent`)
 /// - Primary User ("Hue") chatting with a friend next to him (`ChattingWithFriend`)
-/// - Other people in the room (`OtherSpeaker(0..3)` / `FriendSpeaking`)
+/// - Companion Alex (`OtherSpeaker(0)` -> `"alex"`) and other people in the room (`OtherSpeaker(1..3)` -> `"friend_1..3"`)
 /// - Ambient room noise / silence (`AmbientNoise` / `SilentOrNoise`)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoomAcousticTracker {
@@ -796,9 +796,9 @@ impl Default for RoomAcousticTracker {
 }
 
 impl RoomAcousticTracker {
-    /// Analyze an incoming audio buffer, classify who is speaking (`hue`, `friend_1..4`, `ambient_noise`)
+    /// Analyze an incoming audio buffer, classify who is speaking (`hue`, `alex`, `friend_1..3`, `ambient_noise`)
     /// and the room context (`addressing_agent`, `chatting_with_friend`, `friend_speaking`, `silent_or_noise`),
-    /// and selectively fold only `PrimaryUser` grains into Hue's `MEM|8` profile (and friend grains into friend slots).
+    /// and selectively fold only `PrimaryUser` grains into Hue's `MEM|8` profile (and companion/friend grains into their own slots).
     pub fn classify_and_learn(
         &mut self,
         samples: &[i16],
@@ -862,6 +862,15 @@ impl RoomAcousticTracker {
             };
         }
 
+        // Protect Hue's baritone/tenor profile centroid (`154 Hz`) from any prior high-pitch drift
+        let cur_prof_f0 =
+            self.primary_profile.f0_hz.num / (self.primary_profile.f0_hz.den.max(1) as i32);
+        if cur_prof_f0 > 175 || cur_prof_f0 < 85 {
+            self.primary_profile.f0_hz = Rational::integer(154);
+        }
+
+        let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
+
         // 2. Compare against Primary User ("Hue") profile
         let primary_sim_q15 = speaker_similarity_q15(&self.primary_profile, &report);
 
@@ -886,16 +895,20 @@ impl RoomAcousticTracker {
             })
             .unwrap_or(false);
 
-        // Threshold for matching Primary User ("Hue"): >= 19_000 in Q15 (~58% pitch + cadence match)
-        if primary_sim_q15 >= 19_000 || self.primary_profile.grains_learned == 0 {
+        // Match Primary User ("Hue") only when vocal F0 is in Hue's baritone/tenor range (`<= 178 Hz`)
+        // AND (`primary_sim_q15 >= 19_500` or `self.primary_profile.grains_learned == 0`)
+        if utt_f0 <= 178 && (primary_sim_q15 >= 19_500 || self.primary_profile.grains_learned == 0) {
             // Update Hue's on-axis amplitude baseline when speaking clearly on-axis
             if grain_avg_env > (baseline_amp / 2) {
                 self.primary_on_axis_amp_q15 =
                     (((baseline_amp * 3) + grain_avg_env) >> 2).clamp(512, Q15_ONE as u32) as u16;
             }
 
-            // Fold Hue's highest-salience grains into his personal MEM|8 SpeakerSalienceProfile!
-            self.primary_profile.absorb_report(&report);
+            // Fold Hue's highest-salience grains into his personal MEM|8 SpeakerSalienceProfile
+            // strictly when `utt_f0` is within `95..=178 Hz` so higher-pitched voices never shift his F0!
+            if (95..=178).contains(&utt_f0) {
+                self.primary_profile.absorb_report(&report);
+            }
             self.last_primary_ts = timestamp_secs;
 
             // Determine whether Hue is addressing the AI or chatting with a friend next to him:
@@ -924,36 +937,65 @@ impl RoomAcousticTracker {
             };
         }
 
-        // 3. Another human speaker in the room (`OtherSpeaker(slot)`)!
-        // Match against existing friend slots or allocate a new slot (0..=3)
-        let mut best_slot = 0usize;
-        let mut best_friend_sim = 0u16;
-        let mut empty_slot: Option<usize> = None;
-
-        for (idx, slot_opt) in self.friend_profiles.iter().enumerate() {
-            if let Some(friend_prof) = slot_opt {
-                let sim = speaker_similarity_q15(friend_prof, &report);
-                if sim > best_friend_sim {
-                    best_friend_sim = sim;
-                    best_slot = idx;
+        // 3. Another human speaker in the room (`OtherSpeaker(slot)`):
+        //    Slot `0` (`"alex"`) is dedicated to higher-pitched voices (`utt_f0 >= 179 Hz`),
+        //    while slots `1..=3` (`"friend_1..3"`) diarize additional distinct speakers.
+        let chosen_slot = if utt_f0 >= 179 {
+            if let Some(ref alex_prof) = self.friend_profiles[0] {
+                let alex_sim = speaker_similarity_q15(alex_prof, &report);
+                if alex_sim >= 18_000 {
+                    0usize
+                } else {
+                    let mut best_slot = 0usize;
+                    let mut best_sim = alex_sim;
+                    let mut free_slot = None;
+                    for idx in 1..4 {
+                        if let Some(ref fp) = self.friend_profiles[idx] {
+                            let s = speaker_similarity_q15(fp, &report);
+                            if s > best_sim {
+                                best_sim = s;
+                                best_slot = idx;
+                            }
+                        } else if free_slot.is_none() {
+                            free_slot = Some(idx);
+                        }
+                    }
+                    if best_sim >= 19_000 {
+                        best_slot
+                    } else {
+                        free_slot.unwrap_or(0)
+                    }
                 }
-            } else if empty_slot.is_none() {
-                empty_slot = Some(idx);
+            } else {
+                0usize
             }
-        }
-
-        let chosen_slot = if best_friend_sim >= 19_000 {
-            best_slot
-        } else if let Some(free_idx) = empty_slot {
-            free_idx
         } else {
-            best_slot
+            let mut best_slot = 1usize;
+            let mut best_sim = 0u16;
+            let mut free_slot = None;
+            for idx in 1..4 {
+                if let Some(ref fp) = self.friend_profiles[idx] {
+                    let s = speaker_similarity_q15(fp, &report);
+                    if s > best_sim {
+                        best_sim = s;
+                        best_slot = idx;
+                    }
+                } else if free_slot.is_none() {
+                    free_slot = Some(idx);
+                }
+            }
+            if best_sim >= 19_000 {
+                best_slot
+            } else {
+                free_slot.unwrap_or(1)
+            }
         };
 
         let mut friend_prof = self.friend_profiles[chosen_slot]
             .take()
             .unwrap_or_default();
         friend_prof.absorb_report(&report);
+        let diarized_sim_q15 = speaker_similarity_q15(&friend_prof, &report);
         self.friend_profiles[chosen_slot] = Some(friend_prof);
 
         self.last_other_ts = timestamp_secs;
@@ -962,7 +1004,7 @@ impl RoomAcousticTracker {
         RoomUtteranceAnalysis {
             source: AcousticSourceKind::OtherSpeaker(chosen_slot as u8),
             context: InteractionContext::FriendSpeaking,
-            primary_similarity_q15: primary_sim_q15,
+            primary_similarity_q15: diarized_sim_q15,
             on_axis_ratio_q15,
             should_agent_respond: has_ai_wake_word,
             salience_report: report,
@@ -976,7 +1018,7 @@ impl RoomAcousticTracker {
 pub struct StereoMicTriangulation {
     /// Horizontal azimuth angle in degrees (`-90` = far left, `0` = dead-center at screen, `+90` = far right).
     pub azimuth_deg: i16,
-    /// Estimated speaker distance from the laptop bezel in centimeters (`35..=400 cm`).
+    /// Estimated speaker distance from the laptop bezel in centimeters (`12..=350 cm`).
     pub distance_cm: u16,
     /// Integer TDOA lag in `48 kHz` samples (`-10..=+10`, `~20.8 µs` / `7.14 mm` per sample).
     pub tdoa_samples_48k: i16,
@@ -994,7 +1036,7 @@ impl Default for StereoMicTriangulation {
     fn default() -> Self {
         Self {
             azimuth_deg: 0,
-            distance_cm: 65,
+            distance_cm: 20,
             tdoa_samples_48k: 0,
             ild_pct: 0,
             bt_mic_energy_q15: 0,
@@ -1065,8 +1107,47 @@ pub fn triangulate_stereo_dmic_i16(
 
     // Mean absolute amplitude per sample across the array
     let mean_abs = (total_energy / ((frames_48k as i64) * 2)).max(1);
-    // Estimate distance in cm using inverse-square integer law (calibrated: mean_abs=2800 -> ~60 cm)
-    let distance_cm = ((168_000 / (mean_abs + 400)) + 25).clamp(35, 380) as u16;
+
+    // Compute active voiced chunk mean amplitude across 20ms (960-frame at 48kHz) windows
+    // (chunks with mean abs >= peak_chunk_abs / 3) so pre-roll and trailing silence do not
+    // artificially inflate near-field distance estimates.
+    let chunk_frames = 960usize;
+    let mut peak_chunk_abs: i64 = 0;
+    let mut chunk_means: Vec<i64> = Vec::with_capacity((frames_48k / chunk_frames) + 2);
+    let mut f_start = 0usize;
+    while f_start < frames_48k {
+        let f_end = (f_start + chunk_frames).min(frames_48k);
+        let count = ((f_end - f_start) * 2).max(1) as i64;
+        let mut c_sum: i64 = 0;
+        for idx in f_start..f_end {
+            c_sum += (interleaved_lr_48k[idx * 2] as i64).abs();
+            c_sum += (interleaved_lr_48k[idx * 2 + 1] as i64).abs();
+        }
+        let c_mean = c_sum / count;
+        if c_mean > peak_chunk_abs {
+            peak_chunk_abs = c_mean;
+        }
+        chunk_means.push(c_mean);
+        f_start = f_end;
+    }
+    let active_thresh = (peak_chunk_abs / 3).max(1);
+    let mut voiced_sum: i64 = 0;
+    let mut voiced_count: i64 = 0;
+    for &cm in &chunk_means {
+        if cm >= active_thresh {
+            voiced_sum += cm;
+            voiced_count += 1;
+        }
+    }
+    let voiced_mean_abs = if voiced_count > 0 {
+        (voiced_sum / voiced_count).max(1)
+    } else {
+        mean_abs
+    };
+
+    // Estimate distance in cm using inverse-square integer law
+    // (calibrated so normal near-field laptop speech voiced_mean_abs ~ 800..3500 reports ~18..24 cm, ~20 cm)
+    let distance_cm = ((15_000 / (voiced_mean_abs + 200)) + 14).clamp(16, 350) as u16;
 
     // Optional Bluetooth microphone energy fusion
     let (bt_mic_energy_q15, active_mics) = if let Some(bt_pcm) = bt_mic_mono_16k {
@@ -1634,5 +1715,57 @@ mod tests {
         assert!(is_hey_aye_wake_phrase("Aye, check the logs"));
         assert!(!is_hey_aye_wake_phrase("Hey Chesney! You're getting out of the house"));
         assert!(!is_hey_aye_wake_phrase("Hey Peter how did you sleep?"));
+    }
+
+    #[test]
+    fn near_field_20cm_calibration_and_hue_vs_alex_diarization() {
+        // 1. Verify stereo DMIC near-field calibration reports ~20 cm even with pre-roll & trailing silence
+        let mut stereo_48k = Vec::with_capacity(4800 * 4);
+        // 40ms pre-roll silence
+        stereo_48k.extend(std::iter::repeat_n(15i16, 1920 * 2));
+        // 60ms active near-field speech at ~155 Hz (period = 310 samples at 48kHz, mean_abs ~ 1350)
+        for n in 0..2880isize {
+            let p = n.rem_euclid(310) as i32;
+            let s = if p < 155 { (p - 77) * 35 } else { (232 - p) * 35 };
+            let sample = s.clamp(-2700, 2700) as i16;
+            stereo_48k.push(sample);
+            stereo_48k.push(sample);
+        }
+        // 40ms trailing silence
+        stereo_48k.extend(std::iter::repeat_n(15i16, 1920 * 2));
+
+        let (tri, _) = triangulate_stereo_dmic_i16(&stereo_48k, None);
+        assert!(
+            (16..=25).contains(&tri.distance_cm),
+            "expected ~20 cm near-field distance, got {} cm",
+            tri.distance_cm
+        );
+
+        // 2. Verify polluted profile (>175 Hz) re-anchors to 154 Hz and separates Hue (~155 Hz) from Alex (~215 Hz)
+        let mut tracker = RoomAcousticTracker::default();
+        tracker.primary_profile.f0_hz = Rational::integer(185);
+        tracker.primary_profile.grains_learned = 50;
+
+        let alex_voice: Vec<i16> = (0..3200)
+            .map(|i| {
+                let p = (i % 74) as i32; // 16000 / 74 = 216 Hz
+                let v = if p < 37 { (p - 18) * 600 } else { (55 - p) * 600 };
+                v.clamp(-16_000, 16_000) as i16
+            })
+            .collect();
+        let r_alex = tracker.classify_and_learn(&alex_voice, 16_000, 2000, Some("Where do you know that?"));
+        assert_eq!(r_alex.source, AcousticSourceKind::OtherSpeaker(0));
+        assert_eq!(r_alex.source.as_str(), "alex");
+
+        let hue_voice: Vec<i16> = (0..3200)
+            .map(|i| {
+                let p = (i % 103) as i32; // 16000 / 103 = 155 Hz
+                let v = if p < 51 { (p - 25) * 520 } else { (77 - p) * 520 };
+                v.clamp(-16_000, 16_000) as i16
+            })
+            .collect();
+        let r_hue = tracker.classify_and_learn(&hue_voice, 16_000, 2003, Some("Hey Aye let us test this"));
+        assert_eq!(r_hue.source, AcousticSourceKind::PrimaryUser);
+        assert_eq!(r_hue.source.as_str(), "hue");
     }
 }
