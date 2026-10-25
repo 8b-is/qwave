@@ -1,6 +1,6 @@
 [package]
 name = "qwave-core"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Qwave sovereign core — the egress allowlist and the MEM8 wave substrate in zero-dependency Rust"
 license = "MIT"
