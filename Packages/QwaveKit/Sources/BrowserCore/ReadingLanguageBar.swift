@@ -5,6 +5,7 @@ import NaturalLanguage
 // translationTask lifetime, with only one in-flight batch and no detached work.
 @preconcurrency import Translation
 import Persistence
+import SovereignCore
 
 public enum ReadingLanguageControls {
     public static let toggle = Notification.Name("QwaveToggleReadingLanguageControls")
@@ -20,7 +21,9 @@ public struct ReadingLanguageBar: View {
     public init(webView: WKWebView) { self.webView = webView }
     public var body: some View {
         Group {
-            if #available(macOS 15, iOS 18, *) {
+            if RustLocalReadingSession.isAvailable {
+                NativeReadingLanguageBar(webView: webView, showControls: $showControls).id(ObjectIdentifier(webView))
+            } else if #available(macOS 15, iOS 18, *) {
                 LocalReadingBar(webView: webView, showControls: $showControls).id(ObjectIdentifier(webView))
             } else if showControls {
                 LegacyReadingLanguageBar()
@@ -60,6 +63,9 @@ private struct LocalReadingBar: View {
     @State private var documentID = ""
     @State private var suppressedDocument = ""
     @State private var busy = false
+    @State private var scanning = false
+    @State private var needsDownload = false
+    @State private var requestedDownloadDocument = ""
     @State private var translated = false
     @State private var generation = 0
     @State private var job: Job?
@@ -68,14 +74,23 @@ private struct LocalReadingBar: View {
     private let languages = [
         "en", "ja", "es", "fr", "de", "it", "pt", "ko", "zh-Hans", "zh-Hant", "ar", "hi", "uk", "nl",
     ]
-    private struct Entry { let id: String; let text: String }
-    private struct Job { let document: String; let generation: Int; let entries: [Entry] }
+    private struct Entry: Sendable { let id: String; let text: String }
+    private struct Job {
+        let id = UUID()
+        let document: String
+        let generation: Int
+        let target: String
+        let entries: [Entry]
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "character.bubble")
             Text(status).font(.caption).lineLimit(2).accessibilityLabel(status)
             Spacer(minLength: 2)
+            if needsDownload {
+                Button("Download languages") { requestTranslationDownload() }
+            }
             if translated {
                 Button("Show original") { restore(pause: true) }
             }
@@ -91,8 +106,7 @@ private struct LocalReadingBar: View {
                 }
                 Toggle("Translate automatically", isOn: $automatic)
                 Button("Translate this page") {
-                    suppressedDocument = ""; automatic = true
-                    Task { _ = try? await run("qwaveReading.retry(); return true;") }
+                    requestTranslationDownload()
                 }
                 if let host = webView.url?.host?.lowercased() {
                     Button("Never translate \(host)") {
@@ -119,16 +133,22 @@ private struct LocalReadingBar: View {
         }
         .buttonStyle(.borderless).padding(.horizontal, 10).padding(.vertical, 5)
         .background(.bar)
-        .frame(height: (busy || translated || showControls) ? nil : 0)
+        .frame(height: (busy || translated || needsDownload || showControls) ? nil : 0)
         .clipped()
-        .accessibilityHidden(!(busy || translated || showControls))
+        .accessibilityHidden(!(busy || translated || needsDownload || showControls))
         .onChange(of: language) { new in
             ReadingLanguagePreferences.shared.language = new
             restore(pause: false)
         }
         .onChange(of: automatic) { new in
             ReadingLanguagePreferences.shared.automatic = new
-            if !new { restore(pause: true) } else { restore(pause: false) }
+            if !new { restore(pause: true) } else if requestedDownloadDocument.isEmpty { restore(pause: false) }
+        }
+        .onReceive(webView.publisher(for: \.isLoading).removeDuplicates()) { loading in
+            guard loading else { return }
+            generation += 1
+            configuration = nil; job = nil; busy = false; translated = false
+            needsDownload = false; requestedDownloadDocument = ""; suppressedDocument = ""; documentID = ""
         }
         .task {
             while !Task.isCancelled {
@@ -138,14 +158,24 @@ private struct LocalReadingBar: View {
         }
         .translationTask(configuration) { session in
             guard let current = job else { return }
-            defer { busy = false }
+            defer {
+                // A cancelled session must not clear a newer batch.
+                if job?.id == current.id { busy = false; job = nil }
+            }
             do {
-                var rows: [[String: String]] = []
-                for entry in current.entries {
-                    guard !Task.isCancelled, current.generation == generation else { return }
-                    let response = try await session.translate(entry.text)
-                    rows.append(["id": entry.id, "text": response.targetText])
+                guard !Task.isCancelled, current.generation == generation else { return }
+                let requests = Self.requests(for: current.entries)
+                let responses = try await session.translations(from: requests)
+                let expected = Dictionary(uniqueKeysWithValues: current.entries.map { ($0.id, $0.text) })
+                var seen = Set<String>()
+                let rows = responses.compactMap { response -> [String: String]? in
+                    guard let id = response.clientIdentifier,
+                        expected[id] == response.sourceText, seen.insert(id).inserted
+                    else { return nil }
+                    return ["id": id, "text": response.targetText]
                 }
+                // Never apply an incomplete or incorrectly associated batch.
+                guard rows.count == current.entries.count else { throw CancellationError() }
                 guard !Task.isCancelled, current.generation == generation, suppressedDocument != current.document else {
                     return
                 }
@@ -153,10 +183,10 @@ private struct LocalReadingBar: View {
                     try await run(
                         "return qwaveReading.apply(doc, rows);", arguments: ["doc": current.document, "rows": rows])
                     as? Bool
-                if applied == true {
+                if applied == true, current.generation == generation, suppressedDocument != current.document {
                     translated = true
                     status =
-                        "Translated to \(Locale(identifier: "en").localizedString(forIdentifier: language) ?? language) • On-device"
+                        "Translated to \(Locale(identifier: "en").localizedString(forIdentifier: current.target) ?? current.target) • On-device"
                 }
             } catch {
                 guard !Task.isCancelled, current.generation == generation else { return }
@@ -167,25 +197,48 @@ private struct LocalReadingBar: View {
         }
     }
 
+    nonisolated private static func requests(for entries: [Entry]) -> [TranslationSession.Request] {
+        entries.map { TranslationSession.Request(sourceText: $0.text, clientIdentifier: $0.id) }
+    }
+
     @MainActor private func run(_ script: String, arguments: [String: Any] = [:]) async throws -> Any {
         try await webView.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: world) as Any
     }
 
     @MainActor private func restore(pause: Bool) {
         generation += 1
+        configuration = nil; job = nil; busy = false; needsDownload = false
+        requestedDownloadDocument = ""
         if pause { suppressedDocument = documentID }
         translated = false; status = "Original • Preferred language: \(language)"
+        let restoredGeneration = generation
         Task {
+            guard restoredGeneration == generation else { return }
             _ = try? await run("return globalThis.qwaveReading?.restore(pause);", arguments: ["pause": pause])
-            if !pause { suppressedDocument = "" }
+            if !pause, restoredGeneration == generation { suppressedDocument = "" }
         }
+    }
+
+    @MainActor private func requestTranslationDownload() {
+        // A language download may present system UI only after this explicit action.
+        requestedDownloadDocument = documentID
+        needsDownload = false
+        suppressedDocument = ""
+        ReadingLanguagePreferences.shared.automatic = true
+        automatic = true
+        Task { _ = try? await run("qwaveReading.retry(); return true;") }
     }
 
     @MainActor private func scan() async {
         let preferences = ReadingLanguagePreferences.shared
         if language != preferences.language { language = preferences.language; return }
         if automatic != preferences.automatic { automatic = preferences.automatic; return }
-        guard !busy, !webView.isLoading, ["https", "http"].contains(webView.url?.scheme ?? "") else { return }
+        guard !busy, !scanning, !webView.isLoading, ["https", "http"].contains(webView.url?.scheme ?? "") else {
+            return
+        }
+        scanning = true
+        let scanGeneration = generation
+        defer { scanning = false }
         do {
             guard
                 let batch = try await run(
@@ -194,7 +247,14 @@ private struct LocalReadingBar: View {
                 let doc = batch["documentID"] as? String,
                 let raw = batch["entries"] as? [[String: String]]
             else { return }
+            guard !Task.isCancelled, scanGeneration == generation else {
+                _ = try? await run(
+                    "if (qwaveReading.documentID === doc) qwaveReading.release(ids); return true;",
+                    arguments: ["doc": doc, "ids": raw.compactMap { $0["id"] }])
+                return
+            }
             if doc != documentID {
+                needsDownload = false; requestedDownloadDocument = ""
                 documentID = doc; translated = batch["translated"] as? Bool ?? false; source = ""
                 if batch["paused"] as? Bool == true { suppressedDocument = doc }
                 status =
@@ -208,7 +268,8 @@ private struct LocalReadingBar: View {
             guard !entries.isEmpty else { return }
             let detector = NLLanguageRecognizer()
             detector.processString(entries.map(\.text).joined(separator: " "))
-            let fallback = detector.dominantLanguage?.rawValue ?? (batch["language"] as? String ?? "")
+            let declaredLanguage = batch["language"] as? String ?? ""
+            let fallback = declaredLanguage.isEmpty ? (detector.dominantLanguage?.rawValue ?? "") : declaredLanguage
             // Detect blocks individually so an English page can still contain Japanese UI.
             let classified = entries.map { entry -> (Entry, String) in
                 let local = NLLanguageRecognizer()
@@ -228,15 +289,44 @@ private struct LocalReadingBar: View {
             if !deferred.isEmpty {
                 _ = try await run("return qwaveReading.release(ids);", arguments: ["ids": deferred])
             }
-            busy = true
-            job = Job(document: doc, generation: generation, entries: selected)
-            var next = TranslationSession.Configuration(
-                source: Locale.Language(identifier: source), target: Locale.Language(identifier: language))
-            if let previous = configuration, previous.source == next.source, previous.target == next.target {
-                next = previous; next.invalidate()
-            }
-            status = "Translating on-device…"
-            configuration = next
+            #if targetEnvironment(simulator)
+                // Apple's Translation API requires a physical device. Do not
+                // leave Simulator waiting on an availability request forever.
+                status = "On-device translation needs a physical device"
+                suppressedDocument = doc
+                return
+            #else
+                let availability = await LanguageAvailability().status(
+                    from: Locale.Language(identifier: detected), to: Locale.Language(identifier: language))
+                guard !Task.isCancelled, scanGeneration == generation, doc != suppressedDocument else { return }
+                switch availability {
+                case .installed: break
+                case .supported where requestedDownloadDocument == doc: break
+                case .supported:
+                    needsDownload = true
+                    status = "Download languages to translate this page on-device"
+                    suppressedDocument = doc
+                    return
+                case .unsupported:
+                    status = "This language pair is not available on-device"
+                    suppressedDocument = doc
+                    return
+                @unknown default: return
+                }
+                guard let liveDocument = try await run("return globalThis.qwaveReading?.documentID;") as? String,
+                    liveDocument == doc, scanGeneration == generation, doc != suppressedDocument
+                else { return }
+                needsDownload = false
+                busy = true
+                job = Job(document: doc, generation: generation, target: language, entries: selected)
+                var next = TranslationSession.Configuration(
+                    source: Locale.Language(identifier: source), target: Locale.Language(identifier: language))
+                if let previous = configuration, previous.source == next.source, previous.target == next.target {
+                    next = previous; next.invalidate()
+                }
+                status = "Translating on-device…"
+                configuration = next
+            #endif
         } catch { /* A navigation may replace the document during a scan. */  }
     }
 }

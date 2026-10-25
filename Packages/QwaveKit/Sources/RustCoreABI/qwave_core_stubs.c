@@ -141,3 +141,34 @@ __attribute__((weak)) const char *qw_channel_notice(uint8_t channel) {
     (void)channel;
     return 0;
 }
+
+/* Optional local model absent: never claim a translated/summarized result. */
+__attribute__((weak)) uint32_t qw_reading_abi_version(void) { return 0; }
+__attribute__((weak)) uint32_t qw_reading_open(const uint8_t *config, size_t len,
+                                              uint64_t *handle) {
+    (void)config; (void)len;
+    if (handle) *handle = 0;
+    return QW_READING_UNAVAILABLE;
+}
+__attribute__((weak)) uint32_t qw_reading_begin(uint64_t handle, uint64_t *generation) {
+    (void)handle;
+    if (generation) *generation = 0;
+    return QW_READING_UNAVAILABLE;
+}
+__attribute__((weak)) uint32_t qw_reading_cancel(uint64_t handle, uint64_t generation) {
+    (void)handle; (void)generation;
+    return QW_READING_UNAVAILABLE;
+}
+__attribute__((weak)) uint32_t qw_reading_close(uint64_t handle) {
+    (void)handle;
+    return QW_READING_UNAVAILABLE;
+}
+__attribute__((weak)) uint32_t qw_reading_run(uint64_t handle, uint64_t generation,
+                                             const uint8_t *input, size_t input_len,
+                                             uint8_t *output, size_t capacity,
+                                             size_t *written) {
+    (void)handle; (void)generation; (void)input; (void)input_len;
+    (void)output; (void)capacity;
+    if (written) *written = 0;
+    return QW_READING_UNAVAILABLE;
+}

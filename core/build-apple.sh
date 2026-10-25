@@ -24,6 +24,44 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export MACOSX_DEPLOYMENT_TARGET=14.0
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
 
+# Optional local-reading builds still produce the SAME sovereign archive.
+# The public default never resolves a private dependency. Selection is explicit
+# per build; separate Cargo output directories prevent equal library names in
+# two manifests from overwriting each other's cached top-level archive.
+CORE_MANIFEST="${PROJECT_DIR}/core/Cargo.toml"
+DEFAULT_TARGET_DIR="${CARGO_TARGET_DIR:-${PROJECT_DIR}/core/target}"
+CORE_TARGET_DIR="$DEFAULT_TARGET_DIR"
+LOCK_ARGS=""
+if [ -n "${QWAVE_LOCAL_READING_MANIFEST:-}" ]; then
+  case "$QWAVE_LOCAL_READING_MANIFEST" in
+    /*/Cargo.toml) ;;
+    *) echo "error: QWAVE_LOCAL_READING_MANIFEST must be an absolute Cargo.toml path" >&2; exit 1 ;;
+  esac
+  if [ "${QWAVE_CHANNEL:-stable}" != "stable" ]; then
+    echo "error: local reading is currently validated only with the stable core" >&2
+    exit 1
+  fi
+  CORE_MANIFEST="$QWAVE_LOCAL_READING_MANIFEST"
+  if [ ! -f "$CORE_MANIFEST" ] || [ ! -f "$(dirname "$CORE_MANIFEST")/Cargo.lock" ]; then
+    echo "error: local reading requires a reviewed manifest and Cargo.lock" >&2
+    exit 1
+  fi
+  CORE_TARGET_DIR="${QWAVE_LOCAL_READING_TARGET_DIR:-${DEFAULT_TARGET_DIR}/local-reading}"
+  case "$CORE_TARGET_DIR" in
+    /*) ;;
+    *) echo "error: QWAVE_LOCAL_READING_TARGET_DIR must be absolute" >&2; exit 1 ;;
+  esac
+  mkdir -p "$DEFAULT_TARGET_DIR" "$CORE_TARGET_DIR"
+  if [ "$(cd "$CORE_TARGET_DIR" && pwd -P)" = "$(cd "$DEFAULT_TARGET_DIR" && pwd -P)" ]; then
+    echo "error: local reading must use a separate Cargo target directory" >&2
+    exit 1
+  fi
+  LOCK_ARGS="--locked"
+elif [ -n "${QWAVE_LOCAL_READING_TARGET_DIR:-}" ]; then
+  echo "error: a local reading target directory requires an explicit manifest" >&2
+  exit 1
+fi
+
 # Nightly links the mem|16-10 sovereign library (AGPL-3.0-only); stable must
 # not — that keeps the shipped binary's MIT posture. A plain string, not an
 # array: this script runs under macOS bash 3.2, where expanding an empty
@@ -93,9 +131,10 @@ done
 
 echo "building qwave-core for ${CARGO_TARGETS[*]}${STUB_ARCHES:+ (stub slices: ${STUB_ARCHES[*]})} (${QWAVE_CHANNEL:-stable} channel, ${PLATFORM_NAME:-macosx})"
 for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
-  cargo build --release $FEATURE_ARGS \
+  cargo build --release $FEATURE_ARGS $LOCK_ARGS \
     --target "$target" \
-    --manifest-path "${PROJECT_DIR}/core/Cargo.toml"
+    --target-dir "$CORE_TARGET_DIR" \
+    --manifest-path "$CORE_MANIFEST"
 done
 
 # Stub slices for targets rustc dropped: a tiny safe-fail staticlib per arch.
@@ -112,7 +151,7 @@ done
 
 LIPO_IN=()
 for target in ${CARGO_TARGETS[@]+"${CARGO_TARGETS[@]}"}; do
-  LIPO_IN+=("${PROJECT_DIR}/core/target/${target}/release/libqwave_core.a")
+  LIPO_IN+=("${CORE_TARGET_DIR}/${target}/release/libqwave_core.a")
 done
 for arch in ${STUB_ARCHES[@]+"${STUB_ARCHES[@]}"}; do
   LIPO_IN+=("${PROJECT_DIR}/core/target/stub-${arch}/libqwave_core.a")
@@ -120,8 +159,13 @@ done
 
 OUT_DIR="${PROJECT_DIR}/core/target/apple/${PLATFORM_NAME:-macosx}"
 mkdir -p "$OUT_DIR"
+# Publish only a complete archive. A failed build must not leave a partial
+# output that a later incremental build might mistake for a usable core.
+TEMP_OUT="$(mktemp "$OUT_DIR/.libqwave_core.XXXXXX")"
+trap 'rm -f "$TEMP_OUT"' EXIT
 if [ "${#LIPO_IN[@]}" -eq 1 ]; then
-  cp "${LIPO_IN[0]}" "$OUT_DIR/libqwave_core.a"
+  cp "${LIPO_IN[0]}" "$TEMP_OUT"
 else
-  xcrun lipo -create "${LIPO_IN[@]}" -output "$OUT_DIR/libqwave_core.a"
+  xcrun lipo -create "${LIPO_IN[@]}" -output "$TEMP_OUT"
 fi
+mv "$TEMP_OUT" "$OUT_DIR/libqwave_core.a"

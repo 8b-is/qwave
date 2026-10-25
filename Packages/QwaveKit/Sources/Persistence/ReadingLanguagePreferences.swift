@@ -7,7 +7,7 @@ public final class ReadingLanguagePreferences {
     private let defaults: UserDefaults
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
     public var language: String {
-        get { defaults.string(forKey: "reading.language") ?? Locale.preferredLanguages.first ?? "en" }
+        get { defaults.string(forKey: "reading.language") ?? "en" }
         set { defaults.set(newValue, forKey: "reading.language") }
     }
     public var automatic: Bool {
