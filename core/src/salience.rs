@@ -1170,15 +1170,20 @@ pub fn is_hey_aye_wake_phrase(text: &str) -> bool {
         return true;
     }
 
-    // 3. Two-word phonetic wake pairs ("Hey Aye" -> "hey i", "hey a", "hey eye", "hey ai", "hey hi", "hey ay", "hey there", "hi i")
+    // 3. Two-word phonetic wake pairs ("Hey Aye" -> "hey i", "hey a", "hey eye", "hey ai", "hey hi", "where i")
     for pair in words.windows(2) {
         let w0 = pair[0].as_str();
         let w1 = pair[1].as_str();
         if matches!(w0, "hey" | "hi" | "hello" | "yo" | "ok" | "okay" | "oi")
             && matches!(
                 w1,
-                "aye" | "i" | "eye" | "ai" | "a" | "hi" | "high" | "ay" | "eh" | "there"
+                "aye" | "i" | "eye" | "ai" | "a" | "hi" | "high" | "ay" | "eh" | "there" | "whats" | "what"
             )
+        {
+            return true;
+        }
+        if matches!(w0, "where" | "there" | "way" | "they")
+            && matches!(w1, "aye" | "i" | "eye" | "ai")
         {
             return true;
         }
