@@ -837,6 +837,8 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                         if !cleaned.is_empty() {
                             return Some((cleaned, "whisper-cli (ggml-base.en + Hey Aye prompt)"));
                         }
+                        // Whisper succeeded and determined the clip contained no speech
+                        return None;
                     }
                 }
             }
