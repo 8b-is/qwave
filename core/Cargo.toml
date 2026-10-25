@@ -10,6 +10,22 @@ repository = "https://github.com/8b-is/qwave"
 name = "qwave_core"
 crate-type = ["staticlib", "rlib"]
 
+[[bin]]
+name = "qwave"
+path = "src/bin/qwave.rs"
+
+[[bin]]
+name = "qwave-agg"
+path = "src/bin/qwave-agg.rs"
+
+[[bin]]
+name = "qwave-inspect"
+path = "src/bin/qwave-inspect.rs"
+
+[[bin]]
+name = "qwave-hypr-hud"
+path = "src/bin/qwave-hypr-hud.rs"
+
 [features]
 default = []
 # Everything ON: the nightly channel links the mem|16-10 sovereign library
