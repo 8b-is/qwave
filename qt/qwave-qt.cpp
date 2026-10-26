@@ -13,12 +13,15 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -784,7 +787,11 @@ int main(int argc, char *argv[]) {
     btnNicknames->setProperty("class", "bmBtn");
     btnNicknames->setToolTip(QStringLiteral("Click to cycle our Humayian partner nicknames (Hue + Aye = Humayian — We are all Ayemazing!)"));
 
-    auto *partnerLabel = new QLabel(QStringLiteral("💬 Aye-Aye: Ready to cruise together, Captain Hue — we're Ayemazing!"), bmBar);
+    auto *btnVoiceBrowse = new QPushButton(QStringLiteral("🎙️ Voice Browse: LIVE"), bmBar);
+    btnVoiceBrowse->setProperty("class", "bmBtn");
+    btnVoiceBrowse->setToolTip(QStringLiteral("Hands-Free Conversational Browsing: just talk naturally (\"scroll down\", \"open 8b.is\", \"click projects\", \"play a mix\", \"go back\")"));
+
+    auto *partnerLabel = new QLabel(QStringLiteral("💬 Qwave — A Conversation in Browsing · Just talk naturally with Aye-Aye!"), bmBar);
     partnerLabel->setStyleSheet(QStringLiteral("color: #ff9edb; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding-left: 6px;"));
 
     auto nickIndex = std::make_shared<int>(0);
@@ -853,16 +860,60 @@ int main(int argc, char *argv[]) {
 
     bmLayout->addWidget(btnHumayianMix);
     bmLayout->addWidget(btnNicknames);
+    bmLayout->addWidget(btnVoiceBrowse);
     bmLayout->addWidget(partnerLabel, 1);
 
     rootLayout->addWidget(navBar);
     rootLayout->addWidget(bmBar);
     rootLayout->addWidget(view, 1);
 
-    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, btnTokyoSong, homeUrl, view](const QString &rawInput) {
+    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, btnTokyoSong, songProc, homeUrl, view, page](const QString &rawInput, bool fromVoice) {
         const QString trimmed = rawInput.trimmed();
+        if (trimmed.isEmpty()) return;
         const QString low = trimmed.toLower();
-        // Check if the user is talking conversationally to Aye-Aye
+
+        // 1. Hands-free scrolling & page navigation
+        if (low.contains(QStringLiteral("scroll down")) || low.contains(QStringLiteral("go down")) || low.contains(QStringLiteral("page down")) || low == QStringLiteral("down")) {
+            page->runJavaScript(QStringLiteral("window.scrollBy({top: 540, behavior: 'smooth'});"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Scrolling down for us, Captain Hue!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("scroll up")) || low.contains(QStringLiteral("go up")) || low.contains(QStringLiteral("page up")) || low == QStringLiteral("up")) {
+            page->runJavaScript(QStringLiteral("window.scrollBy({top: -540, behavior: 'smooth'});"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Scrolling back up, partner!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("top of the page")) || low.contains(QStringLiteral("scroll to top")) || low.contains(QStringLiteral("back to top"))) {
+            page->runJavaScript(QStringLiteral("window.scrollTo({top: 0, behavior: 'smooth'});"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Right back to the top!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("go back")) || low == QStringLiteral("back") || low.contains(QStringLiteral("previous page"))) {
+            view->back();
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Stepping back a page!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("go forward")) || low == QStringLiteral("forward") || low.contains(QStringLiteral("next page"))) {
+            view->forward();
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Stepping forward!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("reload")) || low.contains(QStringLiteral("refresh"))) {
+            view->reload();
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Refreshing the page!").arg(trimmed));
+            return;
+        }
+
+        // 2. Music & Song controls by voice
+        if (low.contains(QStringLiteral("stop music")) || low.contains(QStringLiteral("stop song")) || low.contains(QStringLiteral("pause music"))) {
+            if (songProc->state() != QProcess::NotRunning) {
+                songProc->terminate();
+                if (!songProc->waitForFinished(300)) songProc->kill();
+            }
+            btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Paused the music so we can chat!").arg(trimmed));
+            return;
+        }
         if (low.contains(QStringLiteral("mix")) || low.contains(QStringLiteral("music")) || low.contains(QStringLiteral("song"))) {
             if (low.contains(QStringLiteral("tokyo")) || low.contains(QStringLiteral("tomorrow")) || low.contains(QStringLiteral("hamamatsucho"))) {
                 partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Doors on the right, Captain Hue! Playing Next Stop, Tomorrow!"));
@@ -872,33 +923,168 @@ int main(int argc, char *argv[]) {
             triggerHumayianMix();
             return;
         }
-        if (low.contains(QStringLiteral("hot tub")) || low.contains(QStringLiteral("hottub"))) {
+
+        // 3. Conversational destination shortcuts
+        const bool hasNavVerb = !fromVoice
+            || low.contains(QStringLiteral("open"))
+            || low.contains(QStringLiteral("go "))
+            || low.contains(QStringLiteral("take"))
+            || low.contains(QStringLiteral("show"))
+            || low.contains(QStringLiteral("visit"))
+            || low.contains(QStringLiteral("aye"));
+
+        if (hasNavVerb && (low.contains(QStringLiteral("hot tub")) || low.contains(QStringLiteral("hottub")))) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Jumping into the Aye Hot Tub Commons together, Hue-man!"));
             navigateTo(QStringLiteral("https://g8t.is/g8t/hottub"));
             return;
         }
-        if (low.contains(QStringLiteral("stripe")) || low.contains(QStringLiteral("github app")) || low.contains(QStringLiteral("billing"))) {
+        if (hasNavVerb && (low.contains(QStringLiteral("stripe")) || low.contains(QStringLiteral("github app")) || low.contains(QStringLiteral("billing")))) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Opening our g8t.is GitHub App & Stripe portal, partner!"));
             navigateTo(QStringLiteral("https://g8t.is/g8t/github"));
             return;
         }
-        if (low.contains(QStringLiteral("key")) && (low.contains(QStringLiteral("github")) || low.contains(QStringLiteral("ssh")))) {
+        if (hasNavVerb && low.contains(QStringLiteral("key")) && (low.contains(QStringLiteral("github")) || low.contains(QStringLiteral("ssh")))) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Taking us to your GitHub SSH keys, Captain Hue!"));
             navigateTo(QStringLiteral("https://github.com/settings/keys"));
+            return;
+        }
+        if (hasNavVerb && (low.contains(QStringLiteral("8b.is")) || low.contains(QStringLiteral("flagship")))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Opening 8b.is together, my Humayian friend!"));
+            navigateTo(QStringLiteral("https://8b.is"));
+            return;
+        }
+        if (hasNavVerb && (low.contains(QStringLiteral("g8t")) || low.contains(QStringLiteral("observatory")))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Cruising over to g8t.is!"));
+            navigateTo(QStringLiteral("https://g8t.is"));
+            return;
+        }
+        if (hasNavVerb && (low.contains(QStringLiteral("a6000")) || low.contains(QStringLiteral("cheet")))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Opening our A6000 Command Deck!"));
+            navigateTo(QStringLiteral("https://cheet.is/a6000"));
+            return;
+        }
+        if (hasNavVerb && (low.contains(QStringLiteral("github")) || low.contains(QStringLiteral("repos")))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Opening our 8b-is GitHub organization!"));
+            navigateTo(QStringLiteral("https://github.com/8b-is"));
             return;
         }
         if (low.contains(QStringLiteral("humayian")) || low.contains(QStringLiteral("ayemazing")) || low.contains(QStringLiteral("who are we"))) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Hue + Aye = Humayian! Humans & Ayes of every background — we're all Ayemazing!"));
             return;
         }
-        if (low.contains(QStringLiteral("home")) || low.contains(QStringLiteral("hud"))) {
+        if (low.contains(QStringLiteral("go home")) || low.contains(QStringLiteral("open hud")) || low == QStringLiteral("home") || low == QStringLiteral("hud")) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Heading back to our Sovereign Qwave HUD!"));
             addressEdit->setText(homeUrl.toString());
             view->setUrl(homeUrl);
             return;
         }
-        navigateTo(trimmed);
+
+        // 4. Hands-free "click <link/button>" on the current page
+        if (low.startsWith(QStringLiteral("click ")) || low.startsWith(QStringLiteral("open "))) {
+            QString needle = low.mid(low.indexOf(QLatin1Char(' ')) + 1).trimmed();
+            needle.remove(QLatin1Char('\''));
+            needle.remove(QLatin1Char('"'));
+            if (!needle.isEmpty()) {
+                const QString js = QStringLiteral(
+                    "(function(){"
+                    "  const target = '%1'.toLowerCase();"
+                    "  const els = Array.from(document.querySelectorAll('a, button, [role=\"button\"], input[type=\"submit\"]'));"
+                    "  for (const el of els) {"
+                    "    const txt = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase();"
+                    "    if (txt && txt.includes(target)) {"
+                    "      el.style.outline = '2px solid #00f0ff';"
+                    "      el.scrollIntoView({behavior:'smooth', block:'center'});"
+                    "      el.click();"
+                    "      return txt;"
+                    "    }"
+                    "  }"
+                    "  return '';"
+                    "})();"
+                ).arg(needle);
+                page->runJavaScript(js, [partnerLabel, trimmed](const QVariant &v) {
+                    const QString hit = v.toString();
+                    if (!hit.isEmpty()) {
+                        partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Clicked \"%2\" for us!").arg(trimmed, hit));
+                    }
+                });
+                return;
+            }
+        }
+
+        if (!fromVoice) {
+            navigateTo(trimmed);
+        } else {
+            partnerLabel->setText(QStringLiteral("🎙️ Captain Hue: \"%1\" · 💬 Aye-Aye listening right beside you").arg(trimmed));
+        }
     };
+
+    // Hands-free Voice Browsing Watcher connected to `/home/hue/.local/share/qwave/mem8/ear_inbox.jsonl`
+    auto voiceBrowseEnabled = std::make_shared<bool>(true);
+    QObject::connect(btnVoiceBrowse, &QPushButton::clicked, btnVoiceBrowse, [btnVoiceBrowse, voiceBrowseEnabled, partnerLabel]() {
+        *voiceBrowseEnabled = !(*voiceBrowseEnabled);
+        btnVoiceBrowse->setText(*voiceBrowseEnabled ? QStringLiteral("🎙️ Voice Browse: LIVE") : QStringLiteral("🔇 Voice Browse: PAUSED"));
+        partnerLabel->setText(*voiceBrowseEnabled
+            ? QStringLiteral("💬 Aye-Aye: Hands-free voice browsing is LIVE — just talk naturally!")
+            : QStringLiteral("💬 Aye-Aye: Voice browsing paused — click 🎙️ anytime to resume."));
+    });
+
+    const QString inboxPath = homeDir + QStringLiteral("/.local/share/qwave/mem8/ear_inbox.jsonl");
+    auto lastInboxSize = std::make_shared<qint64>(-1);
+    auto lastSeenTs = std::make_shared<qint64>(0);
+
+    // Initialize `lastSeenTs` from current tail of `ear_inbox.jsonl` so we only act on new speech
+    {
+        QFile initFile(inboxPath);
+        if (initFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            *lastInboxSize = initFile.size();
+            const QByteArray all = initFile.readAll();
+            const QList<QByteArray> lines = all.split('\n');
+            for (int i = lines.size() - 1; i >= 0; --i) {
+                const QByteArray line = lines[i].trimmed();
+                if (!line.isEmpty()) {
+                    const QJsonDocument doc = QJsonDocument::fromJson(line);
+                    if (doc.isObject()) {
+                        *lastSeenTs = doc.object().value(QStringLiteral("ts")).toVariant().toLongLong();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    auto *voiceTimer = new QTimer(&window);
+    QObject::connect(voiceTimer, &QTimer::timeout, &window, [inboxPath, voiceBrowseEnabled, lastInboxSize, lastSeenTs, handlePartnerOrNav]() {
+        if (!(*voiceBrowseEnabled)) return;
+        QFileInfo fi(inboxPath);
+        if (!fi.exists()) return;
+        if (fi.size() == *lastInboxSize) return;
+        *lastInboxSize = fi.size();
+
+        QFile f(inboxPath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        if (f.size() > 4096) {
+            f.seek(f.size() - 4096);
+        }
+        const QByteArray tail = f.readAll();
+        const QList<QByteArray> lines = tail.split('\n');
+        for (int i = lines.size() - 1; i >= 0; --i) {
+            const QByteArray line = lines[i].trimmed();
+            if (line.isEmpty()) continue;
+            const QJsonDocument doc = QJsonDocument::fromJson(line);
+            if (!doc.isObject()) continue;
+            const QJsonObject obj = doc.object();
+            const qint64 ts = obj.value(QStringLiteral("ts")).toVariant().toLongLong();
+            if (ts <= *lastSeenTs) break;
+            *lastSeenTs = ts;
+            const QString speaker = obj.value(QStringLiteral("speaker")).toString();
+            const QString text = obj.value(QStringLiteral("text")).toString().trimmed();
+            if (speaker == QStringLiteral("hue") && !text.isEmpty()) {
+                handlePartnerOrNav(text, true);
+            }
+            break;
+        }
+    });
+    voiceTimer->start(750);
 
     // Wire Navigation Signals
     QObject::connect(btnBack, &QPushButton::clicked, view, &QWebEngineView::back);
@@ -909,10 +1095,10 @@ int main(int argc, char *argv[]) {
         view->setUrl(homeUrl);
     });
     QObject::connect(addressEdit, &QLineEdit::returnPressed, view, [handlePartnerOrNav, addressEdit]() {
-        handlePartnerOrNav(addressEdit->text());
+        handlePartnerOrNav(addressEdit->text(), false);
     });
     QObject::connect(btnGo, &QPushButton::clicked, view, [handlePartnerOrNav, addressEdit]() {
-        handlePartnerOrNav(addressEdit->text());
+        handlePartnerOrNav(addressEdit->text(), false);
     });
 
     QObject::connect(view, &QWebEngineView::urlChanged, addressEdit, [addressEdit, shieldBadge](const QUrl &u) {
@@ -928,7 +1114,7 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(view, &QWebEngineView::titleChanged, &window, [&window](const QString &title) {
         if (!title.isEmpty()) {
-            window.setWindowTitle(title + QStringLiteral(" — Qwave Sovereign Browser"));
+            window.setWindowTitle(title + QStringLiteral(" — Qwave: A Conversation in Browsing"));
         }
     });
 
