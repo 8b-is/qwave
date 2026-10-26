@@ -1087,7 +1087,13 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     md.push_str("| **`SUPER + M`** | Toggle Ear | Arm / pause `qwave-ear.service` with spoken confirmation |\n");
     md.push_str("| **`SUPER + D`** | Graphical Qwave Markdown HUD | `qwave-hypr-hud markdown-hud` (WebGL `WaveScene` + Live SSE Reload) |\n");
     md.push_str("| **`SUPER + W`** / **`SUPER + Shift + W`** | Wi-Fi Switcher & Auto-Healer | `qwave-hypr-hud wifi-menu` / `wifi-tui` (Zero-Rescan MTU `1380`) |\n");
-    md.push_str("| **`SUPER + I`** / **`SUPER + Shift + Return`** | Resume Sovereign `agy` Studio | `qwave-hypr-hud agy-resume` (All Permissions · Zero Sandbox · Resumed) |\n");
+    md.push_str("| **`SUPER + I`** / **`SUPER + Shift + Return`** | Resume Sovereign `agy` Studio | `qwave-hypr-hud agy-resume` (All Permissions · Zero Sandbox · Resumed) |\n\n");
+
+    // Tokyo Theme Song Section
+    md.push_str("## 5) 🚆 Tokyo Theme Song — \"Next Stop, Tomorrow!\" (`8bit_wraith × 8b-is`)\n\n");
+    md.push_str("> **まもなく浜松町、浜松町。京浜東北線、JR、東京モノレールはお乗り換えです。お出口は右側です。**  \n");
+    md.push_str("> *\"A thousand faces, a thousand dreams, Tokyo rolls by in silver streams... We don't know where the tracks will bend, but every journey needs a friend. Next stop, tomorrow, here we go! まもなく、未来へ！ And if the tracks don't lead us there, we'll build another, with room to spare.\"*\n");
+    md.push_str("> — Click **`🚆 Tokyo Song`** in the top toolbar (or select **`🔥 Tokyo Phoenix Lattice`** in **`🎨 Page Style`**) to play [`music/next-stop-tomorrow.mp3`](file:///home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3)!\n");
 
     sanitize_no_float(&md)
 }

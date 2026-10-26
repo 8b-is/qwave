@@ -15,6 +15,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
@@ -22,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QProcess>
 #include <QPushButton>
 #include <QShortcut>
 #include <QTimer>
@@ -742,6 +744,35 @@ int main(int argc, char *argv[]) {
         }
     });
     bmLayout->addWidget(btnCopySsh);
+
+    auto *btnTokyoSong = new QPushButton(QStringLiteral("🚆 Tokyo Song"), bmBar);
+    btnTokyoSong->setProperty("class", "bmBtn");
+    btnTokyoSong->setToolTip(QStringLiteral("Play/Stop Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町 · 8bit_wraith)"));
+    auto *songProc = new QProcess(&window);
+    QObject::connect(songProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), btnTokyoSong, [btnTokyoSong](int, QProcess::ExitStatus) {
+        btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+    });
+    QObject::connect(btnTokyoSong, &QPushButton::clicked, btnTokyoSong, [btnTokyoSong, songProc, page]() {
+        if (songProc->state() != QProcess::NotRunning) {
+            songProc->terminate();
+            if (!songProc->waitForFinished(400)) {
+                songProc->kill();
+            }
+            btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+            return;
+        }
+        // Also open the lyrics drawer if currently viewing the local Qwave HUD
+        page->runJavaScript(QStringLiteral(
+            "(function(){ const d=document.getElementById('tokyo-song-drawer'); if(d) d.classList.add('open'); })();"
+        ));
+        QString mp3Path = QStringLiteral("/home/hue/.local/share/qwave/music/next-stop-tomorrow.mp3");
+        if (!QFileInfo::exists(mp3Path)) {
+            mp3Path = QStringLiteral("/home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3");
+        }
+        songProc->start(QStringLiteral("ffplay"), {QStringLiteral("-nodisp"), QStringLiteral("-autoexit"), QStringLiteral("-loglevel"), QStringLiteral("quiet"), mp3Path});
+        btnTokyoSong->setText(QStringLiteral("⏸️ Stop Song"));
+    });
+    bmLayout->addWidget(btnTokyoSong);
     bmLayout->addStretch(1);
 
     rootLayout->addWidget(navBar);

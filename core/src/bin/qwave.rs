@@ -640,6 +640,20 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         ("GET", "/runtime/fonts/KaTeX_Size2-Regular.woff2") => {
             send_response(&mut stream, "200 OK", "font/woff2", FONT_SIZE2_REGULAR)
         }
+        ("GET", "/music/next-stop-tomorrow.mp3") | ("GET", "/api/tokyo-theme.mp3") => {
+            let candidates = [
+                "/home/hue/.local/share/qwave/music/next-stop-tomorrow.mp3",
+                "/home/hue/8b-is/qwave/music/next-stop-tomorrow.mp3",
+                "/home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3",
+                "/home/hue/Downloads/Next Stop, Tomorrow!.mp3",
+            ];
+            for cand in candidates {
+                if let Ok(bytes) = fs::read(cand) {
+                    return send_response(&mut stream, "200 OK", "audio/mpeg", &bytes);
+                }
+            }
+            send_response(&mut stream, "404 Not Found", "text/plain", b"Tokyo theme not found")
+        }
         ("GET", "/asset") => {
             let Some(asset_path) = get_query_param(query, "path") else {
                 return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
@@ -1958,6 +1972,38 @@ fn render_full_page(
         <button type="button" class="escape-btn" data-remember="selection" title="Crystallize selection into MEM|8">✨ Remember Selection</button>
         <button type="button" class="escape-btn" id="btn-wide" title="Cycle reader width">📐 Width</button>
         <button type="button" class="escape-btn" id="btn-shader" title="Pause/Resume WebGL Wave">🌌 Wave</button>
+        <button type="button" class="escape-btn btn-alexiai" id="btn-tokyo-song" title="Play/Pause Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町)">🚆 Tokyo Song</button>
+      </div>
+
+      <!-- Tokyo Theme Song Drawer: Next Stop, Tomorrow! (まもなく浜松町) -->
+      <div class="style-studio-drawer" id="tokyo-song-drawer" style="border-color: rgba(255, 123, 57, 0.45); background: linear-gradient(135deg, rgba(20, 8, 12, 0.92), rgba(4, 18, 28, 0.92));">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:10px;">
+          <div>
+            <div style="font-family:ui-monospace,monospace; font-weight:800; font-size:0.86rem; color:#ff9edb; letter-spacing:1px;">
+              🚆 TOKYO THEME SONG · &quot;NEXT STOP, TOMORROW!&quot; — 8bit_wraith × 8b-is
+            </div>
+            <div style="font-size:0.78rem; color:#dffcff; margin-top:2px;">
+              まもなく浜松町 · 京浜東北線 · JR · 東京モノレールはお乗り換えです · お出口は右側です · まもなく、未来へ！
+            </div>
+          </div>
+          <audio id="tokyo-theme-audio" src="/music/next-stop-tomorrow.mp3" preload="none" controls style="height:34px; min-width:280px;"></audio>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; font-size:0.80rem; line-height:1.55; color:#f5ebd6; background:rgba(0,0,0,0.38); padding:12px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.1);">
+          <div>
+            <strong style="color:#6ef7f7;">[Station Announcer &amp; Verse 1]</strong><br>
+            まもなく浜松町、浜松町。京浜東北線、JR、東京モノレールはお乗り換えです。お出口は右側です。<br><br>
+            A thousand faces, a thousand dreams, Tokyo rolls by in silver streams.<br>
+            Some ride together, some ride alone, every little heart is heading home.<br>
+            We don&#39;t know where the tracks will bend, but every journey needs a friend.
+          </div>
+          <div>
+            <strong style="color:#ff9edb;">[Chorus &amp; Finale]</strong><br>
+            Next stop, tomorrow, here we go! Through the city lights and the morning glow.<br>
+            Doors on the right, let the sunshine through, there&#39;s a little more room for me and you.<br>
+            <strong>まもなく、未来へ！</strong> Hold on to the dreams we share, and leave a little kindness everywhere.<br><br>
+            And if the tracks don&#39;t lead us there, we&#39;ll build another, with room to spare.
+          </div>
+        </div>
       </div>
 
       <!-- Webpage Style Studio Drawer -->
@@ -2230,6 +2276,31 @@ fn render_full_page(
       document.getElementById('style-drawer')?.classList.toggle('open');
     }});
 
+    const tokyoDrawer = document.getElementById('tokyo-song-drawer');
+    const tokyoAudio = document.getElementById('tokyo-theme-audio');
+    const tokyoBtn = document.getElementById('btn-tokyo-song');
+    function toggleTokyoSong(forcePlay) {{
+      if (!tokyoDrawer || !tokyoAudio) return;
+      if (forcePlay) {{
+        tokyoDrawer.classList.add('open');
+        tokyoAudio.play().catch(function () {{}});
+        if (tokyoBtn) tokyoBtn.textContent = '⏸️ Tokyo Song';
+        return;
+      }}
+      const isOpen = tokyoDrawer.classList.toggle('open');
+      if (isOpen && tokyoAudio.paused) {{
+        tokyoAudio.play().catch(function () {{}});
+        if (tokyoBtn) tokyoBtn.textContent = '⏸️ Tokyo Song';
+      }} else if (!isOpen && !tokyoAudio.paused) {{
+        tokyoAudio.pause();
+        if (tokyoBtn) tokyoBtn.textContent = '🚆 Tokyo Song';
+      }}
+    }}
+    tokyoBtn?.addEventListener('click', function () {{ toggleTokyoSong(false); }});
+    tokyoAudio?.addEventListener('ended', function () {{
+      if (tokyoBtn) tokyoBtn.textContent = '🚆 Tokyo Song';
+    }});
+
     document.querySelectorAll('[data-style-preset]').forEach(function (chip) {{
       chip.addEventListener('click', function () {{
         const preset = chip.getAttribute('data-style-preset');
@@ -2237,7 +2308,12 @@ fn render_full_page(
           method: 'POST',
           headers: {{'Content-Type': 'application/json'}},
           body: JSON.stringify({{ preset: preset, prompt: '' }})
-        }}).then(r => r.json()).then(applyStyleConfig);
+        }}).then(r => r.json()).then(function (cfg) {{
+          applyStyleConfig(cfg);
+          if (preset === 'phoenix-lattice') {{
+            toggleTokyoSong(true);
+          }}
+        }});
       }});
     }});
 
