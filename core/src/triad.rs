@@ -169,8 +169,8 @@ pub fn analyze_chirp_echogram_i16(
             speed_of_sound_mm_s: c_mm_s,
             temp_deci_c,
             humidity_pct,
-            direct_tof_us: 2400,
-            direct_distance_cm: 83,
+            direct_tof_us: 290,
+            direct_distance_cm: 10,
             chirp_azimuth_deg: stereo_tri.azimuth_deg,
             first_wall_echo_lag_us: 4200,
             first_wall_path_cm: 228,
@@ -300,7 +300,7 @@ pub fn analyze_chirp_echogram_i16(
     };
 
     // Convert bins (1ms = 1000us) & stereo ILD/clarity into physical distances (cm)
-    let direct_distance_cm = stereo_tri.distance_cm.clamp(25, 320);
+    let direct_distance_cm = stereo_tri.distance_cm.clamp(8, 320);
     // T_direct (us) = (dist_cm * 10_000_000) / c_mm_s
     let direct_tof_us = ((direct_distance_cm as u64 * 10_000_000) / (c_mm_s as u64)) as u32;
 

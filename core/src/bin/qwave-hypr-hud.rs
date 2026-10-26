@@ -26,8 +26,8 @@ use qwave_core::salience::{
 /// C64 `64 KB` (`65_536` bytes) ring-buffer ceiling for all file tail reads.
 pub const C64_RING_BYTES: usize = 65_536;
 
-/// Number of recent room utterances retained in the live TUI ring buffer.
-pub const ROOM_THOUGHT_RING_CAP: usize = 12;
+/// Number of recent room utterances retained in the live TUI & Markdown HUD ring buffer.
+pub const ROOM_THOUGHT_RING_CAP: usize = 15;
 
 /// Parsed utterance / vocal wave entry in the room thoughts ring buffer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub struct RoomThoughtEntry {
     pub spatial_zone: String,
     pub salience_pct: i32,
     pub salience_pq: Rational,
+    pub grains_learned: u64,
     pub vad_byte: u8,
     pub text: String,
 }
@@ -59,6 +60,7 @@ impl Default for RoomThoughtEntry {
             spatial_zone: "center_keyboard".to_string(),
             salience_pct: 90,
             salience_pq: Rational::new(9, 10).unwrap_or(Rational::ONE),
+            grains_learned: 0,
             vad_byte: 0x62,
             text: "Sovereign studio standing by".to_string(),
         }
@@ -101,7 +103,11 @@ fn main() {
     match subcmd {
         "waybar" => {
             let snap = collect_hud_snapshot();
+            let _ = write_graphical_markdown_hud_from_snap(&snap);
             println!("{}", render_waybar_json(&snap));
+        }
+        "markdown-hud" => {
+            println!("{}", run_markdown_hud(rest));
         }
         "status-tui" => run_status_tui(rest),
         "voice-type" => {
@@ -146,6 +152,7 @@ fn print_usage() {
         "qwave-hypr-hud — Sovereign 8b-is x Qwave x ALEXIAI Hyprland HUD (100% Pure Rust, Zero-Float)\n\
          Usage:\n\
          \x20 qwave-hypr-hud waybar                Single-line Waybar JSON with ternary stack badges\n\
+         \x20 qwave-hypr-hud markdown-hud          Launch/refresh graphical browser Qwave Markdown Studio HUD\n\
          \x20 qwave-hypr-hud status-tui [--once]   Live 500ms ANSI Collaboration Radar HUD\n\
          \x20 qwave-hypr-hud voice-type            Record via qwave -> liquid-rust -> wl-copy + wtype\n\
          \x20 qwave-hypr-hud ask-aye               Voice prompt -> loopback alexiai -> qwave --speak\n\
@@ -340,6 +347,11 @@ pub fn parse_jsonl_entry(line: &str) -> Option<RoomThoughtEntry> {
         Rational::new(85, 100).unwrap_or(Rational::ONE)
     };
     let salience_pct = rational_to_pct(salience_pq);
+    let grains_learned = extract_json_i64(trimmed, "speaker_grains_learned")
+        .or_else(|| extract_json_i64(trimmed, "total_grains_learned"))
+        .or_else(|| extract_json_i64(trimmed, "grains_learned"))
+        .unwrap_or(0)
+        .max(0) as u64;
     let vad_byte = extract_json_str(trimmed, "vad_byte")
         .map(|s| parse_vad_hex(&s))
         .unwrap_or(0x62);
@@ -365,6 +377,7 @@ pub fn parse_jsonl_entry(line: &str) -> Option<RoomThoughtEntry> {
         spatial_zone: sanitize_no_float(&spatial_zone),
         salience_pct,
         salience_pq,
+        grains_learned,
         vad_byte,
         text,
     })
@@ -593,12 +606,26 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
         .map(|w| w.salience_pq)
         .unwrap_or(latest_utt.salience_pq);
 
-    let mut grains_learned = profile.grains_learned;
+    let mut hue_grains = profile.grains_learned;
+    let mut active_spk_grains = latest_utt.grains_learned;
     if let Ok(room_json) = fs::read_to_string(&room_path) {
         if let Some(g) = extract_json_i64(&room_json, "hue_grains_learned") {
-            grains_learned = grains_learned.max(g.max(0) as u64);
+            hue_grains = hue_grains.max(g.max(0) as u64);
+        }
+        if active_spk_grains == 0 {
+            if let Some(sg) = extract_json_i64(&room_json, "speaker_grains_learned") {
+                active_spk_grains = sg.max(0) as u64;
+            }
         }
     }
+    let grains_learned = if latest_utt.speaker != "hue"
+        && latest_utt.speaker != "ambient_noise"
+        && active_spk_grains > 0
+    {
+        active_spk_grains
+    } else {
+        hue_grains.max(active_spk_grains)
+    };
 
     let salience_pq = if latest_utt.salience_pct > 0 {
         latest_utt.salience_pq
@@ -833,17 +860,354 @@ fn run_status_tui(args: &[String]) {
     let once = args.iter().any(|a| a == "--once" || a == "-1");
     if once {
         let snap = collect_hud_snapshot();
+        let _ = write_graphical_markdown_hud_from_snap(&snap);
         println!("{}", render_status_tui_frame(&snap));
         return;
     }
 
     loop {
         let snap = collect_hud_snapshot();
+        let _ = write_graphical_markdown_hud_from_snap(&snap);
         print!("\x1b[2J\x1b[H{}", render_status_tui_frame(&snap));
         let _ = io::stdout().flush();
         thread::sleep(Duration::from_millis(500));
     }
 }
+
+/// Path to the live graphical browser-based Qwave Markdown Studio HUD file.
+pub fn graphical_markdown_hud_path() -> PathBuf {
+    qwave_base_dir().join("sovereign-qwave-hud.md")
+}
+
+/// Render a rich, Zero-Float Markdown HUD document for `qwave sovereign-qwave-hud.md`
+/// with WebGL `WaveScene` shader, Mermaid spatial triangulation & room diarization diagram,
+/// diarized room speakers table, live 64KB C64 Ring Buffer thoughts, and hotkey legend.
+pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
+    let mut md = String::with_capacity(8192);
+    let sign = if snap.azimuth_deg >= 0 { "+" } else { "" };
+
+    // Summarize latest measured stats per diarized speaker ("hue", "alex", "trisha", "friend_1", "friend_2")
+    let find_speaker_stats = |name: &str, default_f0: i32, default_dist: i32, default_az: i32| {
+        if let Some(entry) = snap.thoughts.iter().rev().find(|e| e.speaker == name) {
+            let g = if name == "hue" {
+                snap.grains_learned.max(entry.grains_learned)
+            } else {
+                entry.grains_learned.max(1)
+            };
+            (
+                entry.f0_hz,
+                entry.azimuth_deg,
+                entry.distance_cm,
+                entry.salience_pct,
+                g,
+                "ACTIVE",
+            )
+        } else if name == "hue" {
+            let prof_f0 =
+                (snap.profile_f0_pq.num / (snap.profile_f0_pq.den.max(1) as i32)).clamp(90, 178);
+            (
+                prof_f0,
+                0,
+                20,
+                snap.salience_pct.max(85),
+                snap.grains_learned,
+                "ENROLLED",
+            )
+        } else {
+            (default_f0, default_az, default_dist, 0, 0, "STANDBY")
+        }
+    };
+
+    let (hue_f0, hue_az, hue_dist, hue_sal, hue_g, hue_st) =
+        find_speaker_stats("hue", 154, 20, 0);
+    let (alex_f0, alex_az, alex_dist, alex_sal, alex_g, alex_st) =
+        find_speaker_stats("alex", 196, 22, 4);
+    let (trisha_f0, trisha_az, trisha_dist, trisha_sal, trisha_g, trisha_st) =
+        find_speaker_stats("trisha", 242, 35, -12);
+    let (pete_f0, pete_az, pete_dist, pete_sal, pete_g, pete_st) =
+        find_speaker_stats("pete", 130, 45, 15);
+
+    let hue_az_sign = if hue_az >= 0 { "+" } else { "" };
+    let alex_az_sign = if alex_az >= 0 { "+" } else { "" };
+    let trisha_az_sign = if trisha_az >= 0 { "+" } else { "" };
+    let pete_az_sign = if pete_az >= 0 { "+" } else { "" };
+
+    // Read Closed-Loop OTA Self-Calibration state (`~/.local/share/qwave/self_calibration.json`)
+    let cal_raw = fs::read_to_string(qwave_base_dir().join("self_calibration.json")).unwrap_or_default();
+    let cal_utts = extract_json_i64(&cal_raw, "total_self_utterances").unwrap_or(0).max(0) as u64;
+    let cal_pq = extract_json_str(&cal_raw, "word_match_pq").unwrap_or_else(|| "1/1".to_string());
+    let cal_cum_pq =
+        extract_json_str(&cal_raw, "cumulative_word_match_pq").unwrap_or_else(|| "1/1".to_string());
+    let cal_scale_q10 = extract_json_i64(&cal_raw, "distance_scale_q10").unwrap_or(1024).clamp(512, 2048);
+    let cal_az_off = extract_json_i64(&cal_raw, "azimuth_offset_deg").unwrap_or(0);
+    let cal_preroll = extract_json_i64(&cal_raw, "preroll_bonus_frames").unwrap_or(0).max(0);
+    let cal_hangover = extract_json_i64(&cal_raw, "hangover_bonus_frames").unwrap_or(0).max(0);
+    let cal_corr = extract_json_str(&cal_raw, "learned_corrections_flat")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "sleep->speak;bottom cousin->bottom button".to_string());
+    let cal_exp = extract_json_str(&cal_raw, "last_expected_text")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Armed at 10 cm open-lid bezel reference".to_string())
+        .replace('|', "/");
+    let cal_hrd = extract_json_str(&cal_raw, "last_heard_text")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Listening for next spoken reply".to_string())
+        .replace('|', "/");
+
+    md.push_str("# ⚡ Sovereign `8b-is` × `Qwave` × `ALEXIAI` Studio HUD\n\n");
+    md.push_str(&format!(
+        "> [!NOTE]\n\
+         > **Stack Health (Balanced Ternary `[-, 0, +]`)**: `EAR[{}]` · `LIQUID-RUST :8786[{}]` · `ALEXIAI :8787[{}]` · `ESP32-S3 VAK:MEDUSA[{}]` · `A6000 :8790[{}]` · `G8T:IS[{}]`\n\
+         > **Active Speaker**: **`{}`** @ **`{} Hz`** (`{}/{} Hz`) · **Spatial DOA**: **`{}{}° / {} cm`** (`{}`) · **Marine Salience**: **`{}%`** (`{}/{}`) · **Stability**: **`[{}]`** · **Learned Grains**: **`{}g`**\n\
+         > **Closed-Loop OTA Self-Calibration**: **`{}`** word match (`{}` cumulative across `{}` self-utterances) · **`10 cm` Scale**: `{}/1024` (`{:+}°` offset) · **VAD Bonus**: `+{}` pre-roll / `+{}` hangover frames\n\n",
+        trit_symbol(snap.ear_trit),
+        trit_symbol(snap.lqd_trit),
+        trit_symbol(snap.aye_trit),
+        trit_symbol(snap.esp_trit),
+        trit_symbol(snap.a6k_trit),
+        trit_symbol(snap.g8t_trit),
+        snap.speaker,
+        snap.f0_hz,
+        snap.f0_pq.num,
+        snap.f0_pq.den,
+        sign,
+        snap.azimuth_deg,
+        snap.distance_cm,
+        snap.spatial_zone,
+        snap.salience_pct,
+        snap.salience_pq.num,
+        snap.salience_pq.den,
+        trit_symbol(snap.stability_trit),
+        snap.grains_learned,
+        cal_pq,
+        cal_cum_pq,
+        cal_utts,
+        cal_scale_q10,
+        cal_az_off,
+        cal_preroll,
+        cal_hangover,
+    ));
+
+    // Mermaid Spatial Triangulation & Room Diarization Diagram
+    md.push_str("## 1) Spatial Triangulation & Multi-Speaker Room Diarization\n\n");
+    md.push_str("```mermaid\n");
+    md.push_str("flowchart TD\n");
+    md.push_str("    DMIC[\"🎙️ Open-Lid Laptop Bezel Stereo DMIC (FL + FR @ 48kHz)\\nTDOA + First-Difference Cross-Correlation + ILD\"]\n");
+    md.push_str("    SPK[\"🔊 Laptop Internal Speakers (Aye OTA Self-Listen)\\nTest Tone: 432Hz · +0 deg / 10 cm\"]\n");
+    md.push_str(&format!(
+        "    HUE[\"👤 hue (Primary Enrolled · 90..178Hz)\\nF0: {}Hz · {}{} deg / {} cm · {}% ({}g)\"]\n",
+        hue_f0, hue_az_sign, hue_az, hue_dist, hue_sal, hue_g
+    ));
+    md.push_str(&format!(
+        "    ALEX[\"👩 alex (CompanionAlex · 179..225Hz)\\nF0: {}Hz · {}{} deg / {} cm · {}% ({}g)\"]\n",
+        alex_f0, alex_az_sign, alex_az, alex_dist, alex_sal, alex_g
+    ));
+    md.push_str(&format!(
+        "    TRISHA[\"👩 trisha (FriendTrisha · 226..320Hz)\\nF0: {}Hz · {}{} deg / {} cm · {}% ({}g)\"]\n",
+        trisha_f0, trisha_az_sign, trisha_az, trisha_dist, trisha_sal, trisha_g
+    ));
+    md.push_str(&format!(
+        "    PETE[\"🧑 pete (FriendPete · Off-Axis / Slot 2)\\nF0: {}Hz · {}{} deg / {} cm · {}% ({}g)\"]\n",
+        pete_f0, pete_az_sign, pete_az, pete_dist, pete_sal, pete_g
+    ));
+    md.push_str("    RING[\"💾 64 KB C64 StereoPcmRingBuffer (160 frames / 480ms Pre-Roll)\\nTwo-Stage Hysteresis VAD + MarineIntDetector\"]\n");
+    md.push_str("    AYE[\"🧠 ALEXIAI :8787 + LIQUID-RUST :8786\\nGAIA-MLX-QUANT p/q Ternary Fold + Closed-Loop SelfCalibrationEngine\"]\n");
+    md.push_str("    SPK -->|\"10 cm OTA Self-Calibration\"| DMIC\n");
+    md.push_str(&format!("    HUE -->|\"{} cm Near-Field\"| DMIC\n", hue_dist));
+    md.push_str(&format!("    ALEX -->|\"{} cm Room DOA\"| DMIC\n", alex_dist));
+    md.push_str(&format!("    TRISHA -->|\"{} cm Room DOA\"| DMIC\n", trisha_dist));
+    md.push_str(&format!("    PETE -->|\"{} cm Room DOA\"| DMIC\n", pete_dist));
+    md.push_str("    DMIC --> RING --> AYE\n");
+    md.push_str("```\n\n");
+
+    // Diarized Room Speakers Table
+    md.push_str("## 2) Diarized Room Speakers (`MEM|8` Integer Profiles)\n\n");
+    md.push_str("| Speaker | Role / Slot | Pitch Band (`Hz`) | Latest `F0` (`Hz`) | Azimuth (`deg`) | Distance (`cm`) | Salience (`%`) | Learned Grains | Status |\n");
+    md.push_str("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
+    md.push_str(&format!(
+        "| **`hue`** | `PrimaryUser` | `90..178 Hz` (`[110..172]`) | `{} Hz` | `{}{}°` | **`{} cm`** | `{}%` | `{}g` | `{}` |\n",
+        hue_f0, hue_az_sign, hue_az, hue_dist, hue_sal, hue_g, hue_st
+    ));
+    md.push_str(&format!(
+        "| **`alex`** | `CompanionAlex` (`Slot 0`) | `179..225 Hz` | `{} Hz` | `{}{}°` | **`{} cm`** | `{}%` | `{}g` | `{}` |\n",
+        alex_f0, alex_az_sign, alex_az, alex_dist, alex_sal, alex_g, alex_st
+    ));
+    md.push_str(&format!(
+        "| **`trisha`** | `FriendTrisha` (`Slot 1`) | `226..320 Hz` | `{} Hz` | `{}{}°` | **`{} cm`** | `{}%` | `{}g` | `{}` |\n",
+        trisha_f0, trisha_az_sign, trisha_az, trisha_dist, trisha_sal, trisha_g, trisha_st
+    ));
+    md.push_str(&format!(
+        "| **`pete`** | `FriendPete` (`Slot 2`) | `Off-Axis / Friend` | `{} Hz` | `{}{}°` | **`{} cm`** | `{}%` | `{}g` | `{}` |\n",
+        pete_f0, pete_az_sign, pete_az, pete_dist, pete_sal, pete_g, pete_st
+    ));
+    md.push_str(&format!(
+        "| **`aye_self`** | `OTA Self-Calibrator` | `Laptop Speaker (10 cm)` | `432 Hz` | `+0°` | **`10 cm`** | `100%` | `{}` (`{}/1024`) | `SELF-IMPROVING` |\n\n",
+        cal_pq, cal_scale_q10
+    ));
+    md.push_str(&format!(
+        "**Latest OTA Self-Listen**: Expected `\"{}\"` · Heard `\"{}\"` · Learned Corrections: `{}`\n\n",
+        cal_exp, cal_hrd, cal_corr
+    ));
+
+    // Live 64 KB C64 Ring Buffer Room Thoughts Table (latest 15 utterances)
+    md.push_str("## 3) Live `64 KB` C64 Ring Buffer Room Thoughts (Latest 15 Utterances)\n\n");
+    md.push_str("| Trit | Speaker | Context | `F0` (`p/q Hz`) | Spatial (`deg / cm`) | Salience | Utterance |\n");
+    md.push_str("| :---: | :--- | :--- | :--- | :--- | :---: | :--- |\n");
+    if snap.thoughts.is_empty() {
+        md.push_str("| `[+]` | **`hue`** | `ready` | `154 Hz` (`154/1`) | `+0° / 20 cm` | `90%` | Waiting for room acoustic waves |\n");
+    } else {
+        for entry in snap.thoughts.iter().rev().take(15) {
+            let t = Trit::from_rational(entry.salience_pq, default_threshold_pq());
+            let az_sign = if entry.azimuth_deg >= 0 { "+" } else { "" };
+            let clean_tx = entry.text.replace('|', "/").replace('\n', " ");
+            md.push_str(&format!(
+                "| `[{}]` | **`{}`** | `{}` | `{} Hz` (`{}/{}`) | `{}{}° / {} cm` | `{}%` | {} |\n",
+                trit_symbol(t),
+                entry.speaker,
+                entry.context,
+                entry.f0_hz,
+                entry.f0_pq.num,
+                entry.f0_pq.den,
+                az_sign,
+                entry.azimuth_deg,
+                entry.distance_cm,
+                entry.salience_pct,
+                clean_tx
+            ));
+        }
+    }
+    md.push('\n');
+
+    // Hyprland Sovereign Keybindings Table
+    md.push_str("## 4) Hyprland Sovereign Keybindings\n\n");
+    md.push_str("| Hotkey | Action | Command / Pipeline |\n");
+    md.push_str("| :--- | :--- | :--- |\n");
+    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `liquid-rust :8786` -> `wl-copy` + `wtype` |\n");
+    md.push_str("| **`SUPER + A`** | Ask Aye | `qwave --listen 5` -> `alexiai :8787` -> `qwave --speak` |\n");
+    md.push_str("| **`SUPER + M`** | Toggle Ear | Arm / pause `qwave-ear.service` with spoken confirmation |\n");
+    md.push_str("| **`SUPER + D`** | Graphical Qwave Markdown HUD | `qwave-hypr-hud markdown-hud` (WebGL `WaveScene` + Live SSE Reload) |\n");
+    md.push_str("| **`SUPER + W`** / **`SUPER + Shift + W`** | Wi-Fi Switcher & Auto-Healer | `qwave-hypr-hud wifi-menu` / `wifi-tui` (Zero-Rescan MTU `1380`) |\n");
+    md.push_str("| **`SUPER + I`** / **`SUPER + Shift + Return`** | Resume Sovereign `agy` Studio | `qwave-hypr-hud agy-resume` (All Permissions · Zero Sandbox · Resumed) |\n");
+
+    sanitize_no_float(&md)
+}
+
+/// Write `/home/hue/.local/share/qwave/sovereign-qwave-hud.md` from an existing [`HudSnapshot`]
+/// (only writing to disk when content changes so `qwave`'s SSE file watcher triggers cleanly).
+pub fn write_graphical_markdown_hud_from_snap(snap: &HudSnapshot) -> PathBuf {
+    let dir = qwave_base_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("sovereign-qwave-hud.md");
+    let content = render_graphical_markdown_hud(snap);
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    if existing != content {
+        let _ = fs::write(&path, content.as_bytes());
+    }
+    path
+}
+
+/// Collect a live [`HudSnapshot`] and write `/home/hue/.local/share/qwave/sovereign-qwave-hud.md`.
+pub fn write_graphical_markdown_hud() -> PathBuf {
+    let snap = collect_hud_snapshot();
+    write_graphical_markdown_hud_from_snap(&snap)
+}
+
+fn discover_hyprland_signature() -> Option<String> {
+    if let Ok(sig) = std::env::var("HYPRLAND_INSTANCE_SIGNATURE") {
+        if !sig.trim().is_empty() {
+            return Some(sig);
+        }
+    }
+    let hypr_dir = Path::new("/run/user/1000/hypr");
+    if let Ok(entries) = fs::read_dir(hypr_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && p.join(".socket.sock").exists() {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn hyprctl_exec_cmd(cmd_str: &str) -> bool {
+    let sig = discover_hyprland_signature();
+    let escaped = cmd_str.replace('\\', "\\\\").replace('"', "\\\"");
+    let lua_dsp = format!("hl.dsp.exec_cmd(\"{escaped}\")");
+    let mut dsp_cmd = Command::new("hyprctl");
+    if let Some(ref s) = sig {
+        dsp_cmd.env("HYPRLAND_INSTANCE_SIGNATURE", s);
+    }
+    let ok_dsp = dsp_cmd
+        .args(["dispatch", &lua_dsp])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok_dsp {
+        return true;
+    }
+
+    let mut dispatch_cmd = Command::new("hyprctl");
+    if let Some(ref s) = sig {
+        dispatch_cmd.env("HYPRLAND_INSTANCE_SIGNATURE", s);
+    }
+    dispatch_cmd
+        .args(["dispatch", "exec", cmd_str])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Execute `qwave-hypr-hud markdown-hud`:
+/// Writes `/home/hue/.local/share/qwave/sovereign-qwave-hud.md` and launches our graphical
+/// browser-based Qwave Markdown Studio (`qwave sovereign-qwave-hud.md`) if not already open.
+pub fn run_markdown_hud(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let watch_mode = args.iter().any(|a| a == "--watch");
+    let path = write_graphical_markdown_hud();
+    let path_str = path.to_string_lossy().to_string();
+
+    if dry_run {
+        return format!(
+            "{{\"ok\":true,\"action\":\"markdown-hud\",\"path\":\"{}\",\"trit\":\"+\"}}",
+            json_escape(&path_str)
+        );
+    }
+
+    let qwave_bin = find_qwave_bin();
+    if !is_cmdline_running("sovereign-qwave-hud.md") {
+        let dispatched = hyprctl_exec_cmd(&format!("{qwave_bin} {path_str}"));
+        if !dispatched {
+            let _ = Command::new("setsid")
+                .args(["--fork", qwave_bin, &path_str])
+                .env("WAYLAND_DISPLAY", "wayland-1")
+                .env("XDG_RUNTIME_DIR", "/run/user/1000")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    }
+
+    if watch_mode {
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let _ = write_graphical_markdown_hud();
+        }
+    }
+
+    format!(
+        "{{\"ok\":true,\"action\":\"markdown-hud\",\"path\":\"{}\",\"trit\":\"+\"}}",
+        json_escape(&path_str)
+    )
+}
+
 
 fn find_qwave_bin() -> &'static str {
     if Path::new("/home/hue/.local/bin/qwave").exists() {
@@ -1309,6 +1673,11 @@ fn list_saved_wifi_connections() -> Vec<String> {
 }
 
 fn enforce_wlan0_mtu_1380() -> bool {
+    if let Ok(cur_mtu) = fs::read_to_string("/sys/class/net/wlan0/mtu") {
+        if cur_mtu.trim() == "1380" {
+            return true;
+        }
+    }
     if Command::new("sudo")
         .args(["-n", "ip", "link", "set", "dev", "wlan0", "mtu", "1380"])
         .stdout(Stdio::null())
@@ -1328,33 +1697,26 @@ fn enforce_wlan0_mtu_1380() -> bool {
         .unwrap_or(false)
 }
 
+/// Query `wlan0` state and active connection name from NetworkManager's in-memory device table
+/// (`nmcli -t -f DEVICE,STATE,CONNECTION device`) WITHOUT ever invoking `device wifi` (zero rescan!).
 fn current_wlan0_state_and_ssid() -> (String, String) {
     let mut state = "unknown".to_string();
-    if let Ok(out) = Command::new("nmcli")
-        .args(["-t", "-f", "DEVICE,STATE", "device"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        for line in stdout.lines() {
-            if let Some((dev, st)) = line.trim().split_once(':') {
-                if dev.trim() == "wlan0" {
-                    state = st.trim().to_string();
-                    break;
-                }
-            }
-        }
-    }
-
     let mut ssid = String::new();
     if let Ok(out) = Command::new("nmcli")
-        .args(["-t", "-f", "ACTIVE,SSID", "device", "wifi"])
+        .args(["-t", "-f", "DEVICE,STATE,CONNECTION", "device"])
         .output()
     {
         let stdout = String::from_utf8_lossy(&out.stdout);
         for line in stdout.lines() {
-            if let Some((active, s)) = line.trim().split_once(':') {
-                if active.trim() == "yes" {
-                    ssid = s.replace("\\:", ":").trim().to_string();
+            let trimmed = line.trim();
+            if let Some((dev, rest)) = trimmed.split_once(':') {
+                if dev.trim() == "wlan0" {
+                    if let Some((st, conn)) = rest.split_once(':') {
+                        state = st.trim().to_string();
+                        ssid = conn.replace("\\:", ":").trim().to_string();
+                    } else {
+                        state = rest.trim().to_string();
+                    }
                     break;
                 }
             }
@@ -1364,8 +1726,9 @@ fn current_wlan0_state_and_ssid() -> (String, String) {
 }
 
 /// Execute `qwave-hypr-hud wifi-heal`:
-/// Checks `wlan0` state; if disconnected, scans Wi-Fi and auto-connects to the highest-signal
-/// saved connection; always enforces `wlan0` MTU `1380`; outputs a zero-float JSON report.
+/// Checks `wlan0` state without triggering a Wi-Fi scan; when already `connected`, only checks/sets
+/// MTU `1380`; ONLY scans Wi-Fi and auto-connects to the highest-signal saved connection when `wlan0`
+/// is `disconnected`!
 pub fn run_wifi_heal(args: &[String]) -> String {
     let dry_run = args.iter().any(|a| a == "--dry-run");
     if dry_run {
@@ -1375,7 +1738,7 @@ pub fn run_wifi_heal(args: &[String]) -> String {
     let (mut state, mut active_ssid) = current_wlan0_state_and_ssid();
     let mut reconnected = false;
 
-    if state != "connected" {
+    if state == "disconnected" {
         let saved = list_saved_wifi_connections();
         if let Ok(out) = Command::new("nmcli")
             .args([
@@ -1764,29 +2127,13 @@ pub fn run_boot_session(args: &[String]) -> String {
                 .spawn();
         }
 
-        // 7. Ensure Workspace 1 (1:AI-STUDIO) has Sovereign AGY Studio (Resumed) and Qwave HUD open
+        // 7. Ensure Workspace 1 (1:AI-STUDIO) has Sovereign AGY Studio (Resumed) and Graphical Qwave Markdown HUD open
         if !is_process_running("agy") && !is_cmdline_running("qwave-hypr-hud agy-resume") {
-            let _ = Command::new("hyprctl")
-                .args([
-                    "dispatch",
-                    "exec",
-                    "[workspace 1 silent] alacritty -T \"8b.is Sovereign AGY Studio (Resumed)\" --working-directory /home/hue/8b-is -e /home/hue/.local/bin/qwave-hypr-hud agy-resume",
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            let _ = hyprctl_exec_cmd(
+                "[workspace 1 silent] alacritty -T \"8b.is Sovereign AGY Studio (Resumed)\" --working-directory /home/hue/8b-is -e /home/hue/.local/bin/qwave-hypr-hud agy-resume",
+            );
         }
-        if !is_cmdline_running("qwave-hypr-hud status-tui") {
-            let _ = Command::new("hyprctl")
-                .args([
-                    "dispatch",
-                    "exec",
-                    "[workspace 1 silent] alacritty -T \"Qwave Sovereign HUD\" -e /home/hue/.local/bin/qwave-hypr-hud status-tui",
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+        let _ = run_markdown_hud(&[]);
 
         // 8. Speak welcome asynchronously so session boot never blocks
         speak_async(welcome);
@@ -1843,6 +2190,7 @@ mod tests {
             spatial_zone: "center_keyboard".to_string(),
             salience_pct: 85,
             salience_pq: Rational::new(28_155, 32_767).unwrap(),
+            grains_learned: 11_085,
             vad_byte: 0x62,
             text: sanitize_no_float("Testing LFM2.5 version 1.58 with zero floats"),
         };
@@ -1908,6 +2256,21 @@ mod tests {
     }
 
     #[test]
+    fn markdown_hud_renders_mermaid_and_zero_floats() {
+        let snap = sample_snapshot();
+        let md = render_graphical_markdown_hud(&snap);
+        assert!(md.contains("```mermaid"));
+        assert!(md.contains("flowchart TD"));
+        assert!(md.contains("Open-Lid Laptop Bezel Stereo DMIC"));
+        assert!(md.contains("10 cm"));
+        assert!(md.contains("**`hue`**"));
+        assert!(md.contains("**`alex`**"));
+        assert!(md.contains("**`trisha`**"));
+        assert!(md.contains("SUPER + D"));
+        assert_zero_float_literals(&md);
+    }
+
+    #[test]
     fn c64_ring_buffer_caps_oversized_jsonl_and_retains_last_12_thoughts() {
         let mut raw = Vec::new();
         // Generate > 64 KB of JSONL lines
@@ -1961,11 +2324,12 @@ mod tests {
         let te = run_toggle_ear(&["--dry-run".to_string()]);
         let bs = run_boot_session(&["--dry-run".to_string()]);
         let ar = run_agy_resume(&["--dry-run".to_string()]);
+        let mh = run_markdown_hud(&["--dry-run".to_string()]);
         let wm = run_wifi_menu(&["--dry-run".to_string()]);
         let wt = run_wifi_tui(&["--dry-run".to_string()]);
         let wh = run_wifi_heal(&["--dry-run".to_string()]);
         let ap = run_a6000_pulse(&["--dry-run".to_string()]);
-        for out in [&vt, &aa, &te, &bs, &ar, &wm, &wt, &wh, &ap] {
+        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &ap] {
             assert!(out.contains("\"ok\":true"));
             assert_zero_float_literals(out);
         }

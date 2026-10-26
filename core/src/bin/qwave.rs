@@ -37,9 +37,10 @@ use qwave_core::mesh::{
 };
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
-    AcousticSourceKind, MarineIntDetector, RingBuffer, RoomAcousticTracker, SpeakerSalienceProfile,
-    StereoMicTriangulation, StereoPcmRingBuffer, combine_salient_speech_wav, decode_wav_i16,
-    encode_wav_i16, extract_salient_grains, is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
+    AcousticSourceKind, MarineIntDetector, RingBuffer, RoomAcousticTracker, SelfCalibrationEngine,
+    SelfCalibrationOutcome, SpeakerSalienceProfile, StereoMicTriangulation, StereoPcmRingBuffer,
+    combine_salient_speech_wav, contextualize_room_transcript, decode_wav_i16, encode_wav_i16,
+    extract_salient_grains, is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
@@ -1474,6 +1475,7 @@ fn render_full_page(
     body.mode-wide {{ --shell-max: 1320px; }}
     body.mode-zen .md-toc-panel, body.mode-zen .meta-bar {{ display: none !important; }}
     .md-toc-panel {{
+      display: none;
       width: 270px; flex-shrink: 0;
       position: sticky; top: 24px; max-height: calc(100vh - 48px);
       overflow-y: auto; padding: 18px 16px;
@@ -1483,7 +1485,7 @@ fn render_full_page(
       border-radius: 18px;
       box-shadow: 0 18px 50px rgba(0,0,0,0.45);
     }}
-    body.toc-hidden .md-toc-panel {{ display: none; }}
+    body.toc-open .md-toc-panel {{ display: block; }}
     .toc-header {{
       font-family: ui-monospace, 'Courier New', monospace;
       font-size: 0.74rem; letter-spacing: 2.5px; text-transform: uppercase;
@@ -1919,6 +1921,42 @@ fn render_full_page(
     .md-body .math-display {{ margin: 1.1em 0; overflow-x: auto; padding: 8px 0; }}
     .md-body img {{ max-width: 100%; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); }}
     .md-body hr {{ border: none; border-top: 1px solid rgba(255,255,255,0.14); margin: 2em 0; }}
+
+    @media (max-width: 1180px) {{
+      .qwave-layout {{
+        flex-direction: column;
+        padding: 10px 10px 48px;
+        gap: 12px;
+      }}
+      .md-toc-panel {{
+        display: none;
+        width: 100%;
+        position: relative;
+        top: 0;
+        max-height: 260px;
+      }}
+      body.toc-open .md-toc-panel {{
+        display: block;
+      }}
+      .md-shell {{
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        padding: 14px 16px 32px;
+        overflow-x: hidden;
+      }}
+      .studio-grid, .md-body {{
+        width: 100%;
+        min-width: 0;
+        overflow-x: hidden;
+      }}
+      .md-body h1 {{ font-size: 1.35rem; margin-top: 0.1em; }}
+      .md-body h2 {{ font-size: 1.12rem; margin-top: 0.9em; }}
+      .md-body table {{ font-size: 0.78rem; }}
+      .md-body th, .md-body td {{ padding: 6px 8px; }}
+      .md-body .mermaid {{ padding: 10px; margin: 0.8em 0; }}
+      .escape-btn {{ padding: 6px 10px; font-size: 0.70rem; }}
+    }}
   </style>
 </head>
 <body>
@@ -1937,36 +1975,6 @@ fn render_full_page(
         </div>
         <div class="meta-pill" id="live-status">SOVEREIGN LOOPBACK</div>
       </div>
-
-      <!-- ALEXIAI <3 Voice & Live Webpage Studio -->
-      <section class="alexiai-panel" id="alexiai-panel">
-        <div class="alexiai-top">
-          <div class="alexiai-brand">
-            <div class="gaia-orb" id="gaia-orb" title="Click to talk to Alexiai (or press Ctrl+Space)"></div>
-            <div>
-              <div class="alexiai-title">💜 ALEXIAI &lt;3 OMNI · VOICE &amp; WEBPAGE STUDIO</div>
-              <div class="alexiai-sub" id="alexiai-status">Click 🎙️ Voice or press Ctrl+Space to talk — she talks back &amp; can restyle or edit this webpage live!</div>
-            </div>
-          </div>
-          <div class="alexiai-controls">
-            <button type="button" class="escape-btn btn-alexiai" id="btn-mic" title="Talk to Alexiai by Voice (Ctrl+Space)">🎙️ Talk to Alexiai</button>
-            <select class="voice-select" id="alexiai-voice" title="Liquid-Rust LFM2.5 & Kokoro Neural Voice">
-              <option value="af_heart">💜 Dra Heart (Kokoro af_heart)</option>
-              <option value="lfm_aye">🌊 Aye Liquid-Rust (LFM2.5 / Bella)</option>
-              <option value="lfm_omnimom">👑 OmniMom Liquid-Rust (LFM2.5 / Sky)</option>
-              <option value="af_sky">✨ Sky Crystal (Kokoro af_sky)</option>
-              <option value="af_bella">🌸 Bella Studio (Kokoro af_bella)</option>
-              <option value="bf_emma">💎 Emma Velvet (Kokoro bf_emma)</option>
-            </select>
-            <button type="button" class="escape-btn" id="btn-tts-toggle" title="Toggle spoken voice replies">🔊 Voice: ON</button>
-          </div>
-        </div>
-        <form class="alexiai-bar" id="alexiai-form">
-          <input type="text" class="alexiai-input" id="alexiai-input" placeholder="Talk or type to Alexiai: &quot;Make this webpage cyberpunk neon&quot;, &quot;Add a summary section&quot;, or ask anything..." autocomplete="off">
-          <button type="submit" class="escape-btn btn-alexiai">Send ✦</button>
-        </form>
-        <div class="alexiai-reply-box" id="alexiai-reply"></div>
-      </section>
 
       <div class="md-toolbar">
         <button type="button" class="escape-btn" id="btn-marine-sense" title="Toggle Live Marine-Sense Sonar & RF Triangulation HUD">📡 Marine-Sense HUD</button>
@@ -1998,6 +2006,43 @@ fn render_full_page(
       </div>
 
       <div class="mem8-hud" id="mem8-hud"></div>
+
+      <div class="studio-grid">
+        <div class="editor-pane">
+          <textarea id="md-editor-textarea" spellcheck="false"></textarea>
+        </div>
+        <article class="md-body" id="md-body">{body_html}</article>
+      </div>
+
+      <!-- ALEXIAI <3 Voice & Live Webpage Studio -->
+      <section class="alexiai-panel" id="alexiai-panel" style="margin-top: 22px;">
+        <div class="alexiai-top">
+          <div class="alexiai-brand">
+            <div class="gaia-orb" id="gaia-orb" title="Click to talk to Alexiai (or press Ctrl+Space)"></div>
+            <div>
+              <div class="alexiai-title">💜 ALEXIAI &lt;3 OMNI · VOICE &amp; WEBPAGE STUDIO</div>
+              <div class="alexiai-sub" id="alexiai-status">Click 🎙️ Voice or press Ctrl+Space to talk — she talks back &amp; can restyle or edit this webpage live!</div>
+            </div>
+          </div>
+          <div class="alexiai-controls">
+            <button type="button" class="escape-btn btn-alexiai" id="btn-mic" title="Talk to Alexiai by Voice (Ctrl+Space)">🎙️ Talk to Alexiai</button>
+            <select class="voice-select" id="alexiai-voice" title="Liquid-Rust LFM2.5 & Kokoro Neural Voice">
+              <option value="af_heart">💜 Dra Heart (Kokoro af_heart)</option>
+              <option value="lfm_aye">🌊 Aye Liquid-Rust (LFM2.5 / Bella)</option>
+              <option value="lfm_omnimom">👑 OmniMom Liquid-Rust (LFM2.5 / Sky)</option>
+              <option value="af_sky">✨ Sky Crystal (Kokoro af_sky)</option>
+              <option value="af_bella">🌸 Bella Studio (Kokoro af_bella)</option>
+              <option value="bf_emma">💎 Emma Velvet (Kokoro bf_emma)</option>
+            </select>
+            <button type="button" class="escape-btn" id="btn-tts-toggle" title="Toggle spoken voice replies">🔊 Voice: ON</button>
+          </div>
+        </div>
+        <form class="alexiai-bar" id="alexiai-form">
+          <input type="text" class="alexiai-input" id="alexiai-input" placeholder="Talk or type to Alexiai: &quot;Make this webpage cyberpunk neon&quot;, &quot;Add a summary section&quot;, or ask anything..." autocomplete="off">
+          <button type="submit" class="escape-btn btn-alexiai">Send ✦</button>
+        </form>
+        <div class="alexiai-reply-box" id="alexiai-reply"></div>
+      </section>
 
       <!-- Live Marine-Sense Acoustic & RF Triangulation Sonar HUD -->
       <section class="marine-sense-hud" id="marine-sense-hud">
@@ -2085,12 +2130,6 @@ fn render_full_page(
           <div id="ms-event-list"></div>
         </div>
       </section>
-      <div class="studio-grid">
-        <div class="editor-pane">
-          <textarea id="md-editor-textarea" spellcheck="false"></textarea>
-        </div>
-        <article class="md-body" id="md-body">{body_html}</article>
-      </div>
     </main>
   </div>
 
@@ -2210,7 +2249,7 @@ fn render_full_page(
     enhanceDynamic();
 
     // Toolbar & Style Studio
-    document.getElementById('btn-toc')?.addEventListener('click', () => document.body.classList.toggle('toc-hidden'));
+    document.getElementById('btn-toc')?.addEventListener('click', () => document.body.classList.toggle('toc-open'));
     document.getElementById('btn-wide')?.addEventListener('click', () => document.body.classList.toggle('mode-wide'));
     document.getElementById('btn-shader')?.addEventListener('click', function () {{
       window.__qwaveShaderPaused = !window.__qwaveShaderPaused;
@@ -3131,9 +3170,10 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     let _ = fs::write(&play_path, &wav_bytes);
 
     // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
-    // and mark TTS active + save last spoken text so the parallel ear daemon suppresses laptop speaker bleed!
+    // and write tts_expected.json so the parallel ear daemon captures & self-calibrates against our own voice over the air!
     let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 120) + 4;
     mark_tts_active_secs(est_secs);
+    write_tts_expected(text, est_secs);
     let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
 
     let prof = load_salience_profile();
@@ -3582,11 +3622,152 @@ fn handle_mcp_request(req: &str) -> Option<String> {
     }
 }
 
+fn qwave_share_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let dir = PathBuf::from(home).join(".local/share/qwave");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 fn mem8_dir() -> PathBuf {
     let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
     let _ = fs::create_dir_all(&dir);
     dir
+}
+
+fn write_tts_expected(text: &str, duration_secs: u64) {
+    let now = now_secs();
+    let until = now.saturating_add(duration_secs);
+    let json = format!(
+        "{{\"ts\":{now},\"until\":{until},\"expected_text\":{}}}",
+        markdown_source_literal(text)
+    );
+    let _ = fs::write(qwave_share_dir().join("tts_expected.json"), &json);
+    let _ = fs::write(mem8_dir().join("tts_expected.json"), &json);
+}
+
+fn read_tts_expected_text() -> Option<String> {
+    if let Ok(raw) = fs::read_to_string(qwave_share_dir().join("tts_expected.json")) {
+        if let Some(tx) = extract_json_str(&raw, "expected_text") {
+            if !tx.trim().is_empty() {
+                return Some(tx);
+            }
+        }
+    }
+    fs::read_to_string(mem8_dir().join("last_tts_text.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn extract_json_i64(json: &str, field: &str) -> Option<i64> {
+    let needle = format!("\"{field}\":");
+    let start = json.find(&needle)? + needle.len();
+    let rest = json[start..].trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '-')
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+fn load_self_calibration() -> SelfCalibrationEngine {
+    let path = qwave_share_dir().join("self_calibration.json");
+    let Ok(raw) = fs::read_to_string(path) else {
+        return SelfCalibrationEngine::default();
+    };
+    let mut cal = SelfCalibrationEngine::default();
+    cal.total_self_utterances = extract_json_u64(&raw, "total_self_utterances").unwrap_or(0);
+    cal.total_expected_words = extract_json_u64(&raw, "total_expected_words").unwrap_or(0);
+    cal.total_matched_words = extract_json_u64(&raw, "total_matched_words").unwrap_or(0);
+    if let Some(pq) = extract_json_str(&raw, "word_match_pq") {
+        if let Some((n_str, d_str)) = pq.split_once('/') {
+            if let (Ok(n), Ok(d)) = (n_str.parse::<i32>(), d_str.parse::<u32>()) {
+                if let Some(r) = Rational::new(n, d.max(1)) {
+                    cal.last_word_match_pq = r;
+                }
+            }
+        }
+    }
+    cal.last_expected_text = extract_json_str(&raw, "last_expected_text").unwrap_or_default();
+    cal.last_heard_text = extract_json_str(&raw, "last_heard_text").unwrap_or_default();
+    cal.last_measured_distance_cm =
+        extract_json_u64(&raw, "last_measured_distance_cm").unwrap_or(10) as u16;
+    cal.last_measured_azimuth_deg =
+        extract_json_i64(&raw, "last_measured_azimuth_deg").unwrap_or(0) as i16;
+    cal.distance_scale_q10 =
+        (extract_json_u64(&raw, "distance_scale_q10").unwrap_or(1024) as u16).clamp(512, 2048);
+    cal.azimuth_offset_deg =
+        (extract_json_i64(&raw, "azimuth_offset_deg").unwrap_or(0) as i16).clamp(-15, 15);
+    cal.preroll_bonus_frames =
+        (extract_json_u64(&raw, "preroll_bonus_frames").unwrap_or(0) as u8).min(4);
+    cal.hangover_bonus_frames =
+        (extract_json_u64(&raw, "hangover_bonus_frames").unwrap_or(0) as u8).min(6);
+    cal.pre_emphasis_q8 =
+        (extract_json_u64(&raw, "pre_emphasis_q8").unwrap_or(240) as u16).clamp(192, 255);
+    if let Some(corr_str) = extract_json_str(&raw, "learned_corrections_flat") {
+        for pair in corr_str.split(';') {
+            if let Some((h, e)) = pair.split_once("->") {
+                let h_trim = h.trim();
+                let e_trim = e.trim();
+                if !h_trim.is_empty() && !e_trim.is_empty() {
+                    cal.learned_word_corrections
+                        .push((h_trim.to_string(), e_trim.to_string()));
+                }
+            }
+        }
+    }
+    cal
+}
+
+fn save_self_calibration(
+    cal: &SelfCalibrationEngine,
+    outcome: Option<&SelfCalibrationOutcome>,
+    ts: u64,
+) {
+    let flat_pairs: Vec<String> = cal
+        .learned_word_corrections
+        .iter()
+        .map(|(h, e)| format!("{h}->{e}"))
+        .collect();
+    let flat_str = flat_pairs.join(";");
+    let cum_pq = cal.cumulative_word_accuracy_pq();
+    let json = format!(
+        "{{\"ts\":{ts},\"total_self_utterances\":{},\"total_expected_words\":{},\"total_matched_words\":{},\"word_match_pq\":\"{}/{}\",\"cumulative_word_match_pq\":\"{}/{}\",\"last_expected_text\":{},\"last_heard_text\":{},\"last_measured_distance_cm\":{},\"last_measured_azimuth_deg\":{},\"distance_scale_q10\":{},\"azimuth_offset_deg\":{},\"preroll_bonus_frames\":{},\"hangover_bonus_frames\":{},\"pre_emphasis_q8\":{},\"learned_corrections_flat\":{}}}",
+        cal.total_self_utterances,
+        cal.total_expected_words,
+        cal.total_matched_words,
+        cal.last_word_match_pq.num,
+        cal.last_word_match_pq.den,
+        cum_pq.num,
+        cum_pq.den,
+        markdown_source_literal(&cal.last_expected_text),
+        markdown_source_literal(&cal.last_heard_text),
+        cal.last_measured_distance_cm,
+        cal.last_measured_azimuth_deg,
+        cal.distance_scale_q10,
+        cal.azimuth_offset_deg,
+        cal.preroll_bonus_frames,
+        cal.hangover_bonus_frames,
+        cal.pre_emphasis_q8,
+        markdown_source_literal(&flat_str),
+    );
+    let share = qwave_share_dir();
+    let mem8 = mem8_dir();
+    let _ = fs::write(share.join("self_calibration.json"), &json);
+    let _ = fs::write(mem8.join("self_calibration.json"), &json);
+    if outcome.is_some() {
+        append_jsonl_ring_file(
+            &share.join("self_calibration_log.jsonl"),
+            std::slice::from_ref(&json),
+            64,
+        );
+        append_jsonl_ring_file(
+            &mem8.join("self_calibration_log.jsonl"),
+            std::slice::from_ref(&json),
+            64,
+        );
+    }
 }
 
 fn mark_tts_active_secs(duration_secs: u64) {
@@ -4002,10 +4183,16 @@ fn run_parallel_ear_daemon() {
 
     // Pre-allocate the circular 48kHz Stereo PCM Ring Buffer ONCE for the entire daemon lifetime:
     // - 5,760 i16 samples per 60ms stereo frame
-    // - 136 frames ring capacity (8.16 seconds = 783,360 i16 samples = 1,566,720 bytes fixed)
-    // - 6 frames (360ms) automatic pre-roll before VAD onset so "Hey Aye" is never clipped
-    // - 60 frames (3.60 seconds) max continuous utterance before dispatch
-    let mut pcm_ring = StereoPcmRingBuffer::new(5_760, 136, 6, 60);
+    // - 160 frames ring capacity (9.60 seconds = 921,600 i16 samples)
+    // - 8 + preroll_bonus frames automatic pre-roll before VAD onset so leading consonants/"Hey Aye" are never clipped
+    // - 136 frames (8.16 seconds) max continuous utterance before dispatch
+    let init_cal = load_self_calibration();
+    let mut pcm_ring = StereoPcmRingBuffer::new(
+        5_760,
+        160,
+        8 + (init_cal.preroll_bonus_frames as usize),
+        136,
+    );
     let mut frame_bytes = [0u8; 11_520];
     let mut frame_stereo = [0i16; 5_760];
 
@@ -4069,18 +4256,14 @@ fn run_parallel_ear_daemon() {
             if hb_counter % 50 == 1 {
                 let _ = fs::write(dir.join("ear_heartbeat.txt"), now.to_string());
             }
-            let tts_until = read_tts_active_until();
-            if now < tts_until {
-                pcm_ring.reset_active();
-                continue;
-            }
 
             for i in 0..5_760 {
                 frame_stereo[i] = i16::from_le_bytes([frame_bytes[i * 2], frame_bytes[i * 2 + 1]]);
             }
 
             // Evaluate 16kHz downmixed mono frame with persistent zero-float `MarineIntDetector`
-            // plus an adaptive room noise-floor gate so background AC/fan doesn't glue utterances into 7.2s blocks!
+            // plus Two-Stage Hysteresis VAD so unvoiced consonants (s/t/k/p/f) and soft syllables
+            // never split sentences mid-phrase!
             let mut sum_sal: u64 = 0;
             let mut sum_abs: u64 = 0;
             for k in 0..960 {
@@ -4093,14 +4276,22 @@ fn run_parallel_ear_daemon() {
             }
             let mean_abs = (sum_abs / 960) as u32;
             let avg_sal_q15 = (sum_sal / 960) as u16;
-            let is_voiced = mean_abs >= (noise_ema_abs * 15 / 8).max(160) && avg_sal_q15 >= 900;
+            let is_voiced = if pcm_ring.voiced_frames() == 0 {
+                // Vocal onset: require clear glottal periodicity or strong vocal energy
+                (mean_abs >= (noise_ema_abs * 13 / 8).max(125) && avg_sal_q15 >= 620)
+                    || mean_abs >= (noise_ema_abs * 3).max(320)
+            } else {
+                // Sustain: keep utterance open across unvoiced consonants (s/t/k/p/f) and soft syllables!
+                mean_abs >= (noise_ema_abs * 5 / 4).max(85) || avg_sal_q15 >= 280
+            };
             if !is_voiced || mean_abs < noise_ema_abs {
                 noise_ema_abs = ((noise_ema_abs * 15) + mean_abs.max(40)) / 16;
             } else {
                 noise_ema_abs = ((noise_ema_abs * 63) + mean_abs.min(noise_ema_abs * 2)) / 64;
             }
 
-            // Push into circular StereoPcmRingBuffer (with automatic 6-frame / 360ms pre-roll on VAD onset)
+            // Push into circular StereoPcmRingBuffer (including during TTS playback so Closed-Loop
+            // OTA Self-Listening captures our own voice from the 10 cm laptop speakers!)
             pcm_ring.push_frame(&frame_stereo, is_voiced);
 
             if pcm_ring.should_dispatch() {
@@ -4128,17 +4319,34 @@ fn process_parallel_ear_utterance(
     inbox_ring: &Arc<Mutex<RingBuffer<String, 64>>>,
     dir: &Path,
 ) {
+    let mut cal = load_self_calibration();
+
     // 0. Zero-float Stereo DMIC Triangulation (TDOA cross-correlation + ILD + Delay-and-Sum 16kHz Beamforming)
-    let (tri, beamformed_16k) = if stereo_48k.len() >= 192 {
+    let (raw_tri, beamformed_16k) = if stereo_48k.len() >= 192 {
         triangulate_stereo_dmic_i16(stereo_48k, None)
     } else {
         (StereoMicTriangulation::default(), stereo_48k.to_vec())
     };
+    let tri = cal.apply_calibrated_triangulation(raw_tri);
     let pcm = &beamformed_16k;
 
-    // 1. Marine Salience First: fast zero-float integer check before invoking neural STT
+    let tts_until = read_tts_active_until();
+    let in_tts_window = now <= tts_until.saturating_add(2);
+
+    // 1. Marine Salience First: Strict Multi-Grain Vocal Speech Gate before invoking neural STT!
+    //    Prevents single-grain chair creaks, breaths, and thumps from forcing LFM2.5-Audio to hallucinate
+    //    random fiction phrases like "Go and hunt" or "Your weapons".
     let pre_check = extract_salient_grains(pcm, 16_000, 3, now);
-    if pre_check.top_grains.is_empty() || pre_check.overall_vad_byte < 0x10 {
+    if in_tts_window {
+        if pre_check.top_grains.is_empty() {
+            return;
+        }
+    } else if pre_check.top_grains.len() < 2
+        || pre_check.top_grains[0].salience_q15 < 1650
+        || pre_check.salient_frame_ratio_pq.num * 4
+            < (pre_check.salient_frame_ratio_pq.den as i32)
+        || pre_check.overall_vad_byte < 0x16
+    {
         return;
     }
 
@@ -4149,28 +4357,66 @@ fn process_parallel_ear_utterance(
         return;
     }
 
-    let transcript = transcribe_wav_fast_offline(&tmp_wav)
+    let raw_transcript = transcribe_wav_fast_offline(&tmp_wav)
         .map(|(tx, _)| tx)
         .unwrap_or_default();
     let _ = fs::remove_file(&tmp_wav);
 
-    let trimmed_tx = transcript.trim();
+    let trimmed_tx = raw_transcript.trim();
     if trimmed_tx.len() < 3
         || matches!(
             trimmed_tx.to_ascii_lowercase().as_str(),
             "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh." | "thank you."
         )
-        || is_tts_echo(trimmed_tx)
-        || trimmed_tx.contains("Right here Hue")
-        || trimmed_tx.contains("Folded on")
     {
         return;
     }
 
-    // 3. Classify speaker (`hue`, `friend_1..4`, `ambient_noise`) and room context
+    // 2b. Closed-Loop Over-The-Air (OTA) Self-Listening & Self-Improvement Engine:
+    //     When Aye hears her own voice from the laptop speakers (10 cm from the open-lid bezel mics, 0° center),
+    //     compare `trimmed_tx` against `tts_expected.json` ground truth, update `self_calibration.json`
+    //     (word accuracy p/q, 10cm/0° geometry calibration, VAD pre-roll/hangover bonus frames, and
+    //     learned phonetic word substitutions), and return without triggering a wake-word loop!
+    if in_tts_window
+        || is_tts_echo(trimmed_tx)
+        || trimmed_tx.contains("Right here Hue")
+        || trimmed_tx.contains("Folded on")
+    {
+        if let Some(expected_text) = read_tts_expected_text() {
+            let outcome = cal.observe_self_utterance(
+                &expected_text,
+                trimmed_tx,
+                raw_tri.distance_cm,
+                raw_tri.azimuth_deg,
+            );
+            save_self_calibration(&cal, Some(&outcome), now);
+        }
+        return;
+    }
+
+    // 2c. Context-Aware Hallucination Filter & Conversational Phonetic Repair
+    let recent_context: Vec<String> = inbox_ring
+        .lock()
+        .ok()
+        .map(|ring| {
+            ring.iter_newest_first()
+                .take(8)
+                .filter_map(|line| extract_json_str(line, "text"))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let best_sal_q15 = pre_check.top_grains[0].salience_q15;
+    let Some(transcript) =
+        contextualize_room_transcript(trimmed_tx, &recent_context, best_sal_q15, Some(&cal))
+    else {
+        return;
+    };
+
+    // 3. Classify speaker (`hue`, `alex`, `trisha`, `pete`, `ambient_noise`) and room context
     //    (`addressing_agent`, `chatting_with_friend`, `friend_speaking`, `silent_or_noise`)
     let mut tr = tracker.lock().unwrap();
-    tr.tts_active_until_ts = read_tts_active_until();
+    tr.tts_active_until_ts = 0; // Already handled OTA self-listening in step 2b
     let analysis = tr.classify_and_learn(pcm, 16_000, now, Some(&transcript));
 
     // Persist Hue's updated SpeakerSalienceProfile & 79-byte WaveInt frames into bounded 512-slot ring!
@@ -4207,11 +4453,12 @@ fn process_parallel_ear_utterance(
     );
 
     let event_json = format!(
-        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
+        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"speaker_grains_learned\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
         analysis.primary_similarity_q15,
+        analysis.speaker_grains_learned,
         analysis.on_axis_ratio_q15,
         analysis.salience_report.overall_f0_hz.num,
         analysis.salience_report.overall_f0_hz.den,
@@ -4223,6 +4470,17 @@ fn process_parallel_ear_utterance(
         markdown_source_literal(&capsule),
         markdown_source_literal(&transcript)
     );
+
+    if matches!(
+        analysis.source,
+        AcousticSourceKind::PrimaryUser | AcousticSourceKind::OtherSpeaker(_)
+    ) {
+        append_jsonl_ring_file(
+            &dir.join("speech_salience_waves.jsonl"),
+            std::slice::from_ref(&event_json),
+            512,
+        );
+    }
 
     // Push into the in-memory 64-slot `ear_inbox` RingBuffer and atomically flush to `ear_inbox.jsonl`
     if let Ok(mut ring) = inbox_ring.lock() {
@@ -4239,13 +4497,14 @@ fn process_parallel_ear_utterance(
     }
 
     let room_json = format!(
-        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"last_utterance\":{event_json}}}",
+        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"speaker_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"last_utterance\":{event_json}}}",
         std::process::id(),
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
         tr.noise_floor_q15,
         tr.primary_profile.grains_learned,
+        analysis.speaker_grains_learned,
         tri.azimuth_deg,
         tri.distance_cm,
         markdown_source_literal(tri.spatial_zone),
@@ -4415,6 +4674,9 @@ fn run_wait_wake() -> String {
             }
             let text = extract_json_str(trimmed, "text").unwrap_or_default();
             let speaker = extract_json_str(trimmed, "speaker").unwrap_or_default();
+            if speaker == "ambient_noise" || speaker == "system_echo" || speaker == "aye_self" {
+                continue;
+            }
             let should_resp = extract_json_bool(trimmed, "should_agent_respond").unwrap_or(false);
             let low = text.to_ascii_lowercase();
             let direct_req = speaker == "hue"
@@ -4461,7 +4723,7 @@ fn run_hook_pre_invocation() -> String {
                 max_ts = ts;
             }
             let speaker = extract_json_str(trimmed, "speaker").unwrap_or_default();
-            if speaker == "ambient_noise" || speaker == "system_echo" {
+            if speaker == "ambient_noise" || speaker == "system_echo" || speaker == "aye_self" {
                 continue;
             }
             let text = extract_json_str(trimmed, "text").unwrap_or_default();
@@ -5401,12 +5663,17 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
     let snr_ratio_l_x10 = ((rms_ping_l * 10) / rms_noise_l).max(10);
     let snr_ratio_r_x10 = ((rms_ping_r * 10) / rms_noise_r).max(10);
 
-    let (tri, beam_16k) = if captured_samples.len() >= 192 {
-        triangulate_stereo_dmic_i16(&captured_samples, None)
+    let tone_slice = if win_end * 2 <= captured_samples.len() && (win_end - win_start) >= 96 {
+        &captured_samples[win_start * 2..win_end * 2]
+    } else {
+        &captured_samples[..]
+    };
+    let (tri, beam_16k) = if tone_slice.len() >= 192 {
+        triangulate_stereo_dmic_i16(tone_slice, None)
     } else {
         (StereoMicTriangulation::default(), Vec::new())
     };
-    let echogram = analyze_chirp_echogram_i16(&captured_samples, 242, 55);
+    let echogram = analyze_chirp_echogram_i16(tone_slice, 242, 55);
     let grains_rep = extract_salient_grains(&beam_16k, 16_000, 3, now_secs());
     let onset_ms = (onset_frame * 1000) / 48_000;
 
