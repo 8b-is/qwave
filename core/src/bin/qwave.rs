@@ -161,6 +161,25 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--hook-mem8-session-start") {
+        println!("{}", run_hook_mem8_session_start());
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--hook-mem8-pre-invocation") {
+        println!("{}", run_hook_mem8_pre_invocation());
+        return ExitCode::SUCCESS;
+    }
+
+    let invoked_as_mem8 = args
+        .first()
+        .map(|s| s.ends_with("mem8-mcp") || s.ends_with("mem8"))
+        .unwrap_or(false);
+    if invoked_as_mem8 || args.iter().any(|a| a == "--mcp-mem8") {
+        run_mem8_mcp_server();
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--mcp") {
         ensure_ear_daemon_running();
         run_mcp_server();
@@ -3898,6 +3917,14 @@ fn handle_mcp_request(req: &str) -> Option<String> {
                     let speak_opt = extract_json_str(args_slice, "speak");
                     surf_with_qwave(&url, &mode, speak_opt.as_deref())
                 }
+                "store_wave" | "mem8_store_wave" => mem8_tool_store_wave(args_slice),
+                "recall_waves" | "mem8_recall_waves" => mem8_tool_recall_waves(args_slice),
+                "anchor" | "mem8_anchor" => mem8_tool_anchor(args_slice),
+                "salience_profile" | "mem8_salience_profile" => {
+                    let prof = load_salience_profile();
+                    format_salience_profile_json(&prof)
+                }
+                "wave_grid" | "mem8_wave_grid" => mem8_tool_wave_grid(),
                 other => format!("{{\"ok\":false,\"error\":\"unknown tool: {other}\"}}"),
             };
 
@@ -3910,6 +3937,254 @@ fn handle_mcp_request(req: &str) -> Option<String> {
             "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}}}"
         )),
     }
+}
+
+/// Run the dedicated Sovereign `MEM|8` MCP Server (`mem8-mcp` / `qwave --mcp-mem8`) over stdio.
+fn run_mem8_mcp_server() {
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut stdout = std::io::stdout();
+
+    loop {
+        let mut line = String::new();
+        let Ok(n) = reader.read_line(&mut line) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (payload, use_content_length) = if trimmed
+            .to_ascii_lowercase()
+            .starts_with("content-length:")
+        {
+            let len: usize = trimmed
+                .split_once(':')
+                .and_then(|(_, v)| v.trim().parse().ok())
+                .unwrap_or(0);
+            loop {
+                let mut hdr = String::new();
+                if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut buf = vec![0u8; len];
+            if reader.read_exact(&mut buf).is_err() {
+                break;
+            }
+            (String::from_utf8_lossy(&buf).into_owned(), true)
+        } else {
+            (trimmed.to_string(), false)
+        };
+
+        if let Some(resp) = handle_mem8_mcp_request(&payload) {
+            if use_content_length {
+                let _ = write!(stdout, "Content-Length: {}\r\n\r\n{}", resp.len(), resp);
+            } else {
+                let _ = writeln!(stdout, "{resp}");
+            }
+            let _ = stdout.flush();
+        }
+    }
+}
+
+fn handle_mem8_mcp_request(req: &str) -> Option<String> {
+    let method = extract_json_str(req, "method")?;
+    let id_raw = extract_json_id(req);
+    if method.starts_with("notifications/") || id_raw.is_none() {
+        return None;
+    }
+    let id = id_raw.unwrap_or_else(|| "1".to_string());
+
+    match method.as_str() {
+        "initialize" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"mem8\",\"version\":\"1.0.0\"}}}}}}"
+        )),
+        "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}")),
+        "tools/list" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[\
+             {{\"name\":\"store_wave\",\"description\":\"🌊 Store a persistent MEM|8 WaveInt memory with temporal perspective (diary/witness/breakthrough), harmonic frequency (432/528/864 Hz), and 32-byte WUPZ ABI v1 witness seal.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"data\":{{\"type\":\"string\",\"description\":\"Memory content to store in MEM|8\"}},\"perspective\":{{\"type\":\"string\",\"description\":\"Temporal perspective (diary, witness, breakthrough, architecture)\",\"default\":\"witness\"}},\"tags\":{{\"type\":\"string\",\"description\":\"Comma-separated keywords or tags\"}},\"frequency_hz\":{{\"type\":\"integer\",\"description\":\"Harmonic carrier frequency in Hz (default: 432)\",\"default\":432}}}},\"required\":[\"data\"]}}}},\
+             {{\"name\":\"recall_waves\",\"description\":\"🔍 Recall and search persistent MEM|8 wave memories, anchored breakthroughs, and speech salience grains across ~/.local/share/qwave/mem8/ and ~/.mem8/.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"query\":{{\"type\":\"string\",\"description\":\"Keyword or topic to recall from MEM|8 (empty returns most recent waves)\"}},\"limit\":{{\"type\":\"integer\",\"description\":\"Max memories to return (default: 10)\",\"default\":10}}}}}}}},\
+             {{\"name\":\"anchor\",\"description\":\"⚓ Anchor a high-salience breakthrough, solution, or architectural pattern into persistent MEM|8 wave storage.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"anchor_type\":{{\"type\":\"string\",\"description\":\"breakthrough, solution, pattern, or covenant\",\"default\":\"breakthrough\"}},\"keywords\":{{\"type\":\"string\",\"description\":\"Comma-separated keywords for retrieval\"}},\"context\":{{\"type\":\"string\",\"description\":\"Detailed context to anchor\"}}}},\"required\":[\"context\"]}}}},\
+             {{\"name\":\"salience_profile\",\"description\":\"🎙️ Inspect the persistent zero-float M8SP SpeakerSalienceProfile (Hue 166Hz baritone, Alexandra 190Hz Starlight, learned vocal grains, and 16-bin prosody contour).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}},\
+             {{\"name\":\"wave_grid\",\"description\":\"📐 Inspect the live MEM|8 Wave Grid status (waves.bin, speech_salience_waves.bin, speaker_salience_profile.bin, room_state.json, and WUPZ ABI v1 witness state).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}}\
+             ]}}}}"
+        )),
+        "tools/call" => handle_mcp_request(req),
+        _ => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}}}"
+        )),
+    }
+}
+
+fn wupz_xor_fold_u64(bytes: &[u8]) -> u64 {
+    let mut acc: u64 = 0x9E37_79B9_7F4A_7C15;
+    for (idx, &b) in bytes.iter().enumerate() {
+        let lane = (b as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        acc ^= lane.rotate_left(((idx & 7) * 8) as u32);
+        acc = acc.rotate_left(11).wrapping_add(0x94D0_49BB_1331_11EB);
+    }
+    acc
+}
+
+fn mem8_tool_store_wave(args_slice: &str) -> String {
+    let data = extract_json_str(args_slice, "data")
+        .or_else(|| extract_json_str(args_slice, "context"))
+        .unwrap_or_default();
+    let perspective = extract_json_str(args_slice, "perspective")
+        .or_else(|| extract_json_str(args_slice, "anchor_type"))
+        .unwrap_or_else(|| "witness".to_string());
+    let tags = extract_json_str(args_slice, "tags")
+        .or_else(|| extract_json_str(args_slice, "keywords"))
+        .unwrap_or_else(|| "mem8,sovereign".to_string());
+    let freq_hz = extract_json_u64(args_slice, "frequency_hz").unwrap_or(432) as u16;
+    let ts = now_secs();
+    let dir = mem8_dir();
+    let fold = wupz_xor_fold_u64(data.as_bytes());
+    let entry = format!(
+        "{{\"ts\":{ts},\"perspective\":{},\"tags\":{},\"frequency_hz\":{freq_hz},\"wupz_xor_fold\":\"0x{fold:016x}\",\"data\":{}}}",
+        markdown_source_literal(&perspective),
+        markdown_source_literal(&tags),
+        markdown_source_literal(&data),
+    );
+    append_jsonl_ring_file(&dir.join("waves.jsonl"), std::slice::from_ref(&entry), 256);
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let dot_mem8 = PathBuf::from(home).join(".mem8");
+    let _ = fs::create_dir_all(&dot_mem8);
+    append_jsonl_ring_file(&dot_mem8.join("anchors.jsonl"), std::slice::from_ref(&entry), 256);
+    format!(
+        "{{\"ok\":true,\"stored_in\":\"~/.local/share/qwave/mem8/waves.jsonl + ~/.mem8/anchors.jsonl\",\"ts\":{ts},\"frequency_hz\":{freq_hz},\"wupz_xor_fold\":\"0x{fold:016x}\"}}"
+    )
+}
+
+fn mem8_tool_anchor(args_slice: &str) -> String {
+    mem8_tool_store_wave(args_slice)
+}
+
+fn mem8_tool_recall_waves(args_slice: &str) -> String {
+    let query = extract_json_str(args_slice, "query")
+        .or_else(|| extract_json_str(args_slice, "keyword"))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let limit = extract_json_u64(args_slice, "limit").unwrap_or(10) as usize;
+    let dir = mem8_dir();
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let dot_mem8 = PathBuf::from(&home).join(".mem8/anchors.jsonl");
+    let alexiai_mem = PathBuf::from(&home).join(".local/share/alexiai/memory.jsonl");
+
+    let mut matches = Vec::new();
+    for path in [dir.join("waves.jsonl"), dot_mem8, alexiai_mem] {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            for line in raw.lines().rev() {
+                let t = line.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                if query.is_empty() || t.to_ascii_lowercase().contains(&query) {
+                    if !matches.iter().any(|m: &String| m == t) {
+                        matches.push(t.to_string());
+                    }
+                    if matches.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+        if matches.len() >= limit {
+            break;
+        }
+    }
+    format!(
+        "{{\"ok\":true,\"query\":{},\"count\":{},\"waves\":[{}]}}",
+        markdown_source_literal(&query),
+        matches.len(),
+        matches.join(",")
+    )
+}
+
+fn mem8_tool_wave_grid() -> String {
+    let dir = mem8_dir();
+    let waves_bytes = fs::metadata(dir.join("waves.bin")).map(|m| m.len()).unwrap_or(0);
+    let salience_bytes = fs::metadata(dir.join("speech_salience_waves.bin"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let waves_lines = fs::read_to_string(dir.join("waves.jsonl"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0);
+    let prof = load_salience_profile();
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+    format!(
+        "{{\"ok\":true,\"mem8_dir\":{},\"waves_bin_bytes\":{waves_bytes},\"waves_jsonl_entries\":{waves_lines},\"speech_salience_bin_bytes\":{salience_bytes},\"hue_f0_hz\":{f0_int},\"hue_grains_learned\":{}}}",
+        markdown_source_literal(&dir.display().to_string()),
+        prof.grains_learned
+    )
+}
+
+fn run_hook_mem8_session_start() -> String {
+    let dir = mem8_dir();
+    let waves_cnt = fs::read_to_string(dir.join("waves.jsonl"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0);
+    let prof = load_salience_profile();
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+    let msg = format!(
+        "🌊 [MEM|8 Local Wave Grid Active | Waves={waves_cnt} | Hue M8SP={f0_int}Hz ({} grains) | Tools: mcp_mem8_*]",
+        prof.grains_learned
+    );
+    format!(
+        "{{\"injectSteps\":[{{\"ephemeralMessage\":{}}}]}}",
+        markdown_source_literal(&msg)
+    )
+}
+
+fn run_hook_mem8_pre_invocation() -> String {
+    let mut stdin_buf = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin_buf);
+    let last_input = extract_json_str(&stdin_buf, "lastUserInput").unwrap_or_default();
+    if last_input.trim().is_empty() {
+        return "{}".to_string();
+    }
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let dot_mem8 = PathBuf::from(&home).join(".mem8/anchors.jsonl");
+    let Ok(raw) = fs::read_to_string(&dot_mem8) else {
+        return "{}".to_string();
+    };
+    let words: Vec<String> = last_input
+        .split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .filter(|w| w.len() >= 4)
+        .collect();
+    if words.is_empty() {
+        return "{}".to_string();
+    }
+    let mut recalled = Vec::new();
+    for line in raw.lines().rev() {
+        let low = line.to_ascii_lowercase();
+        if words.iter().any(|w| low.contains(w)) {
+            if let Some(d) = extract_json_str(line, "data") {
+                recalled.push(d);
+                if recalled.len() >= 2 {
+                    break;
+                }
+            }
+        }
+    }
+    if recalled.is_empty() {
+        return "{}".to_string();
+    }
+    let msg = format!("🌊 [MEM|8 Recalled Wave Anchors]: {}", recalled.join(" | "));
+    format!(
+        "{{\"injectSteps\":[{{\"ephemeralMessage\":{}}}]}}",
+        markdown_source_literal(&msg)
+    )
 }
 
 fn qwave_share_dir() -> PathBuf {
