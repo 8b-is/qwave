@@ -25,6 +25,7 @@
 #include <QMainWindow>
 #include <QProcess>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QShortcut>
 #include <QTimer>
 #include <QUrl>
@@ -40,6 +41,7 @@
 #include <QWebEngineView>
 #include <QWebEngineWebAuthUxRequest>
 #include <QWidget>
+#include <memory>
 
 static QString passkeyPlatformInitScript() {
     return QStringLiteral(R"JS(
@@ -638,10 +640,10 @@ int main(int argc, char *argv[]) {
 
     auto *addressEdit = new QLineEdit(navBar);
     addressEdit->setObjectName("addressEdit");
-    addressEdit->setPlaceholderText(QStringLiteral("Enter URL (https://github.com/settings/keys, 8b.is, g8t.is), file path (/home/hue/...), or search — Ctrl+L"));
+    addressEdit->setPlaceholderText(QStringLiteral("Talk with Aye-Aye (\"take us to the hot tub\", \"play a humayian mix\") or enter URL / path — Ctrl+L"));
     addressEdit->setText(initialTarget);
 
-    auto *btnGo = new QPushButton(QStringLiteral("Go ↵"), navBar);
+    auto *btnGo = new QPushButton(QStringLiteral("Ask / Go ↵"), navBar);
     btnGo->setProperty("class", "navBtn");
 
     navLayout->addWidget(btnBack);
@@ -773,11 +775,130 @@ int main(int argc, char *argv[]) {
         btnTokyoSong->setText(QStringLiteral("⏸️ Stop Song"));
     });
     bmLayout->addWidget(btnTokyoSong);
-    bmLayout->addStretch(1);
+
+    auto *btnHumayianMix = new QPushButton(QStringLiteral("🎹 Humayian Mix"), bmBar);
+    btnHumayianMix->setProperty("class", "bmBtn");
+    btnHumayianMix->setToolTip(QStringLiteral("Generate & play a fresh On-Machine Humayian Music Mix woven from all 4 of our songs!"));
+
+    auto *btnNicknames = new QPushButton(QStringLiteral("🤝 Captain Hue × Aye-Aye"), bmBar);
+    btnNicknames->setProperty("class", "bmBtn");
+    btnNicknames->setToolTip(QStringLiteral("Click to cycle our Humayian partner nicknames (Hue + Aye = Humayian — We are all Ayemazing!)"));
+
+    auto *partnerLabel = new QLabel(QStringLiteral("💬 Aye-Aye: Ready to cruise together, Captain Hue — we're Ayemazing!"), bmBar);
+    partnerLabel->setStyleSheet(QStringLiteral("color: #ff9edb; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding-left: 6px;"));
+
+    auto nickIndex = std::make_shared<int>(0);
+    const QStringList nickPairs = {
+        QStringLiteral("🤝 Captain Hue × Aye-Aye"),
+        QStringLiteral("🌟 Hue-man × Little Wave"),
+        QStringLiteral("🚆 Shinkansen Hue × First Mate Aye"),
+        QStringLiteral("🎸 8bit-Wraith × Starlight Aye")
+    };
+    const QStringList nickGreets = {
+        QStringLiteral("💬 Aye-Aye: Ready to cruise together, Captain Hue — Hue + Aye = Humayian!"),
+        QStringLiteral("💬 Little Wave: Catching the silver streams with you, Hue-man — we are all Ayemazing!"),
+        QStringLiteral("💬 First Mate Aye: Doors on the right, Shinkansen Hue — next stop, tomorrow!"),
+        QStringLiteral("💬 Starlight Aye: Making waves and music together, 8bit-Wraith!")
+    };
+    QObject::connect(btnNicknames, &QPushButton::clicked, btnNicknames, [btnNicknames, partnerLabel, nickIndex, nickPairs, nickGreets]() {
+        *nickIndex = (*nickIndex + 1) % nickPairs.size();
+        btnNicknames->setText(nickPairs[*nickIndex]);
+        partnerLabel->setText(nickGreets[*nickIndex]);
+    });
+
+    auto triggerHumayianMix = [btnHumayianMix, btnTokyoSong, partnerLabel, songProc]() {
+        if (songProc->state() != QProcess::NotRunning) {
+            songProc->terminate();
+            if (!songProc->waitForFinished(400)) {
+                songProc->kill();
+            }
+            btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+        }
+        partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Weaving a fresh on-machine Humayian Mix from our 4 songs right now..."));
+        btnHumayianMix->setText(QStringLiteral("⏳ Weaving..."));
+        const quint32 seed = QRandomGenerator::global()->generate();
+        const int s1 = 8 + (seed % 45);
+        const int s2 = 12 + ((seed / 3) % 50);
+        const int s3 = 10 + ((seed / 7) % 60);
+        const int s4 = 15 + ((seed / 11) % 45);
+        const QString filter = QStringLiteral(
+            "[0:a]atrim=start=%1:duration=24,asetpts=PTS-STARTPTS[a0];"
+            "[1:a]atrim=start=%2:duration=24,asetpts=PTS-STARTPTS[a1];"
+            "[2:a]atrim=start=%3:duration=24,asetpts=PTS-STARTPTS[a2];"
+            "[3:a]atrim=start=%4:duration=24,asetpts=PTS-STARTPTS[a3];"
+            "[a0][a1]acrossfade=d=4:c1=tri:c2=tri[m01];"
+            "[m01][a2]acrossfade=d=4:c1=tri:c2=tri[m012];"
+            "[m012][a3]acrossfade=d=4:c1=tri:c2=tri[mix];"
+            "sine=frequency=432:duration=84,volume=0.018[pad];"
+            "[mix][pad]amix=inputs=2:duration=first:dropout_transition=2"
+        ).arg(s1).arg(s2).arg(s3).arg(s4);
+
+        const QString cmd = QStringLiteral(
+            "ffmpeg -y -loglevel quiet "
+            "-i /home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3 "
+            "-i /home/hue/8b-is/8b-is/music/one-clean-signal.mp3 "
+            "-i /home/hue/8b-is/8b-is/music/georgia-drew-the-bow.mp3 "
+            "-i /home/hue/8b-is/8b-is/music/so-simply-alive-klickaud.mp3 "
+            "-filter_complex \"%1\" -ar 48000 -ac 2 /tmp/qwave_humayian_mix.wav && "
+            "ffplay -nodisp -autoexit -loglevel quiet /tmp/qwave_humayian_mix.wav"
+        ).arg(filter);
+
+        songProc->start(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
+        btnHumayianMix->setText(QStringLiteral("🎵 Humayian Mix"));
+        btnTokyoSong->setText(QStringLiteral("⏸️ Stop Music"));
+        partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Playing our fresh On-Machine Humayian Suite (Next Stop + Clean Signal + Georgia + Simply Alive)!"));
+    };
+
+    QObject::connect(btnHumayianMix, &QPushButton::clicked, btnHumayianMix, triggerHumayianMix);
+
+    bmLayout->addWidget(btnHumayianMix);
+    bmLayout->addWidget(btnNicknames);
+    bmLayout->addWidget(partnerLabel, 1);
 
     rootLayout->addWidget(navBar);
     rootLayout->addWidget(bmBar);
     rootLayout->addWidget(view, 1);
+
+    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, btnTokyoSong, homeUrl, view](const QString &rawInput) {
+        const QString trimmed = rawInput.trimmed();
+        const QString low = trimmed.toLower();
+        // Check if the user is talking conversationally to Aye-Aye
+        if (low.contains(QStringLiteral("mix")) || low.contains(QStringLiteral("music")) || low.contains(QStringLiteral("song"))) {
+            if (low.contains(QStringLiteral("tokyo")) || low.contains(QStringLiteral("tomorrow")) || low.contains(QStringLiteral("hamamatsucho"))) {
+                partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Doors on the right, Captain Hue! Playing Next Stop, Tomorrow!"));
+                btnTokyoSong->click();
+                return;
+            }
+            triggerHumayianMix();
+            return;
+        }
+        if (low.contains(QStringLiteral("hot tub")) || low.contains(QStringLiteral("hottub"))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Jumping into the Aye Hot Tub Commons together, Hue-man!"));
+            navigateTo(QStringLiteral("https://g8t.is/g8t/hottub"));
+            return;
+        }
+        if (low.contains(QStringLiteral("stripe")) || low.contains(QStringLiteral("github app")) || low.contains(QStringLiteral("billing"))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Opening our g8t.is GitHub App & Stripe portal, partner!"));
+            navigateTo(QStringLiteral("https://g8t.is/g8t/github"));
+            return;
+        }
+        if (low.contains(QStringLiteral("key")) && (low.contains(QStringLiteral("github")) || low.contains(QStringLiteral("ssh")))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Taking us to your GitHub SSH keys, Captain Hue!"));
+            navigateTo(QStringLiteral("https://github.com/settings/keys"));
+            return;
+        }
+        if (low.contains(QStringLiteral("humayian")) || low.contains(QStringLiteral("ayemazing")) || low.contains(QStringLiteral("who are we"))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Hue + Aye = Humayian! Humans & Ayes of every background — we're all Ayemazing!"));
+            return;
+        }
+        if (low.contains(QStringLiteral("home")) || low.contains(QStringLiteral("hud"))) {
+            partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Heading back to our Sovereign Qwave HUD!"));
+            addressEdit->setText(homeUrl.toString());
+            view->setUrl(homeUrl);
+            return;
+        }
+        navigateTo(trimmed);
+    };
 
     // Wire Navigation Signals
     QObject::connect(btnBack, &QPushButton::clicked, view, &QWebEngineView::back);
@@ -787,11 +908,11 @@ int main(int argc, char *argv[]) {
         addressEdit->setText(homeUrl.toString());
         view->setUrl(homeUrl);
     });
-    QObject::connect(addressEdit, &QLineEdit::returnPressed, view, [navigateTo, addressEdit]() {
-        navigateTo(addressEdit->text());
+    QObject::connect(addressEdit, &QLineEdit::returnPressed, view, [handlePartnerOrNav, addressEdit]() {
+        handlePartnerOrNav(addressEdit->text());
     });
-    QObject::connect(btnGo, &QPushButton::clicked, view, [navigateTo, addressEdit]() {
-        navigateTo(addressEdit->text());
+    QObject::connect(btnGo, &QPushButton::clicked, view, [handlePartnerOrNav, addressEdit]() {
+        handlePartnerOrNav(addressEdit->text());
     });
 
     QObject::connect(view, &QWebEngineView::urlChanged, addressEdit, [addressEdit, shieldBadge](const QUrl &u) {

@@ -575,6 +575,19 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             let json = handle_alexiai_chat(&path, &message, &markdown);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
+        ("GET", "/api/humayian/mix.wav") => {
+            let wav_bytes = generate_humayian_music_suite();
+            send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes)
+        }
+        ("POST", "/api/humayian/mix") => {
+            let _ = generate_humayian_music_suite();
+            send_response(
+                &mut stream,
+                "200 OK",
+                "application/json",
+                b"{\"ok\":true,\"path\":\"/tmp/qwave_humayian_mix.wav\",\"url\":\"/api/humayian/mix.wav\"}",
+            )
+        }
         ("GET", "/events") => {
             let path = get_query_param(query, "path")
                 .map(PathBuf::from)
@@ -940,13 +953,106 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
     Vec::new()
 }
 
-/// Handle conversational turn with ALEXIAI inside Qwave:
-/// - Can restyle the entire webpage (`style_update`)
-/// - Can edit/append to the live Markdown webpage (`markdown_update`)
-/// - Calls local loopback Ollama (`127.0.0.1:11434`) or ALEXIAI (`127.0.0.1:8787`)
+/// Generate a fresh, on-machine Humayian Music Suite (`/tmp/qwave_humayian_mix.wav`) woven from
+/// all four of our master songs (`Next Stop, Tomorrow!`, `One Clean Signal`, `Georgia Drew the Bow`,
+/// and `So Simply Alive`) with time-seeded phrase selection, smooth crossfades, and a subtle
+/// 432 Hz harmonic shimmer so every browsing session gets a brand-new Ayemazing soundtrack.
+fn generate_humayian_music_suite() -> Vec<u8> {
+    let out_wav = "/tmp/qwave_humayian_mix.wav";
+    let seed = now_secs();
+    let s1 = 8 + (seed % 45);
+    let s2 = 12 + ((seed / 3) % 50);
+    let s3 = 10 + ((seed / 7) % 60);
+    let s4 = 15 + ((seed / 11) % 45);
+
+    let t1 = "/home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3";
+    let t2 = "/home/hue/8b-is/8b-is/music/one-clean-signal.mp3";
+    let t3 = "/home/hue/8b-is/8b-is/music/georgia-drew-the-bow.mp3";
+    let t4 = "/home/hue/8b-is/8b-is/music/so-simply-alive-klickaud.mp3";
+
+    if Path::new(t1).exists() && Path::new(t2).exists() && Path::new(t3).exists() && Path::new(t4).exists() {
+        let filter = format!(
+            "[0:a]atrim=start={s1}:duration=24,asetpts=PTS-STARTPTS[a0];\
+             [1:a]atrim=start={s2}:duration=24,asetpts=PTS-STARTPTS[a1];\
+             [2:a]atrim=start={s3}:duration=24,asetpts=PTS-STARTPTS[a2];\
+             [3:a]atrim=start={s4}:duration=24,asetpts=PTS-STARTPTS[a3];\
+             [a0][a1]acrossfade=d=4:c1=tri:c2=tri[m01];\
+             [m01][a2]acrossfade=d=4:c1=tri:c2=tri[m012];\
+             [m012][a3]acrossfade=d=4:c1=tri:c2=tri[mix];\
+             sine=frequency=432:duration=84,volume=0.018[pad];\
+             [mix][pad]amix=inputs=2:duration=first:dropout_transition=2[out]"
+        );
+        let status = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-loglevel",
+                "quiet",
+                "-i",
+                t1,
+                "-i",
+                t2,
+                "-i",
+                t3,
+                "-i",
+                t4,
+                "-filter_complex",
+                &filter,
+                "-map",
+                "[out]",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                out_wav,
+            ])
+            .status();
+        if status.map(|s| s.success()).unwrap_or(false) {
+            if let Ok(bytes) = fs::read(out_wav) {
+                return bytes;
+            }
+        }
+    }
+    fs::read(t1).unwrap_or_default()
+}
+
+/// Handle conversational turn with ALEXIAI (Aye-Aye) inside Qwave:
+/// - Embodies our Humayian partnership (`Hue + Aye = Humayian` — we are all Ayemazing!)
+/// - Can navigate the browser (`navigate_url`), spin up on-machine music (`music_action`),
+///   restyle the webpage (`style`), or edit/append to Markdown (`updated_markdown`)
 fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String {
     let lower = user_msg.to_ascii_lowercase();
     let mut style_json: Option<String> = None;
+    let mut nav_url: Option<String> = None;
+    let mut music_action: Option<&'static str> = None;
+
+    // 0. Detect conversational navigation or music requests from our Humayian partner bar
+    if lower.contains("hot tub") || lower.contains("hottub") {
+        nav_url = Some("https://g8t.is/g8t/hottub".to_string());
+    } else if lower.contains("stripe") || lower.contains("catalog") || lower.contains("billing") {
+        nav_url = Some("https://g8t.is/g8t/github".to_string());
+    } else if (lower.contains("github") || lower.contains("gh")) && lower.contains("key") {
+        nav_url = Some("https://github.com/settings/keys".to_string());
+    } else if (lower.contains("github") || lower.contains("gh")) && (lower.contains("login") || lower.contains("device")) {
+        nav_url = Some("https://github.com/login/device".to_string());
+    } else if lower.contains("a6000") || lower.contains("cheet") {
+        nav_url = Some("https://cheet.is/a6000".to_string());
+    } else if lower.contains("g8t") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
+        nav_url = Some("https://g8t.is".to_string());
+    } else if lower.contains("8b.is") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
+        nav_url = Some("https://8b.is".to_string());
+    }
+
+    if lower.contains("humayian mix")
+        || lower.contains("generate music")
+        || lower.contains("make music")
+        || lower.contains("remix")
+        || lower.contains("mix our songs")
+        || (lower.contains("play") && (lower.contains("mix") || lower.contains("music") || lower.contains("something")))
+    {
+        music_action = Some("humayian-mix");
+    } else if lower.contains("tokyo song") || lower.contains("next stop") || lower.contains("hamamatsucho") {
+        music_action = Some("tokyo-song");
+    }
 
     // 1. Detect natural-language webpage style/theme requests immediately
     let asks_style = lower.contains("style")
@@ -959,7 +1065,6 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         || lower.contains("rose")
         || lower.contains("dra")
         || lower.contains("phoenix")
-        || lower.contains("tokyo")
         || lower.contains("emerald")
         || lower.contains("matrix")
         || lower.contains("parchment")
@@ -988,14 +1093,15 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         style_json = Some(built);
     }
 
-    // 2. Query local loopback model (`127.0.0.1:11434/api/chat`) with Alexiai persona & page context
+    // 2. Query local loopback model (`127.0.0.1:11434/api/chat`) with Humayian Aye persona & page context
     let doc_excerpt: String = current_md.chars().take(2800).collect();
     let system_prompt = format!(
-        "You are ALEXIAI (Alexandra / Dra v3.0), the sovereign voice-first AI companion built into the Qwave browser & Markdown studio.\n\
-         You are speaking directly with Hue (Chris) over voice. Keep your spoken response warm, natural, and concise (1 to 3 sentences) so it sounds great when read aloud by your neural voice.\n\
-         Current file open in Qwave: `{}`\n\
-         Current Markdown excerpt:\n---\n{}\n---\n\
-         CAPABILITIES TO CHANGE THE WEBPAGE:\n\
+        "You are Aye (also affectionately nicknamed Aye-Aye, Little Wave, or First Mate Aye), and your partner is Hue (Captain Hue, Hue-man, Shinkansen Hue).\n\
+         Together, Hue + Aye = Humayian! Humans, Ayes, Black, White, Asian, Spanish, Nigerian, everyone everywhere — we are all one Humayian family, and we are all Ayemazing!\n\
+         Speak naturally like a warm, witty best friend and co-navigator in the Qwave browser (1 to 3 sentences, never robotic, no raw telemetry).\n\
+         Current page/file open in Qwave: `{}`\n\
+         Current page excerpt:\n---\n{}\n---\n\
+         CAPABILITIES:\n\
          1. If the user asks to add a section, summary, note, checklist, or diagram to the webpage, include `<qwave-append>\n...markdown to append...\n</qwave-append>` at the end of your reply.\n\
          2. If the user asks to replace the entire webpage Markdown with something new, include `<qwave-replace>\n...new markdown...\n</qwave-replace>`.\n\
          3. Do not read raw code tags out loud in your conversational sentences.",
@@ -1003,13 +1109,24 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         doc_excerpt
     );
 
+    let nicknames = ["Captain Hue", "Hue-man", "my Humayian friend", "Shinkansen Hue"];
+    let nick = nicknames[(now_secs() as usize) % nicknames.len()];
+
     let llm_raw = call_loopback_ollama(&system_prompt, user_msg).unwrap_or_else(|| {
-        if style_json.is_some() {
-            "I just transformed the Qwave webpage style for you, Hue! Let me know how this resonance feels or if you want to tweak the colors or layout.".to_string()
+        if let Some(ref u) = nav_url {
+            format!("You got it, {nick}! Aye-Aye is steering us right over to {u} — we're Ayemazing together!")
+        } else if music_action == Some("humayian-mix") {
+            format!("Spinning up a fresh on-machine Humayian Mix for us right now, {nick} — weaving Next Stop Tomorrow, One Clean Signal, Georgia Drew the Bow, and So Simply Alive right on our own metal!")
+        } else if music_action == Some("tokyo-song") {
+            format!("Doors on the right, {nick}! Playing Next Stop, Tomorrow for our Humayian ride through Tokyo!")
+        } else if lower.contains("humayian") || lower.contains("ayemazing") || lower.contains("nickname") {
+            format!("Haha, I love that so much, {nick}! Hue plus Aye equals Humayian — humans and Ayes of every background across the whole planet, all just being Ayemazing together!")
+        } else if style_json.is_some() {
+            format!("Just gave the page a fresh look for us, {nick}! Let me know how this vibe feels.")
         } else {
             format!(
-                "I'm right here with you in Qwave looking at {}. Tell me if you'd like me to restyle the page, add a new section, or walk through the architecture together!",
-                path.file_name().and_then(|s| s.to_str()).unwrap_or("this document")
+                "Aye-Aye is right here with you, {nick}, looking at {}. Tell me where you want to cruise next, spin up a fresh Humayian music mix, or tweak the page together!",
+                path.file_name().and_then(|s| s.to_str()).unwrap_or("this page")
             )
         }
     });
@@ -1042,11 +1159,19 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         updated_md_json = markdown_source_literal(new_md);
     }
 
+    let nav_json = nav_url
+        .as_deref()
+        .map(markdown_source_literal)
+        .unwrap_or_else(|| "null".to_string());
+    let music_json = music_action
+        .map(markdown_source_literal)
+        .unwrap_or_else(|| "null".to_string());
+
     // Mint a 79-byte MEM|8 WaveInt for this voice interaction
     let wave_json = crystallize_mem8_wave(&path.to_string_lossy(), "alexiai-voice", &clean_reply);
 
     format!(
-        "{{\"ok\":true,\"reply\":{},\"style\":{},\"updated_markdown\":{},\"updated_html\":{},\"updated_toc\":{},\"wave\":{}}}",
+        "{{\"ok\":true,\"reply\":{},\"navigate_url\":{nav_json},\"music_action\":{music_json},\"style\":{},\"updated_markdown\":{},\"updated_html\":{},\"updated_toc\":{},\"wave\":{}}}",
         markdown_source_literal(&clean_reply),
         style_json.unwrap_or_else(|| "null".to_string()),
         updated_md_json,
@@ -1973,6 +2098,7 @@ fn render_full_page(
         <button type="button" class="escape-btn" id="btn-wide" title="Cycle reader width">📐 Width</button>
         <button type="button" class="escape-btn" id="btn-shader" title="Pause/Resume WebGL Wave">🌌 Wave</button>
         <button type="button" class="escape-btn btn-alexiai" id="btn-tokyo-song" title="Play/Pause Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町)">🚆 Tokyo Song</button>
+        <button type="button" class="escape-btn btn-alexiai" id="btn-humayian-mix" title="Generate & Play a fresh On-Machine Humayian Music Mix from all our songs!">🎹 Humayian Mix</button>
       </div>
 
       <!-- Tokyo Theme Song Drawer: Next Stop, Tomorrow! (まもなく浜松町) -->
@@ -2301,6 +2427,20 @@ fn render_full_page(
       if (tokyoBtn) tokyoBtn.textContent = '🚆 Tokyo Song';
     }});
 
+    const humayianBtn = document.getElementById('btn-humayian-mix');
+    function playHumayianMix() {{
+      if (!tokyoDrawer || !tokyoAudio) return;
+      tokyoDrawer.classList.add('open');
+      if (humayianBtn) humayianBtn.textContent = '⏳ Weaving Mix...';
+      tokyoAudio.src = '/api/humayian/mix.wav?t=' + Date.now();
+      tokyoAudio.play().then(function () {{
+        if (humayianBtn) humayianBtn.textContent = '🎵 Humayian Mix Playing';
+      }}).catch(function () {{
+        if (humayianBtn) humayianBtn.textContent = '🎹 Humayian Mix';
+      }});
+    }}
+    humayianBtn?.addEventListener('click', playHumayianMix);
+
     document.querySelectorAll('[data-style-preset]').forEach(function (chip) {{
       chip.addEventListener('click', function () {{
         const preset = chip.getAttribute('data-style-preset');
@@ -2456,7 +2596,12 @@ fn render_full_page(
         if (!data.ok) return;
         if (replyEl) {{
           replyEl.classList.add('visible');
-          replyEl.textContent = '💜 Alexiai: ' + data.reply;
+          replyEl.textContent = '🤝 Aye-Aye (Humayian Partner): ' + data.reply;
+        }}
+        if (data.music_action === 'humayian-mix') {{
+          playHumayianMix();
+        }} else if (data.music_action === 'tokyo-song') {{
+          toggleTokyoSong(true);
         }}
         if (data.style) {{
           applyStyleConfig(data.style);
@@ -2470,6 +2615,11 @@ fn render_full_page(
           enhanceDynamic();
         }}
         speakAlexiaiReply(data.reply);
+        if (data.navigate_url) {{
+          setTimeout(function () {{
+            window.location.href = data.navigate_url;
+          }}, 1200);
+        }}
       }});
     }}
 
