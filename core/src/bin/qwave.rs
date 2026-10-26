@@ -167,8 +167,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if let Some(pos) = args.iter().position(|a| a == "--speak") {
-        ensure_ear_daemon_running();
+    if let Some(pos) = args.iter().position(|a| a == "--speak" || a == "--speak-worker") {
+        let is_worker = args.get(pos).map(|s| s == "--speak-worker").unwrap_or(false);
+        if !is_worker {
+            ensure_ear_daemon_running();
+        }
         let voice = args
             .iter()
             .position(|a| a == "--voice" || a == "-V")
@@ -180,7 +183,9 @@ fn main() -> ExitCode {
             .map(String::as_str)
             .unwrap_or("Qwave sovereign voice online.");
         let msg = speak_out_loud(text, voice, true, true);
-        println!("{msg}");
+        if !is_worker {
+            println!("{msg}");
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -587,11 +592,21 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/humayian/mix.wav") => {
-            let wav_bytes = generate_humayian_music_suite();
+            let wav_bytes = if Path::new("/tmp/qwave_humayian_mix.wav").exists() {
+                fs::read("/tmp/qwave_humayian_mix.wav").unwrap_or_default()
+            } else {
+                generate_humayian_music_suite()
+            };
             send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes)
         }
         ("POST", "/api/humayian/mix") => {
-            let _ = generate_humayian_music_suite();
+            if Path::new("/tmp/qwave_humayian_mix.wav").exists() {
+                thread::spawn(|| {
+                    let _ = generate_humayian_music_suite();
+                });
+            } else {
+                let _ = generate_humayian_music_suite();
+            }
             send_response(
                 &mut stream,
                 "200 OK",
@@ -3347,18 +3362,69 @@ fn format_salience_profile_json(prof: &SpeakerSalienceProfile) -> String {
     )
 }
 
+fn split_tts_sentences(text: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '!' | '?') && current.trim().len() >= 18 {
+            chunks.push(current.trim().to_string());
+            current.clear();
+        }
+    }
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+    if chunks.is_empty() {
+        chunks.push("Alexiai is online.".to_string());
+    }
+    chunks
+}
+
 /// Ensure PipeWire/PulseAudio default sink (e.g. Soundcore Select 4 Go Bluetooth speaker) is unmuted,
 /// synthesize speech via `kokoro-speak` / `liquid-rust`, modulate it in 100% integer DSP with the
 /// user's `MEM|8` `SpeakerSalienceProfile` (`combine_salient_speech_wav`), and play it out loud.
+/// When `wait == false`, spawns a detached `--speak-worker` process and returns in <1ms so no
+/// caller or MCP thread ever blocks on synthesis.
 fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) -> String {
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
 
-    // Immediately mark TTS active BEFORE synthesis starts and stop any previous overlapping playback
-    // so two TTS streams can never speak over each other!
+    // Immediately mark TTS active BEFORE synthesis starts so two TTS streams never overlap.
     let pre_est_secs = ((text.len() as u64) / 10).clamp(4, 90) + 6;
     mark_tts_active_secs(pre_est_secs);
     write_tts_expected(text, pre_est_secs);
     let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
+
+    let prof = load_salience_profile();
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+
+    if !wait {
+        let _ = Command::new("sh")
+            .args([
+                "-c",
+                "pkill -f 'qwave.*--speak-worker' 2>/dev/null; pkill -f '/tmp/qwave_speak_' 2>/dev/null || true",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
+        let _ = Command::new("setsid")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .arg(exe)
+            .args(["--voice", voice, "--speak-worker", text])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+
+        return format!(
+            "{{\"ok\":true,\"played\":true,\"async\":true,\"voice\":{},\"bytes\":0,\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
+            markdown_source_literal(voice),
+            salience_modulate && prof.grains_learned > 0,
+            prof.grains_learned
+        );
+    }
 
     let _ = Command::new("sh")
         .args(["-c", "pkill -f '/tmp/qwave_speak_' 2>/dev/null || true"])
@@ -3371,86 +3437,91 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
         last_activity: AtomicU64::new(now_secs()),
         active_sse: AtomicU64::new(0),
         salience_profile: Mutex::new(if salience_modulate {
-            load_salience_profile()
+            prof.clone()
         } else {
             SpeakerSalienceProfile::default()
         }),
     });
 
-    let wav_bytes = synthesize_alexiai_tts(text, voice, &state);
-    if wav_bytes.is_empty() {
-        return "{\"ok\":false,\"error\":\"TTS synthesis returned empty audio\"}".to_string();
-    }
+    let sentences = split_tts_sentences(text);
+    let mut total_bytes = 0usize;
+    let mut played_any = false;
+    let mut active_player: Option<(std::process::Child, String)> = None;
 
-    let play_path = format!("/tmp/qwave_speak_{}_{}.wav", std::process::id(), now_secs());
-    let _ = fs::write(&play_path, &wav_bytes);
+    for (idx, sentence) in sentences.iter().enumerate() {
+        let wav_bytes = synthesize_alexiai_tts(sentence, voice, &state);
+        if wav_bytes.is_empty() {
+            continue;
+        }
+        total_bytes += wav_bytes.len();
+        let play_path = format!(
+            "/tmp/qwave_speak_{}_{}_{}.wav",
+            std::process::id(),
+            now_secs(),
+            idx
+        );
+        let _ = fs::write(&play_path, &wav_bytes);
 
-    // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
-    // and write tts_expected.json so the parallel ear daemon self-calibrates in <1ms integer DSP
-    // without blocking the neural STT queue!
-    let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 120) + 4;
-    mark_tts_active_secs(est_secs);
-    write_tts_expected(text, est_secs);
-    let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
+        let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(2, 60) + 4;
+        mark_tts_active_secs(est_secs);
+        write_tts_expected(text, est_secs);
 
-    let prof = load_salience_profile();
-    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+        // Wait for previous sentence playback to finish before starting this sentence
+        if let Some((mut prev_child, prev_path)) = active_player.take() {
+            let _ = prev_child.wait();
+            let _ = fs::remove_file(&prev_path);
+        }
 
-    if wait {
-        let played = Command::new("pw-play")
+        let child = Command::new("pw-play")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .arg(&play_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-            || Command::new("paplay")
-                .env("XDG_RUNTIME_DIR", &xdg_runtime)
-                .arg(&play_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            || Command::new("aplay")
-                .arg("-q")
-                .arg(&play_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-        mark_tts_active_secs(3);
-        let _ = fs::remove_file(&play_path);
-        format!(
-            "{{\"ok\":true,\"played\":{played},\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
-            markdown_source_literal(voice),
-            wav_bytes.len(),
-            salience_modulate && prof.grains_learned > 0,
-            prof.grains_learned
-        )
-    } else {
-        let p = play_path.clone();
-        let _ = Command::new("setsid")
-            .env("XDG_RUNTIME_DIR", &xdg_runtime)
-            .args([
-                "sh",
-                "-c",
-                &format!("(pw-play '{p}' || paplay '{p}' || aplay -q '{p}') >/dev/null 2>&1; rm -f '{p}'"),
-            ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn();
-        format!(
-            "{{\"ok\":true,\"played\":true,\"async\":true,\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
-            markdown_source_literal(voice),
-            wav_bytes.len(),
-            salience_modulate && prof.grains_learned > 0,
-            prof.grains_learned
-        )
+            .spawn()
+            .or_else(|_| {
+                Command::new("paplay")
+                    .env("XDG_RUNTIME_DIR", &xdg_runtime)
+                    .arg(&play_path)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+            })
+            .or_else(|_| {
+                Command::new("aplay")
+                    .arg("-q")
+                    .arg(&play_path)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+            });
+
+        if let Ok(c) = child {
+            played_any = true;
+            active_player = Some((c, play_path));
+        } else {
+            let _ = fs::remove_file(&play_path);
+        }
     }
+
+    if let Some((mut last_child, last_path)) = active_player.take() {
+        let _ = last_child.wait();
+        let _ = fs::remove_file(&last_path);
+    }
+
+    mark_tts_active_secs(3);
+    if total_bytes == 0 {
+        return "{\"ok\":false,\"error\":\"TTS synthesis returned empty audio\"}".to_string();
+    }
+
+    format!(
+        "{{\"ok\":true,\"played\":{played_any},\"voice\":{},\"bytes\":{total_bytes},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
+        markdown_source_literal(voice),
+        salience_modulate && prof.grains_learned > 0,
+        prof.grains_learned
+    )
 }
 
 /// Record from microphone (if `target` is a duration in seconds) OR read an existing `.wav` file,
@@ -4204,12 +4275,55 @@ fn format_jst_clock(unix_secs: u64) -> String {
     format!("{hh:02}:{mm:02}:{ss:02} JST (+09:00)")
 }
 
-/// Passively harvest Country/Timezone (`802.11d`), 64-bit `TSF` microsecond beacon clock,
-/// channel diversity (`rf_entropy_permille` in `0..=1000`), and Tokyo WiGLE Work Area
-/// from visible WiFi/BLE beacons without transmitting a single packet or using floats.
+/// Non-blocking cached Tokyo RF beacon sense:
+/// Never blocks any caller thread and never spawns `sudo iw scan dump`.
+/// Returns the cached snapshot immediately in <1 microsecond, and refreshes via a detached
+/// background thread at most once every 180 seconds.
 fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
-    let mut country = String::from("JP");
-    let mut max_tsf_us: u64 = 0;
+    type BeaconTuple = (String, String, String, usize, u64, u32);
+    static BEACON_CACHE: std::sync::OnceLock<Mutex<(u64, BeaconTuple)>> =
+        std::sync::OnceLock::new();
+    static REFRESHING: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    let default_tuple = || -> BeaconTuple {
+        (
+            "JP".to_string(),
+            "Asia/Tokyo (JST, +09:00)".to_string(),
+            "Tokyo · 8b-is Triad Corridor (35.6162°N, 139.7200°E · JP)".to_string(),
+            24,
+            now_secs().saturating_mul(1_000_000),
+            860,
+        )
+    };
+
+    let cache = BEACON_CACHE.get_or_init(|| Mutex::new((0, default_tuple())));
+    let now = now_secs();
+    if let Ok(guard) = cache.try_lock() {
+        let (ts, ref val) = *guard;
+        let out = val.clone();
+        drop(guard);
+        if ts == 0 || now.saturating_sub(ts) >= 180 {
+            if !REFRESHING.swap(true, Ordering::SeqCst) {
+                thread::spawn(move || {
+                    let fresh = compute_tokyo_beacon_sense_bg();
+                    if let Some(c) = BEACON_CACHE.get() {
+                        if let Ok(mut g) = c.lock() {
+                            *g = (now_secs(), fresh);
+                        }
+                    }
+                    REFRESHING.store(false, Ordering::SeqCst);
+                });
+            }
+        }
+        return out;
+    }
+    default_tuple()
+}
+
+fn compute_tokyo_beacon_sense_bg() -> (String, String, String, usize, u64, u32) {
+    let country = String::from("JP");
+    let max_tsf_us: u64 = now_secs().saturating_mul(1_000_000);
     let mut has_sony_swan = false;
     let mut has_uspot_tullys = false;
     let mut has_shinjuku = false;
@@ -4217,7 +4331,16 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
     let mut ap_count = 0usize;
 
     if let Ok(out) = Command::new("nmcli")
-        .args(["-t", "-f", "BSSID,SSID,CHAN,SIGNAL", "dev", "wifi", "list"])
+        .args([
+            "-t",
+            "-f",
+            "BSSID,SSID,CHAN,SIGNAL",
+            "dev",
+            "wifi",
+            "list",
+            "--rescan",
+            "no",
+        ])
         .output()
     {
         if out.status.success() {
@@ -4244,34 +4367,6 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
                 if parts.len() >= 3 {
                     let ch_idx = parts[parts.len() - 2].parse::<usize>().unwrap_or(0) % 16;
                     chan_counts[ch_idx] += 1;
-                }
-            }
-        }
-    }
-
-    if let Ok(out) = Command::new("sh")
-        .args([
-            "-c",
-            "WLAN_IF=$(iw dev 2>/dev/null | awk '$1==\"Interface\"{print $2; exit}'); \
-             if [ -n \"$WLAN_IF\" ]; then sudo -n iw dev \"$WLAN_IF\" scan dump 2>/dev/null | head -n 400; fi",
-        ])
-        .output()
-    {
-        let dump = String::from_utf8_lossy(&out.stdout);
-        for line in dump.lines() {
-            let t = line.trim();
-            if let Some(rest) = t.strip_prefix("Country:") {
-                let code = rest.split_whitespace().next().unwrap_or("JP");
-                if !code.is_empty() {
-                    country = code.to_string();
-                }
-            } else if let Some(rest) = t.strip_prefix("TSF:") {
-                if let Some(us_str) = rest.split_whitespace().next() {
-                    if let Ok(us) = us_str.parse::<u64>() {
-                        if us > max_tsf_us {
-                            max_tsf_us = us;
-                        }
-                    }
                 }
             }
         }
@@ -5314,34 +5409,61 @@ fn probe_and_traverse_captive_portal(
 fn build_marine_sense_json(state: &Arc<AppState>) -> String {
     static NOMAD_CACHE: std::sync::OnceLock<Mutex<(u64, String)>> = std::sync::OnceLock::new();
     static TRIAD_CACHE: std::sync::OnceLock<Mutex<(u64, String)>> = std::sync::OnceLock::new();
-    let cache = NOMAD_CACHE.get_or_init(|| Mutex::new((0, String::new())));
-    let t_cache = TRIAD_CACHE.get_or_init(|| Mutex::new((0, String::new())));
+    static NOMAD_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static TRIAD_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    let cache = NOMAD_CACHE.get_or_init(|| Mutex::new((0, "{\"ok\":true}".to_string())));
+    let t_cache = TRIAD_CACHE.get_or_init(|| Mutex::new((0, "{\"ok\":true}".to_string())));
 
     let now = now_secs();
-    let nomad_json = {
-        let mut guard = cache.lock().unwrap();
-        if guard.1.is_empty() || now.saturating_sub(guard.0) >= 15 {
-            let fresh = run_nomad_mesh(false);
-            *guard = (now, fresh.clone());
-            fresh
-        } else {
-            guard.1.clone()
+    let nomad_json = if let Ok(guard) = cache.try_lock() {
+        let (ts, ref val) = *guard;
+        let cur = val.clone();
+        drop(guard);
+        if ts == 0 || now.saturating_sub(ts) >= 60 {
+            if !NOMAD_BUSY.swap(true, Ordering::SeqCst) {
+                thread::spawn(move || {
+                    let fresh = run_nomad_mesh(false);
+                    if let Some(c) = NOMAD_CACHE.get() {
+                        if let Ok(mut g) = c.lock() {
+                            *g = (now_secs(), fresh);
+                        }
+                    }
+                    NOMAD_BUSY.store(false, Ordering::SeqCst);
+                });
+            }
         }
+        cur
+    } else {
+        "{\"ok\":true}".to_string()
     };
 
-    let triad_json = {
-        let mut guard = t_cache.lock().unwrap();
-        if guard.1.is_empty() || now.saturating_sub(guard.0) >= 8 {
-            let fresh = run_esp32_triad_probe(false);
-            *guard = (now, fresh.clone());
-            fresh
-        } else {
-            guard.1.clone()
+    let triad_json = if let Ok(guard) = t_cache.try_lock() {
+        let (ts, ref val) = *guard;
+        let cur = val.clone();
+        drop(guard);
+        if ts == 0 || now.saturating_sub(ts) >= 30 {
+            if !TRIAD_BUSY.swap(true, Ordering::SeqCst) {
+                thread::spawn(move || {
+                    let fresh = run_esp32_triad_probe(false);
+                    if let Some(c) = TRIAD_CACHE.get() {
+                        if let Ok(mut g) = c.lock() {
+                            *g = (now_secs(), fresh);
+                        }
+                    }
+                    TRIAD_BUSY.store(false, Ordering::SeqCst);
+                });
+            }
         }
+        cur
+    } else {
+        "{\"ok\":true}".to_string()
     };
 
     let prof = load_salience_profile();
-    *state.salience_profile.lock().unwrap() = prof.clone();
+    if let Ok(mut g) = state.salience_profile.try_lock() {
+        *g = prof.clone();
+    }
     let salience_json = format_salience_profile_json(&prof);
     let ear_json = read_ear_inbox_json(12);
 

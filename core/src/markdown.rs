@@ -945,24 +945,20 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   const uF0Location = gl.getUniformLocation(program, "u_f0");
   const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = motionPreference.matches;
-  // Bluish smoke wave runs gently by default and surges with ripples whenever you or Aye speak!
-  window.__qwaveShaderPaused = false;
+  // Demand-driven: 0% GPU/CPU when quiet; wakes and ripples smoothly whenever you or Aye speak!
+  window.__qwaveShaderPaused = true;
   let voiceEnergy = 0.0;
   let voicePitch = 0.5;
   let simTime = 8.0;
 
   function resize() {
-    // Render WebGL FBM smoke at 0.42x resolution for silky performance + soft smoke diffusion
-    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.42));
-    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.42));
+    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.38));
+    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.38));
     gl.viewport(0, 0, canvas.width, canvas.height);
-    if (!document.hidden) render(performance.now());
+    if (!document.hidden) render();
   }
 
-  function render(time) {
-    if (!reduce && !window.__qwaveShaderPaused) {
-      simTime += 0.032 + voiceEnergy * 0.095;
-    }
+  function render() {
     gl.uniform1f(uTimeLocation, simTime);
     gl.uniform2f(uResolutionLocation, canvas.width, canvas.height);
     if (uVoiceLocation) gl.uniform1f(uVoiceLocation, voiceEnergy);
@@ -976,24 +972,31 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   function frame(time) {
     rafId = 0;
     if (document.hidden) return;
-    if ((reduce || window.__qwaveShaderPaused) && voiceEnergy < 0.01) return;
-    const fpsCapMs = voiceEnergy > 0.04 ? (1000 / 24) : (1000 / 12);
-    if (time - lastRender >= fpsCapMs) {
-      lastRender = time;
-      voiceEnergy *= 0.92;
-      if (voiceEnergy < 0.008) voiceEnergy = 0.0;
-      render(time);
+    if (reduce || (window.__qwaveShaderPaused && voiceEnergy < 0.01)) {
+      voiceEnergy = 0.0;
+      render();
+      return;
     }
-    rafId = requestAnimationFrame(frame);
+    if (time - lastRender >= 66) {
+      lastRender = time;
+      simTime += 0.045 + voiceEnergy * 0.08;
+      voiceEnergy *= 0.86;
+      if (voiceEnergy < 0.01) voiceEnergy = 0.0;
+      render();
+    }
+    if (!window.__qwaveShaderPaused || voiceEnergy >= 0.01) {
+      rafId = requestAnimationFrame(frame);
+    }
   }
 
   window.__qwavePulseVoice = function (energy, f0Norm) {
+    if (reduce || document.hidden) return;
     const e = typeof energy === "number" ? Math.max(0.0, Math.min(1.0, energy)) : 0.85;
     voiceEnergy = Math.max(voiceEnergy, e);
     if (typeof f0Norm === "number") {
       voicePitch = Math.max(0.0, Math.min(1.0, f0Norm));
     }
-    if (!rafId && !document.hidden) {
+    if (!rafId) {
       rafId = requestAnimationFrame(frame);
     }
   };
@@ -1004,9 +1007,8 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
     reduce = motionPreference.matches;
     lastRender = -1000;
     if (document.hidden) return;
-    if ((reduce || window.__qwaveShaderPaused) && voiceEnergy < 0.01) {
-      render(8000);
-    } else {
+    render();
+    if (!reduce && (!window.__qwaveShaderPaused || voiceEnergy >= 0.01)) {
       rafId = requestAnimationFrame(frame);
     }
   }
@@ -1014,7 +1016,6 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   document.addEventListener("visibilitychange", syncAnimation);
   window.addEventListener("resize", resize);
   resize();
-  if (!reduce) syncAnimation();
 })();"#;
 
 #[cfg(test)]

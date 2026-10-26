@@ -119,6 +119,9 @@ fn main() {
         "smoke-bg" => {
             println!("{}", run_smoke_bg(rest));
         }
+        "refresh-trits-bg" => {
+            refresh_stack_trits_sync();
+        }
         "markdown-hud" => {
             println!("{}", run_markdown_hud(rest));
         }
@@ -574,7 +577,94 @@ fn probe_a6000_cached() -> Trit {
     Trit::Zero
 }
 
-/// Collect a complete live [`HudSnapshot`] from `~/.local/share/qwave` and loopback services.
+fn parse_trit_char(c: char) -> Trit {
+    match c {
+        '+' => Trit::Plus,
+        '-' => Trit::Minus,
+        _ => Trit::Zero,
+    }
+}
+
+fn refresh_stack_trits_sync() -> (Trit, Trit, Trit, Trit, Trit) {
+    let now = now_epoch_secs();
+    let (ear, lqd, aye, esp, a6k) = thread::scope(|s| {
+        let h_ear = s.spawn(probe_ear_service);
+        let h_lqd = s.spawn(|| probe_http_loopback(8786, "/health", 150));
+        let h_aye = s.spawn(|| probe_http_loopback(8787, "/api/health", 150));
+        let h_esp = s.spawn(probe_esp32_medusa);
+        let h_a6k = s.spawn(probe_a6000_cached);
+        (
+            h_ear.join().unwrap_or(Trit::Zero),
+            h_lqd.join().unwrap_or(Trit::Zero),
+            h_aye.join().unwrap_or(Trit::Zero),
+            h_esp.join().unwrap_or(Trit::Zero),
+            h_a6k.join().unwrap_or(Trit::Zero),
+        )
+    });
+    let payload = format!(
+        "{now}:{}{}{}{}{}",
+        trit_symbol(ear),
+        trit_symbol(lqd),
+        trit_symbol(aye),
+        trit_symbol(esp),
+        trit_symbol(a6k)
+    );
+    let _ = fs::write("/tmp/qwave_stack_trits.cache", payload);
+    (ear, lqd, aye, esp, a6k)
+}
+
+/// Non-blocking stack health reader: returns cached trits immediately in <50us, and triggers
+/// a detached background refresh (`qwave-hypr-hud refresh-trits-bg`) at most once every 30s.
+fn read_stack_trits_nonblocking() -> (Trit, Trit, Trit, Trit, Trit) {
+    let cache_path = Path::new("/tmp/qwave_stack_trits.cache");
+    let now = now_epoch_secs();
+    if let Ok(raw) = fs::read_to_string(cache_path) {
+        if let Some((ts_s, syms)) = raw.trim().split_once(':') {
+            let chars: Vec<char> = syms.chars().collect();
+            if chars.len() >= 5 {
+                let ts = ts_s.parse::<u64>().unwrap_or(0);
+                if now.saturating_sub(ts) > 30 {
+                    // Touch timestamp immediately so concurrent callers don't spawn duplicate refreshes
+                    let _ = fs::write(cache_path, format!("{now}:{syms}"));
+                    if let Ok(exe) = env::current_exe() {
+                        let _ = Command::new(exe)
+                            .arg("refresh-trits-bg")
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .spawn();
+                    }
+                }
+                return (
+                    parse_trit_char(chars[0]),
+                    parse_trit_char(chars[1]),
+                    parse_trit_char(chars[2]),
+                    parse_trit_char(chars[3]),
+                    parse_trit_char(chars[4]),
+                );
+            }
+        }
+    }
+    // First-ever call when no cache file exists yet: write optimistic defaults and spawn background refresh
+    let _ = fs::write(cache_path, format!("{now}:+++++"));
+    if let Ok(exe) = env::current_exe() {
+        let _ = Command::new(exe)
+            .arg("refresh-trits-bg")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+    (
+        probe_ear_service(),
+        Trit::Plus,
+        Trit::Plus,
+        probe_esp32_medusa(),
+        Trit::Plus,
+    )
+}
+
+/// Collect a complete live [`HudSnapshot`] from `~/.local/share/qwave` without blocking on any network socket.
 pub fn collect_hud_snapshot() -> HudSnapshot {
     let profile_path = resolve_qwave_file("speaker_salience_profile.bin");
     let mut profile = fs::read(&profile_path)
@@ -648,11 +738,7 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
     let salience_pct = rational_to_pct(salience_pq);
     let (stability_trit, detector_f0_pq) = evaluate_marine_stability(&profile, salience_pq);
 
-    let ear_trit = probe_ear_service();
-    let lqd_trit = probe_http_loopback(8786, "/health", 150);
-    let aye_trit = probe_http_loopback(8787, "/api/health", 150);
-    let esp_trit = probe_esp32_medusa();
-    let a6k_trit = probe_a6000_cached();
+    let (ear_trit, lqd_trit, aye_trit, esp_trit, a6k_trit) = read_stack_trits_nonblocking();
 
     HudSnapshot {
         speaker: if latest_utt.speaker == "ambient_noise" {
@@ -2437,21 +2523,14 @@ pub fn run_smoke_bg(args: &[String]) -> String {
 
 /// Hands-Free Hyprland Desktop Voice Orchestrator:
 /// Checks if there is a new utterance from `hue` in `snap.thoughts` and executes desktop-wide
-/// workspace/window/music voice commands + shifts the Bluish Smoke Wave desktop background!
+/// workspace/window/music voice commands without ever blocking or restarting background surfaces!
 fn process_desktop_voice_command(snap: &HudSnapshot) {
-    if !is_process_running("swaybg") {
-        apply_hyprland_smoke_phase(0);
-    }
     let Some(latest) = snap.thoughts.first() else {
         return;
     };
-    if latest.ts == 0 {
+    if latest.speaker != "hue" || latest.ts == 0 {
         return;
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
     let stamp_path = qwave_base_dir().join("mem8/hypr_voice_last_ts.txt");
     let prev_ts: u64 = fs::read_to_string(&stamp_path)
         .ok()
@@ -2462,24 +2541,9 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
         return;
     }
     if latest.ts <= prev_ts {
-        // Settle desktop smoke back to calm phase 0 after 12 seconds of quiet
-        if now.saturating_sub(latest.ts) > 12 {
-            let cur = fs::read_to_string("/tmp/qwave_smoke_phase.txt").unwrap_or_default();
-            if cur.trim() != "0" {
-                apply_hyprland_smoke_phase(0);
-            }
-        }
         return;
     }
     let _ = fs::write(&stamp_path, latest.ts.to_string());
-
-    // Speaking in the room shifts the Hyprland bluish smoke wave!
-    let voice_phase = 1 + ((latest.f0_hz.unsigned_abs() as usize + (latest.ts as usize)) % 3);
-    apply_hyprland_smoke_phase(voice_phase);
-
-    if latest.speaker != "hue" {
-        return;
-    }
 
     let low = latest.text.to_ascii_lowercase();
     if low.contains("workspace one") || low.contains("workspace 1") || low.contains("go to studio") {
