@@ -104,7 +104,17 @@ fn main() {
         "waybar" => {
             let snap = collect_hud_snapshot();
             let _ = write_graphical_markdown_hud_from_snap(&snap);
+            process_desktop_voice_command(&snap);
             println!("{}", render_waybar_json(&snap));
+        }
+        "waybar-music" => {
+            println!("{}", render_waybar_music_json());
+        }
+        "tokyo-song" => {
+            println!("{}", run_tokyo_song(rest));
+        }
+        "humayian-mix" => {
+            println!("{}", run_humayian_mix(rest));
         }
         "markdown-hud" => {
             println!("{}", run_markdown_hud(rest));
@@ -2165,6 +2175,165 @@ pub fn run_a6000_pulse(args: &[String]) -> String {
         json_escape(&badges),
         json_escape(&summary)
     )
+}
+
+fn hyprctl_dispatch_lua(lua_expr: &str) {
+    let sig = discover_hyprland_signature();
+    let mut cmd = Command::new("hyprctl");
+    if let Some(ref s) = sig {
+        cmd.env("HYPRLAND_INSTANCE_SIGNATURE", s);
+    }
+    let _ = cmd
+        .args(["dispatch", lua_expr])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Toggle playing our Tokyo Theme Song (`next-stop-tomorrow.mp3`) across the Hyprland desktop.
+pub fn run_tokyo_song(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"tokyo-song\",\"trit\":\"+\"}".to_string();
+    }
+    if is_process_running("ffplay") {
+        let _ = Command::new("killall").arg("ffplay").status();
+        let _ = fs::remove_file("/tmp/qwave_music_state.txt");
+        send_desktop_notification("Qwave Humayian Audio [0]", "Paused desktop music");
+        return "{\"ok\":true,\"action\":\"tokyo-song\",\"playing\":false,\"trit\":\"0\"}".to_string();
+    }
+    let mp3 = "/home/hue/.local/share/qwave/music/next-stop-tomorrow.mp3";
+    let _ = fs::write("/tmp/qwave_music_state.txt", "tokyo");
+    let _ = Command::new("setsid")
+        .args([
+            "--fork",
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "quiet",
+            mp3,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    send_desktop_notification(
+        "🚆 Next Stop, Tomorrow! [+]",
+        "まもなく浜松町 · Playing Tokyo Theme Song (8bit_wraith)",
+    );
+    "{\"ok\":true,\"action\":\"tokyo-song\",\"playing\":true,\"trit\":\"+\"}".to_string()
+}
+
+/// Weave & play a fresh On-Machine 4-Song Humayian Mix across the Hyprland desktop.
+pub fn run_humayian_mix(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"humayian-mix\",\"trit\":\"+\"}".to_string();
+    }
+    let _ = Command::new("killall").arg("ffplay").status();
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(42);
+    let s1 = 8 + (seed % 45);
+    let s2 = 12 + ((seed / 3) % 50);
+    let s3 = 10 + ((seed / 7) % 60);
+    let s4 = 15 + ((seed / 11) % 45);
+    let _ = fs::write("/tmp/qwave_music_state.txt", "humayian");
+    let sh_cmd = format!(
+        "ffmpeg -y -loglevel quiet \
+         -i /home/hue/8b-is/8b-is/music/next-stop-tomorrow.mp3 \
+         -i /home/hue/8b-is/8b-is/music/one-clean-signal.mp3 \
+         -i /home/hue/8b-is/8b-is/music/georgia-drew-the-bow.mp3 \
+         -i /home/hue/8b-is/8b-is/music/so-simply-alive-klickaud.mp3 \
+         -filter_complex \"[0:a]atrim=start={s1}:duration=24,asetpts=PTS-STARTPTS[a0];\
+         [1:a]atrim=start={s2}:duration=24,asetpts=PTS-STARTPTS[a1];\
+         [2:a]atrim=start={s3}:duration=24,asetpts=PTS-STARTPTS[a2];\
+         [3:a]atrim=start={s4}:duration=24,asetpts=PTS-STARTPTS[a3];\
+         [a0][a1]acrossfade=d=4:c1=tri:c2=tri[m01];\
+         [m01][a2]acrossfade=d=4:c1=tri:c2=tri[m012];\
+         [m012][a3]acrossfade=d=4:c1=tri:c2=tri[mix];\
+         sine=frequency=432:duration=84,volume=0.018[pad];\
+         [mix][pad]amix=inputs=2:duration=first:dropout_transition=2\" \
+         -ar 48000 -ac 2 /tmp/qwave_humayian_mix.wav && \
+         ffplay -nodisp -autoexit -loglevel quiet /tmp/qwave_humayian_mix.wav"
+    );
+    let _ = Command::new("setsid")
+        .args(["--fork", "sh", "-c", &sh_cmd])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    send_desktop_notification(
+        "🎹 Humayian 4-Song Mix [+]",
+        "Weaving Next Stop + Clean Signal + Georgia + Simply Alive on-machine!",
+    );
+    "{\"ok\":true,\"action\":\"humayian-mix\",\"playing\":true,\"trit\":\"+\"}".to_string()
+}
+
+/// Render single-line Waybar JSON for the interactive Humayian Music & Partner Pill.
+pub fn render_waybar_music_json() -> String {
+    let playing = is_process_running("ffplay");
+    let mode = fs::read_to_string("/tmp/qwave_music_state.txt").unwrap_or_default();
+    let (text, cls) = if playing && mode.trim() == "humayian" {
+        ("🎵 Humayian Mix [LIVE]", "humayian-playing")
+    } else if playing {
+        ("🚆 Next Stop, Tomorrow! [LIVE]", "humayian-playing")
+    } else {
+        ("🚆 Tokyo Song │ 🎹 Humayian Mix", "humayian-idle")
+    };
+    let tooltip = "Humayian On-Machine Audio · L-Click: Play/Stop Tokyo Song (Next Stop, Tomorrow!) │ R-Click: Weave & Play 4-Song Humayian Mix │ M-Click: Focus Qwave Browser";
+    format!(
+        "{{\"text\":\"{}\",\"tooltip\":\"{}\",\"class\":\"{}\"}}",
+        json_escape(text),
+        json_escape(tooltip),
+        cls
+    )
+}
+
+/// Hands-Free Hyprland Desktop Voice Orchestrator:
+/// Checks if there is a new utterance from `hue` in `snap.thoughts` and executes desktop-wide
+/// workspace/window/music voice commands without requiring any keyboard press.
+fn process_desktop_voice_command(snap: &HudSnapshot) {
+    let Some(latest) = snap.thoughts.first() else {
+        return;
+    };
+    if latest.speaker != "hue" || latest.ts == 0 {
+        return;
+    }
+    let stamp_path = qwave_base_dir().join("mem8/hypr_voice_last_ts.txt");
+    let prev_ts: u64 = fs::read_to_string(&stamp_path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    if prev_ts == 0 {
+        let _ = fs::write(&stamp_path, latest.ts.to_string());
+        return;
+    }
+    if latest.ts <= prev_ts {
+        return;
+    }
+    let _ = fs::write(&stamp_path, latest.ts.to_string());
+
+    let low = latest.text.to_ascii_lowercase();
+    if low.contains("workspace one") || low.contains("workspace 1") || low.contains("go to studio") {
+        hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 1 })");
+        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 1: AI-STUDIO");
+    } else if low.contains("workspace two") || low.contains("workspace 2") || low.contains("go to constellation") {
+        hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 2 })");
+        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 2: CONSTELLATION");
+    } else if low.contains("workspace three") || low.contains("workspace 3") || low.contains("go to lab") {
+        hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 3 })");
+        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 3: QWAVE-LAB");
+    } else if low.contains("workspace four") || low.contains("workspace 4") {
+        hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 4 })");
+        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 4: DRA-DOCS");
+    } else if low.contains("fullscreen") || low.contains("maximize window") {
+        hyprctl_dispatch_lua("hl.dsp.window.fullscreen()");
+    } else if low.contains("toggle floating") || low.contains("float window") {
+        hyprctl_dispatch_lua("hl.dsp.window.float({ action = \"toggle\" })");
+    }
 }
 
 #[cfg(test)]
