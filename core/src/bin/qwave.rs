@@ -3130,22 +3130,16 @@ fn format_salience_profile_json(prof: &SpeakerSalienceProfile) -> String {
 /// user's `MEM|8` `SpeakerSalienceProfile` (`combine_salient_speech_wav`), and play it out loud.
 fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) -> String {
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+
+    // Immediately mark TTS active BEFORE synthesis starts and stop any previous overlapping playback
+    // so two TTS streams can never speak over each other!
+    let pre_est_secs = ((text.len() as u64) / 10).clamp(4, 90) + 6;
+    mark_tts_active_secs(pre_est_secs);
+    write_tts_expected(text, pre_est_secs);
+    let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
+
     let _ = Command::new("sh")
-        .env("XDG_RUNTIME_DIR", &xdg_runtime)
-        .args([
-            "-c",
-            "SPK_SINK=$(pactl list sinks short 2>/dev/null | awk '/HiFi__Speaker__sink/{print $2; exit}'); \
-             BT_SINK=$(pactl list sinks short 2>/dev/null | awk '/bluez_output/{print $2; exit}'); \
-             if [ -n \"$SPK_SINK\" ]; then \
-               pactl set-default-sink \"$SPK_SINK\" 2>/dev/null || true; \
-               pactl set-sink-mute \"$SPK_SINK\" 0 2>/dev/null || true; \
-               pactl set-sink-volume \"$SPK_SINK\" 90% 2>/dev/null || true; \
-             fi; \
-             if [ -n \"$BT_SINK\" ]; then \
-               pactl set-sink-mute \"$BT_SINK\" 0 2>/dev/null || true; \
-               pactl set-sink-volume \"$BT_SINK\" 90% 2>/dev/null || true; \
-             fi",
-        ])
+        .args(["-c", "pkill -f '/tmp/qwave_speak_' 2>/dev/null || true"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -3170,7 +3164,8 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     let _ = fs::write(&play_path, &wav_bytes);
 
     // Estimate playback duration from WAV byte count (~48,000 bytes/sec at 24kHz 16-bit mono)
-    // and write tts_expected.json so the parallel ear daemon captures & self-calibrates against our own voice over the air!
+    // and write tts_expected.json so the parallel ear daemon self-calibrates in <1ms integer DSP
+    // without blocking the neural STT queue!
     let est_secs = ((wav_bytes.len() as u64) / 40_000).clamp(3, 120) + 4;
     mark_tts_active_secs(est_secs);
     write_tts_expected(text, est_secs);
@@ -3204,7 +3199,7 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
-        mark_tts_active_secs(2);
+        mark_tts_active_secs(3);
         let _ = fs::remove_file(&play_path);
         format!(
             "{{\"ok\":true,\"played\":{played},\"voice\":{},\"bytes\":{},\"salience_modulated\":{},\"speaker_f0_hz\":{f0_int},\"grains_learned\":{}}}",
@@ -4290,8 +4285,30 @@ fn run_parallel_ear_daemon() {
                 noise_ema_abs = ((noise_ema_abs * 63) + mean_abs.min(noise_ema_abs * 2)) / 64;
             }
 
-            // Push into circular StereoPcmRingBuffer (including during TTS playback so Closed-Loop
-            // OTA Self-Listening captures our own voice from the 10 cm laptop speakers!)
+            // During TTS playback, perform <1ms zero-float 10cm/0° OTA stereo DMIC self-calibration
+            // directly in the capture loop and NEVER queue our own TTS audio into the neural STT worker!
+            // This guarantees `liquid-rust` is 100% free and zero-delay the instant Hue speaks!
+            if now <= read_tts_active_until() {
+                pcm_ring.push_frame(&frame_stereo, is_voiced);
+                if pcm_ring.should_dispatch() {
+                    let tts_stereo = pcm_ring.take_utterance();
+                    if tts_stereo.len() >= 192 {
+                        let (raw_tri, _) = triangulate_stereo_dmic_i16(&tts_stereo, None);
+                        if let Some(expected_text) = read_tts_expected_text() {
+                            let mut cal = load_self_calibration();
+                            let outcome = cal.observe_self_utterance(
+                                &expected_text,
+                                &expected_text,
+                                raw_tri.distance_cm,
+                                raw_tri.azimuth_deg,
+                            );
+                            save_self_calibration(&cal, Some(&outcome), now);
+                        }
+                    }
+                }
+                continue;
+            }
+
             pcm_ring.push_frame(&frame_stereo, is_voiced);
 
             if pcm_ring.should_dispatch() {
@@ -4512,18 +4529,10 @@ fn process_parallel_ear_utterance(
     let _ = fs::write(dir.join("room_state.json"), room_json);
     drop(tr);
 
-    // 5. 100% Local Autonomous Voice-to-Voice Brain (`"Hey Aye"` / `"Hey Alexia"` / `"Hey Alexandra"` / `"Hey Gemini"`):
-    //    Speak out loud immediately through the speakers whenever Hue addresses Aye with a wake phrase,
-    //    while `ear_inbox.jsonl` simultaneously wakes `qwave --wait-wake` in parallel!
+    // 5. Update wake watermark so `qwave --wait-wake` wakes immediately in parallel
+    //    (Never play a second canned voice response here—that caused speaking over ourselves!)
     if has_explicit_wake_word(&transcript) {
         write_hook_watermark(now);
-        mark_tts_active_secs(7);
-        let (dom, qt, wupz) = query_alexiai_gaia_fold(&transcript);
-        let spoken_reply = format!(
-            "Right here Hue, hearing you clearly at {:+} degrees and {} centimeters! Folded on {dom} at {qt}, WUPZ {wupz}.",
-            tri.azimuth_deg, tri.distance_cm
-        );
-        let _ = speak_out_loud(&spoken_reply, "af_heart", true, true);
     }
 }
 

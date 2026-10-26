@@ -612,8 +612,6 @@ pub fn combine_salient_speech_wav(tts_wav: &[u8], profile: &SpeakerSalienceProfi
     }
 
     let total = samples.len();
-    let grain = &profile.best_grain_pcm;
-    let has_grain = grain.len() >= 64;
 
     // Normalize the 16-bin prosody contour around Q15_ONE (32767)
     let avg_env: u32 = profile
@@ -629,25 +627,15 @@ pub fn combine_salient_speech_wav(tts_wav: &[u8], profile: &SpeakerSalienceProfi
         let bin = (i * 16 / total).min(15);
         let env_target = profile.prosody_envelope_q15[bin] as u32;
         // Prosodic gain in Q10 (1024 = 1.0x), bounded to [896..=1184] (~0.88x .. 1.15x)
-        // so cadence inflection is natural and never distorts
-        let raw_gain_q10 = (env_target * 1024 / avg_env).clamp(640, 1408);
+        // so cadence inflection is natural and never distorts or layers a second voice grain
+        let raw_gain_q10 = (env_target * 1024 / avg_env).clamp(896, 1184);
         // Blend 7/8 base + 1/8 learned prosody contour (`>> 3`)
         let gain_q10 = ((1024 * 7 + raw_gain_q10) >> 3) as i32;
 
         let s = (*sample as i32 * gain_q10) >> 10;
 
-        // Subtle salient grain harmonic warmth on voiced regions (`|s| > 512`)
-        let harmonic = if has_grain && s.abs() > 512 {
-            let g_sample = grain[i % grain.len()] as i32;
-            // Scale salient grain by current voiced envelope (`|s| / 32767`) at 1/24th blend
-            (g_sample * s.abs()) / (Q15_ONE * 24)
-        } else {
-            0
-        };
-
         // Gentle integer 1-pole warmth smoothing (`7/8 current + 1/8 prev`)
-        let combined = s + harmonic;
-        let smoothed = (combined * 7 + prev_s) >> 3;
+        let smoothed = (s * 7 + prev_s) >> 3;
         prev_s = smoothed;
 
         *sample = smoothed.clamp(-Q15_ONE, Q15_ONE) as i16;
@@ -1529,11 +1517,11 @@ impl StereoPcmRingBuffer {
         self.total_frames_written = 0;
     }
 
-    /// Whether a complete utterance is ready to dispatch (`>= 3` voiced frames + `>= 10` (`600 ms`)
+    /// Whether a complete utterance is ready to dispatch (`>= 3` voiced frames + `>= 6` (`360 ms`)
     /// silent frames for production rings, or `captured_frames >= max_utterance_frames`).
     #[inline]
     pub fn should_dispatch(&self) -> bool {
-        let hangover = if self.cap_frames >= 64 { 10 } else { 5 };
+        let hangover = if self.cap_frames >= 64 { 6 } else { 5 };
         (self.voiced_frames >= 3 && self.silent_frames >= hangover)
             || (self.voiced_frames >= 3 && self.captured_frames >= self.max_utterance_frames)
     }
