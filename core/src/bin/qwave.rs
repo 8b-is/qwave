@@ -237,14 +237,34 @@ fn main() -> ExitCode {
 
     let (initial_path, initial_anchor) = resolve_input_target(raw_target);
 
-    let listener = match TcpListener::bind("127.0.0.1:0") {
+    // Always prefer deterministic port 42123 so bookmarks, refreshes, and open browser tabs
+    // at `http://127.0.0.1:42123/view?path=...` never hit ERR_CONNECTION_REFUSED!
+    let listener = match TcpListener::bind("127.0.0.1:42123") {
         Ok(l) => l,
-        Err(e) => {
-            eprintln!("qwave: failed to bind loopback listener: {e}");
-            return ExitCode::from(1);
+        Err(_) => {
+            // If port 42123 is already served by an active qwave daemon, just point the window at it!
+            if !server_only && TcpStream::connect("127.0.0.1:42123").is_ok() {
+                let mut existing_url = format!(
+                    "http://127.0.0.1:42123/view?path={}",
+                    url_encode(&initial_path.to_string_lossy())
+                );
+                if let Some(anchor) = initial_anchor {
+                    existing_url.push('#');
+                    existing_url.push_str(&anchor);
+                }
+                let _ = launch_native_window(&existing_url);
+                return ExitCode::SUCCESS;
+            }
+            match TcpListener::bind("127.0.0.1:0") {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("qwave: failed to bind loopback listener: {e}");
+                    return ExitCode::from(1);
+                }
+            }
         }
     };
-    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(42123);
     let mut url = format!(
         "http://127.0.0.1:{port}/view?path={}",
         url_encode(&initial_path.to_string_lossy())
@@ -265,21 +285,10 @@ fn main() -> ExitCode {
         println!("{url}");
     } else {
         let launch_url = url.clone();
-        let state_watchdog = Arc::clone(&state);
         thread::spawn(move || {
-            let used_blocking_window = launch_native_window(&launch_url);
-            if used_blocking_window {
-                std::process::exit(0);
-            }
-            thread::sleep(Duration::from_secs(12));
-            loop {
-                thread::sleep(Duration::from_secs(5));
-                let sse = state_watchdog.active_sse.load(Ordering::Relaxed);
-                let last = state_watchdog.last_activity.load(Ordering::Relaxed);
-                if sse == 0 && now_secs().saturating_sub(last) > 45 {
-                    std::process::exit(0);
-                }
-            }
+            let _ = launch_native_window(&launch_url);
+            // Keep the loopback server on 127.0.0.1:42123 alive persistently so refreshing
+            // or returning from external websites never hits ERR_CONNECTION_REFUSED.
         });
     }
 
@@ -366,6 +375,8 @@ fn launch_native_window(url: &str) -> bool {
     let x11_display = env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
 
     for qt_bin in [
+        "/home/hue/.local/bin/qwave-qt",
+        "/usr/local/bin/qwave-qt",
         "/usr/local/lib/qwave/qwave-qt",
         "/home/hue/8b-is/qwave/qt/qwave-qt",
     ] {
@@ -473,7 +484,7 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
     };
 
     match (method, route) {
-        ("GET", "/") | ("GET", "/view") => {
+        ("GET", "/") | ("GET", "/view") | ("HEAD", "/") | ("HEAD", "/view") => {
             let path = get_query_param(query, "path")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| state.current_file.lock().unwrap().clone());
@@ -1318,10 +1329,10 @@ fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
     if p_lower.contains("wide") || p_lower.contains("full") {
         max_w = "1360px";
     }
-    if p_lower.contains("animate") || p_lower.contains("motion") || p_lower.contains("live wave") {
-        shader_pause = false;
-    } else {
+    if p_lower.contains("pause") || p_lower.contains("still") || p_lower.contains("static") {
         shader_pause = true;
+    } else if p_lower.contains("animate") || p_lower.contains("motion") || p_lower.contains("live wave") {
+        shader_pause = false;
     }
 
     format!(
@@ -2559,6 +2570,9 @@ fn render_full_page(
             orb.style.transform = 'scale(' + scale.toFixed(3) + ')';
             orb.style.boxShadow = '0 0 ' + Math.round(16 + avg * 0.25) + 'px #ff9edb';
           }}
+          if (window.__qwavePulseVoice && avg > 4) {{
+            window.__qwavePulseVoice(Math.min(1.0, (avg / 140) + 0.22), 0.65);
+          }}
           requestAnimationFrame(animateOrb);
         }}
         audio.addEventListener('play', animateOrb);
@@ -2731,6 +2745,9 @@ fn render_full_page(
             sumSq += chan[i] * chan[i];
           }}
           const rms = Math.sqrt(sumSq / chan.length);
+          if (rms > 0.015 && window.__qwavePulseVoice) {{
+            window.__qwavePulseVoice(Math.min(1.0, rms * 16.0), 0.48);
+          }}
           if (rms > 0.022) {{
             heardSpeech = true;
             silenceFrames = 0;
@@ -3573,6 +3590,8 @@ fn surf_with_qwave(target: &str, mode: &str, speak_opt: Option<&str>) -> String 
     let x11_display = env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
 
     for qt_bin in [
+        "/home/hue/.local/bin/qwave-qt",
+        "/usr/local/bin/qwave-qt",
         "/usr/local/lib/qwave/qwave-qt",
         "/home/hue/8b-is/qwave/qt/qwave-qt",
     ] {

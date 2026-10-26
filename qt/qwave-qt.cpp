@@ -1053,7 +1053,7 @@ int main(int argc, char *argv[]) {
     }
 
     auto *voiceTimer = new QTimer(&window);
-    QObject::connect(voiceTimer, &QTimer::timeout, &window, [inboxPath, voiceBrowseEnabled, lastInboxSize, lastSeenTs, handlePartnerOrNav]() {
+    QObject::connect(voiceTimer, &QTimer::timeout, &window, [inboxPath, voiceBrowseEnabled, lastInboxSize, lastSeenTs, handlePartnerOrNav, page]() {
         if (!(*voiceBrowseEnabled)) return;
         QFileInfo fi(inboxPath);
         if (!fi.exists()) return;
@@ -1078,6 +1078,11 @@ int main(int argc, char *argv[]) {
             *lastSeenTs = ts;
             const QString speaker = obj.value(QStringLiteral("speaker")).toString();
             const QString text = obj.value(QStringLiteral("text")).toString().trimmed();
+            const int f0Hz = obj.value(QStringLiteral("f0_hz")).toInt(165);
+            const double f0Norm = qBound(0.0, (f0Hz - 90.0) / 180.0, 1.0);
+            if (!text.isEmpty()) {
+                page->runJavaScript(QStringLiteral("if (window.__qwavePulseVoice) window.__qwavePulseVoice(0.95, %1);").arg(f0Norm, 0, 'f', 2));
+            }
             if (speaker == QStringLiteral("hue") && !text.isEmpty()) {
                 handlePartnerOrNav(text, true);
             }

@@ -810,13 +810,15 @@ pub fn markdown_source_literal(source: &str) -> String {
     out
 }
 
-/// The domain-warped WebGL wave fragment shader ("Lost in the Math" from `WaveScene.swift`).
+/// The domain-warped WebGL wave fragment shader ("Lost in the Math" — Bluish Smoke + Voice-Reactive Edition).
 pub const WAVE_FRAGMENT_SHADER: &str = r#"#ifdef GL_ES
 precision highp float;
 #endif
 
 uniform float u_time;
 uniform vec2 u_resolution;
+uniform float u_voice;
+uniform float u_f0;
 
 float random (in vec2 _st) {
     return fract(sin(dot(_st.xy, vec2(12.9898,78.233))) * 43758.5453123);
@@ -854,34 +856,45 @@ void main() {
     vec2 st = gl_FragCoord.xy/u_resolution.xy;
     st.x *= u_resolution.x/u_resolution.y;
 
+    vec2 center = vec2(0.5 * (u_resolution.x / max(u_resolution.y, 1.0)), 0.5);
+    vec2 delta = st - center;
+    float dist = length(delta);
+    float rippleFreq = 13.0 + u_f0 * 10.0;
+    float voiceRipple = sin(dist * rippleFreq - u_time * 6.5) * 0.085 * u_voice;
+    vec2 dir = delta / max(dist, 0.0001);
+    vec2 warpedSt = st + dir * voiceRipple;
+
     vec3 color = vec3(0.0);
     vec2 q = vec2(0.);
-    q.x = fbm( st + 0.00*u_time);
-    q.y = fbm( st + vec2(1.0));
+    q.x = fbm( warpedSt + (0.03 + 0.16 * u_voice) * u_time);
+    q.y = fbm( warpedSt + vec2(1.0));
 
     vec2 r = vec2(0.);
-    r.x = fbm( st + 1.0*q + vec2(1.7,9.2)+ 0.15*u_time );
-    r.y = fbm( st + 1.0*q + vec2(8.3,2.8)+ 0.126*u_time);
+    r.x = fbm( warpedSt + (1.0 + 0.48 * u_voice)*q + vec2(1.7,9.2)+ (0.15 + 0.28 * u_voice)*u_time );
+    r.y = fbm( warpedSt + (1.0 + 0.48 * u_voice)*q + vec2(8.3,2.8)+ (0.126 + 0.24 * u_voice)*u_time);
 
-    float f = fbm(st+r);
+    float f = fbm(warpedSt+r);
 
-    color = mix(vec3(0.101961,0.619608,0.666667),
-                vec3(0.666667,0.666667,0.498039),
+    // Bluish Cyber-Smoke palette: deep sapphire -> cobalt azure -> abyssal midnight -> electric cyan/starlight voice crest
+    color = mix(vec3(0.04, 0.26, 0.66),
+                vec3(0.10, 0.56, 0.92),
                 clamp((f*f)*4.0,0.0,1.0));
 
     color = mix(color,
-                vec3(0.0,0.0,0.164706),
+                vec3(0.01, 0.03, 0.15),
                 clamp(length(q),0.0,1.0));
 
+    vec3 crestColor = mix(vec3(0.36, 0.88, 1.0), vec3(0.68, 0.55, 1.0), clamp(u_voice * 0.75, 0.0, 1.0));
     color = mix(color,
-                vec3(0.666667,1.0,1.0),
+                crestColor,
                 clamp(length(r.x),0.0,1.0));
 
-    gl_FragColor = vec4((f*f*f+.6*f*f+.5*f)*color,1.0);
+    float intensity = (f*f*f + (0.62 + 0.26 * u_voice)*f*f + (0.52 + 0.16 * u_voice)*f);
+    gl_FragColor = vec4(intensity * color, 1.0);
 }
 "#;
 
-/// The 30fps demand-controlled WebGL canvas runner from `WaveScene.swift`.
+/// Demand-controlled WebGL Bluish Smoke & Voice-Reactive Wave runner.
 pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   const canvas = document.getElementById("glCanvas");
   if (!canvas) return;
@@ -928,41 +941,62 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
 
   const uTimeLocation = gl.getUniformLocation(program, "u_time");
   const uResolutionLocation = gl.getUniformLocation(program, "u_resolution");
+  const uVoiceLocation = gl.getUniformLocation(program, "u_voice");
+  const uF0Location = gl.getUniformLocation(program, "u_f0");
   const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = motionPreference.matches;
-  // Default to paused after rendering the initial ocean frame so idle CPU/GPU is 0%;
-  // users can toggle live animation anytime via the "🌌 Wave" toolbar button.
-  window.__qwaveShaderPaused = true;
+  // Bluish smoke wave runs gently by default and surges with ripples whenever you or Aye speak!
+  window.__qwaveShaderPaused = false;
+  let voiceEnergy = 0.0;
+  let voicePitch = 0.5;
+  let simTime = 8.0;
 
   function resize() {
-    // Render WebGL FBM backdrop at half resolution (4x fewer fragment shader pixels)
-    // while CSS stretches it smoothly across the viewport.
-    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.5));
-    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.5));
+    // Render WebGL FBM smoke at 0.42x resolution for silky performance + soft smoke diffusion
+    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.42));
+    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.42));
     gl.viewport(0, 0, canvas.width, canvas.height);
-    if ((reduce || window.__qwaveShaderPaused) && !document.hidden) render(8000);
+    if (!document.hidden) render(performance.now());
   }
 
   function render(time) {
-    const seconds = (reduce || window.__qwaveShaderPaused) ? 8.0 : time * 0.001;
-    gl.uniform1f(uTimeLocation, seconds);
+    if (!reduce && !window.__qwaveShaderPaused) {
+      simTime += 0.032 + voiceEnergy * 0.095;
+    }
+    gl.uniform1f(uTimeLocation, simTime);
     gl.uniform2f(uResolutionLocation, canvas.width, canvas.height);
+    if (uVoiceLocation) gl.uniform1f(uVoiceLocation, voiceEnergy);
+    if (uF0Location) gl.uniform1f(uF0Location, voicePitch);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  const FPS_CAP_MS = 1000 / 20;
   let lastRender = -1000;
   let rafId = 0;
 
   function frame(time) {
     rafId = 0;
-    if (document.hidden || reduce || window.__qwaveShaderPaused) return;
-    if (time - lastRender >= FPS_CAP_MS) {
+    if (document.hidden) return;
+    if ((reduce || window.__qwaveShaderPaused) && voiceEnergy < 0.01) return;
+    const fpsCapMs = voiceEnergy > 0.04 ? (1000 / 24) : (1000 / 12);
+    if (time - lastRender >= fpsCapMs) {
       lastRender = time;
+      voiceEnergy *= 0.92;
+      if (voiceEnergy < 0.008) voiceEnergy = 0.0;
       render(time);
     }
     rafId = requestAnimationFrame(frame);
   }
+
+  window.__qwavePulseVoice = function (energy, f0Norm) {
+    const e = typeof energy === "number" ? Math.max(0.0, Math.min(1.0, energy)) : 0.85;
+    voiceEnergy = Math.max(voiceEnergy, e);
+    if (typeof f0Norm === "number") {
+      voicePitch = Math.max(0.0, Math.min(1.0, f0Norm));
+    }
+    if (!rafId && !document.hidden) {
+      rafId = requestAnimationFrame(frame);
+    }
+  };
 
   function syncAnimation() {
     cancelAnimationFrame(rafId);
@@ -970,7 +1004,7 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
     reduce = motionPreference.matches;
     lastRender = -1000;
     if (document.hidden) return;
-    if (reduce || window.__qwaveShaderPaused) {
+    if ((reduce || window.__qwaveShaderPaused) && voiceEnergy < 0.01) {
       render(8000);
     } else {
       rafId = requestAnimationFrame(frame);

@@ -116,6 +116,9 @@ fn main() {
         "humayian-mix" => {
             println!("{}", run_humayian_mix(rest));
         }
+        "smoke-bg" => {
+            println!("{}", run_smoke_bg(rest));
+        }
         "markdown-hud" => {
             println!("{}", run_markdown_hud(rest));
         }
@@ -2292,16 +2295,163 @@ pub fn render_waybar_music_json() -> String {
     )
 }
 
+/// Pure-Rust Zero-Float Integer Domain-Warped Bluish Smoke Wallpaper Generator for Hyprland.
+/// Renders 4 domain-warped FBM smoke wave phases (`smoke_wave_0.ppm` .. `smoke_wave_3.ppm`)
+/// so the Hyprland desktop shares Qwave's Bluish Smoke Wave and shifts dynamically when speaking!
+fn integer_hash2d(x: i32, y: i32, seed: u32) -> i32 {
+    let mut h = (x as u32)
+        .wrapping_mul(374_761_393)
+        .wrapping_add((y as u32).wrapping_mul(668_265_263))
+        .wrapping_add(seed.wrapping_mul(2_246_822_519));
+    h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+    ((h ^ (h >> 16)) & 0xFFFF) as i32
+}
+
+fn integer_noise_q16(x_q8: i32, y_q8: i32, seed: u32) -> i32 {
+    let xi = x_q8 >> 8;
+    let yi = y_q8 >> 8;
+    let xf = x_q8 & 0xFF;
+    let yf = y_q8 & 0xFF;
+    let u = (xf * xf * (768 - 2 * xf)) >> 16;
+    let v = (yf * yf * (768 - 2 * yf)) >> 16;
+    let a = integer_hash2d(xi, yi, seed);
+    let b = integer_hash2d(xi + 1, yi, seed);
+    let c = integer_hash2d(xi, yi + 1, seed);
+    let d = integer_hash2d(xi + 1, yi + 1, seed);
+    let ab = a + (((b - a) * u) >> 8);
+    let cd = c + (((d - c) * u) >> 8);
+    ab + (((cd - ab) * v) >> 8)
+}
+
+fn integer_fbm_q16(mut x_q8: i32, mut y_q8: i32, seed: u32) -> i32 {
+    let mut total = 0i32;
+    let mut amp = 32_768i32;
+    for oct in 0..4u32 {
+        let n = integer_noise_q16(x_q8, y_q8, seed.wrapping_add(oct * 97));
+        total += (n * amp) >> 16;
+        // Rotate ~(cos 0.5, sin 0.5) in Q8: (224, 122) and scale 2x
+        let nx = ((x_q8 * 224 - y_q8 * 122) >> 7) + 2560;
+        let ny = ((x_q8 * 122 + y_q8 * 224) >> 7) + 2560;
+        x_q8 = nx;
+        y_q8 = ny;
+        amp >>= 1;
+    }
+    total.clamp(0, 65_535)
+}
+
+fn ensure_smoke_wallpapers() -> PathBuf {
+    let dir = qwave_base_dir().join("wallpapers");
+    let _ = fs::create_dir_all(&dir);
+    let w = 480i32;
+    let h = 270i32;
+    for phase in 0..4usize {
+        let p = dir.join(format!("smoke_wave_{phase}.ppm"));
+        if p.exists() {
+            continue;
+        }
+        let mut out = Vec::with_capacity((w * h * 3 + 32) as usize);
+        let header = format!("P6\n{w} {h}\n255\n");
+        out.extend_from_slice(header.as_bytes());
+        let time_shift = (phase as i32) * 190;
+        let voice_boost = if phase == 0 { 0i32 } else { 80 + (phase as i32) * 35 };
+
+        for y in 0..h {
+            for x in 0..w {
+                let mut sx = (x * 768) / h;
+                let mut sy = (y * 768) / h;
+                if phase > 0 {
+                    let dx = x - (w / 2);
+                    let dy = y - (h / 2);
+                    let dist_sq = dx * dx + dy * dy;
+                    let ring = ((dist_sq / (180 + (phase as i32) * 40)) + time_shift) & 63;
+                    let wave = if ring < 32 { ring - 16 } else { 48 - ring };
+                    sx += (dx * wave) / 160;
+                    sy += (dy * wave) / 160;
+                }
+                let qx = integer_fbm_q16(sx + time_shift, sy, 101) >> 8;
+                let qy = integer_fbm_q16(sx + 256, sy + 256, 202) >> 8;
+                let rx = integer_fbm_q16(sx + qx + 435 + time_shift, sy + qy + 2350, 303) >> 8;
+                let ry = integer_fbm_q16(sx + qx + 2120, sy + qy + 716 + time_shift, 404) >> 8;
+                let f = integer_fbm_q16(sx + rx, sy + ry, 505) >> 8; // 0..255
+
+                // Bluish Cyber-Smoke palette: deep midnight -> sapphire -> cobalt azure -> electric cyan/starlight voice crest
+                let f2 = (f * f) >> 8;
+                let r_crest = (rx * (110 + voice_boost)) >> 8;
+                let g_crest = (rx * (215 + (voice_boost >> 2))) >> 8;
+                let b_crest = (rx * 255) >> 8;
+
+                let r_col = ((6 + ((f2 * 28) >> 8) + ((r_crest * f) >> 9)) * (110 + f)) >> 8;
+                let g_col = ((22 + ((f2 * 135) >> 8) + ((g_crest * f) >> 9)) * (115 + f)) >> 8;
+                let b_col = ((56 + ((f2 * 215) >> 8) + ((b_crest * f) >> 8)) * (135 + f)) >> 8;
+
+                out.push(r_col.clamp(3, 255) as u8);
+                out.push(g_col.clamp(12, 255) as u8);
+                out.push(b_col.clamp(34, 255) as u8);
+            }
+        }
+        let _ = fs::write(&p, out);
+    }
+    dir
+}
+
+fn apply_hyprland_smoke_phase(phase: usize) {
+    let dir = ensure_smoke_wallpapers();
+    let target = dir.join(format!("smoke_wave_{}.ppm", phase % 4));
+    let state_file = "/tmp/qwave_smoke_phase.txt";
+    let prev_phase = fs::read_to_string(state_file).unwrap_or_default();
+    if prev_phase.trim() == (phase % 4).to_string() && is_process_running("swaybg") {
+        return;
+    }
+    let _ = fs::write(state_file, (phase % 4).to_string());
+    let _ = Command::new("killall").arg("swaybg").status();
+    let _ = Command::new("setsid")
+        .args([
+            "--fork",
+            "swaybg",
+            "-i",
+            &target.to_string_lossy(),
+            "-m",
+            "fill",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+pub fn run_smoke_bg(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"smoke-bg\",\"phase\":0,\"trit\":\"+\"}".to_string();
+    }
+    let phase = args
+        .first()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    apply_hyprland_smoke_phase(phase);
+    format!(
+        "{{\"ok\":true,\"action\":\"smoke-bg\",\"phase\":{},\"trit\":\"+\"}}",
+        phase % 4
+    )
+}
+
 /// Hands-Free Hyprland Desktop Voice Orchestrator:
 /// Checks if there is a new utterance from `hue` in `snap.thoughts` and executes desktop-wide
-/// workspace/window/music voice commands without requiring any keyboard press.
+/// workspace/window/music voice commands + shifts the Bluish Smoke Wave desktop background!
 fn process_desktop_voice_command(snap: &HudSnapshot) {
+    if !is_process_running("swaybg") {
+        apply_hyprland_smoke_phase(0);
+    }
     let Some(latest) = snap.thoughts.first() else {
         return;
     };
-    if latest.speaker != "hue" || latest.ts == 0 {
+    if latest.ts == 0 {
         return;
     }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let stamp_path = qwave_base_dir().join("mem8/hypr_voice_last_ts.txt");
     let prev_ts: u64 = fs::read_to_string(&stamp_path)
         .ok()
@@ -2312,9 +2462,24 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
         return;
     }
     if latest.ts <= prev_ts {
+        // Settle desktop smoke back to calm phase 0 after 12 seconds of quiet
+        if now.saturating_sub(latest.ts) > 12 {
+            let cur = fs::read_to_string("/tmp/qwave_smoke_phase.txt").unwrap_or_default();
+            if cur.trim() != "0" {
+                apply_hyprland_smoke_phase(0);
+            }
+        }
         return;
     }
     let _ = fs::write(&stamp_path, latest.ts.to_string());
+
+    // Speaking in the room shifts the Hyprland bluish smoke wave!
+    let voice_phase = 1 + ((latest.f0_hz.unsigned_abs() as usize + (latest.ts as usize)) % 3);
+    apply_hyprland_smoke_phase(voice_phase);
+
+    if latest.speaker != "hue" {
+        return;
+    }
 
     let low = latest.text.to_ascii_lowercase();
     if low.contains("workspace one") || low.contains("workspace 1") || low.contains("go to studio") {
