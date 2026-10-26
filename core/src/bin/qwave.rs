@@ -811,39 +811,31 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    // 2. Fallback to Pure-Rust `liquid-rust transcribe` CLI
-    for lfm_bin in [
-        "/home/hue/.local/bin/liquid-rust",
-        "/usr/local/bin/liquid-rust",
-        "/home/hue/.cargo/target/release/liquid-rust",
-    ] {
-        if Path::new(lfm_bin).exists() {
-            if let Ok(out) = Command::new(lfm_bin)
-                .env("RUST_LOG", "error")
-                .args(["transcribe", "-i", wav_path, "--max-tokens", "32"])
-                .output()
-            {
-                if out.status.success() {
-                    let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
-                    let cleaned: String = raw
-                        .lines()
-                        .map(str::trim)
-                        .filter(|l| {
-                            !l.is_empty()
-                                && !l.starts_with('═')
-                                && !l.starts_with('🎤')
-                                && !l.starts_with("✓")
-                                && !l.contains(" WARN ")
-                                && !l.contains(" INFO ")
-                                && !l.contains("Failed storing MEM|8")
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if !cleaned.is_empty() {
-                        return Some((cleaned, "liquid-rust (Pure Rust LFM2.5-Audio + Marine Salience)"));
-                    }
-                    return None;
+    // 2. Fallback to lightweight local whisper-cli (`ggml-base.en.bin`, ~140 MB RAM, < 1s)
+    //    instead of spawning a cold 5.3 GB `liquid-rust transcribe` CLI process.
+    let whisper_model = "/home/hue/.local/share/qwave/models/ggml-base.en.bin";
+    if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
+        if let Ok(out) = Command::new("/usr/bin/whisper-cli")
+            .args(["-m", whisper_model, "-f", wav_path, "-nt", "-np", "-t", "3"])
+            .output()
+        {
+            if out.status.success() {
+                let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                let cleaned: String = raw
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| {
+                        !l.is_empty()
+                            && !l.starts_with('[')
+                            && !l.contains("BLANK_AUDIO")
+                            && !l.contains("(silence)")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !cleaned.is_empty() {
+                    return Some((cleaned, "whisper-cli (local ggml-base.en + Marine Salience)"));
                 }
+                return None;
             }
         }
     }
@@ -891,29 +883,6 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
 
     let wav_path = format!("/tmp/qwave_tts_{}_{}.wav", std::process::id(), now_secs());
     let profile = state.salience_profile.lock().unwrap().clone();
-
-    // If user selected an LFM native voice (`lfm_aye`, `lfm_omnimom`), try `liquid-rust speak` first
-    if let Some(lfm_voice) = voice.strip_prefix("lfm_") {
-        for lfm_bin in ["/usr/local/bin/liquid-rust", "/home/hue/.cargo/target/release/liquid-rust"] {
-            if Path::new(lfm_bin).exists() {
-                if let Ok(status) = Command::new(lfm_bin)
-                    .args(["speak", "-t", &spoken, "-o", &wav_path, "--voice", lfm_voice])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                {
-                    if status.success() {
-                        if let Ok(bytes) = fs::read(&wav_path) {
-                            let _ = fs::remove_file(&wav_path);
-                            if bytes.len() > 1024 {
-                                return combine_salient_speech_wav(&bytes, &profile);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     let kokoro_voice = match voice {
         "lfm_aye" => "af_bella",
@@ -1210,7 +1179,9 @@ fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
     if p_lower.contains("wide") || p_lower.contains("full") {
         max_w = "1360px";
     }
-    if p_lower.contains("calm") || p_lower.contains("pause") || p_lower.contains("static") {
+    if p_lower.contains("animate") || p_lower.contains("motion") || p_lower.contains("live wave") {
+        shader_pause = false;
+    } else {
         shader_pause = true;
     }
 
@@ -2631,6 +2602,10 @@ fn render_full_page(
     const msHud = document.getElementById('marine-sense-hud');
     document.getElementById('btn-marine-sense')?.addEventListener('click', function () {{
       msHud?.classList.toggle('collapsed');
+      if (msHud && !msHud.classList.contains('collapsed')) {{
+        pollMarineSense(true);
+        drawMarineRadar();
+      }}
     }});
 
     const prosodyContainer = document.getElementById('ms-prosody-bars');
@@ -2655,6 +2630,7 @@ fn render_full_page(
     }};
 
     function drawMarineRadar() {{
+      if (document.hidden || !msHud || msHud.classList.contains('collapsed')) return;
       const canvas = document.getElementById('marine-radar-canvas');
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -2748,11 +2724,14 @@ fn render_full_page(
       const sign = az >= 0 ? '+' : '';
       ctx.fillText(msState.speaker_id + ' (' + sign + az + '°/' + dist + 'cm)', Math.max(8, Math.min(w - 125, tx - 42)), Math.max(14, ty - 14));
 
-      requestAnimationFrame(drawMarineRadar);
+      setTimeout(drawMarineRadar, 180);
     }}
-    requestAnimationFrame(drawMarineRadar);
+    if (msHud && !msHud.classList.contains('collapsed')) {{
+      setTimeout(drawMarineRadar, 180);
+    }}
 
-    function pollMarineSense() {{
+    function pollMarineSense(force) {{
+      if (!force && (document.hidden || !msHud || msHud.classList.contains('collapsed'))) return;
       fetch('/api/marine-sense')
         .then(r => r.json())
         .then(data => {{

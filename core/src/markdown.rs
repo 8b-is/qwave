@@ -930,11 +930,15 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   const uResolutionLocation = gl.getUniformLocation(program, "u_resolution");
   const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = motionPreference.matches;
-  window.__qwaveShaderPaused = false;
+  // Default to paused after rendering the initial ocean frame so idle CPU/GPU is 0%;
+  // users can toggle live animation anytime via the "🌌 Wave" toolbar button.
+  window.__qwaveShaderPaused = true;
 
   function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    // Render WebGL FBM backdrop at half resolution (4x fewer fragment shader pixels)
+    // while CSS stretches it smoothly across the viewport.
+    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.5));
+    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.5));
     gl.viewport(0, 0, canvas.width, canvas.height);
     if ((reduce || window.__qwaveShaderPaused) && !document.hidden) render(8000);
   }
@@ -946,7 +950,7 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  const FPS_CAP_MS = 1000 / 30;
+  const FPS_CAP_MS = 1000 / 20;
   let lastRender = -1000;
   let rafId = 0;
 
