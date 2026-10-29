@@ -1286,12 +1286,32 @@ pub fn run_markdown_hud(args: &[String]) -> String {
     }
 
     let qwave_bin = find_qwave_bin();
-    if !is_cmdline_running("sovereign-qwave-hud.md") {
+    let hud_url = format!(
+        "http://127.0.0.1:42123/view?path={}",
+        path_str
+    );
+    if is_cmdline_running("qwave-qt") {
+        let nav_dir = PathBuf::from("/home/hue/.local/share/qwave");
+        let _ = fs::create_dir_all(&nav_dir);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = fs::write(nav_dir.join("nav_command.url"), format!("{}\n{}", ts, hud_url));
+        let _ = Command::new("hyprctl")
+            .args(["dispatch", "focuswindow", "class:qwave"])
+            .env("XDG_RUNTIME_DIR", "/run/user/1000")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    } else {
         let dispatched = hyprctl_exec_cmd(&format!("{qwave_bin} {path_str}"));
         if !dispatched {
             let _ = Command::new("setsid")
                 .args(["--fork", qwave_bin, &path_str])
                 .env("WAYLAND_DISPLAY", "wayland-1")
+                .env("DISPLAY", ":0")
+                .env("QT_QPA_PLATFORM", "xcb")
                 .env("XDG_RUNTIME_DIR", "/run/user/1000")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())

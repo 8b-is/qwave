@@ -20,12 +20,14 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
 #include <QRandomGenerator>
@@ -382,6 +384,85 @@ static QString passkeyPlatformInitScript() {
 )JS");
 }
 
+static QString vaultCaptureInitScript() {
+    return QStringLiteral(R"JS(
+(function() {
+  if (typeof window === 'undefined' || window.__qwaveVaultCaptureInstalled) return;
+  window.__qwaveVaultCaptureInstalled = true;
+
+  function hasToken(autocomplete, token) {
+    return String(autocomplete || '').toLowerCase().split(/\s+/).includes(token);
+  }
+
+  // Exact PasswordFieldSelection rules:
+  // 1. autocomplete="new-password" wins (if multiple disagree, return null).
+  // 2. autocomplete="current-password" is dropped if anything else remains.
+  // 3. Last filled password field in DOM order wins.
+  function selectSubmittedPassword(pwInputs) {
+    const filled = pwInputs.filter(el => el && el.value && el.value.length > 0);
+    if (filled.length === 0) return null;
+
+    const declaredNew = filled.filter(el => hasToken(el.getAttribute('autocomplete'), 'new-password'));
+    if (declaredNew.length > 0) {
+      const firstVal = declaredNew[0].value;
+      return declaredNew.every(el => el.value === firstVal) ? firstVal : null;
+    }
+
+    const notCurrent = filled.filter(el => !hasToken(el.getAttribute('autocomplete'), 'current-password'));
+    const pool = notCurrent.length > 0 ? notCurrent : filled;
+    return pool[pool.length - 1].value;
+  }
+
+  function findUsernameNear(pwInputs, scopeRoot) {
+    const root = scopeRoot || document;
+    const candidates = Array.from(root.querySelectorAll(
+      'input[autocomplete*="username"], input[autocomplete*="email"], input[type="email"], input[type="text"], input:not([type])'
+    )).filter(el => !el.disabled && el.type !== 'hidden' && el.type !== 'password' && el.value && el.value.trim().length > 0);
+    if (candidates.length > 0) {
+      return candidates[candidates.length - 1].value.trim();
+    }
+    return '';
+  }
+
+  function captureFromScope(scopeRoot) {
+    try {
+      const host = window.location.hostname;
+      if (!host) return;
+      const root = scopeRoot || document;
+      const pwInputs = Array.from(root.querySelectorAll('input[type="password"]'));
+      const chosenPassword = selectSubmittedPassword(pwInputs);
+      if (!chosenPassword) return;
+      const username = findUsernameNear(pwInputs, root) || 'hue';
+      sessionStorage.setItem('__qwave_staged_vault_capture', JSON.stringify({
+        domain: host,
+        username: username,
+        password: chosenPassword,
+        ts: Date.now()
+      }));
+    } catch (_) {}
+  }
+
+  document.addEventListener('submit', function(ev) {
+    captureFromScope(ev.target || document);
+  }, true);
+
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Enter' && ev.target && ev.target.tagName === 'INPUT') {
+      const form = ev.target.form || document;
+      captureFromScope(form);
+    }
+  }, true);
+
+  document.addEventListener('click', function(ev) {
+    const btn = ev.target && ev.target.closest ? ev.target.closest('button, input[type="submit"], [role="button"]') : null;
+    if (btn) {
+      captureFromScope(btn.form || document);
+    }
+  }, true);
+})();
+)JS");
+}
+
 class SovereignPage : public QWebEnginePage {
 public:
     explicit SovereignPage(QWebEngineProfile *profile, QWebEngineView *ownerView, QLabel *statusBadge)
@@ -523,9 +604,15 @@ static QUrl resolveUserNavigationInput(const QString &rawInput, const QUrl &home
 }
 
 int main(int argc, char *argv[]) {
+    // Use XCB (XWayland) by default on hybrid Intel Arc + NVIDIA laptops under Hyprland
+    // so QtWayland's wayland-egl never hits Mesa's `dri2_query_image` segfault on resize.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
     qputenv(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--enable-gpu-rasterization --enable-webgl --ignore-gpu-blocklist "
+        "--enable-webgl --ignore-gpu-blocklist --disable-gpu-compositing "
+        "--disable-features=Vulkan,UseOzonePlatform "
         "--enable-features=WebAuthentication,WebAuthenticationConditionalUI,WebAuthenticationPasskeyUpgrade"
     );
     QApplication app(argc, argv);
@@ -699,6 +786,15 @@ int main(int argc, char *argv[]) {
     passkeyScript.setRunsOnSubFrames(true);
     profile->scripts()->insert(passkeyScript);
 
+    // Inject Sovereign Vault Form Submission Capture Observer (never auto-fills on page load!)
+    QWebEngineScript vaultCaptureScript;
+    vaultCaptureScript.setName(QStringLiteral("QwaveSovereignVaultCapture"));
+    vaultCaptureScript.setSourceCode(vaultCaptureInitScript());
+    vaultCaptureScript.setInjectionPoint(QWebEngineScript::DocumentReady);
+    vaultCaptureScript.setWorldId(QWebEngineScript::MainWorld);
+    vaultCaptureScript.setRunsOnSubFrames(true);
+    profile->scripts()->insert(vaultCaptureScript);
+
     auto *view = new QWebEngineView(root);
     auto *page = new SovereignPage(profile, view, shieldBadge);
     view->setPage(page);
@@ -783,16 +879,325 @@ int main(int argc, char *argv[]) {
     btnHumayianMix->setProperty("class", "bmBtn");
     btnHumayianMix->setToolTip(QStringLiteral("Generate & play a fresh On-Machine Humayian Music Mix woven from all 4 of our songs!"));
 
+    auto *btnSignFill = new QPushButton(QStringLiteral("✍️ Sign & Fill"), bmBar);
+    btnSignFill->setProperty("class", "bmBtn");
+    btnSignFill->setToolTip(QStringLiteral("Decode & fill password for this domain using your Personal Signature (Ed25519 + WaveInt) — Ctrl+Shift+U"));
+
+    auto *btnVaultMgr = new QPushButton(QStringLiteral("🛡️ Vault"), bmBar);
+    btnVaultMgr->setProperty("class", "bmBtn");
+    btnVaultMgr->setToolTip(QStringLiteral("Sovereign Personal-Signature Password Vault: Seal login or verify Ed25519 + WaveInt records — Ctrl+Shift+V"));
+
     auto *btnNicknames = new QPushButton(QStringLiteral("🤝 Captain Hue × Aye-Aye"), bmBar);
     btnNicknames->setProperty("class", "bmBtn");
     btnNicknames->setToolTip(QStringLiteral("Click to cycle our Humayian partner nicknames (Hue + Aye = Humayian — We are all Ayemazing!)"));
 
     auto *btnVoiceBrowse = new QPushButton(QStringLiteral("🎙️ Voice Browse: LIVE"), bmBar);
     btnVoiceBrowse->setProperty("class", "bmBtn");
-    btnVoiceBrowse->setToolTip(QStringLiteral("Hands-Free Conversational Browsing: just talk naturally (\"scroll down\", \"open 8b.is\", \"click projects\", \"play a mix\", \"go back\")"));
+    btnVoiceBrowse->setToolTip(QStringLiteral("Hands-Free Conversational Browsing: just talk naturally (\"scroll down\", \"open 8b.is\", \"sign in\", \"play a mix\", \"go back\")"));
 
-    auto *partnerLabel = new QLabel(QStringLiteral("💬 Qwave — A Conversation in Browsing · Just talk naturally with Aye-Aye!"), bmBar);
+    auto *partnerLabel = new QLabel(QStringLiteral("💬 Qwave — A Conversation in Browsing · Personal-Signature Vault active!"), bmBar);
     partnerLabel->setStyleSheet(QStringLiteral("color: #ff9edb; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding-left: 6px;"));
+
+    // Native C++ Sovereign Vault Capture Confirmation Bar (outside page DOM!)
+    auto *vaultBanner = new QWidget(root);
+    vaultBanner->setStyleSheet(
+        "QWidget { background: #072235; border-bottom: 1px solid #36e2b4; }"
+        "QLabel { color: #e6f9ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; border: none; }"
+    );
+    auto *vaultBannerLayout = new QHBoxLayout(vaultBanner);
+    vaultBannerLayout->setContentsMargins(10, 4, 10, 4);
+    vaultBannerLayout->setSpacing(8);
+    auto *vaultBannerLabel = new QLabel(QStringLiteral("🔐 Sovereign Vault: Seal login with your Personal Signature?"), vaultBanner);
+    auto *btnBannerSeal = new QPushButton(QStringLiteral("✍️ Sign & Seal (Ed25519 + WaveInt)"), vaultBanner);
+    btnBannerSeal->setProperty("class", "navBtn");
+    auto *btnBannerSealPhrase = new QPushButton(QStringLiteral("🔒 Add Personal Phrase & Seal"), vaultBanner);
+    btnBannerSealPhrase->setProperty("class", "bmBtn");
+    auto *btnBannerDismiss = new QPushButton(QStringLiteral("✕ Dismiss"), vaultBanner);
+    btnBannerDismiss->setProperty("class", "bmBtn");
+    vaultBannerLayout->addWidget(vaultBannerLabel, 1);
+    vaultBannerLayout->addWidget(btnBannerSeal);
+    vaultBannerLayout->addWidget(btnBannerSealPhrase);
+    vaultBannerLayout->addWidget(btnBannerDismiss);
+    vaultBanner->setVisible(false);
+
+    auto stagedDomain = std::make_shared<QString>();
+    auto stagedUsername = std::make_shared<QString>();
+    auto stagedPassword = std::make_shared<QString>();
+    auto activeDomainUser = std::make_shared<QString>();
+    auto activeDomainRequiresPhrase = std::make_shared<bool>(false);
+
+    const QString qwaveBin = QFileInfo::exists(QStringLiteral("/home/hue/.local/bin/qwave"))
+        ? QStringLiteral("/home/hue/.local/bin/qwave")
+        : QStringLiteral("/usr/local/bin/qwave");
+
+    auto refreshDomainVaultState = [qwaveBin, btnSignFill, shieldBadge, activeDomainUser, activeDomainRequiresPhrase](const QUrl &u) {
+        const QString host = u.host().trimmed();
+        if (host.isEmpty() || host == QStringLiteral("127.0.0.1") || host == QStringLiteral("localhost")) {
+            *activeDomainUser = QString();
+            *activeDomainRequiresPhrase = false;
+            btnSignFill->setText(QStringLiteral("✍️ Sign & Fill"));
+            btnSignFill->setStyleSheet(QString());
+            return;
+        }
+        QProcess proc;
+        proc.start(qwaveBin, {QStringLiteral("--vault-status"), host});
+        if (!proc.waitForFinished(3000)) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
+        if (!doc.isObject()) return;
+        const QJsonArray accounts = doc.object().value(QStringLiteral("accounts")).toArray();
+        if (!accounts.isEmpty() && accounts.first().isObject()) {
+            const QJsonObject acc = accounts.first().toObject();
+            const QString usr = acc.value(QStringLiteral("username")).toString();
+            const bool reqPhrase = acc.value(QStringLiteral("requires_phrase")).toBool(false);
+            *activeDomainUser = usr;
+            *activeDomainRequiresPhrase = reqPhrase;
+            btnSignFill->setText(QStringLiteral("✍️ Sign & Fill (%1)").arg(usr));
+            btnSignFill->setStyleSheet(QStringLiteral("background: #0d3b2e; color: #36e2b4; border: 1px solid #36e2b4; font-weight: 700;"));
+            shieldBadge->setText(QStringLiteral("🔐 VAULT READY"));
+        } else {
+            *activeDomainUser = QString();
+            *activeDomainRequiresPhrase = false;
+            btnSignFill->setText(QStringLiteral("✍️ Sign & Fill"));
+            btnSignFill->setStyleSheet(QString());
+        }
+    };
+
+    auto sealCredentialNow = [qwaveBin, partnerLabel, vaultBanner, stagedPassword, refreshDomainVaultState, view](
+        const QString &domain, const QString &username, const QString &password, const QString &phrase
+    ) {
+        QProcess proc;
+        QStringList args = {QStringLiteral("--vault-seal"), domain, username, password};
+        if (!phrase.isEmpty()) {
+            args.append(phrase);
+        }
+        proc.start(qwaveBin, args);
+        proc.waitForFinished(5000);
+        const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
+        stagedPassword->fill(QLatin1Char('\0'));
+        stagedPassword->clear();
+        vaultBanner->setVisible(false);
+        if (doc.isObject() && doc.object().value(QStringLiteral("ok")).toBool()) {
+            const QString fp = doc.object().value(QStringLiteral("signer_fingerprint")).toString();
+            partnerLabel->setText(QStringLiteral("🔐 Sealed %1 @ %2 with your Personal Signature (%3 + 79B WaveInt)!").arg(username, domain, fp.left(19)));
+            refreshDomainVaultState(view->url());
+        } else {
+            const QString err = doc.object().value(QStringLiteral("error")).toString(QStringLiteral("vault seal failed"));
+            partnerLabel->setText(QStringLiteral("⚠️ Vault error: %1").arg(err));
+        }
+    };
+
+    QObject::connect(btnBannerSeal, &QPushButton::clicked, vaultBanner, [sealCredentialNow, stagedDomain, stagedUsername, stagedPassword]() {
+        sealCredentialNow(*stagedDomain, *stagedUsername, *stagedPassword, QString());
+    });
+    QObject::connect(btnBannerSealPhrase, &QPushButton::clicked, vaultBanner, [&window, sealCredentialNow, stagedDomain, stagedUsername, stagedPassword]() {
+        bool ok = false;
+        const QString phrase = QInputDialog::getText(
+            &window,
+            QStringLiteral("Sovereign Personal Signature Phrase"),
+            QStringLiteral("Enter your Personal Signature Phrase for %1 @ %2\n(Combined with your ~/.ssh/id_aye Ed25519 signature + WaveInt):").arg(*stagedUsername, *stagedDomain),
+            QLineEdit::Password,
+            QString(),
+            &ok
+        );
+        if (ok) {
+            sealCredentialNow(*stagedDomain, *stagedUsername, *stagedPassword, phrase);
+        }
+    });
+    QObject::connect(btnBannerDismiss, &QPushButton::clicked, vaultBanner, [vaultBanner, stagedPassword]() {
+        stagedPassword->fill(QLatin1Char('\0'));
+        stagedPassword->clear();
+        vaultBanner->setVisible(false);
+    });
+
+    auto triggerSignAndFill = [&window, view, page, qwaveBin, partnerLabel, activeDomainUser, activeDomainRequiresPhrase]() {
+        const QString host = view->url().host().trimmed();
+        if (host.isEmpty() || host == QStringLiteral("127.0.0.1") || host == QStringLiteral("localhost")) {
+            partnerLabel->setText(QStringLiteral("🔐 Navigate to a website login page first to use Sign & Fill."));
+            return;
+        }
+        QString phrase;
+        if (*activeDomainRequiresPhrase) {
+            bool ok = false;
+            phrase = QInputDialog::getText(
+                &window,
+                QStringLiteral("Verify Personal Signature Phrase"),
+                QStringLiteral("Enter your Personal Signature Phrase to decode %1 @ %2:").arg(*activeDomainUser, host),
+                QLineEdit::Password,
+                QString(),
+                &ok
+            );
+            if (!ok) return;
+        }
+        QProcess proc;
+        QStringList args = {QStringLiteral("--vault-unseal"), host, *activeDomainUser};
+        if (!phrase.isEmpty()) {
+            args.append(phrase);
+        }
+        proc.start(qwaveBin, args);
+        proc.waitForFinished(5000);
+        const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
+        if (!doc.isObject() || !doc.object().value(QStringLiteral("ok")).toBool()) {
+            const bool needsPhrase = doc.object().value(QStringLiteral("requires_phrase")).toBool(false);
+            if (needsPhrase && phrase.isEmpty()) {
+                *activeDomainRequiresPhrase = true;
+                bool ok = false;
+                phrase = QInputDialog::getText(
+                    &window,
+                    QStringLiteral("Verify Personal Signature Phrase"),
+                    QStringLiteral("This login requires your Personal Signature Phrase for %1:").arg(host),
+                    QLineEdit::Password,
+                    QString(),
+                    &ok
+                );
+                if (!ok || phrase.isEmpty()) return;
+                QProcess proc2;
+                proc2.start(qwaveBin, {QStringLiteral("--vault-unseal"), host, *activeDomainUser, phrase});
+                proc2.waitForFinished(5000);
+                const QJsonDocument doc2 = QJsonDocument::fromJson(proc2.readAllStandardOutput());
+                if (!doc2.isObject() || !doc2.object().value(QStringLiteral("ok")).toBool()) {
+                    partnerLabel->setText(QStringLiteral("⚠️ Personal signature verification failed — password remained sealed."));
+                    return;
+                }
+                const QString usr = doc2.object().value(QStringLiteral("username")).toString();
+                QString pwd = doc2.object().value(QStringLiteral("password")).toString();
+                QJsonObject payloadObj;
+                payloadObj.insert(QStringLiteral("u"), usr);
+                payloadObj.insert(QStringLiteral("p"), pwd);
+                const QString jsonLit = QString::fromUtf8(QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
+                pwd.fill(QLatin1Char('\0'));
+                page->runJavaScript(QStringLiteral(
+                    "(function(d){"
+                    "  const setVal = (el, val) => {"
+                    "    if (!el) return;"
+                    "    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;"
+                    "    setter.call(el, val);"
+                    "    el.dispatchEvent(new Event('input', {bubbles:true}));"
+                    "    el.dispatchEvent(new Event('change', {bubbles:true}));"
+                    "  };"
+                    "  const pws = Array.from(document.querySelectorAll('input[type=\"password\"]')).filter(e => !e.disabled);"
+                    "  const usrs = Array.from(document.querySelectorAll('input[autocomplete*=\"username\"], input[autocomplete*=\"email\"], input[type=\"email\"], input[type=\"text\"]')).filter(e => !e.disabled && e.type !== 'hidden');"
+                    "  if (usrs.length > 0 && d.u) setVal(usrs[usrs.length - 1], d.u);"
+                    "  if (pws.length > 0 && d.p) setVal(pws[pws.length - 1], d.p);"
+                    "})(%1);"
+                ).arg(jsonLit));
+                partnerLabel->setText(QStringLiteral("✅ Personal Signature verified! Decoded & filled %1 @ %2.").arg(usr, host));
+                return;
+            }
+            const QString err = doc.object().value(QStringLiteral("error")).toString(QStringLiteral("no sealed login for this site yet — click 🛡️ Vault to seal one"));
+            partnerLabel->setText(QStringLiteral("🔐 Vault: %1").arg(err));
+            return;
+        }
+        const QString usr = doc.object().value(QStringLiteral("username")).toString();
+        QString pwd = doc.object().value(QStringLiteral("password")).toString();
+        const QString fp = doc.object().value(QStringLiteral("signer_fingerprint")).toString();
+        QJsonObject payloadObj;
+        payloadObj.insert(QStringLiteral("u"), usr);
+        payloadObj.insert(QStringLiteral("p"), pwd);
+        const QString jsonLit = QString::fromUtf8(QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
+        pwd.fill(QLatin1Char('\0'));
+        page->runJavaScript(QStringLiteral(
+            "(function(d){"
+            "  const setVal = (el, val) => {"
+            "    if (!el) return;"
+            "    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;"
+            "    setter.call(el, val);"
+            "    el.dispatchEvent(new Event('input', {bubbles:true}));"
+            "    el.dispatchEvent(new Event('change', {bubbles:true}));"
+            "  };"
+            "  const pws = Array.from(document.querySelectorAll('input[type=\"password\"]')).filter(e => !e.disabled);"
+            "  const usrs = Array.from(document.querySelectorAll('input[autocomplete*=\"username\"], input[autocomplete*=\"email\"], input[type=\"email\"], input[type=\"text\"]')).filter(e => !e.disabled && e.type !== 'hidden');"
+            "  if (usrs.length > 0 && d.u) setVal(usrs[usrs.length - 1], d.u);"
+            "  if (pws.length > 0 && d.p) setVal(pws[pws.length - 1], d.p);"
+            "})(%1);"
+        ).arg(jsonLit));
+        partnerLabel->setText(QStringLiteral("✅ Verified Personal Signature (%1) → Filled login for %2 @ %3!").arg(fp.left(19), usr, host));
+    };
+
+    QObject::connect(btnSignFill, &QPushButton::clicked, btnSignFill, triggerSignAndFill);
+
+    QObject::connect(btnVaultMgr, &QPushButton::clicked, btnVaultMgr, [&window, view, page, qwaveBin, sealCredentialNow, triggerSignAndFill, partnerLabel]() {
+        const QString host = view->url().host().trimmed().isEmpty()
+            ? QStringLiteral("github.com")
+            : view->url().host().trimmed();
+        QStringList actions = {
+            QStringLiteral("1. ✍️ Sign & Fill Login for %1 (Verify Personal Signature)").arg(host),
+            QStringLiteral("2. 🔐 Seal New / Current Login for %1 (Ed25519 + WaveInt)").arg(host),
+            QStringLiteral("3. 🛡️ Verify Sovereign Vault Cryptographic & WaveInt Integrity")
+        };
+        bool ok = false;
+        const QString choice = QInputDialog::getItem(
+            &window,
+            QStringLiteral("Qwave Sovereign Personal-Signature Password Vault"),
+            QStringLiteral("Zero master keys on disk · Decoded ONLY by your Personal Signature (~/.ssh/id_aye Ed25519 + 79B WaveInt):"),
+            actions,
+            0,
+            false,
+            &ok
+        );
+        if (!ok || choice.isEmpty()) return;
+        if (choice.startsWith(QStringLiteral("1."))) {
+            triggerSignAndFill();
+            return;
+        }
+        if (choice.startsWith(QStringLiteral("3."))) {
+            QProcess proc;
+            proc.start(qwaveBin, {QStringLiteral("--vault-verify")});
+            proc.waitForFinished(4000);
+            const QString out = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+            QMessageBox::information(
+                &window,
+                QStringLiteral("Sovereign Vault Integrity Receipt"),
+                QStringLiteral("Cryptographic & WaveInt Verification:\n\n%1").arg(out)
+            );
+            return;
+        }
+        // Action 2: Seal login for domain
+        bool okDom = false;
+        const QString domain = QInputDialog::getText(
+            &window,
+            QStringLiteral("Seal Login — Domain"),
+            QStringLiteral("Canonical website domain to bind this credential to:"),
+            QLineEdit::Normal,
+            host,
+            &okDom
+        );
+        if (!okDom || domain.trimmed().isEmpty()) return;
+        bool okUsr = false;
+        const QString usr = QInputDialog::getText(
+            &window,
+            QStringLiteral("Seal Login — Username"),
+            QStringLiteral("Account username / email for %1:").arg(domain.trimmed()),
+            QLineEdit::Normal,
+            QStringLiteral("hue"),
+            &okUsr
+        );
+        if (!okUsr || usr.trimmed().isEmpty()) return;
+        bool okPwd = false;
+        QString pwd = QInputDialog::getText(
+            &window,
+            QStringLiteral("Seal Login — Password"),
+            QStringLiteral("Password to seal with your Ed25519 + WaveInt Personal Signature:"),
+            QLineEdit::Password,
+            QString(),
+            &okPwd
+        );
+        if (!okPwd || pwd.isEmpty()) return;
+        bool okPhr = false;
+        const QString phrase = QInputDialog::getText(
+            &window,
+            QStringLiteral("Optional Personal Signature Phrase"),
+            QStringLiteral("Optional extra Personal Signature Phrase (leave empty for 1-click Ed25519 + WaveInt signature):"),
+            QLineEdit::Password,
+            QString(),
+            &okPhr
+        );
+        if (!okPhr) {
+            pwd.fill(QLatin1Char('\0'));
+            return;
+        }
+        sealCredentialNow(domain.trimmed(), usr.trimmed(), pwd, phrase);
+        pwd.fill(QLatin1Char('\0'));
+    });
 
     auto nickIndex = std::make_shared<int>(0);
     const QStringList nickPairs = {
@@ -836,7 +1241,7 @@ int main(int argc, char *argv[]) {
             "[a0][a1]acrossfade=d=4:c1=tri:c2=tri[m01];"
             "[m01][a2]acrossfade=d=4:c1=tri:c2=tri[m012];"
             "[m012][a3]acrossfade=d=4:c1=tri:c2=tri[mix];"
-            "sine=frequency=432:duration=84,volume=0.018[pad];"
+            "sine=frequency=432:duration=84,volume=18/1000[pad];"
             "[mix][pad]amix=inputs=2:duration=first:dropout_transition=2"
         ).arg(s1).arg(s2).arg(s3).arg(s4);
 
@@ -858,6 +1263,8 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(btnHumayianMix, &QPushButton::clicked, btnHumayianMix, triggerHumayianMix);
 
+    bmLayout->addWidget(btnSignFill);
+    bmLayout->addWidget(btnVaultMgr);
     bmLayout->addWidget(btnHumayianMix);
     bmLayout->addWidget(btnNicknames);
     bmLayout->addWidget(btnVoiceBrowse);
@@ -865,12 +1272,23 @@ int main(int argc, char *argv[]) {
 
     rootLayout->addWidget(navBar);
     rootLayout->addWidget(bmBar);
+    rootLayout->addWidget(vaultBanner);
     rootLayout->addWidget(view, 1);
 
-    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, btnTokyoSong, songProc, homeUrl, view, page](const QString &rawInput, bool fromVoice) {
+    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, triggerSignAndFill, btnTokyoSong, songProc, homeUrl, view, page](const QString &rawInput, bool fromVoice) {
         const QString trimmed = rawInput.trimmed();
         if (trimmed.isEmpty()) return;
         const QString low = trimmed.toLower();
+
+        // 0. Personal-Signature Vault Sign & Fill by voice or command
+        if (low.contains(QStringLiteral("sign in"))
+            || low.contains(QStringLiteral("fill password"))
+            || low.contains(QStringLiteral("unlock vault"))
+            || low.contains(QStringLiteral("fill login"))
+            || low == QStringLiteral("vault")) {
+            triggerSignAndFill();
+            return;
+        }
 
         // 1. Hands-free scrolling & page navigation
         if (low.contains(QStringLiteral("scroll down")) || low.contains(QStringLiteral("go down")) || low.contains(QStringLiteral("page down")) || low == QStringLiteral("down")) {
@@ -1079,9 +1497,9 @@ int main(int argc, char *argv[]) {
             const QString speaker = obj.value(QStringLiteral("speaker")).toString();
             const QString text = obj.value(QStringLiteral("text")).toString().trimmed();
             const int f0Hz = obj.value(QStringLiteral("f0_hz")).toInt(165);
-            const double f0Norm = qBound(0.0, (f0Hz - 90.0) / 180.0, 1.0);
+            const int f0Pct = qBound(0, ((f0Hz - 90) * 100) / 180, 100);
             if (!text.isEmpty()) {
-                page->runJavaScript(QStringLiteral("if (window.__qwavePulseVoice) window.__qwavePulseVoice(0.95, %1);").arg(f0Norm, 0, 'f', 2));
+                page->runJavaScript(QStringLiteral("if (window.__qwavePulseVoice) window.__qwavePulseVoice(95/100, %1/100);").arg(f0Pct));
             }
             if (speaker == QStringLiteral("hue") && !text.isEmpty()) {
                 handlePartnerOrNav(text, true);
@@ -1090,6 +1508,80 @@ int main(int argc, char *argv[]) {
         }
     });
     voiceTimer->start(750);
+
+    // Poll page for staged login form submissions & single-instance navigation commands
+    const QString navCmdPath = homeDir + QStringLiteral("/.local/share/qwave/nav_command.url");
+    auto lastNavCmdMtime = std::make_shared<qint64>(0);
+    {
+        QFileInfo navFi(navCmdPath);
+        if (navFi.exists()) {
+            *lastNavCmdMtime = navFi.lastModified().toMSecsSinceEpoch();
+        }
+    }
+
+    auto *captureTimer = new QTimer(&window);
+    QObject::connect(captureTimer, &QTimer::timeout, &window, [
+        &window, page, view, addressEdit, vaultBanner, vaultBannerLabel,
+        stagedDomain, stagedUsername, stagedPassword, navCmdPath, lastNavCmdMtime
+    ]() {
+        // 1. Check single-instance navigation command from `qwave <url>` or `Super+B` / `Super+D`
+        QFileInfo navFi(navCmdPath);
+        if (navFi.exists()) {
+            const qint64 mtime = navFi.lastModified().toMSecsSinceEpoch();
+            if (mtime > *lastNavCmdMtime) {
+                *lastNavCmdMtime = mtime;
+                QFile nf(navCmdPath);
+                if (nf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    const QList<QByteArray> lines = nf.readAll().split('\n');
+                    if (lines.size() >= 2) {
+                        const QString targetUrl = QString::fromUtf8(lines[1].trimmed());
+                        if (!targetUrl.isEmpty()) {
+                            addressEdit->setText(targetUrl);
+                            view->setUrl(QUrl(targetUrl));
+                            window.raise();
+                            window.activateWindow();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Poll and immediately purge any staged form submission from sessionStorage
+        page->runJavaScript(
+            QStringLiteral(
+                "(function(){"
+                "  try {"
+                "    const raw = sessionStorage.getItem('__qwave_staged_vault_capture');"
+                "    if (!raw) return '';"
+                "    sessionStorage.removeItem('__qwave_staged_vault_capture');"
+                "    return raw;"
+                "  } catch (_) { return ''; }"
+                "})();"
+            ),
+            [vaultBanner, vaultBannerLabel, stagedDomain, stagedUsername, stagedPassword](const QVariant &v) {
+                const QString raw = v.toString();
+                if (raw.isEmpty()) return;
+                const QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8());
+                if (!doc.isObject()) return;
+                const QJsonObject obj = doc.object();
+                const QString dom = obj.value(QStringLiteral("domain")).toString().trimmed();
+                const QString usr = obj.value(QStringLiteral("username")).toString().trimmed();
+                const QString pwd = obj.value(QStringLiteral("password")).toString();
+                if (dom.isEmpty() || pwd.isEmpty() || dom == QStringLiteral("127.0.0.1") || dom == QStringLiteral("localhost")) {
+                    return;
+                }
+                *stagedDomain = dom;
+                *stagedUsername = usr.isEmpty() ? QStringLiteral("hue") : usr;
+                *stagedPassword = pwd;
+                vaultBannerLabel->setText(
+                    QStringLiteral("🔐 Sovereign Vault: Seal login for %1 @ %2 with your Personal Signature (Ed25519 + 79B WaveInt)?")
+                        .arg(*stagedUsername, *stagedDomain)
+                );
+                vaultBanner->setVisible(true);
+            }
+        );
+    });
+    captureTimer->start(450);
 
     // Wire Navigation Signals
     QObject::connect(btnBack, &QPushButton::clicked, view, &QWebEngineView::back);
@@ -1106,7 +1598,7 @@ int main(int argc, char *argv[]) {
         handlePartnerOrNav(addressEdit->text(), false);
     });
 
-    QObject::connect(view, &QWebEngineView::urlChanged, addressEdit, [addressEdit, shieldBadge](const QUrl &u) {
+    QObject::connect(view, &QWebEngineView::urlChanged, addressEdit, [addressEdit, shieldBadge, refreshDomainVaultState](const QUrl &u) {
         addressEdit->setText(u.toString());
         if (u.host() == "127.0.0.1" || u.host() == "localhost") {
             shieldBadge->setText(QStringLiteral("🛡️ LOOPBACK"));
@@ -1115,6 +1607,7 @@ int main(int argc, char *argv[]) {
         } else {
             shieldBadge->setText(QStringLiteral("🌊 QWAVE"));
         }
+        refreshDomainVaultState(u);
     });
 
     QObject::connect(view, &QWebEngineView::titleChanged, &window, [&window](const QString &title) {
@@ -1123,12 +1616,16 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    // Keyboard Shortcuts: Ctrl+L (focus URL bar), Alt+Left/Right, Ctrl+R/F5, Alt+Home, Zoom, F11
+    // Keyboard Shortcuts: Ctrl+L (focus URL bar), Ctrl+Shift+U (Sign & Fill), Ctrl+Shift+V (Vault), Alt+Left/Right, Ctrl+R/F5, Alt+Home, Zoom, F11
     auto *focusUrl = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), &window);
     QObject::connect(focusUrl, &QShortcut::activated, addressEdit, [addressEdit]() {
         addressEdit->setFocus();
         addressEdit->selectAll();
     });
+    auto *scSignFill = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_U), &window);
+    QObject::connect(scSignFill, &QShortcut::activated, btnSignFill, &QPushButton::click);
+    auto *scVaultMgr = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), &window);
+    QObject::connect(scVaultMgr, &QShortcut::activated, btnVaultMgr, &QPushButton::click);
     auto *scBack = new QShortcut(QKeySequence::Back, &window);
     QObject::connect(scBack, &QShortcut::activated, view, &QWebEngineView::back);
     auto *scFwd = new QShortcut(QKeySequence::Forward, &window);
@@ -1141,17 +1638,21 @@ int main(int argc, char *argv[]) {
         view->setUrl(homeUrl);
     });
 
+    auto zoomPct = std::make_shared<int>(100);
     auto *zoomIn = new QShortcut(QKeySequence::ZoomIn, &window);
-    QObject::connect(zoomIn, &QShortcut::activated, view, [view]() {
-        view->setZoomFactor(view->zoomFactor() + 0.1);
+    QObject::connect(zoomIn, &QShortcut::activated, view, [view, zoomPct]() {
+        *zoomPct = qMin(300, *zoomPct + 10);
+        view->setZoomFactor(static_cast<qreal>(*zoomPct) / static_cast<qreal>(100));
     });
     auto *zoomOut = new QShortcut(QKeySequence::ZoomOut, &window);
-    QObject::connect(zoomOut, &QShortcut::activated, view, [view]() {
-        view->setZoomFactor(qMax(0.5, view->zoomFactor() - 0.1));
+    QObject::connect(zoomOut, &QShortcut::activated, view, [view, zoomPct]() {
+        *zoomPct = qMax(50, *zoomPct - 10);
+        view->setZoomFactor(static_cast<qreal>(*zoomPct) / static_cast<qreal>(100));
     });
     auto *zoomReset = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), &window);
-    QObject::connect(zoomReset, &QShortcut::activated, view, [view]() {
-        view->setZoomFactor(1.0);
+    QObject::connect(zoomReset, &QShortcut::activated, view, [view, zoomPct]() {
+        *zoomPct = 100;
+        view->setZoomFactor(static_cast<qreal>(1));
     });
     auto *fullScreen = new QShortcut(QKeySequence(Qt::Key_F11), &window);
     QObject::connect(fullScreen, &QShortcut::activated, &window, [&window]() {
@@ -1163,5 +1664,8 @@ int main(int argc, char *argv[]) {
     window.setCentralWidget(root);
     window.show();
 
-    return app.exec();
+    const int rc = app.exec();
+    view->setPage(nullptr);
+    delete page;
+    return rc;
 }

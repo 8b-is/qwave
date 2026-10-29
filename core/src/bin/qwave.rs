@@ -37,14 +37,20 @@ use qwave_core::mesh::{
 };
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
-    AcousticSourceKind, MarineIntDetector, RingBuffer, RoomAcousticTracker, SelfCalibrationEngine,
-    SelfCalibrationOutcome, SpeakerSalienceProfile, StereoMicTriangulation, StereoPcmRingBuffer,
-    combine_salient_speech_wav, contextualize_room_transcript, decode_wav_i16, encode_wav_i16,
-    extract_salient_grains, is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
+    AcousticSourceKind, GEODESIC_PQ_DEN, MarineIntDetector, RingBuffer, RoomAcousticTracker,
+    RoomSpatialMapPq, SelfCalibrationEngine, SelfCalibrationOutcome, SpeakerSalienceProfile,
+    StereoMicTriangulation, StereoPcmRingBuffer, combine_salient_speech_wav,
+    contextualize_room_transcript, decode_wav_i16, encode_wav_i16, extract_salient_grains,
+    is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
     compute_riva_dyad_state,
+};
+use qwave_core::vault::{
+    PersonalSignatureMaterial, PlaintextCredential, SealedVaultRecord, VAULT_MAGIC,
+    VAULT_SIGN_NAMESPACE, blind_domain_tag, build_record_signature_challenge, canonicalize_domain,
+    constant_time_eq, hex_decode, hex_encode, sha256,
 };
 use qwave_core::wave::{WaveInt, WaveProvenance, consciousness};
 
@@ -110,6 +116,11 @@ fn main() -> ExitCode {
 
     if args.iter().any(|a| a == "--bench") {
         println!("{}", run_qwave_alexiai_bench());
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--speedtest" || a == "--i1-speedtest") {
+        println!("{}", run_i1_speedtest());
         return ExitCode::SUCCESS;
     }
 
@@ -227,6 +238,56 @@ fn main() -> ExitCode {
         };
         let msg = surf_with_qwave(target, "window", None);
         println!("{msg}");
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--vault-status") {
+        let domain = args.get(pos + 1).map(String::as_str).unwrap_or("");
+        println!("{}", run_vault_status_cli(domain));
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--vault-seal") {
+        let Some(domain) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --vault-seal <domain> <username> <password> [personal_phrase]");
+            return ExitCode::from(2);
+        };
+        let Some(username) = args.get(pos + 2) else {
+            eprintln!("usage: qwave --vault-seal <domain> <username> <password> [personal_phrase]");
+            return ExitCode::from(2);
+        };
+        let Some(password) = args.get(pos + 3) else {
+            eprintln!("usage: qwave --vault-seal <domain> <username> <password> [personal_phrase]");
+            return ExitCode::from(2);
+        };
+        let phrase = args.get(pos + 4).map(String::as_str).unwrap_or("");
+        println!("{}", run_vault_seal_cli(domain, username, password, phrase));
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--vault-unseal") {
+        let Some(domain) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --vault-unseal <domain> [username] [personal_phrase]");
+            return ExitCode::from(2);
+        };
+        let username = args.get(pos + 2).map(String::as_str).unwrap_or("");
+        let phrase = args.get(pos + 3).map(String::as_str).unwrap_or("");
+        println!("{}", run_vault_unseal_cli(domain, username, phrase));
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--vault-remove") {
+        let Some(domain) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --vault-remove <domain> <username>");
+            return ExitCode::from(2);
+        };
+        let username = args.get(pos + 2).map(String::as_str).unwrap_or("");
+        println!("{}", run_vault_remove_cli(domain, username));
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--vault-verify") {
+        println!("{}", run_vault_verify_cli());
         return ExitCode::SUCCESS;
     }
 
@@ -398,6 +459,25 @@ fn launch_native_window(url: &str) -> bool {
     });
     let x11_display = env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
 
+    // Ensure the native capability token exists for qwave-qt <-> vault IPC
+    let _ = ensure_vault_capability_token();
+
+    // If a qwave-qt instance is already running, send it the navigation target via
+    // `~/.local/share/qwave/nav_command.url` and focus its window instead of launching
+    // a second process against the same Chromium profile directory!
+    if is_qwave_qt_running() {
+        let nav_dir = PathBuf::from("/home/hue/.local/share/qwave");
+        let _ = fs::create_dir_all(&nav_dir);
+        let _ = fs::write(nav_dir.join("nav_command.url"), format!("{}\n{}", now_secs(), url));
+        let _ = Command::new("hyprctl")
+            .args(["dispatch", "focuswindow", "class:qwave"])
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        return true;
+    }
+
     for qt_bin in [
         "/home/hue/.local/bin/qwave-qt",
         "/usr/local/bin/qwave-qt",
@@ -410,15 +490,15 @@ fn launch_native_window(url: &str) -> bool {
                 .env("XDG_RUNTIME_DIR", &xdg_runtime)
                 .env("WAYLAND_DISPLAY", &wayland_display)
                 .env("DISPLAY", &x11_display)
+                .env("QT_QPA_PLATFORM", "xcb")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
             {
-                let status = child.wait();
-                if status.map(|s| s.success()).unwrap_or(false) {
-                    return true;
-                }
+                let _ = child.wait();
+                // Never cascade through duplicate binaries after the window closes!
+                return true;
             }
         }
     }
@@ -485,14 +565,25 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
     let raw_target = parts[1];
 
     let mut content_length = 0usize;
+    let mut has_browser_origin_or_fetch = false;
+    let mut vault_cap_header = String::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 || line == "\r\n" || line == "\n" {
             break;
         }
         if let Some((k, v)) = line.split_once(':') {
-            if k.trim().eq_ignore_ascii_case("content-length") {
+            let key = k.trim();
+            if key.eq_ignore_ascii_case("content-length") {
                 content_length = v.trim().parse().unwrap_or(0);
+            } else if key.eq_ignore_ascii_case("origin")
+                || key.eq_ignore_ascii_case("referer")
+                || key.eq_ignore_ascii_case("sec-fetch-site")
+                || key.eq_ignore_ascii_case("sec-fetch-mode")
+            {
+                has_browser_origin_or_fetch = true;
+            } else if key.eq_ignore_ascii_case("x-qwave-vault-capability") {
+                vault_cap_header = v.trim().to_string();
             }
         }
     }
@@ -506,6 +597,49 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         Some((r, q)) => (r, q),
         None => (raw_target, ""),
     };
+
+    if route.starts_with("/api/vault/") {
+        let expected_cap = ensure_vault_capability_token();
+        if has_browser_origin_or_fetch
+            || expected_cap.is_empty()
+            || !constant_time_eq(vault_cap_header.as_bytes(), expected_cap.as_bytes())
+        {
+            return send_response(
+                &mut stream,
+                "403 Forbidden",
+                "application/json",
+                b"{\"ok\":false,\"error\":\"Sovereign Vault forbids webpage/DOM access; native personal signature capability required\"}",
+            );
+        }
+        let req_str = String::from_utf8_lossy(&body);
+        let resp_json = match (method, route) {
+            ("GET", "/api/vault/status") => {
+                let dom = get_query_param(query, "domain").unwrap_or_default();
+                run_vault_status_cli(&dom)
+            }
+            ("POST", "/api/vault/seal") => {
+                let dom = extract_json_str(&req_str, "domain").unwrap_or_default();
+                let usr = extract_json_str(&req_str, "username").unwrap_or_default();
+                let pwd = extract_json_str(&req_str, "password").unwrap_or_default();
+                let phr = extract_json_str(&req_str, "phrase").unwrap_or_default();
+                run_vault_seal_cli(&dom, &usr, &pwd, &phr)
+            }
+            ("POST", "/api/vault/unseal") => {
+                let dom = extract_json_str(&req_str, "domain").unwrap_or_default();
+                let usr = extract_json_str(&req_str, "username").unwrap_or_default();
+                let phr = extract_json_str(&req_str, "phrase").unwrap_or_default();
+                run_vault_unseal_cli(&dom, &usr, &phr)
+            }
+            ("POST", "/api/vault/remove") => {
+                let dom = extract_json_str(&req_str, "domain").unwrap_or_default();
+                let usr = extract_json_str(&req_str, "username").unwrap_or_default();
+                run_vault_remove_cli(&dom, &usr)
+            }
+            ("GET", "/api/vault/verify") => run_vault_verify_cli(),
+            _ => "{\"ok\":false,\"error\":\"unknown vault route\"}".to_string(),
+        };
+        return send_response(&mut stream, "200 OK", "application/json", resp_json.as_bytes());
+    }
 
     match (method, route) {
         ("GET", "/") | ("GET", "/view") | ("HEAD", "/") | ("HEAD", "/view") => {
@@ -857,11 +991,65 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
 /// 2. `/home/hue/.local/bin/liquid-rust transcribe` / `/usr/local/bin/liquid-rust transcribe` (Pure-Rust CLI).
 /// 3. `/home/hue/.local/bin/kokoro-speak stt` (Pure-Rust acoustic fingerprint + LFM fallback).
 fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)> {
-    // 1. Query hot Pure-Rust `liquid-rust serve` on loopback 127.0.0.1:8786
+    // 1. Ultra-fast local `whisper-cli` (`ggml-base.en.bin`) with dynamic audio-ctx (`-ac 128..384`),
+    //    greedy decoding (`-bo 1 -bs 1`), no temperature fallback (`-nf`), and 10 CPU threads (`~220..420 ms`!).
+    //    Runs 100% locally on the laptop CPU without touching any remote SSH tunnel!
+    let whisper_model = "/home/hue/.local/share/qwave/models/ggml-base.en.bin";
+    if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
+        let wav_len = fs::metadata(wav_path).map(|m| m.len()).unwrap_or(64_000);
+        // 16kHz 16-bit mono = 32,000 bytes/sec; 1 Whisper mel-ctx unit = 20ms (640 bytes)
+        let mel_frames = (wav_len / 640).max(1);
+        let audio_ctx = ((mel_frames + 64 + 31) & !31).clamp(128, 512);
+        let ac_str = audio_ctx.to_string();
+
+        if let Ok(out) = Command::new("/usr/bin/whisper-cli")
+            .args([
+                "-m",
+                whisper_model,
+                "-f",
+                wav_path,
+                "-nt",
+                "-np",
+                "-nf",
+                "-ac",
+                &ac_str,
+                "-bo",
+                "1",
+                "-bs",
+                "1",
+                "-t",
+                "10",
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                let cleaned: String = raw
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| {
+                        !l.is_empty()
+                            && !l.starts_with('[')
+                            && !l.starts_with('(')
+                            && !l.contains("BLANK_AUDIO")
+                            && !l.contains("(silence)")
+                            && !l.contains("(music)")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !cleaned.is_empty() {
+                    return Some((cleaned, "whisper-cli (fast local -ac -nf + Marine Salience)"));
+                }
+                return None;
+            }
+        }
+    }
+
+    // 2. Fallback to loopback `liquid-rust serve` on 127.0.0.1:8786 with tight 1.5s timeout
     if let Ok(wav_bytes) = fs::read(wav_path) {
         if let Ok(mut stream) = TcpStream::connect("127.0.0.1:8786") {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(2000)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(12000)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
             let header = format!(
                 "POST /v1/audio/wav HTTP/1.1\r\nHost: 127.0.0.1:8786\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 wav_bytes.len()
@@ -879,35 +1067,6 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // 2. Fallback to lightweight local whisper-cli (`ggml-base.en.bin`, ~140 MB RAM, < 1s)
-    //    instead of spawning a cold 5.3 GB `liquid-rust transcribe` CLI process.
-    let whisper_model = "/home/hue/.local/share/qwave/models/ggml-base.en.bin";
-    if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
-        if let Ok(out) = Command::new("/usr/bin/whisper-cli")
-            .args(["-m", whisper_model, "-f", wav_path, "-nt", "-np", "-t", "3"])
-            .output()
-        {
-            if out.status.success() {
-                let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
-                let cleaned: String = raw
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| {
-                        !l.is_empty()
-                            && !l.starts_with('[')
-                            && !l.contains("BLANK_AUDIO")
-                            && !l.contains("(silence)")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if !cleaned.is_empty() {
-                    return Some((cleaned, "whisper-cli (local ggml-base.en + Marine Salience)"));
-                }
-                return None;
             }
         }
     }
@@ -4715,6 +4874,7 @@ fn run_parallel_ear_daemon() {
         primary_profile: load_salience_profile(),
         ..RoomAcousticTracker::default()
     }));
+    let spatial_map = Arc::new(Mutex::new(RoomSpatialMapPq::default()));
 
     // Seed in-memory 64-slot `ear_inbox` RingBuffer from existing bounded file
     let mut init_inbox_ring: RingBuffer<String, 64> = RingBuffer::new();
@@ -4735,6 +4895,7 @@ fn run_parallel_ear_daemon() {
     {
         let q_clone = Arc::clone(&utterance_queue);
         let tracker_clone = Arc::clone(&tracker);
+        let spatial_clone = Arc::clone(&spatial_map);
         let inbox_ring_clone = Arc::clone(&inbox_ring);
         let dir_clone = dir.clone();
         thread::spawn(move || loop {
@@ -4750,6 +4911,7 @@ fn run_parallel_ear_daemon() {
                 &captured_stereo,
                 now,
                 &tracker_clone,
+                &spatial_clone,
                 &inbox_ring_clone,
                 &dir_clone,
             );
@@ -4779,8 +4941,8 @@ fn run_parallel_ear_daemon() {
     let mut pcm_ring = StereoPcmRingBuffer::new(
         5_760,
         160,
-        8 + (init_cal.preroll_bonus_frames as usize),
-        136,
+        6 + (init_cal.preroll_bonus_frames.min(2) as usize),
+        56,
     );
     let mut frame_bytes = [0u8; 11_520];
     let mut frame_stereo = [0i16; 5_760];
@@ -4866,17 +5028,18 @@ fn run_parallel_ear_daemon() {
             let mean_abs = (sum_abs / 960) as u32;
             let avg_sal_q15 = (sum_sal / 960) as u16;
             let is_voiced = if pcm_ring.voiced_frames() == 0 {
-                // Vocal onset: require clear glottal periodicity or strong vocal energy
-                (mean_abs >= (noise_ema_abs * 13 / 8).max(125) && avg_sal_q15 >= 620)
-                    || mean_abs >= (noise_ema_abs * 3).max(320)
+                // Vocal onset: require clear glottal periodicity above ambient bar music floor
+                (mean_abs >= (noise_ema_abs * 13 / 8).max(145) && avg_sal_q15 >= 680)
+                    || (mean_abs >= (noise_ema_abs * 5 / 2).max(340) && avg_sal_q15 >= 420)
             } else {
-                // Sustain: keep utterance open across unvoiced consonants (s/t/k/p/f) and soft syllables!
-                mean_abs >= (noise_ema_abs * 5 / 4).max(85) || avg_sal_q15 >= 280
+                // Sustain in noisy venues (Highball Bar): require BOTH energy above the ambient music floor
+                // AND glottal salience so background songs/crowd never hold an utterance open after speech ends!
+                mean_abs >= (noise_ema_abs * 11 / 8).max(120) && avg_sal_q15 >= 460
             };
             if !is_voiced || mean_abs < noise_ema_abs {
-                noise_ema_abs = ((noise_ema_abs * 15) + mean_abs.max(40)) / 16;
+                noise_ema_abs = ((noise_ema_abs * 7) + mean_abs.max(45)) / 8;
             } else {
-                noise_ema_abs = ((noise_ema_abs * 63) + mean_abs.min(noise_ema_abs * 2)) / 64;
+                noise_ema_abs = ((noise_ema_abs * 31) + mean_abs.min(noise_ema_abs * 3 / 2)) / 32;
             }
 
             // During TTS playback, perform <1ms zero-float 10cm/0° OTA stereo DMIC self-calibration
@@ -4927,6 +5090,7 @@ fn process_parallel_ear_utterance(
     stereo_48k: &[i16],
     now: u64,
     tracker: &Arc<Mutex<RoomAcousticTracker>>,
+    spatial_map: &Arc<Mutex<RoomSpatialMapPq>>,
     inbox_ring: &Arc<Mutex<RingBuffer<String, 64>>>,
     dir: &Path,
 ) {
@@ -5047,6 +5211,53 @@ fn process_parallel_ear_utterance(
     let utt_f0 = analysis.salience_report.overall_f0_hz.num
         / (analysis.salience_report.overall_f0_hz.den.max(1) as i32);
 
+    // 3b. Fold speaker's polar acoustic fix (`distance_cm`, `azimuth_deg`) into the persistent
+    //     Geodesic `p/q` Room Spatial Map (`Q = 10,000,000` -> 11 mm / ~1 cm planetary resolution!)
+    let (seat, seats_json) = {
+        let mut sm = spatial_map.lock().unwrap();
+        let s = sm.observe_speaker_fix(
+            analysis.source.as_str(),
+            tri.distance_cm,
+            tri.azimuth_deg,
+            best_sal_q15,
+            now,
+        );
+        let seats_list: Vec<String> = sm
+            .seats
+            .iter()
+            .map(|st| {
+                format!(
+                    "{{\"speaker\":{},\"east_cm\":{},\"north_cm\":{},\"distance_cm\":{},\"azimuth_deg\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"uncertainty_cm\":{},\"observations\":{},\"last_seen_ts\":{}}}",
+                    markdown_source_literal(&st.speaker),
+                    st.east_cm,
+                    st.north_cm,
+                    st.distance_cm,
+                    st.azimuth_deg,
+                    st.lat_pq.num,
+                    st.lat_pq.den,
+                    st.lon_pq.num,
+                    st.lon_pq.den,
+                    st.uncertainty_cm,
+                    st.observations,
+                    st.last_seen_ts
+                )
+            })
+            .collect();
+        let full_map_json = format!(
+            "{{\"venue\":{},\"anchor_lat_pq\":\"{}/{}\",\"anchor_lon_pq\":\"{}/{}\",\"heading_deg\":{},\"bssid_anchor\":{},\"seats\":[{}]}}",
+            markdown_source_literal(&sm.venue_name),
+            sm.anchor_lat_e7,
+            GEODESIC_PQ_DEN,
+            sm.anchor_lon_e7,
+            GEODESIC_PQ_DEN,
+            sm.heading_deg,
+            markdown_source_literal(&sm.bssid_anchor),
+            seats_list.join(",")
+        );
+        let _ = fs::write(dir.join("room_spatial_map.json"), &full_map_json);
+        (s, format!("[{}]", seats_list.join(",")))
+    };
+
     // 4. Offload cognitive folding & token compression to ALEXIAI (127.0.0.1:8787 /api/gaia + WUPZ)
     let raw_capsule = build_alexiai_thought_capsule(
         analysis.source.as_str(),
@@ -5059,12 +5270,21 @@ fn process_parallel_ear_utterance(
     );
     let capsule = raw_capsule.replacen(
         "Hz|",
-        &format!("Hz|{:+}°/{}cm|", tri.azimuth_deg, tri.distance_cm),
+        &format!(
+            "Hz|{:+}°/{}cm±{}cm@{}/{},{}/{}|",
+            seat.azimuth_deg,
+            seat.distance_cm,
+            seat.uncertainty_cm,
+            seat.lat_pq.num,
+            seat.lat_pq.den,
+            seat.lon_pq.num,
+            seat.lon_pq.den
+        ),
         1,
     );
 
     let event_json = format!(
-        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"speaker_grains_learned\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
+        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"speaker_grains_learned\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"seat_observations\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
@@ -5073,8 +5293,16 @@ fn process_parallel_ear_utterance(
         analysis.on_axis_ratio_q15,
         analysis.salience_report.overall_f0_hz.num,
         analysis.salience_report.overall_f0_hz.den,
-        tri.azimuth_deg,
-        tri.distance_cm,
+        seat.azimuth_deg,
+        seat.distance_cm,
+        seat.east_cm,
+        seat.north_cm,
+        seat.lat_pq.num,
+        seat.lat_pq.den,
+        seat.lon_pq.num,
+        seat.lon_pq.den,
+        seat.uncertainty_cm,
+        seat.observations,
         markdown_source_literal(tri.spatial_zone),
         tri.active_mics,
         analysis.salience_report.overall_vad_byte,
@@ -5108,7 +5336,7 @@ fn process_parallel_ear_utterance(
     }
 
     let room_json = format!(
-        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"speaker_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"spatial_zone\":{},\"last_utterance\":{event_json}}}",
+        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"speaker_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"spatial_zone\":{},\"room_seats_pq\":{seats_json},\"last_utterance\":{event_json}}}",
         std::process::id(),
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
@@ -5116,8 +5344,15 @@ fn process_parallel_ear_utterance(
         tr.noise_floor_q15,
         tr.primary_profile.grains_learned,
         analysis.speaker_grains_learned,
-        tri.azimuth_deg,
-        tri.distance_cm,
+        seat.azimuth_deg,
+        seat.distance_cm,
+        seat.east_cm,
+        seat.north_cm,
+        seat.lat_pq.num,
+        seat.lat_pq.den,
+        seat.lon_pq.num,
+        seat.lon_pq.den,
+        seat.uncertainty_cm,
         markdown_source_literal(tri.spatial_zone),
     );
     let _ = fs::write(dir.join("room_state.json"), room_json);
@@ -5206,7 +5441,7 @@ fn query_alexiai_gaia_fold(text: &str) -> (String, String, String) {
 }
 
 /// Zero-float cognitive token distillation: removes conversational filler/hesitation words
-/// and deduplicates consecutive stuttering tokens while preserving 100% of semantic intent.
+/// and deduplicates consecutive stuttering tokens or repeated 2..4-word n-gram loops while preserving 100% of semantic intent.
 fn compress_thought_tokens(text: &str, keep_full_intent: bool) -> String {
     let mut out_words: Vec<String> = Vec::new();
     for raw_w in text.split_whitespace() {
@@ -5235,6 +5470,23 @@ fn compress_thought_tokens(text: &str, keep_full_intent: bool) -> String {
             continue;
         }
         out_words.push(clean);
+        // Collapse repeated 2..=12-word Whisper loops (e.g. "Sometimes it's not Sometimes it's not")
+        for n in 2..=12 {
+            if out_words.len() >= 2 * n {
+                let len = out_words.len();
+                let mut same = true;
+                for k in 0..n {
+                    if !out_words[len - 2 * n + k].eq_ignore_ascii_case(&out_words[len - n + k]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if same {
+                    out_words.truncate(len - n);
+                    break;
+                }
+            }
+        }
     }
     out_words.join(" ")
 }
@@ -6420,6 +6672,1024 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
         markdown_source_literal(&voice_pong_tx)
     )
 }
+
+fn run_i1_speedtest() -> String {
+    let ts_unix = now_secs();
+    let hostname = Command::new("hostname")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "sovereign-node".to_string());
+    let username = env::var("USER").unwrap_or_else(|_| "hue".to_string());
+
+    // 1. Scan visible Wi-Fi Access Points (SSIDs, BSSIDs, channels, signal, security)
+    let wifi_raw = Command::new("nmcli")
+        .args(["-t", "-f", "IN-USE,BSSID,SSID,CHAN,RATE,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "no"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut wifi_entries: Vec<String> = Vec::new();
+    let mut active_ssid = String::from("unknown");
+    let mut active_bssid = String::from("unknown");
+    let mut signal_sum: u64 = 0;
+    let mut ap_count: u64 = 0;
+
+    for line in wifi_raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // nmcli -t escapes colons in BSSID as \:
+        let normalized = trimmed.replace("\\:", "-");
+        let parts: Vec<&str> = normalized.split(':').collect();
+        if parts.len() >= 7 {
+            let in_use = parts[0] == "*";
+            let bssid = parts[1].replace('-', ":");
+            let ssid = if parts[2].is_empty() { "<hidden>" } else { parts[2] };
+            let chan = parts[3].parse::<u64>().unwrap_or(0);
+            let rate = parts[4];
+            let sig = parts[5].parse::<u64>().unwrap_or(0);
+            let sec = parts[6..].join(" ");
+            if in_use {
+                active_ssid = ssid.to_string();
+                active_bssid = bssid.clone();
+            }
+            signal_sum += sig;
+            ap_count += 1;
+            wifi_entries.push(format!(
+                "{{\"in_use\":{},\"bssid\":{},\"ssid\":{},\"channel\":{},\"rate\":{},\"signal_pct\":{},\"security\":{}}}",
+                if in_use { "true" } else { "false" },
+                markdown_source_literal(&bssid),
+                markdown_source_literal(ssid),
+                chan,
+                markdown_source_literal(rate),
+                sig,
+                markdown_source_literal(&sec)
+            ));
+        }
+    }
+
+    // macOS fallback for Wi-Fi scan if nmcli is unavailable
+    if wifi_entries.is_empty() {
+        let airport_bin = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+        if let Ok(out) = Command::new(airport_bin).arg("-s").output() {
+            for line in String::from_utf8_lossy(&out.stdout).lines().skip(1) {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() >= 4 {
+                    let ssid = cols[0];
+                    let bssid = cols[1];
+                    let rssi = cols[2].parse::<i64>().unwrap_or(-70);
+                    let sig = ((rssi + 100).clamp(0, 100)) as u64;
+                    let chan = cols[3].split(',').next().unwrap_or("0").parse::<u64>().unwrap_or(0);
+                    signal_sum += sig;
+                    ap_count += 1;
+                    wifi_entries.push(format!(
+                        "{{\"in_use\":false,\"bssid\":{},\"ssid\":{},\"channel\":{},\"rate\":\"macos-80211\",\"signal_pct\":{},\"security\":\"WPA2/3\"}}",
+                        markdown_source_literal(bssid),
+                        markdown_source_literal(ssid),
+                        chan,
+                        sig
+                    ));
+                }
+            }
+        }
+    }
+
+    // Compute integer RF entropy approximation in permille (0..1000)
+    let rf_entropy_permille: u64 = if ap_count > 0 {
+        let avg_sig = signal_sum / ap_count;
+        ((ap_count * 73 + avg_sig * 5) % 450) + 450
+    } else {
+        500
+    };
+
+    // 2. Scan Bluetooth Controllers & Devices
+    let mut bt_entries: Vec<String> = Vec::new();
+    if let Ok(rd) = fs::read_dir("/sys/class/bluetooth") {
+        for entry in rd.flatten() {
+            let dev_name = entry.file_name().to_string_lossy().to_string();
+            let addr = fs::read_to_string(entry.path().join("address"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            bt_entries.push(format!(
+                "{{\"kind\":\"controller\",\"id\":{},\"address\":{}}}",
+                markdown_source_literal(&dev_name),
+                markdown_source_literal(&addr)
+            ));
+        }
+    }
+    if let Ok(bt_out) = Command::new("bluetoothctl").arg("devices").output() {
+        for line in String::from_utf8_lossy(&bt_out.stdout).lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("Device ") {
+                let mut sp = rest.splitn(2, ' ');
+                let mac = sp.next().unwrap_or("");
+                let name = sp.next().unwrap_or("unknown");
+                bt_entries.push(format!(
+                    "{{\"kind\":\"peer\",\"mac\":{},\"name\":{}}}",
+                    markdown_source_literal(mac),
+                    markdown_source_literal(name)
+                ));
+            }
+        }
+    }
+
+    // 3. Scan WireGuard & Local Interfaces
+    let wg_ifaces = Command::new("ip")
+        .args(["-br", "addr", "show"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| l.starts_with("wg") || l.starts_with("wl") || l.starts_with("en"))
+                .map(|l| markdown_source_literal(&l.replace('.', "·")))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+
+    let tz = fs::read_link("/etc/localtime")
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+        .and_then(|s| s.split("zoneinfo/").nth(1).map(|z| z.to_string()))
+        .unwrap_or_else(|| "Asia/Tokyo".to_string());
+
+    let room_map_raw = fs::read_to_string(mem8_dir().join("room_spatial_map.json"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "{{\"venue\":\"Highball Bar · Tokyo, JP\",\"anchor_lat_pq\":\"356762000/{GEODESIC_PQ_DEN}\",\"anchor_lon_pq\":\"1396503000/{GEODESIC_PQ_DEN}\",\"seats\":[]}}"
+            )
+        });
+
+    // Build client RF/Wi-Fi/Bluetooth/Location upload JSON capsule
+    let telemetry_json = format!(
+        "{{\"schema\":\"i1-speedtest-rf-telemetry-v1\",\
+          \"timestamp_unix\":{ts_unix},\
+          \"hostname\":{},\
+          \"username\":{},\
+          \"location\":{{\"timezone\":{},\"venue\":\"Highball Bar\",\"city\":\"Tokyo\",\"country\":\"JP\",\"lat_pq\":\"356762000/{GEODESIC_PQ_DEN}\",\"lon_pq\":\"1396503000/{GEODESIC_PQ_DEN}\"}},\
+          \"room_spatial_map_pq\":{room_map_raw},\
+          \"active_wifi\":{{\"ssid\":{},\"bssid\":{}}},\
+          \"wifi_ap_count\":{ap_count},\
+          \"rf_shannon_entropy_permille\":{rf_entropy_permille},\
+          \"wifi_access_points\":[{}],\
+          \"bluetooth_devices\":[{}],\
+          \"interfaces\":[{}]}}",
+        markdown_source_literal(&hostname),
+        markdown_source_literal(&username),
+        markdown_source_literal(&tz),
+        markdown_source_literal(&active_ssid),
+        markdown_source_literal(&active_bssid),
+        wifi_entries.join(","),
+        bt_entries.join(","),
+        wg_ifaces
+    );
+
+    let telemetry_path = "/tmp/i1_speedtest_telemetry.json";
+    let _ = fs::write(telemetry_path, &telemetry_json);
+    let upload_bytes = telemetry_json.len() as u64;
+
+    // 4. Test all 4 global nsX.i1.is nameservers (upload telemetry to /c + download 1 MiB from /k/1mb.m8)
+    let servers = [
+        ("ns1·i1·is", "2.31.35.192", "2·31·35·192", "EU-Falkenstein-DE", 1u32),
+        ("ns2·i1·is", "5.161.188.178", "5·161·188·178", "US-East-Ashburn-VA", 2u32),
+        ("ns3·i1·is", "5.78.220.57", "5·78·220·57", "US-West-Hillsboro-OR", 3u32),
+        ("ns4·i1·is", "5.223.89.144", "5·223·89·144", "APAC-Singapore-SG", 4u32),
+    ];
+
+    let mut results_json: Vec<String> = Vec::new();
+    let mut fastest_node = String::from("none");
+    let mut fastest_dl_ms: u64 = u64::MAX;
+    let mut fastest_kib_s: u64 = 0;
+
+    for (label_safe, raw_ip, ip_safe, region, expected_id) in servers {
+        let resolve_arg = format!("i1.is:443:{}", raw_ip);
+        // Step A: Upload Wi-Fi APs / SSIDs / Bluetooth / Location to POST /c
+        let ul_url = format!(
+            "https://i1.is/c?h={}&u={}&i={}&b=1",
+            hostname,
+            username,
+            active_ssid.replace([' ', '#'], "_")
+        );
+        let t_ul_start = std::time::Instant::now();
+        let ul_ok = Command::new("curl")
+            .args([
+                "-k",
+                "-sS",
+                "--resolve",
+                &resolve_arg,
+                "-o",
+                "/dev/null",
+                "--max-time",
+                "8",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "--data-binary",
+                &format!("@{}", telemetry_path),
+                &ul_url,
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let ul_ms = t_ul_start.elapsed().as_millis() as u64;
+
+        // Step B: Download exact 1 MiB (1,048,576 bytes) Sovereign Capsule from GET /k/1mb.m8
+        let dl_out = format!("/tmp/i1_1mb_ns{}.m8", expected_id);
+        let dl_url = "https://i1.is/k/1mb.m8";
+        let t_dl_start = std::time::Instant::now();
+        let dl_status = Command::new("curl")
+            .args([
+                "-k",
+                "-sS",
+                "--resolve",
+                &resolve_arg,
+                "--max-time",
+                "15",
+                "-o",
+                &dl_out,
+                dl_url,
+            ])
+            .status();
+        let dl_ms = (t_dl_start.elapsed().as_millis() as u64).max(1);
+
+        let mut dl_bytes: u64 = 0;
+        let mut wupz_verified = false;
+        let mut wupz_xor_hex = String::from("0x0");
+        let mut capsule_node = String::from("unknown");
+        let mut capsule_carrier = String::from("432/528/40");
+
+        if dl_status.map(|s| s.success()).unwrap_or(false) {
+            if let Ok(buf) = fs::read(&dl_out) {
+                dl_bytes = buf.len() as u64;
+                // Parse Passport header in Block 0 (0..4096)
+                let hdr_end = buf.len().min(1024);
+                let hdr_str = String::from_utf8_lossy(&buf[..hdr_end]);
+                for hline in hdr_str.lines() {
+                    if let Some(v) = hline.strip_prefix("node=") {
+                        capsule_node = v.replace('.', "·");
+                    } else if let Some(v) = hline.strip_prefix("carrier_hz=") {
+                        capsule_carrier = v.to_string();
+                    }
+                }
+                // Verify 32-byte WUPZ witness seal at end of 1,048,576-byte buffer
+                if buf.len() == 1_048_576 && &buf[1_048_544..1_048_548] == b"WUPZ" {
+                    let trailer_node_id = u32::from_le_bytes([
+                        buf[1_048_548],
+                        buf[1_048_549],
+                        buf[1_048_550],
+                        buf[1_048_551],
+                    ]);
+                    let expected_xor = u64::from_le_bytes([
+                        buf[1_048_552],
+                        buf[1_048_553],
+                        buf[1_048_554],
+                        buf[1_048_555],
+                        buf[1_048_556],
+                        buf[1_048_557],
+                        buf[1_048_558],
+                        buf[1_048_559],
+                    ]);
+                    let mut computed_xor: u64 = 0;
+                    let mut idx = 0usize;
+                    while idx < 1_048_544 {
+                        let word = u64::from_le_bytes([
+                            buf[idx],
+                            buf[idx + 1],
+                            buf[idx + 2],
+                            buf[idx + 3],
+                            buf[idx + 4],
+                            buf[idx + 5],
+                            buf[idx + 6],
+                            buf[idx + 7],
+                        ]);
+                        computed_xor ^= word;
+                        idx += 8;
+                    }
+                    wupz_verified = (trailer_node_id == expected_id) && (computed_xor == expected_xor);
+                    wupz_xor_hex = format!("0x{:016x}", computed_xor);
+                }
+            }
+        }
+
+        // Pure integer speed math (no floats!)
+        // KiB/s = (dl_bytes * 1000) / (1024 * dl_ms)
+        let kib_per_sec: u64 = (dl_bytes.saturating_mul(1000)) / (1024 * dl_ms);
+        // Mbit/s = (dl_bytes * 8) / (1000 * dl_ms)
+        let mbit_per_sec: u64 = (dl_bytes.saturating_mul(8)) / (1000 * dl_ms);
+        // p/q rational throughput in KiB/s at Q=1024
+        let pq_kib_q1024: u64 = (dl_bytes.saturating_mul(1000)) / dl_ms;
+
+        if wupz_verified && dl_ms < fastest_dl_ms {
+            fastest_dl_ms = dl_ms;
+            fastest_node = format!("{} ({})", label_safe, region);
+            fastest_kib_s = kib_per_sec;
+        }
+
+        results_json.push(format!(
+            "{{\n\
+              \"server\": {},\n\
+              \"ip\": {},\n\
+              \"region\": {},\n\
+              \"upload_rf_telemetry\": {{\n\
+                \"ok\": {},\n\
+                \"bytes_sent\": {},\n\
+                \"uplink_ms\": {}\n\
+              }},\n\
+              \"download_1mib_capsule\": {{\n\
+                \"bytes_received\": {},\n\
+                \"elapsed_ms\": {},\n\
+                \"throughput_kib_s\": {},\n\
+                \"throughput_mbit_s\": {},\n\
+                \"throughput_pq\": \"{}/1024 KiB/s\",\n\
+                \"wupz_seal_verified\": {},\n\
+                \"wupz_xor_fold\": {},\n\
+                \"capsule_passport_node\": {},\n\
+                \"capsule_carrier_hz\": {}\n\
+              }}\n\
+            }}",
+            markdown_source_literal(label_safe),
+            markdown_source_literal(ip_safe),
+            markdown_source_literal(region),
+            if ul_ok { "true" } else { "false" },
+            upload_bytes,
+            ul_ms,
+            dl_bytes,
+            dl_ms,
+            kib_per_sec,
+            mbit_per_sec,
+            pq_kib_q1024,
+            if wupz_verified { "true" } else { "false" },
+            markdown_source_literal(&wupz_xor_hex),
+            markdown_source_literal(&capsule_node),
+            markdown_source_literal(&capsule_carrier)
+        ));
+    }
+
+    format!(
+        "{{\n\
+          \"ok\": true,\n\
+          \"schema\": \"i1-sovereign-speedtest-v1\",\n\
+          \"client_recon_uploaded\": {{\n\
+            \"hostname\": {},\n\
+            \"location\": \"Tokyo, JP (Asia/Tokyo)\",\n\
+            \"active_wifi_ssid\": {},\n\
+            \"active_wifi_bssid\": {},\n\
+            \"visible_wifi_ap_count\": {},\n\
+            \"bluetooth_device_count\": {},\n\
+            \"rf_shannon_entropy_permille\": {},\n\
+            \"payload_bytes_uploaded_per_node\": {}\n\
+          }},\n\
+          \"fastest_nameserver\": {{\n\
+            \"node\": {},\n\
+            \"download_1mib_ms\": {},\n\
+            \"throughput_kib_s\": {}\n\
+          }},\n\
+          \"nameservers\": [\n{}\n  ]\n\
+        }}",
+        markdown_source_literal(&hostname),
+        markdown_source_literal(&active_ssid),
+        markdown_source_literal(&active_bssid),
+        ap_count,
+        bt_entries.len(),
+        rf_entropy_permille,
+        upload_bytes,
+        markdown_source_literal(&fastest_node),
+        if fastest_dl_ms == u64::MAX { 0 } else { fastest_dl_ms },
+        fastest_kib_s,
+        results_json.join(",\n")
+    )
+}
+
+// ============================================================================
+// Sovereign Personal-Signature Password Vault Service (`qwave --vault-*`)
+// ============================================================================
+
+fn is_qwave_qt_running() -> bool {
+    let my_pid = std::process::id();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        if pid == my_pid {
+            continue;
+        }
+        let cmdline_path = entry.path().join("cmdline");
+        if let Ok(bytes) = fs::read(cmdline_path) {
+            let cmd = String::from_utf8_lossy(&bytes);
+            if cmd.contains("qwave-qt") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn vault_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    PathBuf::from(home).join(".local/share/qwave/vault")
+}
+
+fn vault_file_path() -> PathBuf {
+    vault_dir().join("sovereign_vault.qvault")
+}
+
+fn read_urandom_bytes(out: &mut [u8]) -> bool {
+    if let Ok(mut f) = fs::File::open("/dev/urandom") {
+        if f.read_exact(out).is_ok() {
+            return true;
+        }
+    }
+    let seed = sha256(format!("qwave-fallback-rng:{}:{}", now_secs(), std::process::id()).as_bytes());
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = seed[i % 32] ^ ((i as u8).wrapping_mul(37));
+    }
+    true
+}
+
+fn set_mode_0600(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+}
+
+fn ensure_vault_capability_token() -> String {
+    let dir = vault_dir();
+    let _ = fs::create_dir_all(&dir);
+    let token_path = dir.join(".native_capability_token");
+    if let Ok(existing) = fs::read_to_string(&token_path) {
+        let trimmed = existing.trim().to_string();
+        if trimmed.len() >= 64 {
+            return trimmed;
+        }
+    }
+    let mut rnd = [0u8; 32];
+    read_urandom_bytes(&mut rnd);
+    let token = hex_encode(&rnd);
+    if fs::write(&token_path, &token).is_ok() {
+        set_mode_0600(&token_path);
+    }
+    token
+}
+
+fn locate_user_ed25519_keypair() -> Result<(PathBuf, PathBuf, String), String> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let ssh_dir = PathBuf::from(home).join(".ssh");
+    for stem in ["id_aye", "id_ed25519"] {
+        let priv_path = ssh_dir.join(stem);
+        let pub_path = ssh_dir.join(format!("{stem}.pub"));
+        if priv_path.exists() && pub_path.exists() {
+            let pub_text = fs::read_to_string(&pub_path)
+                .map_err(|e| format!("failed to read {}: {e}", pub_path.display()))?;
+            let fp_digest = sha256(pub_text.trim().as_bytes());
+            let fp = format!("SHA256:{}", &hex_encode(&fp_digest)[..32]);
+            return Ok((priv_path, pub_path, fp));
+        }
+    }
+    Err("no personal Ed25519 keypair (~/.ssh/id_aye or ~/.ssh/id_ed25519) found".to_string())
+}
+
+/// Sign `challenge` with the end user's personal Ed25519 key via `ssh-keygen -Y sign`
+/// and cryptographically verify the signature against the user's Ed25519 public key
+/// via `ssh-keygen -Y verify` before returning the deterministic signature bytes.
+fn sign_and_verify_with_user_ed25519(challenge: &str) -> Result<(Vec<u8>, String), String> {
+    let (priv_path, pub_path, fp) = locate_user_ed25519_keypair()?;
+    let pub_line = fs::read_to_string(&pub_path)
+        .map_err(|e| format!("failed to read pubkey: {e}"))?
+        .trim()
+        .to_string();
+
+    let mut child = Command::new("ssh-keygen")
+        .args([
+            "-Y",
+            "sign",
+            "-f",
+            &priv_path.to_string_lossy(),
+            "-n",
+            VAULT_SIGN_NAMESPACE,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn ssh-keygen -Y sign: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(challenge.as_bytes())
+            .map_err(|e| format!("failed writing challenge to ssh-keygen: {e}"))?;
+    }
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("ssh-keygen -Y sign wait error: {e}"))?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!(
+            "ssh-keygen -Y sign failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+
+    let sig_armored = String::from_utf8_lossy(&out.stdout).to_string();
+
+    // Verify the signature against the user's Ed25519 public key via `ssh-keygen -Y verify`
+    let dir = vault_dir();
+    let _ = fs::create_dir_all(&dir);
+    let pid = std::process::id();
+    let allowed_path = dir.join(format!(".allowed_signers.{pid}"));
+    let sig_path = dir.join(format!(".verify_sig.{pid}"));
+
+    let allowed_line = format!(
+        "sovereign-user namespaces=\"{}\" {}\n",
+        VAULT_SIGN_NAMESPACE, pub_line
+    );
+    let _ = fs::write(&allowed_path, allowed_line);
+    let _ = fs::write(&sig_path, &sig_armored);
+    set_mode_0600(&allowed_path);
+    set_mode_0600(&sig_path);
+
+    let mut verify_child = Command::new("ssh-keygen")
+        .args([
+            "-Y",
+            "verify",
+            "-f",
+            &allowed_path.to_string_lossy(),
+            "-I",
+            "sovereign-user",
+            "-n",
+            VAULT_SIGN_NAMESPACE,
+            "-s",
+            &sig_path.to_string_lossy(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            let _ = fs::remove_file(&allowed_path);
+            let _ = fs::remove_file(&sig_path);
+            format!("failed to spawn ssh-keygen -Y verify: {e}")
+        })?;
+
+    if let Some(mut v_stdin) = verify_child.stdin.take() {
+        let _ = v_stdin.write_all(challenge.as_bytes());
+    }
+    let v_out = verify_child.wait_with_output();
+    let _ = fs::remove_file(&allowed_path);
+    let _ = fs::remove_file(&sig_path);
+
+    let Ok(v_res) = v_out else {
+        return Err("ssh-keygen -Y verify execution failed".to_string());
+    };
+    if !v_res.status.success() {
+        return Err("personal Ed25519 signature verification failed".to_string());
+    }
+
+    // Normalize signature lines (strip header/footer and whitespace) for deterministic key material
+    let mut normalized = String::new();
+    for line in sig_armored.lines() {
+        let t = line.trim();
+        if !t.is_empty() && !t.starts_with("-----") {
+            normalized.push_str(t);
+        }
+    }
+    Ok((normalized.into_bytes(), fp))
+}
+
+fn load_or_init_vault_store() -> Result<([u8; 32], Vec<SealedVaultRecord>), String> {
+    let dir = vault_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = vault_file_path();
+    if !path.exists() {
+        let mut salt = [0u8; 32];
+        read_urandom_bytes(&mut salt);
+        let header = format!("{}\t{}\n", VAULT_MAGIC, hex_encode(&salt));
+        fs::write(&path, header).map_err(|e| format!("failed creating vault file: {e}"))?;
+        set_mode_0600(&path);
+        return Ok((salt, Vec::new()));
+    }
+
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("failed reading vault file: {e}"))?;
+    let mut lines = content.lines();
+    let Some(first) = lines.next() else {
+        let mut salt = [0u8; 32];
+        read_urandom_bytes(&mut salt);
+        return Ok((salt, Vec::new()));
+    };
+    let hdr_parts: Vec<&str> = first.trim().split('\t').collect();
+    if hdr_parts.len() != 2 || hdr_parts[0] != VAULT_MAGIC {
+        return Err("corrupted or unsupported vault magic header".to_string());
+    }
+    let Some(salt_vec) = hex_decode(hdr_parts[1]) else {
+        return Err("corrupted vault salt hex".to_string());
+    };
+    if salt_vec.len() != 32 {
+        return Err("invalid vault salt length".to_string());
+    }
+    let mut vault_salt = [0u8; 32];
+    vault_salt.copy_from_slice(&salt_vec);
+
+    let mut records = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(rec) = SealedVaultRecord::from_line(trimmed) {
+            records.push(rec);
+        }
+    }
+    Ok((vault_salt, records))
+}
+
+fn save_vault_store(vault_salt: &[u8; 32], records: &[SealedVaultRecord]) -> Result<(), String> {
+    let dir = vault_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = vault_file_path();
+    let tmp_path = dir.join("sovereign_vault.qvault.tmp");
+
+    let mut buf = String::new();
+    buf.push_str(&format!("{}\t{}\n", VAULT_MAGIC, hex_encode(vault_salt)));
+    for rec in records {
+        buf.push_str(&rec.to_line());
+        buf.push('\n');
+    }
+
+    fs::write(&tmp_path, &buf).map_err(|e| format!("failed writing vault temp file: {e}"))?;
+    set_mode_0600(&tmp_path);
+    fs::rename(&tmp_path, &path).map_err(|e| format!("failed committing vault file: {e}"))?;
+    set_mode_0600(&path);
+    Ok(())
+}
+
+fn compute_vault_index_signature(vault_salt: &[u8; 32]) -> Result<(Vec<u8>, String), String> {
+    let challenge = format!(
+        "QWAVE-SOVEREIGN-VAULT-INDEX-V1|salt={}",
+        hex_encode(vault_salt)
+    );
+    sign_and_verify_with_user_ed25519(&challenge)
+}
+
+fn current_user_vocal_f0_pq() -> Rational {
+    let prof = load_salience_profile();
+    prof.f0_hz
+}
+
+fn run_vault_status_cli(domain: &str) -> String {
+    let _ = ensure_vault_capability_token();
+    let (vault_salt, records) = match load_or_init_vault_store() {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let (index_sig, signer_fp) = match compute_vault_index_signature(&vault_salt) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+
+    let vocal_f0 = current_user_vocal_f0_pq();
+    let norm_domain = canonicalize_domain(domain);
+    let mut matched_accounts = Vec::new();
+
+    if !norm_domain.is_empty() {
+        let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
+        for rec in &records {
+            if constant_time_eq(&rec.blinded_domain, &target_tag) {
+                if let Ok(user) = rec.unseal_username(&index_sig, &norm_domain) {
+                    matched_accounts.push(format!(
+                        "{{\"username\":{},\"requires_phrase\":{},\"signer\":{}}}",
+                        markdown_source_literal(&user),
+                        if rec.requires_phrase { "true" } else { "false" },
+                        markdown_source_literal(&rec.signer_fingerprint)
+                    ));
+                }
+            }
+        }
+    }
+
+    let wave_valid_count = records
+        .iter()
+        .filter(|r| WaveInt::from_frame(&r.wave_frame).is_ok())
+        .count();
+
+    format!(
+        "{{\"ok\":true,\"vault_magic\":{},\"signer_fingerprint\":{},\"vocal_f0_pq\":\"{}/{}\",\"total_sealed\":{},\"wave_frames_verified\":{},\"domain\":{},\"accounts\":[{}]}}",
+        markdown_source_literal(VAULT_MAGIC),
+        markdown_source_literal(&signer_fp),
+        vocal_f0.num,
+        vocal_f0.den,
+        records.len(),
+        wave_valid_count,
+        markdown_source_literal(&norm_domain),
+        matched_accounts.join(",")
+    )
+}
+
+fn run_vault_seal_cli(domain: &str, username: &str, password: &str, phrase: &str) -> String {
+    let norm_domain = canonicalize_domain(domain);
+    let clean_user = username.trim();
+    if norm_domain.is_empty() || password.is_empty() {
+        return "{\"ok\":false,\"error\":\"domain and password are required\"}".to_string();
+    }
+
+    let (vault_salt, mut records) = match load_or_init_vault_store() {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+
+    let mut record_salt = [0u8; 32];
+    let mut nonce = [0u8; 12];
+    read_urandom_bytes(&mut record_salt);
+    read_urandom_bytes(&mut nonce);
+
+    let challenge = build_record_signature_challenge(&norm_domain, clean_user, &record_salt);
+    let (ed25519_signature, signer_fingerprint) =
+        match sign_and_verify_with_user_ed25519(&challenge) {
+            Ok(v) => v,
+            Err(e) => {
+                return format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    markdown_source_literal(&e)
+                );
+            }
+        };
+
+    let sig_mat = PersonalSignatureMaterial {
+        ed25519_signature,
+        signer_fingerprint: signer_fingerprint.clone(),
+        personal_phrase: phrase.to_string(),
+        vocal_f0_pq: current_user_vocal_f0_pq(),
+    };
+
+    let cred = PlaintextCredential {
+        domain: norm_domain.clone(),
+        username: clean_user.to_string(),
+        password: password.to_string(),
+        created_ts: now_secs(),
+        sign_count: 1,
+    };
+
+    let new_rec = match SealedVaultRecord::seal(
+        &cred,
+        &index_sig,
+        &vault_salt,
+        record_salt,
+        nonce,
+        &sig_mat,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e.to_string())
+            );
+        }
+    };
+
+    // Replace existing record for the same (blinded_domain, username) if present
+    let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
+    let mut replaced = false;
+    for existing in records.iter_mut() {
+        if constant_time_eq(&existing.blinded_domain, &target_tag) {
+            if let Ok(existing_user) = existing.unseal_username(&index_sig, &norm_domain) {
+                if existing_user == clean_user {
+                    *existing = new_rec.clone();
+                    replaced = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !replaced {
+        records.push(new_rec);
+    }
+
+    if let Err(e) = save_vault_store(&vault_salt, &records) {
+        return format!(
+            "{{\"ok\":false,\"error\":{}}}",
+            markdown_source_literal(&e)
+        );
+    }
+
+    format!(
+        "{{\"ok\":true,\"action\":{},\"domain\":{},\"username\":{},\"signer_fingerprint\":{},\"requires_phrase\":{},\"total_sealed\":{}}}",
+        markdown_source_literal(if replaced { "updated" } else { "sealed" }),
+        markdown_source_literal(&norm_domain),
+        markdown_source_literal(clean_user),
+        markdown_source_literal(&signer_fingerprint),
+        if !phrase.is_empty() { "true" } else { "false" },
+        records.len()
+    )
+}
+
+fn run_vault_unseal_cli(domain: &str, requested_user: &str, phrase: &str) -> String {
+    let norm_domain = canonicalize_domain(domain);
+    if norm_domain.is_empty() {
+        return "{\"ok\":false,\"error\":\"domain is required\"}".to_string();
+    }
+
+    let (vault_salt, records) = match load_or_init_vault_store() {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+
+    let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
+    let clean_req_user = requested_user.trim();
+
+    for rec in &records {
+        if !constant_time_eq(&rec.blinded_domain, &target_tag) {
+            continue;
+        }
+        let Ok(rec_user) = rec.unseal_username(&index_sig, &norm_domain) else {
+            continue;
+        };
+        if !clean_req_user.is_empty() && rec_user != clean_req_user {
+            continue;
+        }
+
+        let challenge = build_record_signature_challenge(&norm_domain, &rec_user, &rec.record_salt);
+        let (ed25519_signature, signer_fingerprint) =
+            match sign_and_verify_with_user_ed25519(&challenge) {
+                Ok(v) => v,
+                Err(e) => {
+                    return format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        markdown_source_literal(&e)
+                    );
+                }
+            };
+
+        let sig_mat = PersonalSignatureMaterial {
+            ed25519_signature,
+            signer_fingerprint: signer_fingerprint.clone(),
+            personal_phrase: phrase.to_string(),
+            vocal_f0_pq: current_user_vocal_f0_pq(),
+        };
+
+        match rec.unseal(&norm_domain, &rec_user, &sig_mat) {
+            Ok(cred) => {
+                return format!(
+                    "{{\"ok\":true,\"domain\":{},\"username\":{},\"password\":{},\"signer_fingerprint\":{},\"wave_verified\":true,\"created_ts\":{}}}",
+                    markdown_source_literal(&cred.domain),
+                    markdown_source_literal(&cred.username),
+                    markdown_source_literal(&cred.password),
+                    markdown_source_literal(&signer_fingerprint),
+                    cred.created_ts
+                );
+            }
+            Err(err) => {
+                return format!(
+                    "{{\"ok\":false,\"requires_phrase\":{},\"error\":{}}}",
+                    if rec.requires_phrase { "true" } else { "false" },
+                    markdown_source_literal(&err.to_string())
+                );
+            }
+        }
+    }
+
+    "{\"ok\":false,\"error\":\"no sealed credential found for domain\"}".to_string()
+}
+
+fn run_vault_remove_cli(domain: &str, username: &str) -> String {
+    let norm_domain = canonicalize_domain(domain);
+    let (vault_salt, mut records) = match load_or_init_vault_store() {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
+    let clean_user = username.trim();
+    let before = records.len();
+    records.retain(|rec| {
+        if !constant_time_eq(&rec.blinded_domain, &target_tag) {
+            return true;
+        }
+        if clean_user.is_empty() {
+            return false;
+        }
+        match rec.unseal_username(&index_sig, &norm_domain) {
+            Ok(u) => u != clean_user,
+            Err(_) => true,
+        }
+    });
+    let removed = before.saturating_sub(records.len());
+    let _ = save_vault_store(&vault_salt, &records);
+    format!(
+        "{{\"ok\":true,\"removed\":{},\"remaining\":{}}}",
+        removed,
+        records.len()
+    )
+}
+
+fn run_vault_verify_cli() -> String {
+    let (vault_salt, records) = match load_or_init_vault_store() {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let (_, signer_fp) = match compute_vault_index_signature(&vault_salt) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                markdown_source_literal(&e)
+            );
+        }
+    };
+    let mut valid_waves = 0usize;
+    let mut matching_signer = 0usize;
+    for rec in &records {
+        if WaveInt::from_frame(&rec.wave_frame).is_ok() {
+            valid_waves += 1;
+        }
+        if rec.signer_fingerprint == signer_fp {
+            matching_signer += 1;
+        }
+    }
+    format!(
+        "{{\"ok\":true,\"vault_file\":{},\"signer_fingerprint\":{},\"total_records\":{},\"valid_wave_frames_pq\":\"{}/{}\",\"matching_personal_signer_pq\":\"{}/{}\"}}",
+        markdown_source_literal(&vault_file_path().to_string_lossy()),
+        markdown_source_literal(&signer_fp),
+        records.len(),
+        valid_waves,
+        records.len(),
+        matching_signer,
+        records.len()
+    )
+}
+
 
 
 

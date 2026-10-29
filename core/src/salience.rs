@@ -99,36 +99,50 @@ impl MarineIntDetector {
                     self.ema_amp_q8 = amp << 8;
                     salience_q15 = (energy_q15 / 6).max(self.vocal_resonance_q15);
                 } else if period_ticks >= self.min_period_ticks && amp >= min_glottal_amp {
-                    let amp_q8 = amp << 8;
-                    let period_q8 = (period_ticks as i64) << 8;
+                    // Sub-harmonic / formant ripple guard for noisy venues (e.g. Highball Bar music + F1 vowel ripples):
+                    // If we already locked onto a glottal period (`expected_ticks`) and a secondary peak arrives
+                    // earlier than 3/4 of that period, require it to be a dominant primary pulse (`>= 11/8` of EMA),
+                    // preventing mid-cycle formant ripples from doubling a 145 Hz baritone voice into ~205 Hz!
+                    let expected_ticks = (self.ema_period_q8 >> 8) as usize;
+                    let is_subcycle_ripple = self.valid_peaks >= 2
+                        && expected_ticks > 75
+                        && period_ticks < (expected_ticks * 3) / 4
+                        && amp < (((self.ema_amp_q8 >> 8) * 11) >> 3);
 
-                    if self.valid_peaks == 0 {
-                        self.ema_amp_q8 = amp_q8;
-                        self.ema_period_q8 = period_q8;
+                    if !is_subcycle_ripple {
+                        let amp_q8 = amp << 8;
+                        let period_q8 = (period_ticks as i64) << 8;
+
+                        if self.valid_peaks == 0 {
+                            self.ema_amp_q8 = amp_q8;
+                            self.ema_period_q8 = period_q8;
+                        } else {
+                            // Exact integer EMA with alpha = 1/8 (`>> 3`):
+                            // new_ema = (7 * old_ema + sample_q8) >> 3
+                            self.ema_amp_q8 = ((self.ema_amp_q8 * 7) + amp_q8) >> 3;
+                            self.ema_period_q8 = ((self.ema_period_q8 * 7) + period_q8) >> 3;
+                        }
+
+                        let jitter_p_q8 = (period_q8 - self.ema_period_q8).unsigned_abs();
+                        // Normalize amplitude shimmer to tick-scale (`>> 9` maps Q15<<8 down to tick units<<8)
+                        let jitter_a_q8 = (amp_q8 - self.ema_amp_q8).unsigned_abs() >> 9;
+                        let total_jitter_q8 = jitter_p_q8.saturating_add(jitter_a_q8);
+
+                        // Integer harmonic stability: `Q15_ONE * 256 / (256 + total_jitter_q8)`
+                        let jitter_contrib_q15 =
+                            ((Q15_ONE as u64) * 256 / (256 + total_jitter_q8)) as i32;
+
+                        // Marine weighting: 2/5 (0.4) energy + 3/5 (0.6) vocal stability
+                        salience_q15 = (energy_q15 * 2 + jitter_contrib_q15 * 3) / 5;
+                        self.vocal_resonance_q15 = salience_q15;
+
+                        self.last_peak_index = current_peak_idx;
+                        self.total_period_ticks += period_ticks as u64;
+                        self.valid_peaks += 1;
+                        self.total_jitter_q8 += total_jitter_q8;
                     } else {
-                        // Exact integer EMA with alpha = 1/8 (`>> 3`):
-                        // new_ema = (7 * old_ema + sample_q8) >> 3
-                        self.ema_amp_q8 = ((self.ema_amp_q8 * 7) + amp_q8) >> 3;
-                        self.ema_period_q8 = ((self.ema_period_q8 * 7) + period_q8) >> 3;
+                        salience_q15 = (energy_q15 / 10).max(self.vocal_resonance_q15);
                     }
-
-                    let jitter_p_q8 = (period_q8 - self.ema_period_q8).unsigned_abs();
-                    // Normalize amplitude shimmer to tick-scale (`>> 9` maps Q15<<8 down to tick units<<8)
-                    let jitter_a_q8 = (amp_q8 - self.ema_amp_q8).unsigned_abs() >> 9;
-                    let total_jitter_q8 = jitter_p_q8.saturating_add(jitter_a_q8);
-
-                    // Integer harmonic stability: `Q15_ONE * 256 / (256 + total_jitter_q8)`
-                    let jitter_contrib_q15 =
-                        ((Q15_ONE as u64) * 256 / (256 + total_jitter_q8)) as i32;
-
-                    // Marine weighting: 2/5 (0.4) energy + 3/5 (0.6) vocal stability
-                    salience_q15 = (energy_q15 * 2 + jitter_contrib_q15 * 3) / 5;
-                    self.vocal_resonance_q15 = salience_q15;
-
-                    self.last_peak_index = current_peak_idx;
-                    self.total_period_ticks += period_ticks as u64;
-                    self.valid_peaks += 1;
-                    self.total_jitter_q8 += total_jitter_q8;
                 } else {
                     salience_q15 = (energy_q15 / 10).max(self.vocal_resonance_q15);
                 }
@@ -344,7 +358,12 @@ pub fn extract_salient_grains(
             .then_with(|| b.peak_amp_q15.cmp(&a.peak_amp_q15))
     });
 
-    let overall_f0_hz = global_detector.f0_hz_pq();
+    // Compute overall_f0_hz from the highest-salience vocal grain (where the speaker's voice
+    // dominates over background bar music/crowd noise), falling back to global_detector if empty.
+    let overall_f0_hz = top_grains
+        .first()
+        .map(|g| g.f0_hz)
+        .unwrap_or_else(|| global_detector.f0_hz_pq());
     let avg_overall_sal = if total_chunks > 0 {
         (sum_salience_q15 / (total_chunks as u64)) as i32
     } else {
@@ -738,15 +757,15 @@ pub fn speaker_similarity_q15(
     let prof_f0 = (profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32)).clamp(50, 640);
     let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
 
-    // When comparing against a male baritone/tenor profile (`90..=178 Hz`, Hue) and the utterance
-    // is within Hue's natural baritone/tenor span (`90..=178 Hz`), measure `f0_diff` relative to
-    // the core `[110..=172 Hz]` band so low-register sentence-ending drops (e.g. `106 Hz`) keep
-    // `pitch_sim_q15 >= 24_000` instead of splitting into a separate speaker.
-    let f0_diff = if (90..=178).contains(&prof_f0) && (90..=178).contains(&utt_f0) {
-        if utt_f0 < 110 {
-            110 - utt_f0
-        } else if utt_f0 > 172 {
-            utt_f0 - 172
+    // When comparing against a male baritone/tenor profile (`88..=186 Hz`, Hue) and the utterance
+    // is within Hue's natural baritone/tenor span (`88..=186 Hz`, including noisy-bar formant lift),
+    // measure `f0_diff` relative to the core `[108..=178 Hz]` band so low-register sentence-ending
+    // drops (e.g. `106 Hz`) or noisy-venue lifts (`182 Hz`) keep `pitch_sim_q15 >= 24_000`.
+    let f0_diff = if (88..=186).contains(&prof_f0) && (88..=186).contains(&utt_f0) {
+        if utt_f0 < 108 {
+            108 - utt_f0
+        } else if utt_f0 > 178 {
+            utt_f0 - 178
         } else {
             (prof_f0 - utt_f0).abs() / 6
         }
@@ -794,6 +813,7 @@ pub struct RoomAcousticTracker {
     pub last_other_ts: u64,
     pub last_other_slot: u8,
     pub tts_active_until_ts: u64,
+    pub last_trisha_mention_ts: u64,
 }
 
 impl Default for RoomAcousticTracker {
@@ -807,6 +827,7 @@ impl Default for RoomAcousticTracker {
             last_other_ts: 0,
             last_other_slot: 0,
             tts_active_until_ts: 0,
+            last_trisha_mention_ts: 0,
         }
     }
 }
@@ -903,6 +924,16 @@ impl RoomAcousticTracker {
             .map(is_hey_aye_wake_phrase)
             .unwrap_or(false);
 
+        let mentions_trisha = transcript_hint
+            .map(|t| {
+                let low = t.to_ascii_lowercase();
+                low.contains("trisha") || low.contains("trish")
+            })
+            .unwrap_or(false);
+        if mentions_trisha {
+            self.last_trisha_mention_ts = timestamp_secs;
+        }
+
         let addresses_human_in_room = transcript_hint
             .map(|t| {
                 let low = t.to_ascii_lowercase();
@@ -918,10 +949,10 @@ impl RoomAcousticTracker {
             })
             .unwrap_or(false);
 
-        // Match Primary User ("Hue") when vocal F0 is in Hue's baritone/tenor band (`90..=178 Hz`)
-        // AND (`primary_sim_q15 >= 19_500` or `self.primary_profile.grains_learned == 0`)
-        if (90..=178).contains(&utt_f0)
-            && (primary_sim_q15 >= 19_500 || self.primary_profile.grains_learned == 0)
+        // Match Primary User ("Hue") when vocal F0 is in Hue's baritone/tenor band (`88..=186 Hz`)
+        // AND (`primary_sim_q15 >= 19_000` or `self.primary_profile.grains_learned == 0`)
+        if (88..=186).contains(&utt_f0)
+            && (primary_sim_q15 >= 19_000 || self.primary_profile.grains_learned == 0)
         {
             // Update Hue's on-axis amplitude baseline when speaking clearly on-axis
             if grain_avg_env > (baseline_amp / 2) {
@@ -968,36 +999,28 @@ impl RoomAcousticTracker {
             };
         }
 
-        // 3. Another human speaker in the room (`OtherSpeaker(slot)`):
-        //    - Slot `0` (`CompanionAlex` -> `"alex"`): `179..=225 Hz`
-        //    - Slot `1` (`FriendTrisha`  -> `"trisha"`): `226..=320 Hz`
-        //    - Slots `2..=3` (`"friend_1..2"`): additional distinct speakers
-        let mentions_trisha = transcript_hint
-            .map(|t| {
-                let low = t.to_ascii_lowercase();
-                low.contains("trisha") || low.contains("trish")
-            })
-            .unwrap_or(false);
+        // 3. Another human speaker or background bar audio in the room (`OtherSpeaker(slot)`):
+        //    - Slot `0` (`CompanionAlex` -> `"alex"`): `187..=310 Hz` near-field (`on_axis_ratio_q15 >= 10_500`)
+        //    - Slot `1` (`FriendTrisha`  -> `"trisha"`): `241..=320 Hz` when Trisha was mentioned in the room
+        //    - Slots `2..=3` (`"pete"` / `"friend_1"`): off-axis bar patrons or background songs
+        let trisha_active = mentions_trisha
+            || (self.last_trisha_mention_ts > 0
+                && timestamp_secs.saturating_sub(self.last_trisha_mention_ts) <= 120);
 
-        let chosen_slot = if (179..=225).contains(&utt_f0) {
-            // If slot 0 temporarily held a >225 Hz profile before Alex spoke, shift it to slot 1 (Trisha)
-            if let Some(ref p0) = self.friend_profiles[0] {
-                let p0_f0 = p0.f0_hz.num / (p0.f0_hz.den.max(1) as i32);
-                if p0_f0 >= 226 && self.friend_profiles[1].is_none() {
-                    self.friend_profiles[1] = self.friend_profiles[0].take();
-                }
-            }
+        // Detect low-energy / distant bar crowd or sustained background music so it never pollutes Alex's profile
+        let env_min = *best_grain.envelope_q15.iter().min().unwrap_or(&0) as u32;
+        let env_max = *best_grain.envelope_q15.iter().max().unwrap_or(&0) as u32;
+        let is_flat_bar_music = env_max.saturating_sub(env_min) * 5 < grain_avg_env.max(1)
+            && on_axis_ratio_q15 < 16_000
+            && !has_ai_wake_word;
+        let is_distant_bar_patron = on_axis_ratio_q15 < 9_500 && !has_ai_wake_word;
+
+        let chosen_slot = if is_flat_bar_music || is_distant_bar_patron {
+            3usize
+        } else if trisha_active && (226..=320).contains(&utt_f0) {
+            1usize
+        } else if (187..=310).contains(&utt_f0) {
             0usize
-        } else if (226..=320).contains(&utt_f0) {
-            if mentions_trisha
-                || (226..=262).contains(&utt_f0)
-                || self.friend_profiles[0].is_some()
-                || self.friend_profiles[1].is_some()
-            {
-                1usize
-            } else {
-                0usize
-            }
         } else {
             let mut best_slot = 2usize;
             let mut best_sim = 0u16;
@@ -1023,8 +1046,18 @@ impl RoomAcousticTracker {
         let mut friend_prof = self.friend_profiles[chosen_slot]
             .take()
             .unwrap_or_default();
-        friend_prof.absorb_report(&report);
-        let diarized_sim_q15 = speaker_similarity_q15(&friend_prof, &report);
+        // Compute speaker similarity BEFORE absorbing the new utterance so strangers/songs
+        // don't artificially score 90%+ by comparing against themselves!
+        let diarized_sim_q15 = if friend_prof.grains_learned > 0 {
+            speaker_similarity_q15(&friend_prof, &report)
+        } else {
+            speaker_similarity_q15(&friend_prof, &report)
+        };
+        if chosen_slot <= 1 && on_axis_ratio_q15 >= 10_500 {
+            friend_prof.absorb_report(&report);
+        } else if chosen_slot >= 2 || friend_prof.grains_learned == 0 {
+            friend_prof.absorb_report(&report);
+        }
         let diarized_grains = friend_prof.grains_learned;
         self.friend_profiles[chosen_slot] = Some(friend_prof);
 
@@ -1178,14 +1211,24 @@ pub fn triangulate_stereo_dmic_i16(
     let ild_deg = ((ild_pct as i32) * 45) / 100;
     let azimuth_deg = ((tdoa_deg * 6 + ild_deg * 4) / 10).clamp(-90, 90) as i16;
 
-    // Active voiced/signal mean absolute amplitude per sample across the array
+    // Active voiced/signal mean absolute amplitude per sample across the array.
+    // In noisy venues (e.g. Highball Bar with continuous background music where the quietest 10ms
+    // pre-roll block has `min_block_abs > 120`), subtract the excess ambient floor so background music
+    // doesn't artificially inflate `voiced_mean_abs` and collapse every speaker's distance to 9..10 cm!
     let voiced_mean_abs = (total_energy / ((active_frames.max(1) as i64) * 2)).max(1);
-    let mean_abs = voiced_mean_abs;
+    let min_block_abs = blocks.iter().map(|b| b.4).min().unwrap_or(0);
+    let ambient_excess = if min_block_abs > 120 && blocks.len() >= 3 {
+        (min_block_abs - 60).min(voiced_mean_abs * 3 / 4)
+    } else {
+        0
+    };
+    let direct_vocal_abs = (voiced_mean_abs - ambient_excess).max(1);
+    let mean_abs = direct_vocal_abs;
 
     // Estimate distance in cm using inverse-square integer law:
-    // - Open-lid laptop internal speaker test sound (`voiced_mean_abs ~ 3_000..6_500`) -> `~10 cm` (`9..12 cm`)
-    // - Near-field laptop speech (`voiced_mean_abs ~ 1_100..1_800`) -> `~18..22 cm` (`~20 cm`)
-    let distance_cm = ((28_000 / (voiced_mean_abs + 260)) + 5).clamp(9, 350) as u16;
+    // - Open-lid laptop internal speaker test sound (`direct_vocal_abs ~ 3_000..6_500`) -> `~10 cm` (`9..12 cm`)
+    // - Near-field laptop speech (`direct_vocal_abs ~ 1_100..1_800`) -> `~18..22 cm` (`~20 cm`)
+    let distance_cm = ((28_000 / (direct_vocal_abs + 260)) + 5).clamp(9, 350) as u16;
 
     // Optional Bluetooth microphone energy fusion
     let (bt_mic_energy_q15, active_mics) = if let Some(bt_pcm) = bt_mic_mono_16k {
@@ -1239,6 +1282,210 @@ pub fn triangulate_stereo_dmic_i16(
         },
         beamformed_16k,
     )
+}
+
+/// Planetary `p/q` Geodesic Coordinate Denominator (`Q = 10,000,000` = `10^7` per degree).
+///
+/// Why `Q = 10,000,000`:
+/// 1. `1 / 10,000,000` degree of latitude equals **`11 millimeters` (`~1 cm`)** on Earth's surface,
+///    giving centimeter-exact seating resolution inside any room on Earth.
+/// 2. `180 * 10,000,000 = 1,800,000,000 <= i32::MAX (2,147,483,647)`, so every latitude and longitude
+///    on Earth fits natively inside a 32-bit [`Rational`] (`num / 10_000_000`) with zero floats!
+pub const GEODESIC_PQ_DEN: u32 = 10_000_000;
+
+/// Exact integer Q15 sine lookup (`-32767..=+32767`) for any angle in degrees using Bhaskara I's
+/// rational approximation (`4 * x * (180 - x) / (40500 - x * (180 - x))`).
+#[inline]
+pub fn sin_deg_q15(deg: i32) -> i32 {
+    let mut a = deg.rem_euclid(360);
+    let sign = if a >= 180 {
+        a -= 180;
+        -1
+    } else {
+        1
+    };
+    let p = a * (180 - a);
+    let num = (4 * p) * Q15_ONE;
+    let den = (40_500 - p).max(1);
+    sign * (num / den)
+}
+
+/// Exact integer Q15 cosine lookup (`-32767..=+32767`) for any angle in degrees.
+#[inline]
+pub fn cos_deg_q15(deg: i32) -> i32 {
+    sin_deg_q15(deg + 90)
+}
+
+/// Converged `p/q` planetary & room-frame coordinate for an individual speaker in the room.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeakerRoomSeatPq {
+    /// Speaker identifier (`"hue"`, `"alex"`, `"trisha"`, `"pete"`, `"friend_1"`).
+    pub speaker: String,
+    /// Converged East-West offset from the laptop bezel in centimeters (`-350..=+350 cm`).
+    pub east_cm: i32,
+    /// Converged North-South (forward) offset from the laptop bezel in centimeters (`-350..=+350 cm`).
+    pub north_cm: i32,
+    /// Converged polar distance from the laptop bezel in centimeters (`9..=350 cm`).
+    pub distance_cm: u16,
+    /// Converged polar azimuth in degrees (`-90..=+90 deg`).
+    pub azimuth_deg: i16,
+    /// Exact `p/q` Latitude (`lat_e7 / 10,000,000`) of this person's seat in the room.
+    pub lat_pq: Rational,
+    /// Exact `p/q` Longitude (`lon_e7 / 10,000,000`) of this person's seat in the room.
+    pub lon_pq: Rational,
+    /// Estimated radial seat uncertainty in centimeters (shrinks from `18 cm` down to `2 cm` as observations accumulate).
+    pub uncertainty_cm: u16,
+    /// Number of acoustic fixes folded into this speaker's room seat coordinate.
+    pub observations: u64,
+    /// Last Unix timestamp (seconds) when this speaker was observed at this seat.
+    pub last_seen_ts: u64,
+}
+
+/// Project a room-local polar acoustic fix (`distance_cm`, `azimuth_deg`) from a room anchor
+/// (`anchor_lat_e7`, `anchor_lon_e7`, `heading_deg`) into `(east_cm, north_cm, lat_pq, lon_pq)`.
+pub fn project_polar_to_latlon_pq(
+    anchor_lat_e7: i32,
+    anchor_lon_e7: i32,
+    heading_deg: i16,
+    distance_cm: u16,
+    azimuth_deg: i16,
+) -> (i32, i32, Rational, Rational) {
+    let bearing_deg = (heading_deg as i32) + (azimuth_deg as i32);
+    let sin_val = sin_deg_q15(bearing_deg) as i64;
+    let cos_val = cos_deg_q15(bearing_deg) as i64;
+    let d = distance_cm as i64;
+    let east_cm = ((d * sin_val + if sin_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
+    let north_cm = ((d * cos_val + if cos_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
+
+    // 1 degree of latitude = 11,113,300 cm = 10,000,000 e7-ticks (~1.11 cm per e7 tick)
+    let delta_lat_e7 = ((north_cm as i64) * (GEODESIC_PQ_DEN as i64) / 11_113_300) as i32;
+
+    // Longitude scale foreshortened by cos(latitude)
+    let lat_deg = (anchor_lat_e7 / (GEODESIC_PQ_DEN as i32)).clamp(-85, 85);
+    let cos_lat_q15 = cos_deg_q15(lat_deg).max(4096) as i64;
+    let cm_per_deg_lon = ((11_113_300i64 * cos_lat_q15) >> 15).max(1_000_000);
+    let delta_lon_e7 = ((east_cm as i64) * (GEODESIC_PQ_DEN as i64) / cm_per_deg_lon) as i32;
+
+    let lat_num = anchor_lat_e7.saturating_add(delta_lat_e7);
+    let lon_num = anchor_lon_e7.saturating_add(delta_lon_e7);
+
+    let lat_pq = Rational {
+        num: lat_num,
+        den: GEODESIC_PQ_DEN,
+    };
+    let lon_pq = Rational {
+        num: lon_num,
+        den: GEODESIC_PQ_DEN,
+    };
+    (east_cm, north_cm, lat_pq, lon_pq)
+}
+
+/// Persistent `p/q` Geodesic Room Spatial Map tracking the laptop's room anchor (`anchor_lat_e7`,
+/// `anchor_lon_e7`, Wi-Fi BSSID signature) and the converged `(lat_pq, lon_pq, east_cm, north_cm)`
+/// coordinates of every person in the room.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomSpatialMapPq {
+    /// Venue / room label (e.g., `"Highball Bar · Tokyo, JP"`).
+    pub venue_name: String,
+    /// Anchor latitude numerator at `Q = 10,000,000` (default Tokyo Highball Bar: `356,762,000`).
+    pub anchor_lat_e7: i32,
+    /// Anchor longitude numerator at `Q = 10,000,000` (default Tokyo Highball Bar: `1,396,503,000`).
+    pub anchor_lon_e7: i32,
+    /// Laptop bezel compass orientation in degrees (`0` = North).
+    pub heading_deg: i16,
+    /// Active Wi-Fi BSSID / RF fingerprint anchoring this room.
+    pub bssid_anchor: String,
+    /// Converged `p/q` room seat coordinates for each recognized speaker.
+    pub seats: Vec<SpeakerRoomSeatPq>,
+}
+
+impl Default for RoomSpatialMapPq {
+    fn default() -> Self {
+        Self {
+            venue_name: String::from("Highball Bar · Tokyo, JP"),
+            anchor_lat_e7: 356_762_000,
+            anchor_lon_e7: 1_396_503_000,
+            heading_deg: 0,
+            bssid_anchor: String::from("5E:1C:48:01:81:E3"),
+            seats: Vec::new(),
+        }
+    }
+}
+
+impl RoomSpatialMapPq {
+    /// Observe a speaker at `(distance_cm, azimuth_deg)` with vocal `salience_q15`,
+    /// refine their converged room seat via integer Kalman/EMA folding, and return their updated [`SpeakerRoomSeatPq`].
+    pub fn observe_speaker_fix(
+        &mut self,
+        speaker: &str,
+        distance_cm: u16,
+        azimuth_deg: i16,
+        salience_q15: u16,
+        now_ts: u64,
+    ) -> SpeakerRoomSeatPq {
+        let (obs_east, obs_north, obs_lat_pq, obs_lon_pq) = project_polar_to_latlon_pq(
+            self.anchor_lat_e7,
+            self.anchor_lon_e7,
+            self.heading_deg,
+            distance_cm,
+            azimuth_deg,
+        );
+
+        if let Some(seat) = self.seats.iter_mut().find(|s| s.speaker == speaker) {
+            // Salience-weighted integer EMA: high-salience fixes carry 1/3 weight, normal fixes 1/4 weight
+            let num_w: i32 = if salience_q15 >= 2400 { 1 } else { 1 };
+            let den_w: i32 = if salience_q15 >= 2400 { 3 } else { 4 };
+            let keep_w = den_w - num_w;
+
+            seat.east_cm = (seat.east_cm * keep_w + obs_east * num_w) / den_w;
+            seat.north_cm = (seat.north_cm * keep_w + obs_north * num_w) / den_w;
+            seat.distance_cm = (((seat.distance_cm as i32) * keep_w + (distance_cm as i32) * num_w)
+                / den_w)
+                .clamp(9, 350) as u16;
+            seat.azimuth_deg = (((seat.azimuth_deg as i32) * keep_w + (azimuth_deg as i32) * num_w)
+                / den_w)
+                .clamp(-90, 90) as i16;
+
+            // Recompute exact p/q lat/lon from the converged (east_cm, north_cm) room vector!
+            let delta_lat_e7 =
+                ((seat.north_cm as i64) * (GEODESIC_PQ_DEN as i64) / 11_113_300) as i32;
+            let lat_deg = (self.anchor_lat_e7 / (GEODESIC_PQ_DEN as i32)).clamp(-85, 85);
+            let cos_lat_q15 = cos_deg_q15(lat_deg).max(4096) as i64;
+            let cm_per_deg_lon = ((11_113_300i64 * cos_lat_q15) >> 15).max(1_000_000);
+            let delta_lon_e7 =
+                ((seat.east_cm as i64) * (GEODESIC_PQ_DEN as i64) / cm_per_deg_lon) as i32;
+
+            seat.lat_pq = Rational {
+                num: self.anchor_lat_e7.saturating_add(delta_lat_e7),
+                den: GEODESIC_PQ_DEN,
+            };
+            seat.lon_pq = Rational {
+                num: self.anchor_lon_e7.saturating_add(delta_lon_e7),
+                den: GEODESIC_PQ_DEN,
+            };
+            seat.observations = seat.observations.saturating_add(1);
+            // Shrink uncertainty from 18 cm down toward 2 cm as observations accumulate
+            let shrink = (seat.observations.min(64) as u16).isqrt().max(1);
+            seat.uncertainty_cm = (18 / shrink).clamp(2, 18);
+            seat.last_seen_ts = now_ts;
+            return seat.clone();
+        }
+
+        let new_seat = SpeakerRoomSeatPq {
+            speaker: speaker.to_string(),
+            east_cm: obs_east,
+            north_cm: obs_north,
+            distance_cm,
+            azimuth_deg,
+            lat_pq: obs_lat_pq,
+            lon_pq: obs_lon_pq,
+            uncertainty_cm: 18,
+            observations: 1,
+            last_seen_ts: now_ts,
+        };
+        self.seats.push(new_seat.clone());
+        new_seat
+    }
 }
 
 /// Detect `"Hey Aye"` and all its phonetic neural-STT spellings (`"hey aye"`, `"hey, aye"`,
@@ -1521,7 +1768,7 @@ impl StereoPcmRingBuffer {
     /// silent frames for production rings, or `captured_frames >= max_utterance_frames`).
     #[inline]
     pub fn should_dispatch(&self) -> bool {
-        let hangover = if self.cap_frames >= 64 { 6 } else { 5 };
+        let hangover = if self.cap_frames >= 64 { 4 } else { 5 };
         (self.voiced_frames >= 3 && self.silent_frames >= hangover)
             || (self.voiced_frames >= 3 && self.captured_frames >= self.max_utterance_frames)
     }
@@ -2308,6 +2555,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fixed, "Hey Aye click the bottom button to speak back");
+    }
+
+    #[test]
+    fn geodesic_pq_room_spatial_map_converges_speaker_seats_without_floats() {
+        let mut map = RoomSpatialMapPq::default();
+        assert_eq!(map.anchor_lat_e7, 356_762_000);
+        assert_eq!(map.anchor_lon_e7, 1_396_503_000);
+
+        // Hue at 20 cm dead-center (0 deg) -> +20 cm North, 0 cm East
+        for step in 0..9 {
+            let seat = map.observe_speaker_fix("hue", 20, 0, 2800, 1000 + step);
+            assert_eq!(seat.lat_pq.den, GEODESIC_PQ_DEN);
+            assert_eq!(seat.lon_pq.den, GEODESIC_PQ_DEN);
+        }
+        let hue_seat = map.seats.iter().find(|s| s.speaker == "hue").unwrap();
+        assert_eq!(hue_seat.east_cm, 0);
+        assert_eq!(hue_seat.north_cm, 20);
+        assert!(hue_seat.lat_pq.num > 356_762_000);
+        assert_eq!(hue_seat.lon_pq.num, 1_396_503_000);
+        assert_eq!(hue_seat.uncertainty_cm, 6); // 18 / isqrt(9) = 6 cm!
+
+        // Alexandra sitting to Hue's left (-30 deg, 40 cm) -> -20 cm East (West), +34 cm North
+        let alex_seat = map.observe_speaker_fix("alex", 40, -30, 2600, 1020);
+        assert!(alex_seat.east_cm <= -19 && alex_seat.east_cm >= -21);
+        assert!(alex_seat.north_cm >= 33 && alex_seat.north_cm <= 35);
+        assert!(alex_seat.lon_pq.num < 1_396_503_000);
     }
 }
 
