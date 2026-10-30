@@ -41,7 +41,8 @@ use qwave_core::salience::{
     RoomSpatialMapPq, SelfCalibrationEngine, SelfCalibrationOutcome, SpeakerSalienceProfile,
     StereoMicTriangulation, StereoPcmRingBuffer, combine_salient_speech_wav,
     contextualize_room_transcript, decode_wav_i16, encode_wav_i16, extract_salient_grains,
-    is_hey_aye_wake_phrase, triangulate_stereo_dmic_i16,
+    is_hey_aye_wake_phrase, sanitize_and_dedup_stt_transcript, triangulate_stereo_dmic_i16,
+    trim_salient_speech_pcm_i16,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
@@ -983,23 +984,121 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
 }
 
-/// Fast, 100% Pure-Rust offline speech-to-text transcription powered by Marine Salience + LFM2.5-Audio.
+/// Fast, Zero-Float Sovereign offline speech-to-text transcription powered by Marine Salience +
+/// Hot Loopback ASR (`127.0.0.1:8785` `whisper-server` + `127.0.0.1:8786` `liquid-rust`).
 ///
-/// Order of preference (zero C++/Python dependencies — ready for `g8t.is`):
-/// 1. Hot loopback `liquid-rust serve` daemon (`POST http://127.0.0.1:8786/v1/audio/wav`, `0 ms` model load,
-///    Marine Salience boundary trimmer + Marine-salient Goertzel mel normalizer).
-/// 2. `/home/hue/.local/bin/liquid-rust transcribe` / `/usr/local/bin/liquid-rust transcribe` (Pure-Rust CLI).
-/// 3. `/home/hue/.local/bin/kokoro-speak stt` (Pure-Rust acoustic fingerprint + LFM fallback).
+/// Order of preference:
+/// 1. Marine Salience boundary trimmer (`trim_salient_speech_pcm_i16`) strips leading/trailing silence.
+/// 2. Hot loopback `whisper-server` (`POST http://127.0.0.1:8785/inference`, `0 ms` model load,
+///    domain vocabulary prompt, temperature fallback enabled, `--suppress-nst`, `-ac 384`).
+/// 3. Hot loopback `liquid-rust serve` daemon (`POST http://127.0.0.1:8786/v1/audio/wav`).
+/// 4. Local `/usr/bin/whisper-cli` with temperature fallback enabled (no `-nf` loop bug!), `-sns`,
+///    `-mc 0`, `-ml 96`, and Sovereign vocabulary prompt.
+/// 5. Every output is filtered through `sanitize_and_dedup_stt_transcript` + `contextualize_room_transcript`.
 fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)> {
-    // 1. Ultra-fast local `whisper-cli` (`ggml-base.en.bin`) with dynamic audio-ctx (`-ac 128..384`),
-    //    greedy decoding (`-bo 1 -bs 1`), no temperature fallback (`-nf`), and 10 CPU threads (`~220..420 ms`!).
-    //    Runs 100% locally on the laptop CPU without touching any remote SSH tunnel!
+    const SOVEREIGN_VOCAB_PROMPT: &str =
+        "Hey Aye, Qwave, Hyprland, Alexiai, Alexandra, Aurora, Sovereign, MEM8, 8b-is, Waybar, WUPZ.";
+
+    // 0. Pre-trim leading and trailing non-salient silence in pure integer DSP so the encoder
+    //    only processes the active voiced region (+120ms pre-roll / +160ms post-roll).
+    let mut trimmed_wav_bytes: Option<Vec<u8>> = None;
+    if let Ok(raw_bytes) = fs::read(wav_path) {
+        if let Some((sr, pcm)) = decode_wav_i16(&raw_bytes) {
+            let trimmed_pcm = trim_salient_speech_pcm_i16(&pcm, sr);
+            if trimmed_pcm.len() >= 1600 && trimmed_pcm.len() < pcm.len() {
+                let enc = encode_wav_i16(sr, &trimmed_pcm);
+                let _ = fs::write(wav_path, &enc);
+                trimmed_wav_bytes = Some(enc);
+            } else {
+                trimmed_wav_bytes = Some(raw_bytes);
+            }
+        } else {
+            trimmed_wav_bytes = Some(raw_bytes);
+        }
+    }
+
+    let finalize_tx = |raw: &str, backend: &'static str| -> Option<(String, &'static str)> {
+        let deduped = sanitize_and_dedup_stt_transcript(raw)?;
+        let repaired =
+            contextualize_room_transcript(&deduped, &[], 2800, None).unwrap_or(deduped);
+        if repaired.trim().is_empty() {
+            None
+        } else {
+            Some((repaired, backend))
+        }
+    };
+
+    // 1. Hot loopback `whisper-server` on 127.0.0.1:8785 (`0 ms` model load, ~280..450ms total)
+    if let Some(ref wav_bytes) = trimmed_wav_bytes {
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8785).into();
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(60)) {
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(1800)));
+            let boundary = "----QwaveSovereignBoundary8bIs";
+            let part_fmt = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n\
+                 --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+            );
+            let part_end = format!("\r\n--{boundary}--\r\n");
+            let content_len = part_fmt.len() + wav_bytes.len() + part_end.len();
+            let header = format!(
+                "POST /inference HTTP/1.1\r\nHost: 127.0.0.1:8785\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {content_len}\r\nConnection: close\r\n\r\n"
+            );
+            if stream.write_all(header.as_bytes()).is_ok()
+                && stream.write_all(part_fmt.as_bytes()).is_ok()
+                && stream.write_all(wav_bytes).is_ok()
+                && stream.write_all(part_end.as_bytes()).is_ok()
+            {
+                let mut resp = String::new();
+                if stream.read_to_string(&mut resp).is_ok() {
+                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
+                        if let Some(tx) = extract_json_str(body, "text") {
+                            return finalize_tx(
+                                &tx,
+                                "whisper-server:8785 (Hot RAM + Marine Salience + Dedup)",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Hot loopback `liquid-rust serve` on 127.0.0.1:8786
+    if let Some(ref wav_bytes) = trimmed_wav_bytes {
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8786).into();
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(60)) {
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(1600)));
+            let header = format!(
+                "POST /v1/audio/wav HTTP/1.1\r\nHost: 127.0.0.1:8786\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                wav_bytes.len()
+            );
+            if stream.write_all(header.as_bytes()).is_ok() && stream.write_all(wav_bytes).is_ok() {
+                let mut resp = String::new();
+                if stream.read_to_string(&mut resp).is_ok() {
+                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
+                        if let Some(tx) = extract_json_str(body, "text") {
+                            return finalize_tx(
+                                &tx,
+                                "liquid-rust:8786 (Pure Rust LFM2.5 + Marine Salience)",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Local `/usr/bin/whisper-cli` fallback (`ggml-base.en.bin`) WITH temperature fallback
+    //    (no `-nf`!), `--suppress-nst` (`-sns`), `--max-context 0` (`-mc 0`), `--max-len 96` (`-ml 96`),
+    //    and Sovereign vocabulary prompt so repetition loops never occur!
     let whisper_model = "/home/hue/.local/share/qwave/models/ggml-base.en.bin";
     if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
         let wav_len = fs::metadata(wav_path).map(|m| m.len()).unwrap_or(64_000);
         // 16kHz 16-bit mono = 32,000 bytes/sec; 1 Whisper mel-ctx unit = 20ms (640 bytes)
         let mel_frames = (wav_len / 640).max(1);
-        let audio_ctx = ((mel_frames + 64 + 31) & !31).clamp(128, 512);
+        let audio_ctx = ((mel_frames + 64 + 31) & !31).clamp(128, 384);
         let ac_str = audio_ctx.to_string();
 
         if let Ok(out) = Command::new("/usr/bin/whisper-cli")
@@ -1010,7 +1109,11 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                 wav_path,
                 "-nt",
                 "-np",
-                "-nf",
+                "-sns",
+                "-mc",
+                "0",
+                "-ml",
+                "96",
                 "-ac",
                 &ac_str,
                 "-bo",
@@ -1019,12 +1122,14 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                 "1",
                 "-t",
                 "10",
+                "--prompt",
+                SOVEREIGN_VOCAB_PROMPT,
             ])
             .output()
         {
             if out.status.success() {
                 let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
-                let cleaned: String = raw
+                let joined: String = raw
                     .lines()
                     .map(str::trim)
                     .filter(|l| {
@@ -1037,41 +1142,12 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                if !cleaned.is_empty() {
-                    return Some((cleaned, "whisper-cli (fast local -ac -nf + Marine Salience)"));
-                }
-                return None;
+                return finalize_tx(&joined, "whisper-cli (local + Marine Salience + Dedup)");
             }
         }
     }
 
-    // 2. Fallback to loopback `liquid-rust serve` on 127.0.0.1:8786 with tight 1.5s timeout
-    if let Ok(wav_bytes) = fs::read(wav_path) {
-        if let Ok(mut stream) = TcpStream::connect("127.0.0.1:8786") {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
-            let header = format!(
-                "POST /v1/audio/wav HTTP/1.1\r\nHost: 127.0.0.1:8786\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                wav_bytes.len()
-            );
-            if stream.write_all(header.as_bytes()).is_ok() && stream.write_all(&wav_bytes).is_ok() {
-                let mut resp = String::new();
-                if stream.read_to_string(&mut resp).is_ok() {
-                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
-                        if let Some(tx) = extract_json_str(body, "text") {
-                            let cleaned = tx.trim().to_string();
-                            if !cleaned.is_empty() {
-                                return Some((cleaned, "liquid-rust-daemon (Pure Rust LFM2.5 + Marine Salience)"));
-                            }
-                            return None;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Fallback to `kokoro-speak stt` ONLY if a verified `.stt.json` sidecar exists
+    // 4. Fallback to `kokoro-speak stt` ONLY if a verified `.stt.json` sidecar exists
     let sidecar = format!("{wav_path}.stt.json");
     if Path::new(&sidecar).exists() {
         for k_bin in ["/home/hue/.local/bin/kokoro-speak", "/usr/local/bin/kokoro-speak"] {
@@ -1085,7 +1161,7 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                         if let Some(rest) = line.trim().strip_prefix("Text:") {
                             let tx = rest.trim().to_string();
                             if !tx.is_empty() && !raw.contains("kokoro-acoustic-hu") {
-                                return Some((tx, "kokoro-speak-stt (Pure Rust)"));
+                                return finalize_tx(&tx, "kokoro-speak-stt (Pure Rust)");
                             }
                         }
                     }
@@ -4876,15 +4952,31 @@ fn run_parallel_ear_daemon() {
     }));
     let spatial_map = Arc::new(Mutex::new(RoomSpatialMapPq::default()));
 
-    // Seed in-memory 64-slot `ear_inbox` RingBuffer from existing bounded file
+    // Seed in-memory 64-slot `ear_inbox` RingBuffer from existing bounded file,
+    // automatically purging any legacy repetition-loop or breath-artifact lines!
     let mut init_inbox_ring: RingBuffer<String, 64> = RingBuffer::new();
+    let mut cleaned_existing = false;
     if let Ok(existing_inbox) = fs::read_to_string(dir.join("ear_inbox.jsonl")) {
         for line in existing_inbox.lines() {
             let t = line.trim();
             if !t.is_empty() {
+                if let Some(tx) = extract_json_str(t, "text") {
+                    if sanitize_and_dedup_stt_transcript(&tx).is_none() {
+                        cleaned_existing = true;
+                        continue;
+                    }
+                }
                 init_inbox_ring.push_overwrite(t.to_string());
             }
         }
+    }
+    if cleaned_existing {
+        let mut buf = String::with_capacity(init_inbox_ring.len() * 256);
+        for item in init_inbox_ring.iter_oldest_first() {
+            buf.push_str(item);
+            buf.push('\n');
+        }
+        let _ = fs::write(dir.join("ear_inbox.jsonl"), buf.as_bytes());
     }
     let inbox_ring = Arc::new(Mutex::new(init_inbox_ring));
 

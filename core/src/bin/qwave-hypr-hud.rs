@@ -21,7 +21,10 @@ use qwave_core::Rational;
 use qwave_core::quanttern::{Trit, default_threshold_pq};
 use qwave_core::salience::{
     DEFAULT_CLIP_THRESHOLD_Q15, MarineIntDetector, Q15_ONE, RingBuffer, SpeakerSalienceProfile,
+    sanitize_and_dedup_stt_transcript,
 };
+use qwave_core::vault::{SealedVaultRecord, VAULT_MAGIC, canonicalize_domain};
+use qwave_core::wave::WaveInt;
 
 /// C64 `64 KB` (`65_536` bytes) ring-buffer ceiling for all file tail reads.
 pub const C64_RING_BYTES: usize = 65_536;
@@ -110,6 +113,9 @@ fn main() {
         "waybar-music" => {
             println!("{}", render_waybar_music_json());
         }
+        "waybar-vault" => {
+            println!("{}", render_waybar_vault_json());
+        }
         "tokyo-song" => {
             println!("{}", run_tokyo_song(rest));
         }
@@ -150,6 +156,9 @@ fn main() {
         "wifi-heal" => {
             println!("{}", run_wifi_heal(rest));
         }
+        "vault-menu" => {
+            println!("{}", run_vault_menu(rest));
+        }
         "a6000-pulse" => {
             println!("{}", run_a6000_pulse(rest));
         }
@@ -173,6 +182,7 @@ fn print_usage() {
          \x20 qwave-hypr-hud voice-type            Record via qwave -> liquid-rust -> wl-copy + wtype\n\
          \x20 qwave-hypr-hud ask-aye               Voice prompt -> loopback alexiai -> qwave --speak\n\
          \x20 qwave-hypr-hud toggle-ear            Toggle qwave-ear.service with spoken confirmation\n\
+         \x20 qwave-hypr-hud vault-menu            Sovereign Ed25519 + MEM|8 Personal-Signature Password Vault\n\
          \x20 qwave-hypr-hud boot-session          Autostart services, waybar, workspaces & welcome\n\
          \x20 qwave-hypr-hud agy-resume            Launch Sovereign AGY Studio (All Perms, Zero Sandbox, Resumed)\n\
          \x20 qwave-hypr-hud wifi-menu             Fuzzel/dmenu Wi-Fi switcher, password updater & healer\n\
@@ -372,14 +382,16 @@ pub fn parse_jsonl_entry(line: &str) -> Option<RoomThoughtEntry> {
         .map(|s| parse_vad_hex(&s))
         .unwrap_or(0x62);
 
-    let raw_text = extract_json_str(trimmed, "text")
-        .or_else(|| extract_json_str(trimmed, "preview"))
-        .unwrap_or_else(|| {
-            format!(
-                "MEM|8 vocal grain F0={}/{}Hz salience={}/{}",
-                f0_pq.num, f0_pq.den, salience_pq.num, salience_pq.den
-            )
-        });
+    let raw_text = if let Some(tx) = extract_json_str(trimmed, "text") {
+        sanitize_and_dedup_stt_transcript(&tx)?
+    } else if let Some(prev) = extract_json_str(trimmed, "preview") {
+        prev
+    } else {
+        format!(
+            "MEM|8 vocal grain F0={}/{}Hz salience={}/{}",
+            f0_pq.num, f0_pq.den, salience_pq.num, salience_pq.den
+        )
+    };
     let text = sanitize_no_float(&raw_text);
 
     Some(RoomThoughtEntry {
@@ -589,8 +601,31 @@ fn refresh_stack_trits_sync() -> (Trit, Trit, Trit, Trit, Trit) {
     let now = now_epoch_secs();
     let (ear, lqd, aye, esp, a6k) = thread::scope(|s| {
         let h_ear = s.spawn(probe_ear_service);
-        let h_lqd = s.spawn(|| probe_http_loopback(8786, "/health", 150));
-        let h_aye = s.spawn(|| probe_http_loopback(8787, "/api/health", 150));
+        let h_lqd = s.spawn(|| {
+            let t8786 = probe_http_loopback(8786, "/health", 150);
+            if t8786 == Trit::Plus {
+                return Trit::Plus;
+            }
+            let addr8785 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8785);
+            if TcpStream::connect_timeout(&addr8785, Duration::from_millis(120)).is_ok() {
+                Trit::Plus
+            } else {
+                t8786
+            }
+        });
+        let h_aye = s.spawn(|| {
+            let t = probe_http_loopback(8787, "/", 250);
+            if t == Trit::Plus {
+                Trit::Plus
+            } else {
+                let addr8787 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8787);
+                if TcpStream::connect_timeout(&addr8787, Duration::from_millis(120)).is_ok() {
+                    Trit::Plus
+                } else {
+                    t
+                }
+            }
+        });
         let h_esp = s.spawn(probe_esp32_medusa);
         let h_a6k = s.spawn(probe_a6000_cached);
         (
@@ -786,11 +821,30 @@ pub fn format_stack_badges(snap: &HudSnapshot) -> String {
 /// Render single-line Waybar JSON (`{"text": "...", "tooltip": "...", "class": "..."}`) with zero floats.
 pub fn render_waybar_json(snap: &HudSnapshot) -> String {
     let badges = format_stack_badges(snap);
-    let short_utterance: String = snap.latest_text.chars().take(28).collect();
+    let short_utterance: String = snap.latest_text.chars().take(18).collect();
     let sign = if snap.azimuth_deg >= 0 { "+" } else { "" };
 
     let text = format!(
-        "🌊 {} {}Hz ({}/{}) {}{}°/{}cm {}% {}g │ {} │ \"{}\"",
+        "🌊 {} {}Hz {}% │ E{} L{} A{} │ \"{}\"",
+        snap.speaker,
+        snap.f0_hz,
+        snap.salience_pct,
+        trit_symbol(snap.ear_trit),
+        trit_symbol(snap.lqd_trit),
+        trit_symbol(snap.aye_trit),
+        short_utterance
+    );
+
+    let tooltip = format!(
+        "Sovereign 8b-is x Qwave x ALEXIAI Studio HUD (Zero-Float)\n\
+         Summary: {} {}Hz ({}/{}) {}{}°/{}cm {}% {}g\n\
+         Speaker: {} @ {} Hz (p/q: {}/{} Hz)\n\
+         Spatial DOA: {}{} deg / {} cm ({})\n\
+         Marine Salience: {}% (p/q: {}/{}) · Stability Trit: [{}]\n\
+         MEM|8 Learned Grains: {} (C64 64KB Ring)\n\
+         Stack: {}\n\
+         Latest Utterance: {}\n\
+         L-Click: Toggle Ear │ R-Click: Voice-Type │ M-Click: Ask Aye",
         snap.speaker,
         snap.f0_hz,
         snap.f0_pq.num,
@@ -800,19 +854,6 @@ pub fn render_waybar_json(snap: &HudSnapshot) -> String {
         snap.distance_cm,
         snap.salience_pct,
         snap.grains_learned,
-        badges,
-        short_utterance
-    );
-
-    let tooltip = format!(
-        "Sovereign 8b-is x Qwave x ALEXIAI Studio HUD (Zero-Float)\n\
-         Speaker: {} @ {} Hz (p/q: {}/{} Hz)\n\
-         Spatial DOA: {}{} deg / {} cm ({})\n\
-         Marine Salience: {}% (p/q: {}/{}) · Stability Trit: [{}]\n\
-         MEM|8 Learned Grains: {} (C64 64KB Ring)\n\
-         Stack: {}\n\
-         Latest Utterance: {}\n\
-         L-Click: Toggle Ear │ R-Click: Voice-Type │ M-Click: Ask Aye",
         snap.speaker,
         snap.f0_hz,
         snap.f0_pq.num,
@@ -942,8 +983,9 @@ pub fn render_status_tui_frame(snap: &HudSnapshot) -> String {
     // Section 4: Hyprland Voice & AI Hotkey Legend
     out.push_str("\x1b[1;36m├─ 4) HYPRLAND VOICE & AI HOTKEY LEGEND ───────────────────────────────────────┤\x1b[0m\n");
     out.push_str(
-        "  • \x1b[1;33mSUPER+Space\x1b[0m / \x1b[1;33mSUPER+V\x1b[0m : Voice-Type (qwave --listen 5 -> liquid-rust -> wl-copy + wtype)\n\
+        "  • \x1b[1;33mSUPER+Space\x1b[0m / \x1b[1;33mSUPER+V\x1b[0m : Voice-Type (qwave --listen 5 -> whisper-server:8785 -> wl-copy + wtype)\n\
          \x20 • \x1b[1;33mSUPER+A\x1b[0m               : Ask Aye    (qwave --listen 5 -> alexiai :8787 -> qwave --speak)\n\
+         \x20 • \x1b[1;33mSUPER+U\x1b[0m               : Sovereign Vault (Ed25519 + MEM|8 Personal-Signature Password Unseal)\n\
          \x20 • \x1b[1;33mSUPER+M\x1b[0m               : Toggle Ear (arm/pause qwave-ear.service + spoken status)\n\
          \x20 • \x1b[1;33mSUPER+D\x1b[0m               : Qwave Radar Scratchpad (toggle special:qwave HUD)\n\
          \x20 • \x1b[1;33mSUPER+G\x1b[0m               : A6000 Pulse (probe A6000 + Sovereign stack notification)\n\
@@ -1181,8 +1223,9 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     md.push_str("## 4) Hyprland Sovereign Keybindings\n\n");
     md.push_str("| Hotkey | Action | Command / Pipeline |\n");
     md.push_str("| :--- | :--- | :--- |\n");
-    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `liquid-rust :8786` -> `wl-copy` + `wtype` |\n");
+    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `whisper-server :8785` / `liquid-rust :8786` -> `wl-copy` + `wtype` |\n");
     md.push_str("| **`SUPER + A`** | Ask Aye | `qwave --listen 5` -> `alexiai :8787` -> `qwave --speak` |\n");
+    md.push_str("| **`SUPER + U`** | Sovereign Personal-Signature Vault | `qwave-hypr-hud vault-menu` (Ed25519 + `MEM|8` `79B` Wave Unseal & Auto-Type) |\n");
     md.push_str("| **`SUPER + M`** | Toggle Ear | Arm / pause `qwave-ear.service` with spoken confirmation |\n");
     md.push_str("| **`SUPER + D`** | Graphical Qwave Markdown HUD | `qwave-hypr-hud markdown-hud` (WebGL `WaveScene` + Live SSE Reload) |\n");
     md.push_str("| **`SUPER + W`** / **`SUPER + Shift + W`** | Wi-Fi Switcher & Auto-Healer | `qwave-hypr-hud wifi-menu` / `wifi-tui` (Zero-Rescan MTU `1380`) |\n");
@@ -2056,12 +2099,42 @@ fn connect_wifi_with_password_prompt(ssid: &str, security: &str, force_password:
 }
 
 /// Execute `qwave-hypr-hud wifi-menu`:
-/// Scans available Wi-Fi networks, opens `fuzzel --dmenu -p "Wi-Fi > "`, switches or updates
-/// Wi-Fi credentials, enforces `1380` MTU, and emits desktop + spoken notification.
+/// Opens Noctalia's native graphical Wi-Fi & Network Control Center (`noctalia msg panel-toggle control-center network`)
+/// when `/usr/bin/noctalia` is available (falling back to `fuzzel --dmenu` when `--dmenu` is passed),
+/// and enforces `1380` MTU on `wlan0`.
 pub fn run_wifi_menu(args: &[String]) -> String {
     let dry_run = args.iter().any(|a| a == "--dry-run");
     if dry_run {
         return "{\"ok\":true,\"action\":\"wifi-menu\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+    }
+
+    let force_dmenu = args.iter().any(|a| a == "--dmenu");
+    if !force_dmenu && Path::new("/usr/bin/noctalia").exists() {
+        if !is_process_running("noctalia") {
+            let _ = Command::new("/usr/bin/noctalia")
+                .arg("--daemon")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            thread::sleep(Duration::from_millis(250));
+            let _ = Command::new("/usr/bin/noctalia")
+                .args(["msg", "bar-hide"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        if Command::new("/usr/bin/noctalia")
+            .args(["msg", "panel-toggle", "control-center", "network"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            let _ = enforce_wlan0_mtu_1380();
+            return "{\"ok\":true,\"action\":\"wifi-menu\",\"ui\":\"noctalia-network\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+        }
     }
 
     let saved = list_saved_wifi_connections();
@@ -2208,11 +2281,12 @@ pub fn run_boot_session(args: &[String]) -> String {
             .stderr(Stdio::null())
             .status();
 
-        // 2. Ensure liquid-rust.service, qwave-ear.service, and qwave-wifi-heal.timer are active
+        // 2. Ensure qwave-whisper.service, liquid-rust.service, qwave-ear.service, and qwave-wifi-heal.timer are active
         let _ = Command::new("systemctl")
             .args([
                 "--user",
                 "start",
+                "qwave-whisper.service",
                 "liquid-rust.service",
                 "qwave-ear.service",
                 "qwave-wifi-heal.timer",
@@ -2240,6 +2314,24 @@ pub fn run_boot_session(args: &[String]) -> String {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
+        }
+
+        // 5b. Ensure noctalia daemon is running for the graphical Wi-Fi & Control Center panels (with duplicate bar hidden)
+        if Path::new("/usr/bin/noctalia").exists() {
+            if !is_process_running("noctalia") {
+                let _ = Command::new("/usr/bin/noctalia")
+                    .arg("--daemon")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                thread::sleep(Duration::from_millis(250));
+            }
+            let _ = Command::new("/usr/bin/noctalia")
+                .args(["msg", "bar-hide"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
 
         // 6. Start nm-applet --indicator if installed and not already running
@@ -2363,7 +2455,7 @@ pub fn run_humayian_mix(args: &[String]) -> String {
          [a0][a1]acrossfade=d=4:c1=tri:c2=tri[m01];\
          [m01][a2]acrossfade=d=4:c1=tri:c2=tri[m012];\
          [m012][a3]acrossfade=d=4:c1=tri:c2=tri[mix];\
-         sine=frequency=432:duration=84,volume=0.018[pad];\
+         sine=frequency=432:duration=84,volume=9/500[pad];\
          [mix][pad]amix=inputs=2:duration=first:dropout_transition=2\" \
          -ar 48000 -ac 2 /tmp/qwave_humayian_mix.wav && \
          ffplay -nodisp -autoexit -loglevel quiet /tmp/qwave_humayian_mix.wav"
@@ -2397,6 +2489,30 @@ pub fn render_waybar_music_json() -> String {
         "{{\"text\":\"{}\",\"tooltip\":\"{}\",\"class\":\"{}\"}}",
         json_escape(text),
         json_escape(tooltip),
+        cls
+    )
+}
+
+/// Render single-line Waybar JSON for the Sovereign Personal-Signature Password Vault Pill.
+pub fn render_waybar_vault_json() -> String {
+    let records = load_hud_vault_records();
+    let count = records.len();
+    let has_key = find_hud_ed25519_keypair().is_some();
+    let trit = if has_key { "+" } else { "0" };
+    let text = format!("🔐 Vault [{count}│{trit}]");
+    let tooltip = format!(
+        "Sovereign Personal-Signature Password Vault (SUPER + U)\n\
+         Sealed Credentials: {count} (ChaCha20-HMAC-SHA256 + PBKDF2 + HKDF + MEM|8 79B WaveInt)\n\
+         Ed25519 Personal Signature Key: {}\n\
+         L-Click: Unseal / Seal Password (fuzzel/wofi + auto-type + 12s clipboard wipe)\n\
+         R-Click: Open Sovereign Vault in Qwave Browser",
+        if has_key { "Active [+] (~/.ssh/id_ed25519)" } else { "Missing [-]" }
+    );
+    let cls = if has_key { "vault-ready" } else { "vault-locked" };
+    format!(
+        "{{\"text\":\"{}\",\"tooltip\":\"{}\",\"class\":\"{}\"}}",
+        json_escape(&text),
+        json_escape(&tooltip),
         cls
     )
 }
@@ -2541,11 +2657,324 @@ pub fn run_smoke_bg(args: &[String]) -> String {
     )
 }
 
+fn hud_vault_file_path() -> PathBuf {
+    let dir = qwave_base_dir().join("vault");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("sovereign_vault.qvault")
+}
+
+fn hud_known_domains_path() -> PathBuf {
+    let dir = qwave_base_dir().join("vault");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("known_domains.txt")
+}
+
+fn load_hud_known_domains() -> Vec<String> {
+    let mut domains = vec![
+        "github.com".to_string(),
+        "cheet.is".to_string(),
+        "g8t.is".to_string(),
+        "gemini-diary.8b.is".to_string(),
+        "8b.is".to_string(),
+    ];
+    if let Ok(raw) = fs::read_to_string(hud_known_domains_path()) {
+        for line in raw.lines() {
+            let d = canonicalize_domain(line.trim());
+            if !d.is_empty() && !domains.contains(&d) {
+                domains.insert(0, d);
+            }
+        }
+    }
+    domains
+}
+
+fn remember_hud_domain(domain: &str) {
+    let norm = canonicalize_domain(domain);
+    if norm.is_empty() {
+        return;
+    }
+    let mut list = load_hud_known_domains();
+    list.retain(|d| d != &norm);
+    list.insert(0, norm);
+    let path = hud_known_domains_path();
+    let _ = fs::write(&path, list.join("\n") + "\n");
+    let _ = Command::new("chmod")
+        .args(["600", &path.to_string_lossy()])
+        .status();
+}
+
+fn load_hud_vault_records() -> Vec<SealedVaultRecord> {
+    let path = hud_vault_file_path();
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut lines = content.lines();
+    let Some(first) = lines.next() else {
+        return Vec::new();
+    };
+    if !first.trim().starts_with(VAULT_MAGIC) {
+        return Vec::new();
+    }
+    let mut records = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            if let Ok(rec) = SealedVaultRecord::from_line(trimmed) {
+                if WaveInt::from_frame(&rec.wave_frame).is_ok() {
+                    records.push(rec);
+                }
+            }
+        }
+    }
+    records
+}
+
+fn find_hud_ed25519_keypair() -> Option<(PathBuf, PathBuf, String)> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let ssh_dir = PathBuf::from(home).join(".ssh");
+    for name in ["id_ed25519", "id_ed25519_sovereign", "id_rsa"] {
+        let priv_p = ssh_dir.join(name);
+        let pub_p = ssh_dir.join(format!("{name}.pub"));
+        if priv_p.exists() && pub_p.exists() {
+            if let Ok(pub_line) = fs::read_to_string(&pub_p) {
+                let trimmed = pub_line.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some((priv_p, pub_p, trimmed));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_qwave_bin() -> String {
+    for cand in ["/home/hue/.local/bin/qwave", "/usr/local/bin/qwave", "qwave"] {
+        if Path::new(cand).exists() {
+            return cand.to_string();
+        }
+    }
+    "qwave".to_string()
+}
+
+/// Execute `qwave-hypr-hud vault-menu`:
+/// Sovereign Personal-Signature Password Vault launcher (`SUPER + U`).
+/// Unseals credentials ONLY via live Ed25519 cryptographic signature (`ssh-keygen -Y sign`/`verify`)
+/// fused with Hue's `MEM|8` 79-byte `WaveInt` vocal wave, types/copies into the focused window,
+/// and automatically wipes the clipboard after 12 seconds!
+pub fn run_vault_menu(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"vault-menu\",\"cipher\":\"ChaCha20-HMAC-SHA256-PBKDF2-HKDF\",\"trit\":\"+\"}".to_string();
+    }
+
+    let records = load_hud_vault_records();
+    let known_domains = load_hud_known_domains();
+    let mut menu_lines: Vec<String> = Vec::with_capacity(known_domains.len() + 4);
+    for dom in &known_domains {
+        menu_lines.push(format!(
+            "[UNSEAL] {} (Sign with Ed25519 + 79B WaveInt)",
+            sanitize_no_float(dom)
+        ));
+    }
+    menu_lines.push("[SEAL] Seal New Credential with Personal Ed25519 Signature".to_string());
+    menu_lines.push(format!(
+        "[VERIFY] Verify {} Sealed Vault Records & 79B WaveInt Frames",
+        records.len()
+    ));
+    menu_lines.push("[BROWSER] Open Sovereign Vault in Qwave Browser".to_string());
+
+    let Some(choice) = prompt_dmenu("Sovereign Vault > ", &menu_lines, false) else {
+        return "{\"ok\":true,\"action\":\"vault-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
+    };
+
+    if choice.starts_with("[BROWSER]") {
+        return run_markdown_hud(&[]);
+    }
+
+    if choice.starts_with("[VERIFY]") {
+        let qwave_bin = resolve_qwave_bin();
+        let out = Command::new(&qwave_bin)
+            .args(["vault", "verify"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let total = extract_json_i64(&out, "total_records").unwrap_or(records.len() as i64);
+        let fp = extract_json_str(&out, "signer_fingerprint").unwrap_or_default();
+        let msg = format!(
+            "Verified {} sealed records · Signer {}",
+            total,
+            sanitize_no_float(&fp)
+        );
+        send_desktop_notification("🛡️ Sovereign Vault Verified [+]", &msg);
+        speak_async("Sovereign password vault verified with your personal signature");
+        return if out.is_empty() {
+            "{\"ok\":true,\"action\":\"vault-menu\",\"subaction\":\"verify\",\"trit\":\"+\"}".to_string()
+        } else {
+            sanitize_no_float(&out)
+        };
+    }
+
+    if choice.starts_with("[SEAL]") {
+        let Some(origin_in) =
+            prompt_dmenu("Domain to Seal (e.g. github.com) > ", &known_domains, false)
+        else {
+            return "{\"ok\":true,\"action\":\"vault-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        };
+        let origin = canonicalize_domain(origin_in.trim());
+        if origin.is_empty() {
+            return "{\"ok\":false,\"action\":\"vault-menu\",\"error\":\"empty origin\",\"trit\":\"-\"}".to_string();
+        }
+        let Some(user_in) = prompt_dmenu("Username / Email > ", &[], false) else {
+            return "{\"ok\":true,\"action\":\"vault-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        };
+        let username = user_in.trim().to_string();
+        let Some(pass_in) = prompt_dmenu("Password to Seal > ", &[], true) else {
+            return "{\"ok\":true,\"action\":\"vault-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        };
+        let password = pass_in.trim().to_string();
+        if password.is_empty() {
+            return "{\"ok\":false,\"action\":\"vault-menu\",\"error\":\"empty password\",\"trit\":\"-\"}".to_string();
+        }
+        let phrase = prompt_dmenu("Optional Personal Signature Phrase (Enter for none) > ", &[], true)
+            .unwrap_or_default();
+
+        let qwave_bin = resolve_qwave_bin();
+        let out = Command::new(&qwave_bin)
+            .args([
+                "vault",
+                "seal",
+                &origin,
+                &username,
+                &password,
+                phrase.trim(),
+            ])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        if out.contains("\"ok\":true") {
+            remember_hud_domain(&origin);
+            let msg = format!(
+                "Sealed {} ({}) with Ed25519 + 79B WaveInt",
+                sanitize_no_float(&origin),
+                sanitize_no_float(&username)
+            );
+            send_desktop_notification("🔏 Sovereign Vault Sealed [+]", &msg);
+            speak_async("Password sealed with your personal signature");
+            return format!(
+                "{{\"ok\":true,\"action\":\"vault-menu\",\"subaction\":\"seal\",\"origin\":\"{}\",\"trit\":\"+\"}}",
+                json_escape(&origin)
+            );
+        }
+        let err = extract_json_str(&out, "error").unwrap_or_else(|| "seal failed".to_string());
+        send_desktop_notification("Sovereign Vault Error [-]", &sanitize_no_float(&err));
+        return format!(
+            "{{\"ok\":false,\"action\":\"vault-menu\",\"error\":\"{}\",\"trit\":\"-\"}}",
+            json_escape(&err)
+        );
+    }
+
+    let domain_cand = if let Some(rest) = choice.strip_prefix("[UNSEAL]") {
+        rest.split_whitespace().next().unwrap_or("").to_string()
+    } else {
+        choice.trim().to_string()
+    };
+    let norm_domain = canonicalize_domain(&domain_cand);
+    if !norm_domain.is_empty() {
+        let qwave_bin = resolve_qwave_bin();
+        let mut out = Command::new(&qwave_bin)
+            .args(["vault", "unseal", &norm_domain])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        if out.contains("\"requires_phrase\":true") && !out.contains("\"ok\":true") {
+            if let Some(phrase) =
+                prompt_dmenu("Personal Signature Phrase Required > ", &[], true)
+            {
+                out = Command::new(&qwave_bin)
+                    .args(["vault", "unseal", &norm_domain, "", phrase.trim()])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+            }
+        }
+
+        if out.contains("\"ok\":true") {
+            if let Some(password) = extract_json_str(&out, "password") {
+                let username = extract_json_str(&out, "username").unwrap_or_default();
+                let sig_fp = extract_json_str(&out, "signer_fingerprint").unwrap_or_default();
+                remember_hud_domain(&norm_domain);
+
+                if let Ok(mut child) = Command::new("wl-copy")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    if let Some(ref mut stdin) = child.stdin {
+                        let _ = stdin.write_all(password.as_bytes());
+                    }
+                    let _ = child.wait();
+                }
+                let _ = Command::new("wtype")
+                    .args(["--", &password])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                // Auto-wipe clipboard after 12 seconds so unsealed secrets never linger
+                let _ = Command::new("setsid")
+                    .args([
+                        "--fork",
+                        "sh",
+                        "-c",
+                        "sleep 12 && wl-copy --clear 2>/dev/null || true",
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+
+                let msg = format!(
+                    "Unsealed {} ({}) · {} · Clipboard auto-wipes in 12s",
+                    sanitize_no_float(&norm_domain),
+                    sanitize_no_float(&username),
+                    sanitize_no_float(&sig_fp)
+                );
+                send_desktop_notification("🔓 Sovereign Vault Unsealed [+]", &msg);
+                return format!(
+                    "{{\"ok\":true,\"action\":\"vault-menu\",\"subaction\":\"unseal\",\"origin\":\"{}\",\"trit\":\"+\"}}",
+                    json_escape(&norm_domain)
+                );
+            }
+        }
+
+        let err = extract_json_str(&out, "error")
+            .unwrap_or_else(|| "no sealed credential for domain".to_string());
+        send_desktop_notification(
+            "Sovereign Vault Notice [0]",
+            &sanitize_no_float(&err),
+        );
+        return format!(
+            "{{\"ok\":false,\"action\":\"vault-menu\",\"origin\":\"{}\",\"error\":\"{}\",\"trit\":\"0\"}}",
+            json_escape(&norm_domain),
+            json_escape(&err)
+        );
+    }
+
+    "{\"ok\":true,\"action\":\"vault-menu\",\"status\":\"noop\",\"trit\":\"0\"}".to_string()
+}
+
 /// Hands-Free Hyprland Desktop Voice Orchestrator:
-/// Checks if there is a new utterance from `hue` in `snap.thoughts` and executes desktop-wide
-/// workspace/window/music voice commands without ever blocking or restarting background surfaces!
+/// Checks if there is a new utterance from `hue` in `snap.thoughts` (using `.last()`, the newest
+/// entry in the chronological ring!) and executes desktop-wide workspace/window/vault/music voice commands!
 fn process_desktop_voice_command(snap: &HudSnapshot) {
-    let Some(latest) = snap.thoughts.first() else {
+    let Some(latest) = snap.thoughts.last() else {
         return;
     };
     if latest.speaker != "hue" || latest.ts == 0 {
@@ -2578,6 +3007,29 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
     } else if low.contains("workspace four") || low.contains("workspace 4") {
         hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 4 })");
         send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 4: DRA-DOCS");
+    } else if low.contains("open vault") || low.contains("password vault") || low.contains("unseal password") {
+        if let Ok(exe) = env::current_exe() {
+            let _ = Command::new(exe)
+                .arg("vault-menu")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    } else if low.contains("wifi menu") || low.contains("wi-fi menu") || low.contains("open wifi") || low.contains("open wi-fi") {
+        let _ = Command::new("noctalia")
+            .args(["msg", "panel-toggle", "control-center", "network"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    } else if low.contains("control center") || low.contains("bluetooth menu") {
+        let _ = Command::new("noctalia")
+            .args(["msg", "panel-toggle", "control-center"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
     } else if low.contains("fullscreen") || low.contains("maximize window") {
         hyprctl_dispatch_lua("hl.dsp.window.fullscreen()");
     } else if low.contains("toggle floating") || low.contains("float window") {
@@ -2752,8 +3204,9 @@ mod tests {
         let wm = run_wifi_menu(&["--dry-run".to_string()]);
         let wt = run_wifi_tui(&["--dry-run".to_string()]);
         let wh = run_wifi_heal(&["--dry-run".to_string()]);
+        let vm = run_vault_menu(&["--dry-run".to_string()]);
         let ap = run_a6000_pulse(&["--dry-run".to_string()]);
-        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &ap] {
+        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &vm, &ap] {
             assert!(out.contains("\"ok\":true"));
             assert_zero_float_literals(out);
         }

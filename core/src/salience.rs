@@ -2092,7 +2092,7 @@ impl SelfCalibrationEngine {
         out_tokens.join(" ")
     }
 
-    ///Cumulative word accuracy across all OTA self-listening utterances as a zero-float [`Rational`].
+    /// Cumulative word accuracy across all OTA self-listening utterances as a zero-float [`Rational`].
     pub fn cumulative_word_accuracy_pq(&self) -> Rational {
         if self.total_expected_words == 0 {
             return Rational::ONE;
@@ -2105,6 +2105,241 @@ impl SelfCalibrationEngine {
     }
 }
 
+/// Trim leading and trailing non-salient silence from `16-bit PCM` speech using `100%` integer
+/// [`MarineIntDetector`] in `20 ms` frames (`sample_rate / 50`), preserving a `120 ms` (`6` frames)
+/// pre-roll and `160 ms` (`8` frames) post-roll around the voiced speech region.
+pub fn trim_salient_speech_pcm_i16(samples: &[i16], sample_rate: u32) -> Vec<i16> {
+    let sr = sample_rate.max(8_000) as usize;
+    let frame_len = (sr / 50).max(160); // 20 ms frame (320 samples at 16 kHz)
+    if samples.len() <= frame_len * 16 {
+        return samples.to_vec();
+    }
+
+    let mut det = MarineIntDetector::new(sr as u32, DEFAULT_CLIP_THRESHOLD_Q15);
+    let num_frames = samples.len() / frame_len;
+    let mut frame_abs = Vec::with_capacity(num_frames);
+    let mut frame_sal = Vec::with_capacity(num_frames);
+    let mut peak_abs: u32 = 0;
+
+    for f_idx in 0..num_frames {
+        let start = f_idx * frame_len;
+        let slice = &samples[start..start + frame_len];
+        let mut sum_abs: u64 = 0;
+        let mut sum_sal: u64 = 0;
+        for (i, &s) in slice.iter().enumerate() {
+            sum_abs += (s as i32).unsigned_abs() as u64;
+            sum_sal += det.process_sample_i16(s, start + i) as u64;
+        }
+        let m_abs = (sum_abs / (frame_len as u64)) as u32;
+        let m_sal = (sum_sal / (frame_len as u64)) as u16;
+        if m_abs > peak_abs {
+            peak_abs = m_abs;
+        }
+        frame_abs.push(m_abs);
+        frame_sal.push(m_sal);
+    }
+
+    let abs_gate = (peak_abs / 7).max(95);
+    let mut first_voiced: Option<usize> = None;
+    let mut last_voiced: Option<usize> = None;
+    for idx in 0..num_frames {
+        if frame_sal[idx] >= 24 || frame_abs[idx] >= abs_gate {
+            if first_voiced.is_none() {
+                first_voiced = Some(idx);
+            }
+            last_voiced = Some(idx);
+        }
+    }
+
+    let (Some(first_f), Some(last_f)) = (first_voiced, last_voiced) else {
+        return samples.to_vec();
+    };
+
+    let start_f = first_f.saturating_sub(6); // 120 ms pre-roll
+    let end_f = (last_f + 9).min(num_frames); // 160 ms post-roll
+    let start_sample = start_f * frame_len;
+    let end_sample = (end_f * frame_len).min(samples.len());
+    if end_sample <= start_sample + frame_len * 4 {
+        return samples.to_vec();
+    }
+    samples[start_sample..end_sample].to_vec()
+}
+
+/// Zero-float STT Repetition-Loop Deduplicator, Stutter Collapse & Breath-Noise Gate.
+///
+/// Rejects:
+/// - Decoder repetition loops on stationary noise (`"You Can Can Can..."`, `"M M M M..."`, `"be be be..."`)
+/// - Single-letter / single-word breath and click artifacts (`"M"`, `"be"`, `"And..."`, `"you"`, `"the"`)
+/// - Bracketed/parenthesized non-speech markers (`[BLANK_AUDIO]`, `(silence)`, `*music*`)
+/// And collapses accidental 1-word stutters or repeated `2..=10`-word n-gram tails.
+pub fn sanitize_and_dedup_stt_transcript(raw_tx: &str) -> Option<String> {
+    let mut cleaned_tokens: Vec<String> = Vec::new();
+    let mut in_bracket = false;
+    let mut in_paren = false;
+
+    for raw_tok in raw_tx.split_whitespace() {
+        if raw_tok.starts_with('[') || raw_tok.starts_with('*') {
+            in_bracket = true;
+        }
+        if raw_tok.starts_with('(') {
+            in_paren = true;
+        }
+        let skip = in_bracket || in_paren || raw_tok.contains("BLANK_AUDIO");
+        if raw_tok.ends_with(']') || raw_tok.ends_with('*') {
+            in_bracket = false;
+        }
+        if raw_tok.ends_with(')') {
+            in_paren = false;
+        }
+        if skip {
+            continue;
+        }
+        cleaned_tokens.push(raw_tok.to_string());
+    }
+
+    if cleaned_tokens.is_empty() {
+        return None;
+    }
+
+    // Extract normalized lowercase alphanumeric cores for loop analysis
+    let norm_words: Vec<String> = cleaned_tokens
+        .iter()
+        .map(|t| {
+            t.chars()
+                .filter(|c| c.is_alphanumeric() || *c == '\'')
+                .collect::<String>()
+                .trim_matches('\'')
+                .to_ascii_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if norm_words.is_empty() {
+        return None;
+    }
+
+    // 1. Detect greedy/beam decoder repetition loops (e.g. "You Can Can Can...", "M M M M...", "be be be...")
+    let mut max_consec_run = 1usize;
+    let mut cur_run = 1usize;
+    let mut unique_words: Vec<&str> = Vec::new();
+    for i in 0..norm_words.len() {
+        let w = norm_words[i].as_str();
+        if !unique_words.contains(&w) {
+            unique_words.push(w);
+        }
+        if i > 0 {
+            if norm_words[i] == norm_words[i - 1] {
+                cur_run += 1;
+                if cur_run > max_consec_run {
+                    max_consec_run = cur_run;
+                }
+            } else {
+                cur_run = 1;
+            }
+        }
+    }
+
+    // If a single token repeats >= 4 times in a row and the entire phrase has <= 3 unique words
+    // (like "You Can Can Can...", "M M M M...", "be be be..."), it is 100% a noise loop hallucination!
+    if max_consec_run >= 4 && unique_words.len() <= 3 {
+        return None;
+    }
+    // If >= 6 words total and unique words make up <= 1/3 of the words, reject as decoder loop!
+    if norm_words.len() >= 6 && unique_words.len() * 3 <= norm_words.len() {
+        return None;
+    }
+
+    // 2. Collapse consecutive duplicate words and repeated 2..=10-word n-gram loops
+    let mut dedup_tokens: Vec<String> = Vec::with_capacity(cleaned_tokens.len());
+    let mut dedup_norms: Vec<String> = Vec::with_capacity(cleaned_tokens.len());
+
+    for tok in cleaned_tokens {
+        let norm: String = tok
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '\'')
+            .collect::<String>()
+            .trim_matches('\'')
+            .to_ascii_lowercase();
+        if norm.is_empty() {
+            continue;
+        }
+        if dedup_norms.last().map(|prev| prev == &norm).unwrap_or(false) {
+            continue;
+        }
+        dedup_tokens.push(tok);
+        dedup_norms.push(norm);
+
+        for n in 2..=10 {
+            if dedup_norms.len() >= 2 * n {
+                let len = dedup_norms.len();
+                if dedup_norms[len - 2 * n..len - n] == dedup_norms[len - n..len] {
+                    dedup_tokens.truncate(len - n);
+                    dedup_norms.truncate(len - n);
+                    break;
+                }
+            }
+        }
+    }
+
+    if dedup_norms.is_empty() {
+        return None;
+    }
+
+    // 3. Reject single-letter / single-word breath, hum, or mic click artifacts ("M", "be", "And...", "you")
+    if dedup_norms.len() == 1 {
+        let w = dedup_norms[0].as_str();
+        const ALLOWED_SINGLE_WORDS: &[&str] = &[
+            "hey",
+            "aye",
+            "alex",
+            "alexia",
+            "alexandra",
+            "alexiai",
+            "qwave",
+            "gemini",
+            "aurora",
+            "hyprland",
+            "waybar",
+            "vault",
+            "stop",
+            "pause",
+            "play",
+            "yes",
+            "no",
+            "status",
+            "help",
+            "fullscreen",
+            "terminal",
+            "browser",
+            "hello",
+        ];
+        if !ALLOWED_SINGLE_WORDS.contains(&w) {
+            return None;
+        }
+    } else if dedup_norms.iter().all(|w| w.len() <= 1) {
+        return None;
+    } else if dedup_norms.len() == 2 {
+        // Reject 2-word filler/stutter fragments like "you can", "and the", "to be", "m m" when trailing off
+        let pair = (dedup_norms[0].as_str(), dedup_norms[1].as_str());
+        if matches!(
+            pair,
+            ("you", "can")
+                | ("and", "the")
+                | ("to", "be")
+                | ("in", "the")
+                | ("of", "the")
+                | ("on", "the")
+                | ("it", "is")
+                | ("oh", "oh")
+                | ("uh", "oh")
+        ) {
+            return None;
+        }
+    }
+
+    Some(dedup_tokens.join(" "))
+}
+
 /// Filter out non-speech ASR hallucinations (`"Go and hunt"`, `"Your weapons"`, etc.) on low-salience
 /// room sounds and repair phonetic near-misses using rolling room conversation context (`100%` integer math).
 pub fn contextualize_room_transcript(
@@ -2113,7 +2348,8 @@ pub fn contextualize_room_transcript(
     best_salience_q15: u16,
     cal: Option<&SelfCalibrationEngine>,
 ) -> Option<String> {
-    let trimmed = raw_tx.trim();
+    let sanitized = sanitize_and_dedup_stt_transcript(raw_tx)?;
+    let trimmed = sanitized.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -2182,12 +2418,29 @@ pub fn contextualize_room_transcript(
         ("Hyper land", "Hyprland"),
         ("hyperland", "Hyprland"),
         ("Hyperland", "Hyprland"),
+        ("hyperlands", "Hyprland"),
+        ("Hyperlands", "Hyprland"),
+        ("hypland", "Hyprland"),
+        ("Hypland", "Hyprland"),
+        ("hyplin", "Hyprland"),
+        ("Hyplin", "Hyprland"),
+        ("hypolin", "Hyprland"),
+        ("Hypolin", "Hyprland"),
+        ("Octalia", "Noctalia"),
+        ("octalia", "Noctalia"),
         ("way bar", "Waybar"),
         ("Way bar", "Waybar"),
         ("q wave", "Qwave"),
         ("Q wave", "Qwave"),
+        ("q-wave", "Qwave"),
+        ("Q-wave", "Qwave"),
+        ("Q-Wave", "Qwave"),
         ("cue wave", "Qwave"),
         ("Cue wave", "Qwave"),
+        ("Alexia I", "Alexiai"),
+        ("alexia i", "Alexiai"),
+        ("Alexi AI", "Alexiai"),
+        ("alexi ai", "Alexiai"),
     ];
     for &(bad, good) in PHONETIC_REPAIRS {
         if repaired.contains(bad) {
@@ -2195,8 +2448,19 @@ pub fn contextualize_room_transcript(
         }
     }
 
-    // Normalize leading "Hey I " / "Hey eye " wake phrase to "Hey Aye "
-    for prefix in ["Hey I ", "hey i ", "Hey eye ", "hey eye ", "Hey AI ", "hey ai "] {
+    // Normalize leading "Hey I " / "Hey eye " / "Hey, I! " wake phrase to "Hey Aye "
+    for prefix in [
+        "Hey, I! ",
+        "Hey, I, ",
+        "Hey, I ",
+        "hey, i ",
+        "Hey I ",
+        "hey i ",
+        "Hey eye ",
+        "hey eye ",
+        "Hey AI ",
+        "hey ai ",
+    ] {
         if let Some(rest) = repaired.strip_prefix(prefix) {
             repaired = format!("Hey Aye {rest}");
             break;
@@ -2581,6 +2845,67 @@ mod tests {
         assert!(alex_seat.east_cm <= -19 && alex_seat.east_cm >= -21);
         assert!(alex_seat.north_cm >= 33 && alex_seat.north_cm <= 35);
         assert!(alex_seat.lon_pq.num < 1_396_503_000);
+    }
+
+    #[test]
+    fn stt_repetition_loop_dedup_and_salient_window_trimmer_work_without_floats() {
+        // 1. Greedy/beam decoder repetition loops on stationary noise are rejected as None
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript(
+                "You Can Can Can Can Can Can Can Can Can Can Can Can Can Can Can Can Can"
+            ),
+            None
+        );
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript(
+                "M M M M M M M M M M M M M M M M M M M M M M M M M M"
+            ),
+            None
+        );
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript(
+                "be be be be be be be be be be be be be be be be be"
+            ),
+            None
+        );
+        // 2. Single-letter / single-word breath and mic click artifacts are rejected
+        assert_eq!(sanitize_and_dedup_stt_transcript("M"), None);
+        assert_eq!(sanitize_and_dedup_stt_transcript("And..."), None);
+        assert_eq!(sanitize_and_dedup_stt_transcript("be"), None);
+        assert_eq!(sanitize_and_dedup_stt_transcript("[BLANK_AUDIO] (silence)"), None);
+
+        // 3. Explicit 1-word wake words and commands ARE preserved
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript("Aye!").as_deref(),
+            Some("Aye!")
+        );
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript("Vault").as_deref(),
+            Some("Vault")
+        );
+
+        // 4. Real sentences with minor 2-word n-gram tail stutters or domain vocabulary are repaired cleanly
+        let recent = vec!["Checking Sovereign desktop".to_string()];
+        let cleaned = contextualize_room_transcript(
+            "Hey, I! Check the Sovereign Hypland studio check the Sovereign Hypland studio",
+            &recent,
+            2800,
+            None,
+        )
+        .unwrap();
+        assert_eq!(cleaned, "Hey Aye Check the Sovereign Hyprland studio");
+
+        // 5. Marine salient PCM trimmer strips leading/trailing silence while keeping active voiced speech
+        let mut padded_pcm = vec![5i16; 16_000]; // 1.0s leading silence
+        for i in 0..8_000usize {
+            let p = (i % 100) as i32;
+            let s = if p < 50 { (p - 25) * 400 } else { (75 - p) * 400 };
+            padded_pcm.push(s.clamp(-16_000, 16_000) as i16);
+        }
+        padded_pcm.extend(std::iter::repeat_n(5i16, 16_000)); // 1.0s trailing silence
+        let trimmed = trim_salient_speech_pcm_i16(&padded_pcm, 16_000);
+        assert!(trimmed.len() < padded_pcm.len());
+        assert!(trimmed.len() >= 8_000);
     }
 }
 
