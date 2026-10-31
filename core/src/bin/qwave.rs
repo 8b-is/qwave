@@ -36,6 +36,9 @@ use qwave_core::mesh::{
     MemnetCapsule64, PortalMemoryBook, fnv32_1a, parse_captive_portal_response_with_identity,
     rank_free_wifi_candidates_with_memory,
 };
+use qwave_core::papers::{
+    compile_tex_to_markdown, extract_pdf_to_markdown, markdown_to_spoken_narration,
+};
 use qwave_core::phoenix_sound::{PhoenixSoundPreset, phoenix_transform_audio_file};
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
@@ -236,11 +239,25 @@ fn main() -> ExitCode {
             .and_then(|vpos| args.get(vpos + 1))
             .map(String::as_str)
             .unwrap_or("af_heart");
-        let text = args
+        let raw_arg = args
             .get(pos + 1)
             .map(String::as_str)
             .unwrap_or("Qwave sovereign voice online.");
-        let msg = speak_out_loud(text, voice, true, true);
+        let spoken_text = {
+            let candidate = Path::new(raw_arg);
+            if candidate.is_file() {
+                let (_, md_source, _) = load_and_compile(candidate);
+                let narr = markdown_to_spoken_narration(&md_source);
+                if narr.is_empty() {
+                    raw_arg.to_string()
+                } else {
+                    narr
+                }
+            } else {
+                raw_arg.to_string()
+            }
+        };
+        let msg = speak_out_loud(&spoken_text, voice, true, true);
         if !is_worker {
             println!("{msg}");
         }
@@ -321,22 +338,11 @@ fn main() -> ExitCode {
 
     if let Some(pos) = args.iter().position(|a| a == "--compile") {
         let Some(target) = args.get(pos + 1) else {
-            eprintln!("usage: qwave --compile <file.md>");
+            eprintln!("usage: qwave --compile <file.md|file.pdf|file.tex>");
             return ExitCode::from(2);
         };
         let (path, _) = resolve_input_target(target);
-        let source = fs::read_to_string(&path).unwrap_or_else(|e| {
-            format!("# Could not read `{}`\n\nError: `{e}`", path.display())
-        });
-        let compiled = compile_full(&source, MarkdownTrust::CompilerOutputOnly, None);
-        let title = if compiled.title.is_empty() {
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Qwave Markdown")
-                .to_string()
-        } else {
-            compiled.title.clone()
-        };
+        let (title, source, compiled) = load_and_compile(&path);
         println!("{}", render_full_page(&path, &title, &source, &compiled, None, true));
         return ExitCode::SUCCESS;
     }
@@ -1679,15 +1685,83 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
     let base_dir = path
         .parent()
         .map(|p| p.to_string_lossy().to_string());
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document");
+    let file_name_lower = file_name.to_ascii_lowercase();
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    let raw = fs::read_to_string(path).unwrap_or_else(|e| {
-        format!("# Could not open `{}`\n\nError: `{e}`", path.display())
-    });
+    let raw_bytes = fs::read(path).unwrap_or_default();
+    let is_pdf = ext == "pdf"
+        || file_name_lower.ends_with(".pdf.bin")
+        || raw_bytes.starts_with(b"%PDF-");
+
+    if is_pdf {
+        let asset_url = format!("/asset?path={}", url_encode(&path.to_string_lossy()));
+        let pdf_report = extract_pdf_to_markdown(&raw_bytes, file_name, Some(&asset_url));
+        let mut compiled = compile_full(
+            &pdf_report.markdown,
+            MarkdownTrust::CompilerOutputOnly,
+            base_dir.as_deref(),
+        );
+        let safe_asset = escape(&asset_url);
+        let pdf_embed_banner = format!(
+            "<div class=\"pdf-embed-shell\" style=\"margin-bottom:18px;border:1px solid rgba(110,247,247,0.3);border-radius:12px;background:rgba(4,18,28,0.75);padding:10px 14px;\">\
+               <div style=\"display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;\">\
+                 <span style=\"font-family:ui-monospace,monospace;font-size:0.80rem;color:#6ef7f7;\">📄 <strong>Sovereign PDF Engine</strong> · Zero-Float RFC-1951 Inflater + ToUnicode/OT1 Text &amp; TOC Extractor ({} pages · {} words)</span>\
+                 <div style=\"display:flex;gap:8px;\">\
+                   <button type=\"button\" class=\"escape-btn\" onclick=\"var f=document.getElementById('qwave-pdf-frame');if(f){{f.style.display=f.style.display==='none'?'block':'none';}}\">👁️ Toggle Original PDF View</button>\
+                   <a class=\"escape-btn\" href=\"{safe_asset}\" target=\"_blank\" style=\"text-decoration:none;\">↗ Raw PDF</a>\
+                 </div>\
+               </div>\
+               <iframe id=\"qwave-pdf-frame\" src=\"{safe_asset}\" style=\"display:none;width:100%;height:78vh;margin-top:12px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:#fff;\"></iframe>\
+             </div>",
+            pdf_report.page_count,
+            pdf_report.word_count
+        );
+        compiled.html = format!("{pdf_embed_banner}\n{}", compiled.html);
+        let title = if !pdf_report.title.is_empty() {
+            pdf_report.title
+        } else if compiled.title.is_empty() {
+            file_name.to_string()
+        } else {
+            compiled.title.clone()
+        };
+        return (title, pdf_report.markdown, compiled);
+    }
+
+    let raw = if raw_bytes.is_empty() && !path.exists() {
+        format!("# Could not open `{}`\n\nError: `file not found`", path.display())
+    } else {
+        String::from_utf8_lossy(&raw_bytes).into_owned()
+    };
+
+    let is_tex = matches!(ext.as_str(), "tex" | "ltx" | "latex" | "sty" | "cls" | "bib")
+        || file_name_lower.ends_with(".tex.bin")
+        || raw.contains("\\documentclass")
+        || raw.contains("\\begin{document}");
+
+    if is_tex {
+        let tex_report = compile_tex_to_markdown(&raw, file_name);
+        let compiled = compile_full(
+            &tex_report.markdown,
+            MarkdownTrust::CompilerOutputOnly,
+            base_dir.as_deref(),
+        );
+        let title = if !tex_report.title.is_empty() {
+            tex_report.title
+        } else if compiled.title.is_empty() {
+            file_name.to_string()
+        } else {
+            compiled.title.clone()
+        };
+        return (title, tex_report.markdown, compiled);
+    }
 
     let is_markdown = matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkd" | "txt" | "");
     let markdown_input = if is_markdown {
@@ -1701,7 +1775,7 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
             .join("\n");
         format!(
             "# `{}`\n\n> [!NOTE]\n> Viewing source file in **Qwave Sovereign Inspector** · `{}`\n\n```{ext}\n{numbered}\n```",
-            path.file_name().and_then(|s| s.to_str()).unwrap_or("source"),
+            file_name,
             path.display()
         )
     };
@@ -1712,10 +1786,7 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
         base_dir.as_deref(),
     );
     let title = if compiled.title.is_empty() {
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Qwave Markdown")
-            .to_string()
+        file_name.to_string()
     } else {
         compiled.title.clone()
     };
@@ -2416,6 +2487,7 @@ fn render_full_page(
         <button type="button" class="escape-btn" data-remember="selection" title="Crystallize selection into MEM|8">✨ Remember Selection</button>
         <button type="button" class="escape-btn" id="btn-wide" title="Cycle reader width">📐 Width</button>
         <button type="button" class="escape-btn" id="btn-shader" title="Pause/Resume WebGL Wave">🌌 Wave</button>
+        <button type="button" class="escape-btn btn-alexiai" id="btn-read-aloud" title="Read paper/document aloud paragraph-by-paragraph with ALEXIAI while you work">🔊 Read Aloud</button>
         <button type="button" class="escape-btn btn-alexiai" id="btn-tokyo-song" title="Play/Pause Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町)">🚆 Tokyo Song</button>
         <button type="button" class="escape-btn btn-alexiai" id="btn-humayian-mix" title="Generate & Play a fresh On-Machine Humayian Music Mix from all our songs!">🎹 Humayian Mix</button>
       </div>
@@ -2898,6 +2970,92 @@ fn render_full_page(
         }}
       }});
     }}
+
+    // Document / Paper Read-Aloud Narrator ("Listen While Working" mode)
+    let isReadingAloud = false;
+    let readAloudNodes = [];
+    let readAloudIdx = 0;
+    const readAloudBtn = document.getElementById('btn-read-aloud');
+
+    function clearReadAloudHighlight() {{
+      document.querySelectorAll('.qwave-reading-active').forEach(function (el) {{
+        el.classList.remove('qwave-reading-active');
+        el.style.outline = '';
+        el.style.background = '';
+      }});
+    }}
+
+    function stopReadAloud() {{
+      isReadingAloud = false;
+      if (currentAudio) {{
+        currentAudio.pause();
+        currentAudio = null;
+      }}
+      clearReadAloudHighlight();
+      if (readAloudBtn) readAloudBtn.textContent = '🔊 Read Aloud';
+      if (statusEl) statusEl.textContent = '💜 Read-aloud paused — click 🔊 Read Aloud to resume.';
+    }}
+
+    function playNextReadAloudParagraph() {{
+      if (!isReadingAloud) return;
+      while (readAloudIdx < readAloudNodes.length) {{
+        const node = readAloudNodes[readAloudIdx];
+        const rawText = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (rawText.length >= 4 && !rawText.startsWith('📄 Sovereign PDF Engine')) {{
+          clearReadAloudHighlight();
+          node.classList.add('qwave-reading-active');
+          node.style.outline = '1px solid rgba(255, 158, 219, 0.65)';
+          node.style.background = 'rgba(255, 158, 219, 0.08)';
+          node.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+
+          const voice = document.getElementById('alexiai-voice')?.value || 'af_heart';
+          const clipped = rawText.length > 520 ? rawText.slice(0, 520) : rawText;
+          if (readAloudBtn) {{
+            readAloudBtn.textContent = '⏹️ Stop Reading (' + (readAloudIdx + 1) + '/' + readAloudNodes.length + ')';
+          }}
+          if (statusEl) {{
+            statusEl.textContent = '📖 Reading paragraph ' + (readAloudIdx + 1) + ' of ' + readAloudNodes.length + ' (' + voice + ')...';
+          }}
+          const audio = new Audio('/api/alexiai/tts?voice=' + encodeURIComponent(voice) + '&text=' + encodeURIComponent(clipped));
+          currentAudio = audio;
+          audio.addEventListener('ended', function () {{
+            if (!isReadingAloud) return;
+            readAloudIdx++;
+            playNextReadAloudParagraph();
+          }});
+          audio.addEventListener('error', function () {{
+            if (!isReadingAloud) return;
+            readAloudIdx++;
+            playNextReadAloudParagraph();
+          }});
+          audio.play().catch(function () {{
+            stopReadAloud();
+          }});
+          return;
+        }}
+        readAloudIdx++;
+      }}
+      stopReadAloud();
+      if (statusEl) statusEl.textContent = '✨ Finished reading document aloud!';
+    }}
+
+    function toggleReadAloud() {{
+      if (isReadingAloud) {{
+        stopReadAloud();
+        return;
+      }}
+      const bodyEl = document.getElementById('md-body');
+      if (!bodyEl) return;
+      readAloudNodes = Array.from(bodyEl.querySelectorAll('h1, h2, h3, p, blockquote, li'));
+      if (!readAloudNodes.length) return;
+      if (readAloudIdx >= readAloudNodes.length) readAloudIdx = 0;
+      voiceEnabled = true;
+      if (ttsToggleBtn) ttsToggleBtn.textContent = '🔊 Voice: ON';
+      isReadingAloud = true;
+      playNextReadAloudParagraph();
+    }}
+
+    readAloudBtn?.addEventListener('click', toggleReadAloud);
 
     // Send prompt (from voice or text) to ALEXIAI
     function sendToAlexiai(messageText) {{
@@ -3493,6 +3651,8 @@ fn guess_mime(path: &Path) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "tex" | "ltx" | "latex" | "bib" => "text/plain; charset=utf-8",
         "woff2" => "font/woff2",
         "css" => "text/css; charset=utf-8",
         "js" => "application/javascript; charset=utf-8",

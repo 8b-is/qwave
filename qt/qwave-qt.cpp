@@ -576,6 +576,12 @@ static QUrl resolveUserNavigationInput(const QString &rawInput, const QUrl &home
         const QString homeDir = homeEnv.isEmpty() ? QStringLiteral("/home/hue") : QString::fromUtf8(homeEnv);
         s = homeDir + s.mid(1);
     }
+    if (s.startsWith("file://")) {
+        const QUrl fileUrl(s);
+        if (fileUrl.isLocalFile()) {
+            s = fileUrl.toLocalFile();
+        }
+    }
     if (s.startsWith('/')) {
         if (homeUrl.host() == "127.0.0.1" || homeUrl.host() == "localhost") {
             QUrl u = homeUrl;
