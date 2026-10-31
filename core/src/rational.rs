@@ -65,6 +65,12 @@ impl Rational {
     }
 }
 
+impl core::fmt::Display for Rational {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}/{}", self.num, self.den)
+    }
+}
+
 const fn gcd(mut a: u32, mut b: u32) -> u32 {
     while b != 0 {
         let t = a % b;

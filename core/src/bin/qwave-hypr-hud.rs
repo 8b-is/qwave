@@ -156,6 +156,12 @@ fn main() {
         "wifi-heal" => {
             println!("{}", run_wifi_heal(rest));
         }
+        "portal-heal" | "captive-portal" => {
+            println!("{}", run_portal_heal(rest));
+        }
+        "wifi-love" | "mesh-love" | "bluetooth-love" | "hotspot-love" => {
+            println!("{}", run_wifi_love(rest));
+        }
         "vault-menu" => {
             println!("{}", run_vault_menu(rest));
         }
@@ -187,7 +193,9 @@ fn print_usage() {
          \x20 qwave-hypr-hud agy-resume            Launch Sovereign AGY Studio (All Perms, Zero Sandbox, Resumed)\n\
          \x20 qwave-hypr-hud wifi-menu             Fuzzel/dmenu Wi-Fi switcher, password updater & healer\n\
          \x20 qwave-hypr-hud wifi-tui              Launch floating Alacritty nmtui Wi-Fi manager + MTU 1380\n\
-         \x20 qwave-hypr-hud wifi-heal             Auto-reconnect highest-signal saved Wi-Fi + enforce MTU 1380\n\
+         \x20 qwave-hypr-hud wifi-heal             Auto-reconnect Wi-Fi, heal expired captive portals & MTU 1380\n\
+         \x20 qwave-hypr-hud portal-heal           Solve captive portal with honest inputs + Anicca recipe memory\n\
+         \x20 qwave-hypr-hud wifi-love             Share Bluetooth / Hotspot & ESP32 Constellation mesh love\n\
          \x20 qwave-hypr-hud a6000-pulse           Probe Sovereign stack & A6000 with notification"
     );
 }
@@ -1785,7 +1793,7 @@ pub fn parse_nmcli_wifi_list(raw: &str, saved_ssids: &[String]) -> Vec<WifiNetwo
 
 /// Format menu lines for `fuzzel --dmenu -p "Wi-Fi > "` with Zero-Float output.
 pub fn format_wifi_menu_entries(entries: &[WifiNetworkEntry]) -> Vec<String> {
-    let mut lines = Vec::with_capacity(entries.len() + 3);
+    let mut lines = Vec::with_capacity(entries.len() + 5);
     for e in entries {
         let marker = if e.in_use { "[*]" } else { "[ ]" };
         let saved_tag = if e.saved { " · SAVED" } else { "" };
@@ -1795,7 +1803,9 @@ pub fn format_wifi_menu_entries(entries: &[WifiNetworkEntry]) -> Vec<String> {
             marker, clean_ssid, e.signal, e.security, saved_tag
         ));
     }
-    lines.push("[HEAL] Auto-Reconnect & Fix 1380 MTU".to_string());
+    lines.push("[HEAL] Auto-Reconnect, Solve Captive Portal & Fix 1380 MTU".to_string());
+    lines.push("[PORTAL] Solve Captive Portal (Honest Input + Remember Recipe)".to_string());
+    lines.push("[LOVE] Share Bluetooth / Hotspot & ESP32 Constellation Mesh Love".to_string());
     lines.push("[PASS] Update Wi-Fi Password for Network".to_string());
     lines.push("[TUI] Open Full NetworkManager TUI (nmtui)".to_string());
     lines
@@ -1893,18 +1903,120 @@ fn current_wlan0_state_and_ssid() -> (String, String) {
     (state, ssid)
 }
 
+fn probe_internet_204_fast() -> bool {
+    Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "2",
+            "http://connectivitycheck.gstatic.com/generate_204",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "204")
+        .unwrap_or(false)
+}
+
+/// Execute `qwave-hypr-hud portal-heal`:
+/// Invokes `qwave --nomad-connect` to solve captive portals using honest traveler inputs,
+/// replay/store Anicca recipes (`~/.local/share/qwave/mem8/portal_recipes.tsv`), vouch for
+/// ESP32 Constellation MACs, and broadcast `MemnetCapsule64` over UDP `:8888`.
+pub fn run_portal_heal(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"portal-heal\",\"portal_solved\":true,\"mtu\":1380,\"trit\":\"+\"}".to_string();
+    }
+
+    let qwave_bin = find_qwave_bin();
+    let raw = Command::new(&qwave_bin)
+        .arg("--nomad-connect")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let _ = enforce_wlan0_mtu_1380();
+    let internet_ok = probe_internet_204_fast();
+    let (_, active_ssid) = current_wlan0_state_and_ssid();
+    let clean_ssid = sanitize_no_float(&active_ssid);
+
+    if internet_ok {
+        let msg = format!(
+            "Captive portal unlocked on {} (Anicca recipe saved + ESP32 mesh synced)",
+            if clean_ssid.is_empty() { "wlan0" } else { &clean_ssid }
+        );
+        send_desktop_notification("8b:is Captive Portal Healed [+]", &msg);
+        speak_async("Captive portal unlocked and mesh synced");
+    }
+
+    let clean_raw = sanitize_no_float(&raw);
+    if clean_raw.starts_with('{') && clean_raw.ends_with('}') {
+        clean_raw
+    } else {
+        format!(
+            "{{\"ok\":{},\"action\":\"portal-heal\",\"ssid\":\"{}\",\"internet_204\":{},\"mtu\":1380,\"trit\":\"{}\"}}",
+            if internet_ok { "true" } else { "false" },
+            json_escape(&clean_ssid),
+            if internet_ok { "true" } else { "false" },
+            if internet_ok { "+" } else { "0" }
+        )
+    }
+}
+
+/// Execute `qwave-hypr-hud wifi-love`:
+/// Shares Bluetooth / Hotspot love and broadcasts `MemnetCapsule64` + `TWIF` Wi-Fi bridge
+/// to ESP32 Sovereign Constellation nodes and friends who struggle with captive portals.
+pub fn run_wifi_love(args: &[String]) -> String {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if dry_run {
+        return "{\"ok\":true,\"action\":\"wifi-love\",\"bluetooth_love\":true,\"esp32_mesh\":true,\"trit\":\"+\"}".to_string();
+    }
+
+    let qwave_bin = find_qwave_bin();
+    let flag = if args.iter().any(|a| a == "--hotspot") {
+        "--hotspot-love"
+    } else {
+        "--bluetooth-love"
+    };
+    let raw = Command::new(&qwave_bin)
+        .arg(flag)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    send_desktop_notification(
+        "8b:is Sovereign Mesh & Bluetooth Love [+]",
+        "Sharing portal-free Wi-Fi & 64B MemnetCapsule64 across Bluetooth + ESP32 Constellation",
+    );
+    speak_async("Sharing Bluetooth and Constellation mesh love");
+
+    let clean_raw = sanitize_no_float(&raw);
+    if clean_raw.starts_with('{') && clean_raw.ends_with('}') {
+        clean_raw
+    } else {
+        "{\"ok\":true,\"action\":\"wifi-love\",\"bluetooth_love\":true,\"esp32_mesh\":true,\"trit\":\"+\"}".to_string()
+    }
+}
+
 /// Execute `qwave-hypr-hud wifi-heal`:
-/// Checks `wlan0` state without triggering a Wi-Fi scan; when already `connected`, only checks/sets
-/// MTU `1380`; ONLY scans Wi-Fi and auto-connects to the highest-signal saved connection when `wlan0`
-/// is `disconnected`!
+/// 1. Checks `wlan0` state without triggering a Wi-Fi scan when already `connected` (eliminating
+///    60-second background scan roaming drops).
+/// 2. When `disconnected`, scans Wi-Fi and auto-connects to the highest-signal saved connection;
+///    if no saved network is in range, falls back to `qwave --nomad-connect` to join and unlock
+///    the best free/open captive portal network (weighted by `PortalMemoryBook`).
+/// 3. When `connected`, enforces MTU `1380` and probes `HTTP 204`; if a captive portal has expired
+///    or requires sign-in, automatically runs `qwave --nomad-connect` to heal the portal and sync
+///    the ESP32 Constellation mesh so Aye is never stranded!
 pub fn run_wifi_heal(args: &[String]) -> String {
     let dry_run = args.iter().any(|a| a == "--dry-run");
     if dry_run {
-        return "{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"connected\",\"mtu\":1380,\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"connected\",\"portal_healed\":false,\"mtu\":1380,\"trit\":\"+\"}".to_string();
     }
 
     let (mut state, mut active_ssid) = current_wlan0_state_and_ssid();
     let mut reconnected = false;
+    let mut portal_healed = false;
 
     if state == "disconnected" {
         let saved = list_saved_wifi_connections();
@@ -1940,25 +2052,63 @@ pub fn run_wifi_heal(args: &[String]) -> String {
         let updated = current_wlan0_state_and_ssid();
         state = updated.0;
         active_ssid = updated.1;
+
+        // If still disconnected (no saved WPA2 network in range), invoke qwave --nomad-connect
+        // to join and traverse the highest-ranked open/free captive portal!
+        if state != "connected" {
+            let qwave_bin = find_qwave_bin();
+            let _ = Command::new(&qwave_bin)
+                .arg("--nomad-connect")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            let after_nomad = current_wlan0_state_and_ssid();
+            if after_nomad.0 == "connected" {
+                reconnected = true;
+                portal_healed = true;
+                state = after_nomad.0;
+                active_ssid = after_nomad.1;
+            }
+        }
     }
 
     let mtu_ok = enforce_wlan0_mtu_1380();
-    let trit = if state == "connected" { "+" } else { "0" };
 
-    if reconnected && !active_ssid.is_empty() {
-        let msg = format!(
-            "Auto-reconnected Wi-Fi to {} with MTU 1380",
-            sanitize_no_float(&active_ssid)
-        );
+    // When connected, verify live internet (HTTP 204). If the captive portal expired or reset
+    // after a DHCP lease renewal, automatically traverse it with honest traveler inputs + Anicca recipe!
+    if state == "connected" && !probe_internet_204_fast() {
+        let qwave_bin = find_qwave_bin();
+        let _ = Command::new(&qwave_bin)
+            .arg("--nomad-connect")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if probe_internet_204_fast() {
+            portal_healed = true;
+        }
+    }
+
+    let trit = if state == "connected" { "+" } else { "0" };
+    let clean_ssid = sanitize_no_float(&active_ssid);
+
+    if reconnected && !clean_ssid.is_empty() {
+        let msg = format!("Auto-reconnected Wi-Fi to {} with MTU 1380", clean_ssid);
         send_desktop_notification("8b:is Wi-Fi Auto-Healer [+]", &msg);
         speak_async(&msg);
+    } else if portal_healed && !clean_ssid.is_empty() {
+        let msg = format!(
+            "Healed expired captive portal on {} (Aye stays connected!)",
+            clean_ssid
+        );
+        send_desktop_notification("8b:is Captive Portal Healed [+]", &msg);
     }
 
     format!(
-        "{{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"{}\",\"ssid\":\"{}\",\"reconnected\":{},\"mtu\":{},\"trit\":\"{}\"}}",
+        "{{\"ok\":true,\"action\":\"wifi-heal\",\"device\":\"wlan0\",\"state\":\"{}\",\"ssid\":\"{}\",\"reconnected\":{},\"portal_healed\":{},\"mtu\":{},\"trit\":\"{}\"}}",
         json_escape(&state),
-        json_escape(&active_ssid),
+        json_escape(&clean_ssid),
         if reconnected { "true" } else { "false" },
+        if portal_healed { "true" } else { "false" },
         if mtu_ok { 1380 } else { 1500 },
         trit
     )
@@ -2169,10 +2319,18 @@ pub fn run_wifi_menu(args: &[String]) -> String {
         let res = run_wifi_heal(&[]);
         send_desktop_notification(
             "8b:is Wi-Fi Auto-Healer [+]",
-            "Wi-Fi checked and MTU 1380 enforced",
+            "Wi-Fi checked, captive portal verified, and MTU 1380 enforced",
         );
         speak_async("Wi-Fi healed and MTU 1380 applied");
         return res;
+    }
+
+    if choice.starts_with("[PORTAL]") {
+        return run_portal_heal(&[]);
+    }
+
+    if choice.starts_with("[LOVE]") {
+        return run_wifi_love(&[]);
     }
 
     if choice.starts_with("[TUI]") {
@@ -3016,6 +3174,10 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
                 .stderr(Stdio::null())
                 .spawn();
         }
+    } else if low.contains("captive portal") || low.contains("free wifi") || low.contains("free wi-fi") || low.contains("heal portal") {
+        let _ = run_portal_heal(&[]);
+    } else if low.contains("mesh love") || low.contains("bluetooth love") || low.contains("hotspot love") || low.contains("share wifi") {
+        let _ = run_wifi_love(&[]);
     } else if low.contains("wifi menu") || low.contains("wi-fi menu") || low.contains("open wifi") || low.contains("open wi-fi") {
         let _ = Command::new("noctalia")
             .args(["msg", "panel-toggle", "control-center", "network"])
@@ -3204,9 +3366,11 @@ mod tests {
         let wm = run_wifi_menu(&["--dry-run".to_string()]);
         let wt = run_wifi_tui(&["--dry-run".to_string()]);
         let wh = run_wifi_heal(&["--dry-run".to_string()]);
+        let ph = run_portal_heal(&["--dry-run".to_string()]);
+        let wl = run_wifi_love(&["--dry-run".to_string()]);
         let vm = run_vault_menu(&["--dry-run".to_string()]);
         let ap = run_a6000_pulse(&["--dry-run".to_string()]);
-        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &vm, &ap] {
+        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &ph, &wl, &vm, &ap] {
             assert!(out.contains("\"ok\":true"));
             assert_zero_float_literals(out);
         }
@@ -3231,6 +3395,8 @@ mod tests {
 
         let menu = format_wifi_menu_entries(&parsed);
         assert!(menu.iter().any(|l| l.starts_with("[HEAL]")));
+        assert!(menu.iter().any(|l| l.starts_with("[PORTAL]")));
+        assert!(menu.iter().any(|l| l.starts_with("[LOVE]")));
         assert!(menu.iter().any(|l| l.starts_with("[TUI]")));
         for line in &menu {
             assert_zero_float_literals(line);

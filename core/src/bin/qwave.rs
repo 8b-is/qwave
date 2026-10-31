@@ -18,7 +18,7 @@
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,9 +32,11 @@ use qwave_core::markdown::{
     escape, markdown_source_literal,
 };
 use qwave_core::mesh::{
-    BluetoothMeshFrame, CaptivePortalAction, parse_captive_portal_response,
-    rank_free_wifi_candidates,
+    BluetoothMeshFrame, CONSTELLATION_FLOCK_MACS, CaptivePortalAction, HonestPortalIdentity,
+    MemnetCapsule64, PortalMemoryBook, fnv32_1a, parse_captive_portal_response_with_identity,
+    rank_free_wifi_candidates_with_memory,
 };
+use qwave_core::phoenix_sound::{PhoenixSoundPreset, phoenix_transform_audio_file};
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
     AcousticSourceKind, GEODESIC_PQ_DEN, MarineIntDetector, RingBuffer, RoomAcousticTracker,
@@ -125,9 +127,24 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--nomad" || a == "--nomad-connect") {
-        let auto_connect = args.iter().any(|a| a == "--nomad-connect");
+    if args.iter().any(|a| {
+        a == "--nomad"
+            || a == "--nomad-connect"
+            || a == "--portal-heal"
+            || a == "--captive-portal"
+    }) {
+        let auto_connect = args
+            .iter()
+            .any(|a| a == "--nomad-connect" || a == "--portal-heal" || a == "--captive-portal");
         println!("{}", run_nomad_mesh(auto_connect));
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| {
+        a == "--hotspot-love" || a == "--bluetooth-love" || a == "--mesh-love" || a == "--wifi-love"
+    }) {
+        let start_ap = args.iter().any(|a| a == "--hotspot-ap");
+        println!("{}", run_hotspot_bluetooth_love(start_ap));
         return ExitCode::SUCCESS;
     }
 
@@ -140,6 +157,16 @@ fn main() -> ExitCode {
     if args.iter().any(|a| a == "--ping-pong" || a == "--ping-pong-voice") {
         let do_voice = args.iter().any(|a| a == "--ping-pong-voice");
         println!("{}", run_acoustic_ping_pong(do_voice));
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| {
+        a == "--phoenix-music"
+            || a == "--phoenix-sound"
+            || a == "--phoenix-432"
+            || a == "--ignite-all"
+    }) {
+        println!("{}", run_phoenix_music_revelation(&args));
         return ExitCode::SUCCESS;
     }
 
@@ -727,6 +754,18 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("POST", "/api/triad/chirp") => {
             let json = run_esp32_triad_probe(true);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/api/nomad") => {
+            let json = run_nomad_mesh(false);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("POST", "/api/nomad/heal") | ("POST", "/api/nomad/connect") => {
+            let json = run_nomad_mesh(true);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("POST", "/api/nomad/love") => {
+            let json = run_hotspot_bluetooth_love(false);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/alexiai/tts") => {
@@ -5844,13 +5883,187 @@ fn run_qwave_alexiai_bench() -> String {
     )
 }
 
-/// Sovereign Nomad Mesh (`qwave --nomad` / `nomad_mesh` MCP tool):
-/// 1. Discovers & ranks open/free & captive-portal Wi-Fi networks (`tullys_Wi-Fi`, `0000docomo`, etc.).
-/// 2. Probes HTTP captive portal state (`http://neverssl.com/` / default gateway) and optionally
-///    auto-traverses redirects & submits HTML ToS acceptance forms (`--nomad-connect`).
-/// 3. Discovers Bluetooth peers and builds a 96-byte BNEP/RFCOMM Sovereign Mesh Frame (`8BM8`)
-///    and 31-byte BLE Advertising Beacon (`8B`) carrying the user's `MEM|8` `WaveInt` + `WUPZ` receipt.
+fn portal_recipes_path() -> PathBuf {
+    let mut p = mem8_dir();
+    p.push("portal_recipes.tsv");
+    p
+}
+
+fn load_portal_memory_book() -> PortalMemoryBook {
+    let path = portal_recipes_path();
+    if let Ok(raw) = fs::read_to_string(&path) {
+        PortalMemoryBook::from_tsv(&raw)
+    } else {
+        PortalMemoryBook::new()
+    }
+}
+
+fn save_portal_memory_book(book: &PortalMemoryBook) {
+    let dir = mem8_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = portal_recipes_path();
+    let _ = fs::write(&path, book.to_tsv());
+}
+
+/// Read `(state, active_ssid, wlan0_mac, lease_valid_lft_s, arp_neighbor_macs)` without triggering any Wi-Fi rescan.
+fn read_wlan0_state_ssid_mac_lease() -> (String, String, String, u32, Vec<String>) {
+    let mut state = "unknown".to_string();
+    let mut active_ssid = String::new();
+    if let Ok(out) = Command::new("nmcli")
+        .args(["-t", "-f", "DEVICE,STATE,CONNECTION", "device"])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("wlan0:") {
+                if let Some((st, conn)) = rest.split_once(':') {
+                    state = st.trim().to_string();
+                    active_ssid = conn.replace("\\:", ":").trim().to_string();
+                } else {
+                    state = rest.trim().to_string();
+                }
+                break;
+            }
+        }
+    }
+
+    let wlan0_mac = fs::read_to_string("/sys/class/net/wlan0/address")
+        .unwrap_or_else(|_| "a0:b3:39:08:f7:46".to_string())
+        .trim()
+        .to_ascii_lowercase();
+
+    let mut lease_s: u32 = 1800;
+    if let Ok(ip_out) = Command::new("ip").args(["addr", "show", "dev", "wlan0"]).output() {
+        let txt = String::from_utf8_lossy(&ip_out.stdout);
+        if let Some(idx) = txt.find("valid_lft ") {
+            let after = &txt[idx + "valid_lft ".len()..];
+            let token = after.split_whitespace().next().unwrap_or("");
+            if let Some(num_str) = token.strip_suffix("sec") {
+                if let Ok(parsed) = num_str.parse::<u32>() {
+                    lease_s = parsed;
+                }
+            }
+        }
+    }
+
+    let mut neighbor_macs = Vec::new();
+    if let Ok(neigh_out) = Command::new("ip")
+        .args(["neigh", "show", "dev", "wlan0"])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&neigh_out.stdout).lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            for w in parts.windows(2) {
+                if w[0] == "lladdr" {
+                    let mac = w[1].trim().to_ascii_lowercase();
+                    if mac.len() == 17
+                        && mac.chars().filter(|&c| c == ':').count() == 5
+                        && !mac.starts_with("00:00:5e:")
+                        && !neighbor_macs.contains(&mac)
+                    {
+                        neighbor_macs.push(mac);
+                    }
+                }
+            }
+        }
+    }
+
+    (state, active_ssid, wlan0_mac, lease_s, neighbor_macs)
+}
+
+/// Broadcast a 64-byte `MemnetCapsule64` packet on UDP `:8888` (matching `FLUG-OS` and `tdeck-omni`)
+/// and optionally push `WIFI <ssid>` + `WIFI SHARE` to any USB-attached ESP32 Triad/T-Deck node.
+fn broadcast_and_sync_esp32_memnet(
+    active_ssid: &str,
+    portal_ok: bool,
+    f0_hz: u16,
+    salience_pct: u8,
+    ap_count: u16,
+    push_serial_wifi: bool,
+) -> (String, Vec<String>) {
+    static MEMNET_SEQ: AtomicU64 = AtomicU64::new(1);
+    let seq = MEMNET_SEQ.fetch_add(1, Ordering::Relaxed) as u32;
+    let bssid_hash = fnv32_1a(active_ssid.as_bytes());
+    let cap = MemnetCapsule64 {
+        version: 1,
+        node_id: 4, // LINUX:QWAVE
+        node_trit: 1,
+        transport_mask: 0x07, // ESP-NOW + WIFI-UDP(:8888) + BLE
+        seed_class: 3,
+        dominant_mod: 1,
+        seq,
+        audio_f0_hz: f0_hz,
+        audio_salience_pct: salience_pct,
+        rf_rssi_dbm: -54,
+        rf_ap_count: ap_count,
+        imu_motion_mg: 0,
+        peer_rssi_dbm: [-52, -56, -58, -54],
+        top_bssid_fnv32: bssid_hash,
+        top_bssid_rssi_dbm: -54,
+        portal_ok: if portal_ok { 1 } else { 0 },
+        wave_b3: "101T10101".to_string(),
+        ssid_hint: active_ssid.chars().take(15).collect(),
+    };
+    let bytes64 = cap.to_bytes_64();
+    let hex64: String = bytes64.iter().map(|b| format!("{b:02x}")).collect();
+
+    let mut rx_nodes = Vec::new();
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.set_broadcast(true);
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(25)));
+        let _ = sock.send_to(&bytes64, "255.255.255.255:8888");
+        let mut rbuf = [0u8; 64];
+        if let Ok((n, src)) = sock.recv_from(&mut rbuf) {
+            if n == 64 {
+                if let Some(peer_cap) = MemnetCapsule64::from_bytes_64(&rbuf) {
+                    rx_nodes.push(format!(
+                        "node_{}@{}(seq={})",
+                        peer_cap.node_id,
+                        src.ip(),
+                        peer_cap.seq
+                    ));
+                }
+            }
+        }
+    }
+
+    if push_serial_wifi && portal_ok && !active_ssid.is_empty() {
+        for dev in ["/dev/ttyACM0", "/dev/ttyUSB0", "/dev/ttyACM1"] {
+            if Path::new(dev).exists() {
+                if let Ok(mut f) = fs::OpenOptions::new().write(true).open(dev) {
+                    let cmd = format!("\nWIFI {active_ssid}\nWIFI SHARE\n");
+                    let _ = f.write_all(cmd.as_bytes());
+                    let _ = f.flush();
+                    rx_nodes.push(format!("serial_twif_shared:{dev}"));
+                }
+            }
+        }
+    }
+
+    (hex64, rx_nodes)
+}
+
+/// Sovereign Nomad Mesh (`qwave --nomad` / `qwave --nomad-connect` / `nomad_mesh` MCP tool):
+/// 1. Discovers & ranks open/free & captive-portal Wi-Fi networks (`.Wi2_Free_at_[SK.GROUP]`, `tullys_Wi-Fi`, etc.)
+///     WITHOUT triggering destructive background Wi-Fi rescans when `wlan0` is already connected!
+/// 2. Probes HTTP captive portal state (`http://connectivitycheck.gstatic.com/generate_204`), automatically
+///    fills in honest traveler inputs (`email`, `country`, `lang`, `macaddr`, ToS checkboxes) and USEN
+///    `/capi/welcome` flock MAC vouchers, and remembers verified recipes in `~/.local/share/qwave/mem8/portal_recipes.tsv`.
+/// 3. Broadcasts a 64-byte `MemnetCapsule64` (`0x4D4E` `"MN"`) over UDP `:8888` to our 4-Node ESP32 Constellation
+///    (`ADA:MEDUSA`, `VAK:MEDUSA`, `OMN:MEDUSA`, `SUN:TDECK`) + 96B BNEP (`8BM8`) & 31B BLE (`8B`) mesh frames.
 fn run_nomad_mesh(auto_connect_free: bool) -> String {
+    let mut portal_book = load_portal_memory_book();
+    let (wlan_state, active_ssid, wlan0_mac, lease_s, neighbor_macs) =
+        read_wlan0_state_ssid_mac_lease();
+
+    // CRITICAL: When `wlan0` is already connected, ALWAYS pass `--rescan no` so NetworkManager
+    // never triggers an active multi-band scan that causes BSSID roaming & 60s DHCP drops!
+    let rescan_mode = if wlan_state == "connected" || !auto_connect_free {
+        "no"
+    } else {
+        "auto"
+    };
+
     let nmcli_out = Command::new("nmcli")
         .args([
             "-t",
@@ -5859,16 +6072,22 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
             "dev",
             "wifi",
             "list",
+            "--rescan",
+            rescan_mode,
         ])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
 
-    let candidates = rank_free_wifi_candidates(&nmcli_out);
+    let candidates = rank_free_wifi_candidates_with_memory(&nmcli_out, Some(&portal_book));
     let mut cand_json_items = Vec::new();
     for c in candidates.iter().take(8) {
+        let remembered = portal_book
+            .find_by_ssid(&c.ssid)
+            .map(|r| r.ttl_q8)
+            .unwrap_or(0);
         cand_json_items.push(format!(
-            "{{\"bssid\":{},\"ssid\":{},\"channel\":{},\"freq_mhz\":{},\"signal_pct\":{},\"security\":{},\"is_open\":{},\"is_portal_brand\":{},\"score_q10\":{}}}",
+            "{{\"bssid\":{},\"ssid\":{},\"channel\":{},\"freq_mhz\":{},\"signal_pct\":{},\"security\":{},\"is_open\":{},\"is_portal_brand\":{},\"remembered_ttl_q8\":{},\"score_q10\":{}}}",
             markdown_source_literal(&c.bssid),
             markdown_source_literal(&c.ssid),
             c.channel,
@@ -5877,12 +6096,24 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
             markdown_source_literal(&c.security),
             c.is_open,
             c.is_known_portal_brand,
+            remembered,
             c.score_q10
         ));
     }
 
-    // Check current HTTP captive-portal status via lightweight TCP probe to default gateway or neverssl
-    let portal_status = probe_and_traverse_captive_portal(auto_connect_free, &candidates);
+    // Check current HTTP captive-portal status and traverse/heal if needed
+    let portal_status = probe_and_traverse_captive_portal(
+        auto_connect_free,
+        &candidates,
+        &mut portal_book,
+        &wlan_state,
+        &active_ssid,
+        &wlan0_mac,
+        lease_s,
+        &neighbor_macs,
+    );
+    let portal_is_open = portal_status.starts_with("internet_open")
+        || portal_status.starts_with("portal_unlocked_204");
 
     // Discover nearby Bluetooth peers via `bluetoothctl devices`
     let bt_out = Command::new("bluetoothctl")
@@ -5907,6 +6138,8 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
     // Build deterministic 96-byte BNEP/RFCOMM Mesh Frame (`8BM8`) + 31-byte BLE Advertising Beacon (`8B`)
     let prof = load_salience_profile();
     let f0_u16 = (prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32)).clamp(50, 500) as u16;
+    let sal_pct = ((prof.avg_salience.num * 100) / (prof.avg_salience.den.max(1) as i32))
+        .clamp(10, 100) as u8;
     let now = now_secs();
     let wave = WaveInt {
         base_amplitude: prof.avg_salience,
@@ -5932,6 +6165,42 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
     let hex96: String = bytes96.iter().take(24).map(|b| format!("{b:02x}")).collect();
     let hex31: String = adv31.iter().map(|b| format!("{b:02x}")).collect();
 
+    // Broadcast 64-byte MemnetCapsule64 on UDP :8888 to ESP32 Constellation
+    let (memnet64_hex, esp32_sync_events) = broadcast_and_sync_esp32_memnet(
+        &active_ssid,
+        portal_is_open,
+        f0_u16,
+        sal_pct,
+        candidates.len() as u16,
+        auto_connect_free,
+    );
+
+    let mut recipe_items = Vec::new();
+    for r in portal_book.recipes.iter().take(8) {
+        recipe_items.push(format!(
+            "{{\"ssid\":{},\"portal_host\":{},\"strategy\":{},\"ttl_q8\":{},\"success_cnt\":{},\"lease_hint_s\":{},\"honest_inputs\":{}}}",
+            markdown_source_literal(&r.ssid),
+            markdown_source_literal(&r.portal_host),
+            markdown_source_literal(&r.strategy),
+            r.ttl_q8,
+            r.success_cnt,
+            r.lease_hint_s,
+            markdown_source_literal(&r.honest_summary),
+        ));
+    }
+
+    let flock_items: Vec<String> = CONSTELLATION_FLOCK_MACS
+        .iter()
+        .map(|(node, mac, sym)| {
+            format!(
+                "{{\"node\":{},\"mac\":{},\"vertex\":{}}}",
+                markdown_source_literal(node),
+                markdown_source_literal(mac),
+                markdown_source_literal(sym)
+            )
+        })
+        .collect();
+
     // Enumerate all available hardware & Bluetooth microphones in PipeWire
     let pactl_srcs = Command::new("pactl")
         .args(["list", "sources", "short"])
@@ -5949,45 +6218,97 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
     format!(
         "{{\n\
          \"ok\": true,\n\
-         \"version\": \"0.3.0\",\n\
+         \"version\": \"0.4.0-anicca-memnet\",\n\
          \"tokyo_time_jst\": {},\n\
+         \"active_wifi_ssid\": {},\n\
+         \"wlan0_state\": {},\n\
+         \"wlan0_mac\": {},\n\
+         \"dhcp_lease_valid_lft_s\": {},\n\
          \"available_microphones\": [{}],\n\
          \"free_wifi_candidates_count\": {},\n\
          \"free_wifi_candidates\": [{}],\n\
          \"captive_portal_probe\": {},\n\
+         \"remembered_portal_recipes\": [{}],\n\
+         \"constellation_flock_nodes\": [{}],\n\
+         \"esp32_memnet_capsule_64b_hex\": \"0x{memnet64_hex}\",\n\
+         \"esp32_mesh_events\": [{}],\n\
          \"bluetooth_peers\": [{}],\n\
          \"bluetooth_mesh_frame_96b_prefix_hex\": \"0x{hex96}...\",\n\
          \"bluetooth_ble_adv_31b_hex\": \"0x{hex31}\"\n\
          }}",
         markdown_source_literal(&format_jst_clock(now_secs())),
+        markdown_source_literal(&active_ssid),
+        markdown_source_literal(&wlan_state),
+        markdown_source_literal(&wlan0_mac),
+        lease_s,
         mic_sources.join(","),
         candidates.len(),
         cand_json_items.join(","),
         markdown_source_literal(&portal_status),
+        recipe_items.join(","),
+        flock_items.join(","),
+        esp32_sync_events
+            .iter()
+            .map(|s| markdown_source_literal(s))
+            .collect::<Vec<_>>()
+            .join(","),
         bt_peers.join(",")
     )
 }
 
-fn probe_and_traverse_captive_portal(
-    auto_connect_free: bool,
-    candidates: &[qwave_core::mesh::FreeWifiCandidate],
-) -> String {
-    // Check if an active default route already exists
-    let route_out = Command::new("ip")
-        .args(["route", "show", "default"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
+/// Perform an HTTP GET or POST using `curl -s -i` (handling both HTTP and HTTPS captive portals)
+/// with a fast TCP fallback for `http://connectivitycheck.gstatic.com/generate_204`.
+fn fetch_raw_http_portal(
+    method: &str,
+    url: &str,
+    content_type: Option<&str>,
+    body: Option<&str>,
+    timeout_s: &str,
+) -> Option<String> {
+    let mut args = vec![
+        "-s".to_string(),
+        "-i".to_string(),
+        "--max-time".to_string(),
+        timeout_s.to_string(),
+        "-X".to_string(),
+        method.to_string(),
+    ];
+    if let Some(ct) = content_type {
+        args.push("-H".to_string());
+        args.push(format!("Content-Type: {ct}"));
+    }
+    args.push("-H".to_string());
+    args.push("User-Agent: Mozilla/5.0 (X11; Linux x86_64) QwaveSovereign/0.4".to_string());
+    if let Some(b) = body {
+        args.push("--data-raw".to_string());
+        args.push(b.to_string());
+    }
+    args.push(url.to_string());
 
-    if route_out.trim().is_empty() && auto_connect_free {
-        if let Some(best) = candidates.first() {
-            let _ = Command::new("nmcli")
-                .args(["dev", "wifi", "connect", &best.ssid])
-                .output();
+    if let Ok(out) = Command::new("curl").args(&args).output() {
+        let s = String::from_utf8_lossy(&out.stdout).into_owned();
+        if !s.trim().is_empty() {
+            return Some(s);
         }
     }
+    None
+}
 
-    // Probe HTTP captive portal detector (`connectivitycheck.gstatic.com:80/generate_204`)
+fn check_http_204_probe() -> (bool, String) {
+    if let Some(resp) = fetch_raw_http_portal(
+        "GET",
+        "http://connectivitycheck.gstatic.com/generate_204",
+        None,
+        None,
+        "2",
+    ) {
+        let first_line = resp.lines().next().unwrap_or("");
+        if first_line.contains(" 204 ") {
+            return (true, resp);
+        }
+        return (false, resp);
+    }
+
     if let Ok(mut stream) = TcpStream::connect_timeout(
         &"142.250.196.110:80".parse().unwrap(),
         Duration::from_millis(900),
@@ -5998,31 +6319,435 @@ fn probe_and_traverse_captive_portal(
         if stream.write_all(req).is_ok() {
             let mut resp = String::new();
             let _ = stream.read_to_string(&mut resp);
-            match parse_captive_portal_response(&resp, "connectivitycheck.gstatic.com") {
-                CaptivePortalAction::InternetOpen => {
-                    return "internet_open (HTTP 204 verified, no captive portal blocking)".to_string();
+            let first = resp.lines().next().unwrap_or("");
+            if first.contains(" 204 ") {
+                return (true, resp);
+            }
+            if !resp.is_empty() {
+                return (false, resp);
+            }
+        }
+    }
+
+    (false, String::new())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn probe_and_traverse_captive_portal(
+    auto_connect_free: bool,
+    candidates: &[qwave_core::mesh::FreeWifiCandidate],
+    portal_book: &mut PortalMemoryBook,
+    wlan_state: &str,
+    active_ssid: &str,
+    wlan0_mac: &str,
+    lease_s: u32,
+    neighbor_macs: &[String],
+) -> String {
+    let mut cur_ssid = active_ssid.to_string();
+
+    // 1. If disconnected and `auto_connect_free` is enabled, join the highest-ranked free/remembered Wi-Fi
+    if (wlan_state != "connected" || cur_ssid.is_empty()) && auto_connect_free {
+        for cand in candidates.iter().take(3) {
+            let ok = Command::new("nmcli")
+                .args(["dev", "wifi", "connect", &cand.ssid])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if ok {
+                cur_ssid = cand.ssid.clone();
+                break;
+            }
+        }
+    }
+
+    let mut extra_macs: Vec<String> = CONSTELLATION_FLOCK_MACS
+        .iter()
+        .map(|(_, m, _)| (*m).to_string())
+        .collect();
+    for nm in neighbor_macs {
+        if !extra_macs.contains(nm) {
+            extra_macs.push(nm.clone());
+        }
+    }
+    let identity = HonestPortalIdentity {
+        client_mac: wlan0_mac.to_string(),
+        extra_vouched_macs: extra_macs,
+        ..HonestPortalIdentity::default()
+    };
+
+    // 2. Probe HTTP 204 connectivity check
+    let (is_204, initial_resp) = check_http_204_probe();
+    if is_204 {
+        if !cur_ssid.is_empty() {
+            portal_book.learn_verified(
+                &cur_ssid,
+                "connectivitycheck.gstatic.com",
+                "verified_204",
+                "GET",
+                "http://connectivitycheck.gstatic.com/generate_204",
+                "",
+                "honest_traveler_verified",
+                now_secs(),
+                lease_s,
+            );
+            save_portal_memory_book(portal_book);
+        }
+        return format!(
+            "internet_open (HTTP 204 verified on {} · lease {}s · Anicca recipe active)",
+            if cur_ssid.is_empty() { "uplink" } else { &cur_ssid },
+            lease_s
+        );
+    }
+
+    // 3. Determine if we should auto-solve the captive portal right now:
+    //    Either `--nomad-connect` was requested OR we are connected to a remembered/known free portal
+    //    whose captive portal session just expired!
+    let is_remembered_or_known_portal = !cur_ssid.is_empty()
+        && (portal_book.find_by_ssid(&cur_ssid).is_some()
+            || candidates
+                .iter()
+                .any(|c| c.ssid == cur_ssid && (c.is_open || c.is_known_portal_brand)));
+    let should_auto_solve = auto_connect_free || is_remembered_or_known_portal;
+
+    // 3a. First try replaying our remembered Anicca PortalRecipe for `cur_ssid` if one exists!
+    if should_auto_solve {
+        if let Some(rec) = portal_book.find_by_ssid(&cur_ssid).cloned() {
+            if rec.strategy == "usen_capi_welcome" && !rec.action_url.is_empty() {
+                for mac in identity.all_vouched_macs() {
+                    let jbody = format!(
+                        "{{\"gender\":\"\",\"birth\":\"\",\"macaddr\":\"{}\",\"lang\":\"{}\"}}",
+                        mac, identity.lang
+                    );
+                    let _ = fetch_raw_http_portal(
+                        "POST",
+                        &rec.action_url,
+                        Some("application/json"),
+                        Some(&jbody),
+                        "3",
+                    );
                 }
-                CaptivePortalAction::FollowRedirect { url } => {
-                    return format!("portal_redirect_detected -> {url}");
-                }
-                CaptivePortalAction::SubmitAcceptanceForm {
-                    method,
-                    action_url,
-                    form_urlencoded_body,
-                } => {
+                let (ok_after_recipe, _) = check_http_204_probe();
+                if ok_after_recipe {
+                    portal_book.learn_verified(
+                        &cur_ssid,
+                        &rec.portal_host,
+                        "usen_capi_welcome",
+                        "POST",
+                        &rec.action_url,
+                        &rec.payload_template,
+                        &rec.honest_summary,
+                        now_secs(),
+                        lease_s,
+                    );
+                    save_portal_memory_book(portal_book);
                     return format!(
-                        "portal_form_ready ({method} {action_url} [{form_urlencoded_body}])"
+                        "portal_unlocked_204 (replayed remembered Anicca recipe `{}` on {} + vouched {} MACs)",
+                        rec.strategy,
+                        cur_ssid,
+                        identity.all_vouched_macs().len()
+                    );
+                }
+            } else if rec.strategy == "html_form" && !rec.action_url.is_empty() {
+                let _ = fetch_raw_http_portal(
+                    &rec.method,
+                    &rec.action_url,
+                    Some("application/x-www-form-urlencoded"),
+                    if rec.method == "POST" {
+                        Some(&rec.payload_template)
+                    } else {
+                        None
+                    },
+                    "3",
+                );
+                let (ok_after_recipe, _) = check_http_204_probe();
+                if ok_after_recipe {
+                    portal_book.learn_verified(
+                        &cur_ssid,
+                        &rec.portal_host,
+                        "html_form",
+                        &rec.method,
+                        &rec.action_url,
+                        &rec.payload_template,
+                        &rec.honest_summary,
+                        now_secs(),
+                        lease_s,
+                    );
+                    save_portal_memory_book(portal_book);
+                    return format!(
+                        "portal_unlocked_204 (replayed remembered form recipe on {})",
+                        cur_ssid
                     );
                 }
             }
         }
     }
 
-    if !route_out.trim().is_empty() {
-        format!("uplink_active ({})", route_out.lines().next().unwrap_or("").trim())
-    } else {
-        "offline_mesh_ready (BLE 31B + BNEP 96B standby)".to_string()
+    // 4. Parse the captive portal response and follow up to 3 redirects to reach the acceptance form/API
+    let mut current_resp = initial_resp;
+    let mut current_host = "connectivitycheck.gstatic.com".to_string();
+
+    if current_resp.is_empty() {
+        // Fallback: probe default gateway HTTP directly (like FLUG-OS `WiFi.gatewayIP()`)
+        if let Ok(route_out) = Command::new("ip").args(["route", "show", "default"]).output() {
+            let rtxt = String::from_utf8_lossy(&route_out.stdout);
+            for w in rtxt.split_whitespace().collect::<Vec<_>>().windows(2) {
+                if w[0] == "via" {
+                    let gw = w[1];
+                    let gw_url = format!("http://{gw}/");
+                    if let Some(gw_resp) = fetch_raw_http_portal("GET", &gw_url, None, None, "2") {
+                        current_resp = gw_resp;
+                        current_host = gw_url;
+                    }
+                    break;
+                }
+            }
+        }
     }
+
+    for _hop in 0..3 {
+        if current_resp.is_empty() {
+            break;
+        }
+        match parse_captive_portal_response_with_identity(&current_resp, &current_host, &identity) {
+            CaptivePortalAction::InternetOpen => {
+                return "internet_open (HTTP 204 verified, no captive portal blocking)".to_string();
+            }
+            CaptivePortalAction::FollowRedirect { url } => {
+                if !should_auto_solve {
+                    return format!("portal_redirect_detected -> {url}");
+                }
+                current_host = url.clone();
+                if let Some(next_resp) = fetch_raw_http_portal("GET", &url, None, None, "3") {
+                    current_resp = next_resp;
+                } else {
+                    break;
+                }
+            }
+            CaptivePortalAction::SubmitUsenWelcomeJson {
+                endpoint_url,
+                vouched_macs,
+                json_payloads,
+            } => {
+                if !should_auto_solve {
+                    return format!(
+                        "portal_usen_ready (POST {endpoint_url} for {} MACs)",
+                        vouched_macs.len()
+                    );
+                }
+                for payload in &json_payloads {
+                    let _ = fetch_raw_http_portal(
+                        "POST",
+                        &endpoint_url,
+                        Some("application/json"),
+                        Some(payload),
+                        "3",
+                    );
+                }
+                let (verified, _) = check_http_204_probe();
+                if verified {
+                    portal_book.learn_verified(
+                        &cur_ssid,
+                        &current_host,
+                        "usen_capi_welcome",
+                        "POST",
+                        &endpoint_url,
+                        json_payloads.first().map(|s| s.as_str()).unwrap_or(""),
+                        "gender='',birth='',lang='en',macaddr=flock",
+                        now_secs(),
+                        lease_s,
+                    );
+                    save_portal_memory_book(portal_book);
+                    return format!(
+                        "portal_unlocked_204 (USEN /capi/welcome accepted on {} · vouched {} MACs including ESP32 flock)",
+                        cur_ssid,
+                        vouched_macs.len()
+                    );
+                } else {
+                    portal_book.record_failure(&cur_ssid);
+                    save_portal_memory_book(portal_book);
+                    return format!("portal_submitted_pending_verify (POST {endpoint_url})");
+                }
+            }
+            CaptivePortalAction::SubmitAcceptanceForm {
+                method,
+                action_url,
+                form_urlencoded_body,
+            } => {
+                if !should_auto_solve {
+                    return format!(
+                        "portal_form_ready ({method} {action_url} [{form_urlencoded_body}])"
+                    );
+                }
+                let target_url = if method == "GET" && !form_urlencoded_body.is_empty() {
+                    if action_url.contains('?') {
+                        format!("{action_url}&{form_urlencoded_body}")
+                    } else {
+                        format!("{action_url}?{form_urlencoded_body}")
+                    }
+                } else {
+                    action_url.clone()
+                };
+                let _ = fetch_raw_http_portal(
+                    &method,
+                    &target_url,
+                    if method == "POST" {
+                        Some("application/x-www-form-urlencoded")
+                    } else {
+                        None
+                    },
+                    if method == "POST" {
+                        Some(&form_urlencoded_body)
+                    } else {
+                        None
+                    },
+                    "3",
+                );
+                let (verified, _) = check_http_204_probe();
+                if verified {
+                    portal_book.learn_verified(
+                        &cur_ssid,
+                        &current_host,
+                        "html_form",
+                        &method,
+                        &action_url,
+                        &form_urlencoded_body,
+                        "email=guest@8b.is,country=JP,lang=en,accept=true",
+                        now_secs(),
+                        lease_s,
+                    );
+                    save_portal_memory_book(portal_book);
+                    return format!(
+                        "portal_unlocked_204 ({method} {action_url} accepted with honest traveler inputs on {})",
+                        cur_ssid
+                    );
+                } else {
+                    portal_book.record_failure(&cur_ssid);
+                    save_portal_memory_book(portal_book);
+                    return format!("portal_submitted_pending_verify ({method} {action_url})");
+                }
+            }
+        }
+    }
+
+    if wlan_state == "connected" && !cur_ssid.is_empty() {
+        format!("uplink_active ({cur_ssid})")
+    } else {
+        "offline_mesh_ready (BLE 31B + BNEP 96B + UDP:8888 MemnetCapsule64 standby)".to_string()
+    }
+}
+
+/// Offer Bluetooth, Hotspot, and Captive-Portal Vouching Love (`qwave --hotspot-love` / `qwave --bluetooth-love`)
+/// to nearby ESP32 Constellation nodes and friends' devices that struggle with captive portals:
+/// 1. Heals/unlocks the active captive portal and vouches for the 4 ESP32 Constellation MACs
+///    (`ADA:MEDUSA`, `VAK:MEDUSA`, `OMN:MEDUSA`, `SUN:TDECK`) + all ARP-discovered neighbor MACs on `wlan0`.
+/// 2. Enables Bluetooth discoverable & pairable mesh love (`bluetoothctl discoverable on`, `pairable on`).
+/// 3. Broadcasts the 64-byte `MemnetCapsule64` (`portal_ok = 1`, `ssid_hint`) on UDP `:8888` and pushes
+///    `WIFI <ssid>` + `WIFI SHARE` over USB serial so the ESP32 flock relays `TWIF` across all 13 channels.
+fn run_hotspot_bluetooth_love(start_ap: bool) -> String {
+    let mut portal_book = load_portal_memory_book();
+    let (wlan_state, active_ssid, wlan0_mac, lease_s, neighbor_macs) =
+        read_wlan0_state_ssid_mac_lease();
+
+    // 1. Enable Bluetooth discoverable & pairable mode for Bluetooth PAN / BLE mesh love
+    let _ = Command::new("bluetoothctl")
+        .args(["power", "on"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = Command::new("bluetoothctl")
+        .args(["discoverable", "on"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = Command::new("bluetoothctl")
+        .args(["pairable", "on"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    // 2. If `--hotspot-ap` was explicitly requested (or if we want to spin up an open/shared AP relay)
+    let mut hotspot_status = "arp_vouch_and_ble_mesh_active".to_string();
+    if start_ap {
+        let ok = Command::new("nmcli")
+            .args([
+                "device",
+                "wifi",
+                "hotspot",
+                "ifname",
+                "wlan0",
+                "ssid",
+                "8b-is-Mesh-Love",
+                "password",
+                "432hzlove",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        hotspot_status = if ok {
+            "hotspot_active (SSID: 8b-is-Mesh-Love)".to_string()
+        } else {
+            "single_radio_sta_mode (using ARP MAC vouching + Bluetooth/UDP:8888 mesh love)".to_string()
+        };
+    }
+
+    // 3. Solve/vouch captive portal for laptop + 4 ESP32 Constellation MACs + ARP neighbors
+    let portal_res = probe_and_traverse_captive_portal(
+        true,
+        &[],
+        &mut portal_book,
+        &wlan_state,
+        &active_ssid,
+        &wlan0_mac,
+        lease_s,
+        &neighbor_macs,
+    );
+
+    // 4. Broadcast 64-byte MemnetCapsule64 over UDP :8888 and sync attached ESP32 boards
+    let (memnet64_hex, esp32_events) = broadcast_and_sync_esp32_memnet(
+        &active_ssid,
+        true,
+        154,
+        92,
+        8,
+        true,
+    );
+
+    let mut vouched: Vec<String> = CONSTELLATION_FLOCK_MACS
+        .iter()
+        .map(|(n, m, _)| format!("{n} ({m})"))
+        .collect();
+    for nm in &neighbor_macs {
+        vouched.push(format!("neighbor ({nm})"));
+    }
+
+    format!(
+        "{{\n\
+         \"ok\": true,\n\
+         \"action\": \"hotspot_bluetooth_love\",\n\
+         \"active_wifi_ssid\": {},\n\
+         \"portal_status\": {},\n\
+         \"hotspot_relay\": {},\n\
+         \"bluetooth_love\": \"discoverable+pairable+BLE31B+BNEP96B\",\n\
+         \"vouched_peers\": [{}],\n\
+         \"esp32_memnet_capsule_64b_hex\": \"0x{memnet64_hex}\",\n\
+         \"esp32_sync_events\": [{}]\n\
+         }}",
+        markdown_source_literal(&active_ssid),
+        markdown_source_literal(&portal_res),
+        markdown_source_literal(&hotspot_status),
+        vouched
+            .iter()
+            .map(|s| markdown_source_literal(s))
+            .collect::<Vec<_>>()
+            .join(","),
+        esp32_events
+            .iter()
+            .map(|s| markdown_source_literal(s))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn build_marine_sense_json(state: &Arc<AppState>) -> String {
@@ -7781,6 +8506,142 @@ fn run_vault_verify_cli() -> String {
         records.len()
     )
 }
+
+fn run_phoenix_music_revelation(args: &[String]) -> String {
+    let is_432 = args.iter().any(|a| a == "--phoenix-432" || a == "--432");
+    let do_play = args.iter().any(|a| a == "--play");
+    let preset = if is_432 {
+        PhoenixSoundPreset::sanctuary_432()
+    } else {
+        PhoenixSoundPreset::sovereign_master()
+    };
+
+    let out_dir = PathBuf::from("/tmp/phoenix_sound");
+    let _ = fs::create_dir_all(&out_dir);
+
+    let mut targets: Vec<PathBuf> = Vec::new();
+    for (idx, a) in args.iter().enumerate() {
+        if (a == "--phoenix-music" || a == "--phoenix-sound" || a == "--phoenix-432")
+            && let Some(next) = args.get(idx + 1)
+            && !next.starts_with('-')
+        {
+            targets.push(PathBuf::from(next));
+        }
+    }
+    if targets.is_empty() {
+        let default_music_dir = PathBuf::from("/home/hue/8b-is/8b-is/music");
+        if default_music_dir.is_dir() {
+            targets.push(default_music_dir);
+        }
+    }
+
+    let mut audio_files: Vec<PathBuf> = Vec::new();
+    for t in targets {
+        if t.is_dir() {
+            if let Ok(entries) = fs::read_dir(&t) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                        let ext_l = ext.to_ascii_lowercase();
+                        if matches!(ext_l.as_str(), "mp3" | "wav" | "flac" | "ogg" | "m4a") {
+                            audio_files.push(p);
+                        }
+                    }
+                }
+            }
+        } else if t.is_file() {
+            audio_files.push(t);
+        }
+    }
+    audio_files.sort();
+
+    let mut out = String::new();
+    out.push_str("🐦‍🔥 [QWAVE × PHOENIX SOUND REVELATION ENGINE · 768 kHz 16× CATMULL-ROM + S+N+T + .8a∞]\n");
+    out.push_str(&format!(
+        "  ├─ Mode              : {} (Sparkle={}/1024, Warmth={}/1024, Drive={}/1024, Punch={}/1024, Air={}/1024, φ-432={}/1024, Stereo={}/1024)\n",
+        if is_432 { "Sanctuary 432 Hz (54/55 Rational Pitch Relaxation)" } else { "Sovereign Master (48 kHz -> 768 kHz 16x Oversampled)" },
+        preset.sparkle_q10,
+        preset.warmth_q10,
+        preset.drive_q10,
+        preset.punch_q10,
+        preset.air_q10,
+        preset.phi_432_bloom_q10,
+        preset.stereo_width_q10
+    ));
+    out.push_str(&format!(
+        "  ├─ Output Sanctuary  : {}\n",
+        out_dir.display()
+    ));
+
+    let mut first_wav: Option<PathBuf> = None;
+    for path in &audio_files {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("track");
+        let wav_out = out_dir.join(format!("{stem}.phoenix.wav"));
+        let eight_a_out = out_dir.join(format!("{stem}.8a"));
+        match phoenix_transform_audio_file(path, Some(&wav_out), Some(&eight_a_out), &preset) {
+            Ok((_pcm, _eight_a, rec)) => {
+                if first_wav.is_none() {
+                    first_wav = Some(wav_out.clone());
+                }
+                out.push_str(&format!(
+                    "  ├─ 🎵 {:<28} -> {} & {}\n",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or(stem),
+                    wav_out.display(),
+                    eight_a_out.display()
+                ));
+                out.push_str(&format!(
+                    "  │    ├─ Grid & Restoration : {} Hz -> {} Hz (16x) · {} frames · {} clipped/dropped samples restored\n",
+                    rec.sample_rate_hz,
+                    rec.internal_oversample_hz,
+                    rec.total_frames,
+                    rec.catmull_rom_restored_samples
+                ));
+                out.push_str(&format!(
+                    "  │    ├─ Harmonic Family    : f₀ = {} Hz · φ_low = {} Hz · φ_high = {} Hz · Bloom = {}\n",
+                    rec.dominant_freq_hz,
+                    rec.phi_lower_hz,
+                    rec.phi_upper_hz,
+                    rec.harmonic_bloom_ratio
+                ));
+                out.push_str(&format!(
+                    "  │    ├─ Marine S+N+T & Soul: S={} · N={} · T={} · Silence={} · J_p={} · J_a={} · Soul={}\n",
+                    rec.harmonic_s_frames,
+                    rec.stochastic_n_frames,
+                    rec.dirac_t_frames,
+                    rec.silence_frames,
+                    rec.period_jitter_ratio,
+                    rec.amplitude_jitter_ratio,
+                    rec.soul_authenticity
+                ));
+                out.push_str(&format!(
+                    "  │    └─ .8a∞ Capsule Seal  : {} bytes (magic 0x3861E29E) · PCM FNV-1a = 0x{:016x}\n",
+                    rec.eight_a_bytes,
+                    rec.pcm_fnv1a_hash
+                ));
+            }
+            Err(e) => {
+                out.push_str(&format!("  ├─ ⚠️ {}: {}\n", path.display(), e));
+            }
+        }
+    }
+
+    if do_play
+        && let Some(wav) = first_wav
+    {
+        out.push_str(&format!("  └─ 🔊 Playing PhoeniX'd track: {}\n", wav.display()));
+        let _ = Command::new("pw-play")
+            .arg(&wav)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+    out
+}
+
 
 
 

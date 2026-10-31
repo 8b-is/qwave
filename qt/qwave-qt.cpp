@@ -1252,19 +1252,77 @@ int main(int argc, char *argv[]) {
             "-i /home/hue/8b-is/8b-is/music/georgia-drew-the-bow.mp3 "
             "-i /home/hue/8b-is/8b-is/music/so-simply-alive-klickaud.mp3 "
             "-filter_complex \"%1\" -ar 48000 -ac 2 /tmp/qwave_humayian_mix.wav && "
-            "ffplay -nodisp -autoexit -loglevel quiet /tmp/qwave_humayian_mix.wav"
+            "/home/hue/.local/bin/qwave --phoenix-music /tmp/qwave_humayian_mix.wav >/dev/null 2>&1 && "
+            "ffplay -nodisp -autoexit -loglevel quiet /tmp/phoenix_sound/qwave_humayian_mix.phoenix.wav"
         ).arg(filter);
 
         songProc->start(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
-        btnHumayianMix->setText(QStringLiteral("🎵 Humayian Mix"));
+        btnHumayianMix->setText(QStringLiteral("🐦‍🔥 Humayian Phoenix"));
         btnTokyoSong->setText(QStringLiteral("⏸️ Stop Music"));
-        partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Playing our fresh On-Machine Humayian Suite (Next Stop + Clean Signal + Georgia + Simply Alive)!"));
+        partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Playing our PhoeniX'd 768kHz Humayian Suite (Catmull-Rom 16x + S+N+T + 432Hz/φ Companion)!"));
     };
 
     QObject::connect(btnHumayianMix, &QPushButton::clicked, btnHumayianMix, triggerHumayianMix);
 
+    auto *btnPhoenixSound = new QPushButton(QStringLiteral("🐦‍🔥 Phoenix Sound"), bmBar);
+    btnPhoenixSound->setProperty("class", "bmBtn");
+    btnPhoenixSound->setStyleSheet(
+        "QPushButton { background: #2c1408; color: #ffb347; border: 1px solid #d45d12; border-radius: 5px; padding: 2px 8px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; }"
+        "QPushButton:hover { background: #4a210c; border-color: #ffdf80; color: #ffffff; }"
+    );
+    btnPhoenixSound->setToolTip(QStringLiteral("Transform ALL music into PhoeniX'd Sound (16x 768kHz Catmull-Rom + S+N+T Harmonic Family + 432Hz/φ Bloom + .8a∞ Capsule)"));
+    QObject::connect(btnPhoenixSound, &QPushButton::clicked, btnPhoenixSound, [triggerHumayianMix]() {
+        triggerHumayianMix();
+    });
+
+    auto *btnPortalLove = new QPushButton(QStringLiteral("🔓 Portal + Love"), bmBar);
+    btnPortalLove->setProperty("class", "bmBtn");
+    btnPortalLove->setStyleSheet(
+        "QPushButton { background: #0c2b29; color: #36e2b4; border: 1px solid #1f7a68; border-radius: 5px; padding: 2px 8px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; }"
+        "QPushButton:hover { background: #144945; border-color: #00f0ff; color: #ffffff; }"
+    );
+    btnPortalLove->setToolTip(QStringLiteral("Solve Captive Portal with Honest Inputs + Remember Anicca Recipe + Share Bluetooth/Hotspot & ESP32 Constellation Mesh Love"));
+
+    auto triggerPortalAndLove = [page, partnerLabel]() {
+        partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Unlocking captive portal with honest traveler inputs + syncing Anicca recipe & ESP32 Constellation / Bluetooth love!"));
+        const QString jsFillPortal = QStringLiteral(
+            "(function(){"
+            "  var filled = 0;"
+            "  var inputs = document.querySelectorAll('input, select');"
+            "  for (var i = 0; i < inputs.length; i++) {"
+            "    var el = inputs[i];"
+            "    var t = (el.type || '').toLowerCase();"
+            "    var n = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '')).toLowerCase();"
+            "    if (t === 'checkbox') { if (!el.checked) { el.checked = true; el.dispatchEvent(new Event('change', {bubbles:true})); filled++; } }"
+            "    else if (t === 'email' || n.indexOf('mail') !== -1) { el.value = 'hue@8b.is'; el.dispatchEvent(new Event('input', {bubbles:true})); filled++; }"
+            "    else if (n.indexOf('name') !== -1 || n.indexOf('guest') !== -1) { el.value = 'Hue 8b-is'; el.dispatchEvent(new Event('input', {bubbles:true})); filled++; }"
+            "    else if (n.indexOf('country') !== -1 || n.indexOf('nation') !== -1) { el.value = 'JP'; el.dispatchEvent(new Event('input', {bubbles:true})); filled++; }"
+            "    else if (n.indexOf('lang') !== -1) { el.value = 'en'; el.dispatchEvent(new Event('input', {bubbles:true})); filled++; }"
+            "  }"
+            "  var btns = document.querySelectorAll('button, input[type=submit], input[type=button], a');"
+            "  for (var j = 0; j < btns.length; j++) {"
+            "    var b = btns[j];"
+            "    var txt = ((b.innerText || b.value || '') + ' ' + (b.id || '') + ' ' + (b.className || '')).toLowerCase();"
+            "    if (txt.indexOf('agree') !== -1 || txt.indexOf('connect') !== -1 || txt.indexOf('accept') !== -1 || txt.indexOf('free') !== -1 || txt.indexOf('internet') !== -1 || txt.indexOf('同意') !== -1 || txt.indexOf('接続') !== -1) {"
+            "      b.click(); break;"
+            "    }"
+            "  }"
+            "  return filled;"
+            "})();"
+        );
+        page->runJavaScript(jsFillPortal);
+        QProcess::startDetached(
+            QStringLiteral("sh"),
+            {QStringLiteral("-c"), QStringLiteral("/home/hue/.local/bin/qwave --nomad-connect >/dev/null 2>&1; /home/hue/.local/bin/qwave --bluetooth-love >/dev/null 2>&1")}
+        );
+    };
+
+    QObject::connect(btnPortalLove, &QPushButton::clicked, btnPortalLove, triggerPortalAndLove);
+
     bmLayout->addWidget(btnSignFill);
     bmLayout->addWidget(btnVaultMgr);
+    bmLayout->addWidget(btnPortalLove);
+    bmLayout->addWidget(btnPhoenixSound);
     bmLayout->addWidget(btnHumayianMix);
     bmLayout->addWidget(btnNicknames);
     bmLayout->addWidget(btnVoiceBrowse);
@@ -1275,12 +1333,22 @@ int main(int argc, char *argv[]) {
     rootLayout->addWidget(vaultBanner);
     rootLayout->addWidget(view, 1);
 
-    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, triggerSignAndFill, btnTokyoSong, songProc, homeUrl, view, page](const QString &rawInput, bool fromVoice) {
+    auto handlePartnerOrNav = [navigateTo, addressEdit, partnerLabel, triggerHumayianMix, triggerSignAndFill, triggerPortalAndLove, btnTokyoSong, songProc, homeUrl, view, page](const QString &rawInput, bool fromVoice) {
         const QString trimmed = rawInput.trimmed();
         if (trimmed.isEmpty()) return;
         const QString low = trimmed.toLower();
 
-        // 0. Personal-Signature Vault Sign & Fill by voice or command
+        // 0. Personal-Signature Vault Sign & Fill or Captive Portal + Mesh Love by voice or command
+        if (low.contains(QStringLiteral("captive portal"))
+            || low.contains(QStringLiteral("free wifi"))
+            || low.contains(QStringLiteral("free wi-fi"))
+            || low.contains(QStringLiteral("mesh love"))
+            || low.contains(QStringLiteral("bluetooth love"))
+            || low.contains(QStringLiteral("hotspot love"))
+            || low == QStringLiteral("portal")) {
+            triggerPortalAndLove();
+            return;
+        }
         if (low.contains(QStringLiteral("sign in"))
             || low.contains(QStringLiteral("fill password"))
             || low.contains(QStringLiteral("unlock vault"))

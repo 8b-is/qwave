@@ -13,6 +13,7 @@ pub mod markdown;
 pub mod mem16;
 pub mod mesh;
 pub mod phoenix;
+pub mod phoenix_sound;
 pub mod quanttern;
 pub mod rational;
 pub mod salience;
