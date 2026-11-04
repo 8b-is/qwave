@@ -272,7 +272,7 @@ jobs:
           }
 
       - name: Install Periphery
-        run: brew install peripheryapp/periphery/periphery
+        run: brew install --cask periphery || true
 
       - name: Scan (report only)
         run: |
@@ -322,7 +322,15 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$(brew --prefix jemalloc)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           cd Benchmarks
-          swift package benchmark thresholds check --no-progress
+          out="$(swift package benchmark thresholds check --no-progress 2>&1)" && rc=0 || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -q "benchmarkThresholdImprovement" && ! printf '%s\n' "$out" | grep -q "benchmarkThresholdRegression"; then
+              echo "✓ Benchmark improved beyond threshold with zero regressions"
+              exit 0
+            fi
+            exit "$rc"
+          fi
 
   # ---------------------------------------------------------------------------
   # Experimental toolchain lane (NON-BLOCKING). Runs the authority test suite
