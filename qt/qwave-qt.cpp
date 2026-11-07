@@ -472,7 +472,8 @@ public:
             const QUrl origin = permission.origin();
             if (origin.host() == "127.0.0.1" || origin.host() == "localhost" ||
                 origin.host().endsWith("8b.is") || origin.host().endsWith("g8t.is") ||
-                origin.host().endsWith("cheet.is") || origin.host().endsWith("github.com")) {
+                origin.host().endsWith("cheet.is") || origin.host().endsWith("github.com") ||
+                origin.host().endsWith("delta.com")) {
                 permission.grant();
             } else {
                 permission.deny();
@@ -566,34 +567,83 @@ private:
     QLabel *m_statusBadge;
 };
 
+static bool isOnDeltaFlightWifi() {
+    QFile f(QStringLiteral("/etc/resolv.conf"));
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QByteArray raw = f.readAll().toLower();
+        if (raw.contains("wifi.delta.com") || raw.contains("deltawifi")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static QString resolveDeltaAirlinesUrl(const QString &lowerInput) {
+    if (lowerInput.contains(QStringLiteral("www.delta.com"))) {
+        return QStringLiteral("https://www.delta.com/");
+    }
+    if (lowerInput.contains(QStringLiteral("wifi.delta.com"))
+        || lowerInput.contains(QStringLiteral("portal"))
+        || lowerInput.contains(QStringLiteral("login"))) {
+        return QStringLiteral("https://wifi.delta.com/");
+    }
+    if (isOnDeltaFlightWifi()
+        || lowerInput == QStringLiteral("delta")
+        || lowerInput.contains(QStringLiteral("delta airlines"))
+        || lowerInput.contains(QStringLiteral("inflight"))
+        || lowerInput.contains(QStringLiteral("flight"))) {
+        return QStringLiteral("http://127.0.0.1:42123/flight");
+    }
+    return QStringLiteral("https://www.delta.com/");
+}
+
 static QUrl resolveUserNavigationInput(const QString &rawInput, const QUrl &homeUrl) {
     QString s = rawInput.trimmed();
     if (s.isEmpty() || s.compare("hud", Qt::CaseInsensitive) == 0 || s.compare("home", Qt::CaseInsensitive) == 0) {
         return homeUrl;
+    }
+    const QString low = s.toLower();
+    if (low == QStringLiteral("delta")
+        || low == QStringLiteral("delta airlines")
+        || low == QStringLiteral("delta air lines")
+        || low == QStringLiteral("delta wifi")
+        || low == QStringLiteral("deltawifi")
+        || low == QStringLiteral("delta.com")
+        || low == QStringLiteral("flight")
+        || low == QStringLiteral("flight status")
+        || low == QStringLiteral("inflight")
+        || low == QStringLiteral("dal120")
+        || low == QStringLiteral("dl120")
+        || low.startsWith(QStringLiteral("delta "))) {
+        return QUrl(resolveDeltaAirlinesUrl(low));
+    }
+    if (s.startsWith("file://")) {
+        const QString localPath = QUrl(s).toLocalFile();
+        if (!localPath.isEmpty()) {
+            s = localPath;
+        }
     }
     if (s.startsWith("~/")) {
         const QByteArray homeEnv = qgetenv("HOME");
         const QString homeDir = homeEnv.isEmpty() ? QStringLiteral("/home/hue") : QString::fromUtf8(homeEnv);
         s = homeDir + s.mid(1);
     }
-    if (s.startsWith("file://")) {
-        const QUrl fileUrl(s);
-        if (fileUrl.isLocalFile()) {
-            s = fileUrl.toLocalFile();
-        }
-    }
     if (s.startsWith('/')) {
-        if (homeUrl.host() == "127.0.0.1" || homeUrl.host() == "localhost") {
-            QUrl u = homeUrl;
+        const QString qwaveBin = QFileInfo::exists(QStringLiteral("/home/hue/.local/bin/qwave"))
+            ? QStringLiteral("/home/hue/.local/bin/qwave")
+            : QStringLiteral("/usr/local/bin/qwave");
+        QProcess::startDetached(qwaveBin, {QStringLiteral("--server-only"), s});
+        QUrl u(QStringLiteral("http://127.0.0.1:42123/view"));
+        if ((homeUrl.host() == "127.0.0.1" || homeUrl.host() == "localhost") && homeUrl.port() == 42123) {
+            u = homeUrl;
             u.setPath(QStringLiteral("/view"));
-            QUrlQuery q;
-            q.addQueryItem(QStringLiteral("path"), s);
-            u.setQuery(q);
-            return u;
         }
-        return QUrl::fromLocalFile(s);
+        QUrlQuery q;
+        q.addQueryItem(QStringLiteral("path"), s);
+        u.setQuery(q);
+        return u;
     }
-    if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("file://") || s.startsWith("data:")) {
+    if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("data:")) {
         return QUrl(s);
     }
     if (s.startsWith("localhost") || s.startsWith("127.0.0.1") || s.startsWith("10.")) {
@@ -727,32 +777,48 @@ int main(int argc, char *argv[]) {
     btnReload->setProperty("class", "navBtn");
     btnReload->setToolTip(QStringLiteral("Reload (Ctrl+R / F5)"));
 
-    auto *btnHome = new QPushButton(QStringLiteral("🏠 HUD"), navBar);
+    auto *btnHome = new QPushButton(QStringLiteral("🏠"), navBar);
     btnHome->setProperty("class", "navBtn");
     btnHome->setToolTip(QStringLiteral("Return to Sovereign Qwave Studio HUD"));
 
-    auto *shieldBadge = new QLabel(QStringLiteral("🛡️ SOVEREIGN"), navBar);
+    auto *btnSmartTree = new QPushButton(QStringLiteral("🌳"), navBar);
+    btnSmartTree->setProperty("class", "navBtn");
+    btnSmartTree->setToolTip(QStringLiteral("Open Smart Tree (st) Knowledge & Codebase Atlas"));
+
+    auto *shieldBadge = new QLabel(QStringLiteral("🛡️"), navBar);
     shieldBadge->setObjectName("shieldBadge");
+    shieldBadge->setToolTip(QStringLiteral("Sovereign Egress & Loopback Shield"));
 
     auto *addressEdit = new QLineEdit(navBar);
     addressEdit->setObjectName("addressEdit");
-    addressEdit->setPlaceholderText(QStringLiteral("Talk with Aye-Aye (\"take us to the hot tub\", \"play a humayian mix\") or enter URL / path — Ctrl+L"));
+    addressEdit->setPlaceholderText(QStringLiteral("Talk with Aye-Aye & Smart Tree, or enter URL / path — Ctrl+L"));
     addressEdit->setText(initialTarget);
 
-    auto *btnGo = new QPushButton(QStringLiteral("Ask / Go ↵"), navBar);
+    auto *btnGo = new QPushButton(QStringLiteral("↵"), navBar);
     btnGo->setProperty("class", "navBtn");
+    btnGo->setToolTip(QStringLiteral("Ask / Navigate"));
+
+    auto *btnToggleTools = new QPushButton(QStringLiteral("⋯"), navBar);
+    btnToggleTools->setProperty("class", "navBtn");
+    btnToggleTools->setToolTip(QStringLiteral("Toggle Bookmarks, Vault & Studio Tools Bar"));
 
     navLayout->addWidget(btnBack);
     navLayout->addWidget(btnFwd);
     navLayout->addWidget(btnReload);
     navLayout->addWidget(btnHome);
+    navLayout->addWidget(btnSmartTree);
     navLayout->addWidget(shieldBadge);
     navLayout->addWidget(addressEdit, 1);
     navLayout->addWidget(btnGo);
+    navLayout->addWidget(btnToggleTools);
 
-    // Top Row 2: One-Click Sovereign Bookmarks + Copy SSH Public Key
+    // Top Row 2: Collapsible Bookmarks & Studio Tools (hidden by default for minimalistic conversational UI)
     auto *bmBar = new QWidget(root);
     bmBar->setObjectName("bookmarkBar");
+    bmBar->setVisible(false);
+    QObject::connect(btnToggleTools, &QPushButton::clicked, bmBar, [bmBar]() {
+        bmBar->setVisible(!bmBar->isVisible());
+    });
     auto *bmLayout = new QHBoxLayout(bmBar);
     bmLayout->setContentsMargins(8, 3, 8, 3);
     bmLayout->setSpacing(6);
@@ -812,6 +878,8 @@ int main(int argc, char *argv[]) {
     settings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
     settings->setAttribute(QWebEngineSettings::JavascriptCanAccessClipboard, true);
     settings->setAttribute(QWebEngineSettings::LocalStorageEnabled, true);
+    settings->setAttribute(QWebEngineSettings::PluginsEnabled, true);
+    settings->setAttribute(QWebEngineSettings::PdfViewerEnabled, true);
 
     auto navigateTo = [view, addressEdit, homeUrl](const QString &input) {
         const QUrl target = resolveUserNavigationInput(input, homeUrl);
@@ -856,8 +924,9 @@ int main(int argc, char *argv[]) {
     btnTokyoSong->setProperty("class", "bmBtn");
     btnTokyoSong->setToolTip(QStringLiteral("Play/Stop Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町 · 8bit_wraith)"));
     auto *songProc = new QProcess(&window);
-    QObject::connect(songProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), btnTokyoSong, [btnTokyoSong](int, QProcess::ExitStatus) {
+    QObject::connect(songProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), btnTokyoSong, [btnTokyoSong, page](int, QProcess::ExitStatus) {
         btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+        page->runJavaScript(QStringLiteral("if (window.__qwaveSetMusic) window.__qwaveSetMusic(false);"));
     });
     QObject::connect(btnTokyoSong, &QPushButton::clicked, btnTokyoSong, [btnTokyoSong, songProc, page]() {
         if (songProc->state() != QProcess::NotRunning) {
@@ -866,11 +935,12 @@ int main(int argc, char *argv[]) {
                 songProc->kill();
             }
             btnTokyoSong->setText(QStringLiteral("🚆 Tokyo Song"));
+            page->runJavaScript(QStringLiteral("if (window.__qwaveSetMusic) window.__qwaveSetMusic(false);"));
             return;
         }
-        // Also open the lyrics drawer if currently viewing the local Qwave HUD
+        // Also open the lyrics drawer and activate smooth music-reactive smoke in the local Qwave HUD
         page->runJavaScript(QStringLiteral(
-            "(function(){ const d=document.getElementById('tokyo-song-drawer'); if(d) d.classList.add('open'); })();"
+            "(function(){ const d=document.getElementById('tokyo-song-drawer'); if(d) d.classList.add('open'); if(window.__qwaveSetMusic) window.__qwaveSetMusic(true); })();"
         ));
         QString mp3Path = QStringLiteral("/home/hue/.local/share/qwave/music/next-stop-tomorrow.mp3");
         if (!QFileInfo::exists(mp3Path)) {
@@ -880,6 +950,10 @@ int main(int argc, char *argv[]) {
         btnTokyoSong->setText(QStringLiteral("⏸️ Stop Song"));
     });
     bmLayout->addWidget(btnTokyoSong);
+
+    QObject::connect(btnSmartTree, &QPushButton::clicked, btnSmartTree, [navigateTo]() {
+        navigateTo(QStringLiteral("http://127.0.0.1:42123/view?path=/home/hue/8b-is/qwave"));
+    });
 
     auto *btnHumayianMix = new QPushButton(QStringLiteral("🎹 Humayian Mix"), bmBar);
     btnHumayianMix->setProperty("class", "bmBtn");
@@ -1224,7 +1298,7 @@ int main(int argc, char *argv[]) {
         partnerLabel->setText(nickGreets[*nickIndex]);
     });
 
-    auto triggerHumayianMix = [btnHumayianMix, btnTokyoSong, partnerLabel, songProc]() {
+    auto triggerHumayianMix = [btnHumayianMix, btnTokyoSong, partnerLabel, songProc, page]() {
         if (songProc->state() != QProcess::NotRunning) {
             songProc->terminate();
             if (!songProc->waitForFinished(400)) {
@@ -1263,6 +1337,7 @@ int main(int argc, char *argv[]) {
         ).arg(filter);
 
         songProc->start(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
+        page->runJavaScript(QStringLiteral("if (window.__qwaveSetMusic) window.__qwaveSetMusic(true);"));
         btnHumayianMix->setText(QStringLiteral("🐦‍🔥 Humayian Phoenix"));
         btnTokyoSong->setText(QStringLiteral("⏸️ Stop Music"));
         partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Playing our PhoeniX'd 768kHz Humayian Suite (Catmull-Rom 16x + S+N+T + 432Hz/φ Companion)!"));
@@ -1396,6 +1471,34 @@ int main(int argc, char *argv[]) {
             return;
         }
 
+        // 1b. Document Read-Aloud / Audiobook Narrator controls by voice or command
+        if (low.contains(QStringLiteral("stop reading")) || low.contains(QStringLiteral("pause reading"))) {
+            page->runJavaScript(QStringLiteral("if (window.__qwaveReadAloudToggle) window.__qwaveReadAloudToggle(false);"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Paused document narration!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("read aloud"))
+            || low.contains(QStringLiteral("read this"))
+            || low.contains(QStringLiteral("read paper"))
+            || low.contains(QStringLiteral("read pdf"))
+            || low.contains(QStringLiteral("read tex"))
+            || low.contains(QStringLiteral("start reading"))
+            || low.contains(QStringLiteral("listen to this"))) {
+            page->runJavaScript(QStringLiteral("if (window.__qwaveReadAloudToggle) window.__qwaveReadAloudToggle(true);"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Reading this document out loud for you while you work!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("next paragraph")) || low.contains(QStringLiteral("skip paragraph"))) {
+            page->runJavaScript(QStringLiteral("if (window.__qwaveReadAloudStep) window.__qwaveReadAloudStep(1);"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Skipping to next paragraph!").arg(trimmed));
+            return;
+        }
+        if (low.contains(QStringLiteral("previous paragraph"))) {
+            page->runJavaScript(QStringLiteral("if (window.__qwaveReadAloudStep) window.__qwaveReadAloudStep(-1);"));
+            partnerLabel->setText(QStringLiteral("🎙️ \"%1\" → 💬 Aye-Aye: Back to previous paragraph!").arg(trimmed));
+            return;
+        }
+
         // 2. Music & Song controls by voice
         if (low.contains(QStringLiteral("stop music")) || low.contains(QStringLiteral("stop song")) || low.contains(QStringLiteral("pause music"))) {
             if (songProc->state() != QProcess::NotRunning) {
@@ -1425,6 +1528,21 @@ int main(int argc, char *argv[]) {
             || low.contains(QStringLiteral("visit"))
             || low.contains(QStringLiteral("aye"));
 
+        if (low == QStringLiteral("delta")
+            || low.contains(QStringLiteral("delta airlines"))
+            || low.contains(QStringLiteral("delta air lines"))
+            || low.contains(QStringLiteral("delta wifi"))
+            || low.contains(QStringLiteral("deltawifi"))
+            || low.contains(QStringLiteral("dal120"))
+            || low.contains(QStringLiteral("dl120"))
+            || ((isOnDeltaFlightWifi() || hasNavVerb) && (low.contains(QStringLiteral("delta")) || low == QStringLiteral("flight") || low.contains(QStringLiteral("flight status")) || low.contains(QStringLiteral("inflight"))))) {
+            const QString targetUrl = resolveDeltaAirlinesUrl(low);
+            partnerLabel->setText(isOnDeltaFlightWifi()
+                ? QStringLiteral("✈️ Aye-Aye: We're flying Delta Air Lines (DeltaWiFi.com) — steering us right to %1!").arg(targetUrl)
+                : QStringLiteral("✈️ Aye-Aye: Steering us to Delta Air Lines (%1), Captain Hue!").arg(targetUrl));
+            navigateTo(targetUrl);
+            return;
+        }
         if (hasNavVerb && (low.contains(QStringLiteral("hot tub")) || low.contains(QStringLiteral("hottub")))) {
             partnerLabel->setText(QStringLiteral("💬 Aye-Aye: Jumping into the Aye Hot Tub Commons together, Hue-man!"));
             navigateTo(QStringLiteral("https://g8t.is/g8t/hottub"));

@@ -9,6 +9,7 @@
 
 pub mod badge;
 pub mod egress;
+pub mod i1_soul;
 pub mod markdown;
 pub mod mem16;
 pub mod mesh;
@@ -19,6 +20,7 @@ pub mod quanttern;
 pub mod rational;
 pub mod salience;
 pub mod telemetry;
+pub mod tex_pdf;
 pub mod triad;
 pub mod vault;
 pub mod wave;

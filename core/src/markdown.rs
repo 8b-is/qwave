@@ -109,6 +109,10 @@ pub fn compile_full(
             } else if lang_token == "carousel" {
                 carousel_counter += 1;
                 out.push(render_carousel(&content, carousel_counter, base_dir));
+            } else if lang_token == "qwave-pdf" {
+                out.push(render_pdf_dock(&content));
+            } else if lang_token == "qwave-media" {
+                out.push(render_media_dock(&content));
             } else if lang_token.is_empty() {
                 out.push(format!(
                     "<div class=\"code-block\"><button class=\"code-copy\" data-copy-code title=\"Copy code\">Copy</button><pre><code>{}</code></pre></div>",
@@ -359,6 +363,107 @@ fn render_carousel(content: &str, id: usize, base_dir: Option<&str>) -> String {
            </div>\
          </div>\
          <div class=\"qwave-carousel-track\">{slides_html}</div>\
+         </div>"
+    )
+}
+
+fn render_pdf_dock(content: &str) -> String {
+    let mut src = String::new();
+    let mut pages = String::from("1");
+    let mut title = String::from("PDF Document");
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("src=") {
+            src = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("pages=") {
+            pages = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("title=") {
+            title = v.trim().to_string();
+        }
+    }
+    let safe_src = safe_href(&src).unwrap_or_default();
+    let esc_src = escape(&safe_src);
+    let esc_pages = escape(&pages);
+    let esc_title = escape(&title);
+    format!(
+        "<div class=\"qwave-carousel qwave-pdf-dock\" data-pdf-dock data-pdf-src=\"{esc_src}\">\
+         <div class=\"qwave-carousel-bar\">\
+           <span class=\"qwave-carousel-badge\">📄 SOVEREIGN PDF STUDIO · <strong>{esc_pages} PAGES</strong></span>\
+           <div class=\"qwave-carousel-nav\">\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"summary\">⚡ Summary (For You)</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"phoenix\">🔥 PhoeniX'd (High-Res)</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn active\" data-pdf-mode=\"reader\">📖 Full Reader</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"split\">🌗 Split (PDF + Reader)</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"canvas\">📄 Original PDF</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn btn-alexiai\" data-pdf-listen-summary>🔊 Listen: For You</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn btn-alexiai\" data-pdf-listen>🔊 Listen All</button>\
+           </div>\
+         </div>\
+         <div class=\"qwave-pdf-canvas-wrap\" data-pdf-canvas-wrap style=\"display:none\">\
+           <iframe class=\"qwave-pdf-frame\" data-pdf-frame src=\"{esc_src}#view=FitH\" title=\"{esc_title}\"></iframe>\
+         </div>\
+         </div>"
+    )
+}
+
+fn render_media_dock(content: &str) -> String {
+    let mut src = String::new();
+    let mut phoenix_src = String::new();
+    let mut kind = String::from("audio");
+    let mut duration = String::from("0:00");
+    let mut title = String::from("Media Stream");
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("src=") {
+            src = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("phoenix_src=") {
+            phoenix_src = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("kind=") {
+            kind = v.trim().to_ascii_lowercase();
+        } else if let Some(v) = t.strip_prefix("duration=") {
+            duration = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("title=") {
+            title = v.trim().to_string();
+        }
+    }
+    let safe_src = safe_href(&src).unwrap_or_default();
+    let safe_phoenix = safe_href(&phoenix_src).unwrap_or_else(|| safe_src.clone());
+    let esc_src = escape(&safe_src);
+    let esc_phoenix = escape(&safe_phoenix);
+    let esc_duration = escape(&duration);
+    let esc_title = escape(&title);
+    let is_video = kind == "video";
+    let icon = if is_video { "🎬" } else { "🎵" };
+    let label = if is_video { "SOVEREIGN VIDEO + PHOENIX STUDIO" } else { "SOVEREIGN AUDIO + PHOENIX 768kHz STUDIO" };
+    let player_html = if is_video {
+        format!(
+            "<video class=\"qwave-media-player\" data-media-player data-orig-src=\"{esc_src}\" data-phoenix-src=\"{esc_phoenix}\" src=\"{esc_src}\" controls preload=\"metadata\" style=\"width:100%;max-height:540px;background:#05080f;display:block\"></video>"
+        )
+    } else {
+        format!(
+            "<div style=\"padding:18px 20px;background:rgba(8,13,24,0.92);display:flex;flex-direction:column;gap:10px\">\
+               <div style=\"display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted)\">\
+                 <span data-media-stream-badge>🔥 Active Stream: <strong style=\"color:var(--accent-2)\">Original Studio Master</strong> (Click PhoeniX'd 768kHz above for 16× Catmull-Rom + φ432 Revelation)</span>\
+                 <span>{esc_title} · {esc_duration}</span>\
+               </div>\
+               <audio class=\"qwave-media-player\" data-media-player data-orig-src=\"{esc_src}\" data-phoenix-src=\"{esc_phoenix}\" src=\"{esc_src}\" controls preload=\"metadata\" style=\"width:100%\"></audio>\
+             </div>"
+        )
+    };
+    format!(
+        "<div class=\"qwave-carousel qwave-media-dock\" data-media-dock>\
+         <div class=\"qwave-carousel-bar\">\
+           <span class=\"qwave-carousel-badge\">{icon} {label} · <strong>{esc_duration}</strong></span>\
+           <div class=\"qwave-carousel-nav\">\
+             <button type=\"button\" class=\"escape-btn carousel-btn active\" data-media-stream=\"orig\">{icon} Original Stream</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-media-stream=\"phoenix\">🔥 PhoeniX'd High-Res (768kHz / 16× + φ432)</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"summary\">⚡ Summary (For You)</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"phoenix\">🔥 PhoeniX'd Notes</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn\" data-pdf-mode=\"reader\">📖 Full View</button>\
+             <button type=\"button\" class=\"escape-btn carousel-btn btn-alexiai\" data-pdf-listen-summary>🔊 Listen: For You</button>\
+           </div>\
+         </div>\
+         <div class=\"qwave-media-wrap\">{player_html}</div>\
          </div>"
     )
 }
@@ -810,7 +915,7 @@ pub fn markdown_source_literal(source: &str) -> String {
     out
 }
 
-/// The domain-warped WebGL wave fragment shader ("Lost in the Math" — Bluish Smoke + Voice-Reactive Edition).
+/// The domain-warped WebGL wave fragment shader ("Lost in the Math" — Silky Bluish Smoke + Voice & Music Reactive Edition).
 pub const WAVE_FRAGMENT_SHADER: &str = r#"#ifdef GL_ES
 precision highp float;
 #endif
@@ -819,6 +924,7 @@ uniform float u_time;
 uniform vec2 u_resolution;
 uniform float u_voice;
 uniform float u_f0;
+uniform float u_music;
 
 float random (in vec2 _st) {
     return fract(sin(dot(_st.xy, vec2(12.9898,78.233))) * 43758.5453123);
@@ -859,42 +965,45 @@ void main() {
     vec2 center = vec2(0.5 * (u_resolution.x / max(u_resolution.y, 1.0)), 0.5);
     vec2 delta = st - center;
     float dist = length(delta);
-    float rippleFreq = 13.0 + u_f0 * 10.0;
-    float voiceRipple = sin(dist * rippleFreq - u_time * 6.5) * 0.085 * u_voice;
+    float rippleFreq = 12.0 + u_f0 * 9.0;
+    float voiceRipple = sin(dist * rippleFreq - u_time * 5.2) * 0.075 * u_voice;
+    float musicSway = sin(st.x * 4.2 + st.y * 3.1 - u_time * 2.1) * 0.038 * u_music
+                    + cos(dist * 7.5 - u_time * 2.8) * 0.024 * u_music;
     vec2 dir = delta / max(dist, 0.0001);
-    vec2 warpedSt = st + dir * voiceRipple;
+    vec2 warpedSt = st + dir * voiceRipple + vec2(musicSway, musicSway * 0.65);
 
     vec3 color = vec3(0.0);
     vec2 q = vec2(0.);
-    q.x = fbm( warpedSt + (0.03 + 0.16 * u_voice) * u_time);
-    q.y = fbm( warpedSt + vec2(1.0));
+    q.x = fbm( warpedSt + (0.042 + 0.065 * u_music + 0.14 * u_voice) * u_time);
+    q.y = fbm( warpedSt + vec2(1.0) + 0.028 * u_time);
 
     vec2 r = vec2(0.);
-    r.x = fbm( warpedSt + (1.0 + 0.48 * u_voice)*q + vec2(1.7,9.2)+ (0.15 + 0.28 * u_voice)*u_time );
-    r.y = fbm( warpedSt + (1.0 + 0.48 * u_voice)*q + vec2(8.3,2.8)+ (0.126 + 0.24 * u_voice)*u_time);
+    r.x = fbm( warpedSt + (1.0 + 0.22 * u_music + 0.42 * u_voice)*q + vec2(1.7,9.2)+ (0.11 + 0.08 * u_music + 0.22 * u_voice)*u_time );
+    r.y = fbm( warpedSt + (1.0 + 0.22 * u_music + 0.42 * u_voice)*q + vec2(8.3,2.8)+ (0.095 + 0.07 * u_music + 0.19 * u_voice)*u_time);
 
     float f = fbm(warpedSt+r);
 
-    // Bluish Cyber-Smoke palette: deep sapphire -> cobalt azure -> abyssal midnight -> electric cyan/starlight voice crest
-    color = mix(vec3(0.04, 0.26, 0.66),
-                vec3(0.10, 0.56, 0.92),
+    // Bluish Cyber-Smoke palette: deep sapphire -> cobalt azure -> abyssal midnight -> electric cyan/starlight/gold music crest
+    color = mix(vec3(0.03, 0.22, 0.58),
+                vec3(0.09, 0.52, 0.88),
                 clamp((f*f)*4.0,0.0,1.0));
 
     color = mix(color,
-                vec3(0.01, 0.03, 0.15),
+                vec3(0.01, 0.025, 0.12),
                 clamp(length(q),0.0,1.0));
 
-    vec3 crestColor = mix(vec3(0.36, 0.88, 1.0), vec3(0.68, 0.55, 1.0), clamp(u_voice * 0.75, 0.0, 1.0));
+    vec3 crestColor = mix(vec3(0.34, 0.86, 1.0), vec3(0.70, 0.54, 1.0), clamp(u_voice * 0.75 + u_music * 0.35, 0.0, 1.0));
+    crestColor = mix(crestColor, vec3(0.91, 0.69, 0.36), clamp(u_music * 0.36, 0.0, 0.36));
     color = mix(color,
                 crestColor,
                 clamp(length(r.x),0.0,1.0));
 
-    float intensity = (f*f*f + (0.62 + 0.26 * u_voice)*f*f + (0.52 + 0.16 * u_voice)*f);
+    float intensity = (f*f*f + (0.58 + 0.14 * u_music + 0.24 * u_voice)*f*f + (0.48 + 0.10 * u_music + 0.14 * u_voice)*f);
     gl_FragColor = vec4(intensity * color, 1.0);
 }
 "#;
 
-/// Demand-controlled WebGL Bluish Smoke & Voice-Reactive Wave runner.
+/// Continuous Silky WebGL Bluish Smoke & Voice/Music-Reactive Wave runner.
 pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   const canvas = document.getElementById("glCanvas");
   if (!canvas) return;
@@ -943,17 +1052,24 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   const uResolutionLocation = gl.getUniformLocation(program, "u_resolution");
   const uVoiceLocation = gl.getUniformLocation(program, "u_voice");
   const uF0Location = gl.getUniformLocation(program, "u_f0");
+  const uMusicLocation = gl.getUniformLocation(program, "u_music");
   const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = motionPreference.matches;
-  // Demand-driven: 0% GPU/CPU when quiet; wakes and ripples smoothly whenever you or Aye speak!
-  window.__qwaveShaderPaused = true;
+  // Smooth continuous flow by default; reacts lightly to music and voice!
+  window.__qwaveShaderPaused = false;
+  window.__qwaveMusicPlaying = false;
   let voiceEnergy = 0.0;
   let voicePitch = 0.5;
+  let musicEnergy = 0.0;
+  let targetMusicEnergy = 0.0;
+  let activeAudioAnalyser = null;
+  let activeAudioBins = null;
+  let activeMediaEl = null;
   let simTime = 8.0;
 
   function resize() {
-    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.38));
-    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.38));
+    canvas.width = Math.max(1, Math.floor(window.innerWidth * 0.32));
+    canvas.height = Math.max(1, Math.floor(window.innerHeight * 0.32));
     gl.viewport(0, 0, canvas.width, canvas.height);
     if (!document.hidden) render();
   }
@@ -963,31 +1079,116 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
     gl.uniform2f(uResolutionLocation, canvas.width, canvas.height);
     if (uVoiceLocation) gl.uniform1f(uVoiceLocation, voiceEnergy);
     if (uF0Location) gl.uniform1f(uF0Location, voicePitch);
+    if (uMusicLocation) gl.uniform1f(uMusicLocation, musicEnergy);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
+  const FPS_CAP_MS = 1000 / 20;
   let lastRender = -1000;
+  let lastTime = 0;
   let rafId = 0;
+
+  function sampleMusicEnvelope(nowSec) {
+    if (activeAudioAnalyser && activeAudioBins && activeMediaEl && !activeMediaEl.paused) {
+      activeAudioAnalyser.getByteFrequencyData(activeAudioBins);
+      let bassSum = 0;
+      let midSum = 0;
+      const n = activeAudioBins.length;
+      for (let i = 0; i < n; i++) {
+        if (i < 8) bassSum += activeAudioBins[i];
+        else midSum += activeAudioBins[i];
+      }
+      const bass = (bassSum / Math.max(1, Math.min(8, n))) / 255.0;
+      const mid = (midSum / Math.max(1, n - 8)) / 255.0;
+      targetMusicEnergy = Math.min(0.85, bass * 0.62 + mid * 0.38);
+    } else if (window.__qwaveMusicPlaying) {
+      // Gentle rhythmic 432Hz/112BPM breathing when external desktop music (ffplay) is playing
+      const beat = 0.5 + 0.5 * Math.sin(nowSec * 5.86);
+      const swell = 0.5 + 0.5 * Math.cos(nowSec * 1.46);
+      targetMusicEnergy = 0.24 + 0.26 * beat + 0.14 * swell;
+    } else {
+      targetMusicEnergy *= 0.92;
+      if (targetMusicEnergy < 0.005) targetMusicEnergy = 0.0;
+    }
+    musicEnergy += (targetMusicEnergy - musicEnergy) * 0.12;
+    if (musicEnergy < 0.003) musicEnergy = 0.0;
+  }
 
   function frame(time) {
     rafId = 0;
     if (document.hidden) return;
-    if (reduce || (window.__qwaveShaderPaused && voiceEnergy < 0.01)) {
-      voiceEnergy = 0.0;
+    if (reduce || window.__qwaveShaderPaused) {
       render();
       return;
     }
-    if (time - lastRender >= 66) {
+    if (time - lastRender >= FPS_CAP_MS) {
+      const dt = lastTime > 0 ? Math.min(0.08, Math.max(0.001, (time - lastTime) * 0.001)) : 0.033;
+      lastTime = time;
       lastRender = time;
-      simTime += 0.045 + voiceEnergy * 0.08;
-      voiceEnergy *= 0.86;
-      if (voiceEnergy < 0.01) voiceEnergy = 0.0;
+      sampleMusicEnvelope(time * 0.001);
+      simTime += dt * (0.28 + musicEnergy * 0.42 + voiceEnergy * 0.65);
+      voiceEnergy *= Math.pow(0.22, dt);
+      if (voiceEnergy < 0.005) voiceEnergy = 0.0;
       render();
     }
-    if (!window.__qwaveShaderPaused || voiceEnergy >= 0.01) {
-      rafId = requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function bindMediaElementForMusic(el) {
+    if (!el || el.__qwaveAudioBound) return;
+    el.__qwaveAudioBound = true;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const src = ctx.createMediaElementSource(el);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.82;
+      src.connect(analyser);
+      analyser.connect(ctx.destination);
+      activeAudioAnalyser = analyser;
+      activeAudioBins = new Uint8Array(analyser.frequencyBinCount);
+      activeMediaEl = el;
+    } catch (_) {
+      activeMediaEl = el;
     }
   }
+
+  document.addEventListener("play", function (e) {
+    const t = e.target;
+    if (t && (t.tagName === "AUDIO" || t.tagName === "VIDEO")) {
+      window.__qwaveMusicPlaying = true;
+      bindMediaElementForMusic(t);
+      if (!rafId && !reduce) rafId = requestAnimationFrame(frame);
+    }
+  }, true);
+
+  document.addEventListener("pause", function (e) {
+    const t = e.target;
+    if (t && t === activeMediaEl) {
+      window.__qwaveMusicPlaying = false;
+    }
+  }, true);
+
+  document.addEventListener("ended", function (e) {
+    const t = e.target;
+    if (t && t === activeMediaEl) {
+      window.__qwaveMusicPlaying = false;
+    }
+  }, true);
+
+  window.__qwaveSetMusic = function (playingOrLevel) {
+    if (typeof playingOrLevel === "boolean") {
+      window.__qwaveMusicPlaying = playingOrLevel;
+    } else if (typeof playingOrLevel === "number") {
+      window.__qwaveMusicPlaying = playingOrLevel > 0.01;
+      targetMusicEnergy = Math.max(0.0, Math.min(1.0, playingOrLevel));
+    }
+    if (!rafId && !reduce && !document.hidden) {
+      rafId = requestAnimationFrame(frame);
+    }
+  };
 
   window.__qwavePulseVoice = function (energy, f0Norm) {
     if (reduce || document.hidden) return;
@@ -1005,10 +1206,10 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
     cancelAnimationFrame(rafId);
     rafId = 0;
     reduce = motionPreference.matches;
-    lastRender = -1000;
+    lastTime = 0;
     if (document.hidden) return;
     render();
-    if (!reduce && (!window.__qwaveShaderPaused || voiceEnergy >= 0.01)) {
+    if (!reduce && !window.__qwaveShaderPaused) {
       rafId = requestAnimationFrame(frame);
     }
   }
@@ -1016,6 +1217,7 @@ pub const WAVE_CANVAS_SCRIPT: &str = r#"(function () {
   document.addEventListener("visibilitychange", syncAnimation);
   window.addEventListener("resize", resize);
   resize();
+  syncAnimation();
 })();"#;
 
 #[cfg(test)]

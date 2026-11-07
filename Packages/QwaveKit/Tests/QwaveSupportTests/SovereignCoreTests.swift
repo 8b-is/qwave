@@ -62,6 +62,28 @@ final class SovereignCoreTests: XCTestCase {
         XCTAssertEqual(amplitude, 0.5)
     }
 
+    func testPhoenixSoundStubAndTelemetryContract() {
+        let engine = RustPhoenixSound(sampleRateHz: 48_000, preset: .vocalClaritySvara)
+        engine.setPreset(.naadStudioSub)
+        engine.setParams(
+            naadSubQ10: 480,
+            svaraVocalQ10: 520,
+            warmthQ10: 420,
+            goonjVelvetQ10: 260,
+            airQ10: 380
+        )
+        var samples: [Int16] = [1200, -1200, 2400, -2400]
+        samples.withUnsafeMutableBufferPointer { buf in
+            if let base = buf.baseAddress {
+                engine.processInterleavedStereo(base, frames: 2)
+            }
+        }
+        let snap = engine.telemetry()
+        XCTAssertEqual(snap.marineBuckets64.count, 64)
+        XCTAssertEqual(snap.marineVocal64.count, 64)
+        XCTAssertEqual(snap.dominantHz, 432)
+    }
+
     /// Walk up from this source file to the repository root (the directory
     /// containing both `core/` and `Packages/`).
     private func repoRoot() throws -> URL {

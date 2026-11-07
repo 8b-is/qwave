@@ -105,6 +105,79 @@ bool qw_channel_entitled(uint8_t channel, uint64_t member_hash, uint8_t tier,
 /* Static NUL-terminated non-nagging notice for `channel`, or null. */
 const char *qw_channel_notice(uint8_t channel);
 
+/* ── PhoeniX Sound Revelation & Marine-Sense AUv3 DSP Engine ─────────────── */
+
+struct qwave_phoenix_sound; /* opaque: real-time 16x Catmull-Rom + Svara + Marine engine */
+
+/* Allocate a real-time PhoeniX audio processor at `sample_rate_hz` (`48000`..`384000`)
+ * with `preset_id` (0=Sovereign, 1=GoonjVelvet, 2=NaadSub, 3=Sanctuary432, 4=VocalClarity). */
+struct qwave_phoenix_sound *qw_phoenix_sound_new(uint32_t sample_rate_hz,
+                                                 uint8_t preset_id);
+
+/* Release a processor allocated by `qw_phoenix_sound_new`. */
+void qw_phoenix_sound_free(struct qwave_phoenix_sound *engine);
+
+/* Switch the active PhoeniX preset (`0..=5`, where `5 = AlexandraSanctuary`). */
+void qw_phoenix_sound_set_preset(struct qwave_phoenix_sound *engine,
+                                 uint8_t preset_id);
+
+/* Update Auto-Magical Svara self-tuning and 3 human-feel macros (`0..=200` percent). */
+void qw_phoenix_sound_set_feel(struct qwave_phoenix_sound *engine,
+                               bool automagic,
+                               uint16_t voice_pct,
+                               uint16_t bass_pct,
+                               uint16_t space_pct);
+
+/* Toggle the built-in 432Hz x phi Alexandra Sanctuary Nervous-System Reset Wave. */
+void qw_phoenix_sound_set_alexandra_reset(struct qwave_phoenix_sound *engine,
+                                          bool active);
+
+/* Fine-tune PhoeniX harmonic parameters (`0..=1024` Q10 scale; `stereo_width_q10` `512..=2048`). */
+void qw_phoenix_sound_set_params(struct qwave_phoenix_sound *engine,
+                                 int32_t naad_sub_q10,
+                                 int32_t svara_vocal_q10,
+                                 int32_t warmth_q10,
+                                 int32_t goonj_velvet_q10,
+                                 int32_t air_q10,
+                                 int32_t stereo_width_q10);
+
+/* Real-time zero-allocation in-place stereo `s16le` processing (`frames * 2` int16 samples). */
+void qw_phoenix_sound_process_i16(struct qwave_phoenix_sound *engine,
+                                  int16_t *interleaved_stereo,
+                                  size_t frames);
+
+/* Snapshot 64 Marine time-domain salience buckets (20 Hz .. 384 kHz), 64 isolated Singer-Only
+ * vocal emotion buckets, dominant pitch (Hz), and Soul Authenticity score (0..1024). */
+void qw_phoenix_sound_telemetry(const struct qwave_phoenix_sound *engine,
+                                uint16_t *out_buckets_64,
+                                uint16_t *out_vocal_64,
+                                uint32_t *out_dom_hz,
+                                uint16_t *out_soul_q10);
+
+/* --- i1.is Sovereign AI Provenance, Soul Signature & Smart Tree .m8 --- */
+
+struct QwI1DeedSummary {
+    uint64_t soul_tag;
+    uint64_t deed_seal;
+    uint16_t stylometric_q10;
+    uint16_t shingle_q10;
+    uint16_t organic_authenticity_q10;
+    uint16_t combined_match_q10;
+    uint16_t smart_tree_savings_q10;
+    uint16_t smart_tree_nodes;
+    uint32_t redaction_count;
+    bool can_ingest_i1;
+    bool can_summarize_local;
+};
+
+bool qw_i1_evaluate_deed(const char *creator_id,
+                         const char *secret_phrase,
+                         const char *canonical_url,
+                         const char *page_text,
+                         uint8_t ingest_mode,
+                         bool original_author_revoked,
+                         struct QwI1DeedSummary *out_summary);
+
 #ifdef __cplusplus
 }
 #endif

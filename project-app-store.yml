@@ -26,6 +26,8 @@ targets:
         product: WebCredentials
       - target: CredentialProvider
         embed: true
+      - target: PhoenixAudioExtension
+        embed: true
     info:
       path: Resources/AppStore/MacInfo.plist
       properties:
@@ -57,6 +59,24 @@ targets:
       path: Resources/AppStore/CredentialProvider.entitlements
       properties:
         com.apple.security.app-sandbox: true
+  PhoenixAudioExtension:
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.q-wave.phoenix-au
+    info:
+      path: Resources/AppStore/PhoenixAudioExtensionInfo.plist
+    entitlements:
+      path: Resources/AppStore/PhoenixAudioExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+  PhoenixAudioIOSExtension:
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.8b.q-wave.phoenix-au
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: $(QWAVE_DEVELOPMENT_TEAM)
+    info:
+      path: Resources/AppStore/PhoenixAudioIOSExtensionInfo.plist
   QwaveIOS:
     sources:
       - path: Resources/StoreDistribution/PrivacyInfo.xcprivacy

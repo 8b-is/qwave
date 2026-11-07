@@ -36,9 +36,6 @@ use qwave_core::mesh::{
     MemnetCapsule64, PortalMemoryBook, fnv32_1a, parse_captive_portal_response_with_identity,
     rank_free_wifi_candidates_with_memory,
 };
-use qwave_core::papers::{
-    compile_tex_to_markdown, extract_pdf_to_markdown, markdown_to_spoken_narration,
-};
 use qwave_core::phoenix_sound::{PhoenixSoundPreset, phoenix_transform_audio_file};
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
@@ -48,6 +45,13 @@ use qwave_core::salience::{
     contextualize_room_transcript, decode_wav_i16, encode_wav_i16, extract_salient_grains,
     is_hey_aye_wake_phrase, sanitize_and_dedup_stt_transcript, triangulate_stereo_dmic_i16,
     trim_salient_speech_pcm_i16,
+};
+use qwave_core::tex_pdf::{
+    MediaExtract, PdfExtract, compile_tex_to_markdown, compile_tex_to_markdown_with_mem8,
+    extract_pdf_text_pure_rust, extract_spoken_narration, extract_spoken_narration_mode,
+    format_media_to_markdown, format_pdf_to_markdown, format_pdf_to_markdown_with_mem8,
+    is_audio_extension, is_media_extension, is_pdf_extension, is_tex_extension,
+    is_video_extension,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
@@ -239,23 +243,19 @@ fn main() -> ExitCode {
             .and_then(|vpos| args.get(vpos + 1))
             .map(String::as_str)
             .unwrap_or("af_heart");
+        let page_opt: Option<usize> = args
+            .iter()
+            .position(|a| a == "--page" || a == "-p")
+            .and_then(|ppos| args.get(ppos + 1))
+            .and_then(|s| s.parse().ok());
         let raw_arg = args
             .get(pos + 1)
             .map(String::as_str)
             .unwrap_or("Qwave sovereign voice online.");
-        let spoken_text = {
-            let candidate = Path::new(raw_arg);
-            if candidate.is_file() {
-                let (_, md_source, _) = load_and_compile(candidate);
-                let narr = markdown_to_spoken_narration(&md_source);
-                if narr.is_empty() {
-                    raw_arg.to_string()
-                } else {
-                    narr
-                }
-            } else {
-                raw_arg.to_string()
-            }
+        let spoken_text = if is_worker {
+            raw_arg.to_string()
+        } else {
+            resolve_spoken_input_or_file(raw_arg, page_opt)
         };
         let msg = speak_out_loud(&spoken_text, voice, true, true);
         if !is_worker {
@@ -336,9 +336,120 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Some(pos) = args.iter().position(|a| a == "--summarize" || a == "--summary") {
+        let Some(target) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --summarize <file.pdf | file.tex | file.mp4 | file.mp3 | file.md>");
+            return ExitCode::from(2);
+        };
+        let (path, _) = resolve_input_target(target);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let (_title, raw_or_md, _compiled) = load_and_compile(&path);
+        let source_md = if is_tex_extension(&ext) {
+            compile_tex_to_markdown_with_mem8(&raw_or_md, &load_mem8_user_anchors())
+        } else {
+            raw_or_md
+        };
+        let summary_slice = if let Some(end_idx) = source_md.find("## 📖 Full Sovereign Document") {
+            &source_md[..end_idx]
+        } else {
+            &source_md
+        };
+        println!("{}", summary_slice.trim());
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--phoenix") {
+        let Some(target) = args.get(pos + 1) else {
+            eprintln!("usage: qwave --phoenix <file.wav | file.mp3 | file.mp4 | file.pdf | file.tex> [-o output]");
+            return ExitCode::from(2);
+        };
+        let out_opt = args
+            .iter()
+            .position(|a| a == "-o" || a == "--output")
+            .and_then(|opos| args.get(opos + 1))
+            .map(PathBuf::from);
+        let (path, _) = resolve_input_target(target);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if is_audio_extension(&ext) {
+            let out_wav = out_opt.unwrap_or_else(|| path.with_extension("phoenix.wav"));
+            let out_8a = path.with_extension("8a");
+            let preset = qwave_core::phoenix_sound::PhoenixSoundPreset::sovereign_master();
+            match qwave_core::phoenix_sound::phoenix_transform_audio_file(
+                &path,
+                Some(&out_wav),
+                Some(&out_8a),
+                &preset,
+            ) {
+                Ok((_pcm, _eight_a, rcpt)) => {
+                    println!(
+                        "🔥 PhoeniX 768kHz Sound Revelation Complete:\n  Output WAV : {}\n  Output .8a : {} ({} bytes)\n  Grid       : {} Hz (16x over {} Hz)\n  Restored   : {} clipped/dropped samples via integer Catmull-Rom\n  Dominant f0: {}/{} Hz (phi_low={}/{} Hz, phi_high={}/{} Hz)\n  Soul Score : {}/{}\n  Bloom Ratio: {}/{}",
+                        out_wav.display(),
+                        out_8a.display(),
+                        rcpt.eight_a_bytes,
+                        rcpt.internal_oversample_hz,
+                        rcpt.sample_rate_hz,
+                        rcpt.catmull_rom_restored_samples,
+                        rcpt.dominant_freq_hz.num,
+                        rcpt.dominant_freq_hz.den,
+                        rcpt.phi_lower_hz.num,
+                        rcpt.phi_lower_hz.den,
+                        rcpt.phi_upper_hz.num,
+                        rcpt.phi_upper_hz.den,
+                        rcpt.soul_authenticity.num,
+                        rcpt.soul_authenticity.den,
+                        rcpt.harmonic_bloom_ratio.num,
+                        rcpt.harmonic_bloom_ratio.den
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                Err(e) => {
+                    eprintln!("qwave --phoenix error: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        } else if is_video_extension(&ext) {
+            match render_phoenix_video_stream(&path) {
+                Ok(bytes) => {
+                    let out_mp4 = out_opt.unwrap_or_else(|| path.with_extension("phoenix.mp4"));
+                    let _ = fs::write(&out_mp4, &bytes);
+                    println!(
+                        "🔥 PhoeniX High-Resolution Video + 768kHz Audio Complete: {} ({} bytes)",
+                        out_mp4.display(),
+                        bytes.len()
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                Err(e) => {
+                    eprintln!("qwave --phoenix video error: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        } else {
+            let (_title, source_md, _compiled) = load_and_compile(&path);
+            if let Some(start) = source_md.find("## 🔥 PhoeniX'd High-Resolution Distillation") {
+                let sub = &source_md[start..];
+                let end = sub
+                    .find("## 📖 Full Sovereign Document")
+                    .unwrap_or(sub.len());
+                println!("{}", sub[..end].trim());
+            } else {
+                println!("{}", source_md.trim());
+            }
+            return ExitCode::SUCCESS;
+        }
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--compile") {
         let Some(target) = args.get(pos + 1) else {
-            eprintln!("usage: qwave --compile <file.md|file.pdf|file.tex>");
+            eprintln!("usage: qwave --compile <file.md | file.tex | file.pdf>");
             return ExitCode::from(2);
         };
         let (path, _) = resolve_input_target(target);
@@ -348,6 +459,9 @@ fn main() -> ExitCode {
     }
 
     let server_only = args.iter().any(|a| a == "--server-only");
+    let auto_read = args
+        .iter()
+        .any(|a| a == "--read" || a == "--listen-doc" || a == "--read-aloud");
     let raw_target = args
         .iter()
         .find(|a| !a.starts_with("--"))
@@ -364,8 +478,9 @@ fn main() -> ExitCode {
             // If port 42123 is already served by an active qwave daemon, just point the window at it!
             if !server_only && TcpStream::connect("127.0.0.1:42123").is_ok() {
                 let mut existing_url = format!(
-                    "http://127.0.0.1:42123/view?path={}",
-                    url_encode(&initial_path.to_string_lossy())
+                    "http://127.0.0.1:42123/view?path={}{}",
+                    url_encode(&initial_path.to_string_lossy()),
+                    if auto_read { "&autolisten=1" } else { "" }
                 );
                 if let Some(anchor) = initial_anchor {
                     existing_url.push('#');
@@ -385,8 +500,9 @@ fn main() -> ExitCode {
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(42123);
     let mut url = format!(
-        "http://127.0.0.1:{port}/view?path={}",
-        url_encode(&initial_path.to_string_lossy())
+        "http://127.0.0.1:{port}/view?path={}{}",
+        url_encode(&initial_path.to_string_lossy()),
+        if auto_read { "&autolisten=1" } else { "" }
     );
     if let Some(anchor) = initial_anchor {
         url.push('#');
@@ -423,16 +539,17 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     println!(
-        "Qwave Sovereign Markdown Reader, ALEXIAI Voice Companion & MEM|8 Studio\n\
+        "Qwave Sovereign Markdown, TeX & PDF Reader, ALEXIAI Voice Companion & MEM|8 Studio\n\
          \n\
          Usage:\n\
-           qwave <file.md | file:///path/to/file.md[#L10-L20]>\n\
-           qwave --mcp                   Run MCP server over stdio (for agy, claude, codex)\n\
-           qwave --speak <text>          Speak out loud with zero-float MEM|8 salience modulation\n\
-           qwave --listen [secs|wav]     Record/transcribe & learn salient vocal grains into MEM|8\n\
-           qwave --surf <url>            Open URL or Markdown in native Qwave window\n\
-           qwave --compile <file.md>     Emit self-contained HTML to stdout\n\
-           qwave --server-only <file.md> Run sovereign loopback server and print URL"
+           qwave <file.md | file.tex | file.pdf | file:///path/to/file[#L10-L20]>\n\
+           qwave --read <file.pdf|file.tex|file.md>  Open document and start Read-Aloud narrator\n\
+           qwave --mcp                               Run MCP server over stdio (for agy, claude, codex)\n\
+           qwave --speak <text|file.pdf|file.tex>    Speak text or document out loud (--page N for PDF page)\n\
+           qwave --listen [secs|wav]                 Record/transcribe & learn salient vocal grains into MEM|8\n\
+           qwave --surf <url|file.pdf|file.tex>      Open URL, PDF, TeX, or Markdown in native Qwave window\n\
+           qwave --compile <file.md|file.tex|file.pdf> Emit self-contained HTML to stdout\n\
+           qwave --server-only <file>                Run sovereign loopback server and print URL"
     );
 }
 
@@ -712,8 +829,22 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("POST", "/api/compile-raw") => {
             let req_str = String::from_utf8_lossy(&body);
-            let markdown = extract_json_str(&req_str, "markdown").unwrap_or_default();
+            let raw_input = extract_json_str(&req_str, "markdown").unwrap_or_default();
             let path = state.current_file.lock().unwrap().clone();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let is_tex_doc = is_tex_extension(&ext)
+                || raw_input.trim_start().starts_with("\\documentclass")
+                || raw_input.contains("\\begin{document}")
+                || raw_input.contains("\\section{");
+            let markdown = if is_tex_doc {
+                compile_tex_to_markdown(&raw_input)
+            } else {
+                raw_input
+            };
             let base_dir = path.parent().map(|p| p.to_string_lossy().to_string());
             let compiled = compile_full(
                 &markdown,
@@ -777,8 +908,38 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         ("GET", "/api/alexiai/tts") => {
             let text = get_query_param(query, "text").unwrap_or_else(|| "Alexiai online.".to_string());
             let voice = get_query_param(query, "voice").unwrap_or_else(|| "af_heart".to_string());
-            let wav_bytes = synthesize_alexiai_tts(&text, &voice, &state);
+            let use_phoenix = get_query_param(query, "phoenix").unwrap_or_else(|| "1".to_string()) != "0";
+            let mut wav_bytes = synthesize_alexiai_tts(&text, &voice, &state);
+            if use_phoenix && wav_bytes.len() > 44 {
+                if let Ok((enhanced, _rcpt)) = qwave_core::phoenix_sound::phoenix_enhance_wav_bytes(
+                    &wav_bytes,
+                    &qwave_core::phoenix_sound::PhoenixSoundPreset::vocal_clarity(),
+                ) {
+                    wav_bytes = enhanced;
+                }
+            }
             send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes)
+        }
+        ("GET", "/api/phoenix/audio") => {
+            let Some(asset_path) = get_query_param(query, "path") else {
+                return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
+            };
+            let preset_name = get_query_param(query, "preset").unwrap_or_else(|| "master".to_string());
+            let p = PathBuf::from(&asset_path);
+            match render_phoenix_audio_stream(&p, &preset_name) {
+                Ok(wav_bytes) => send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes),
+                Err(e) => send_response(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes()),
+            }
+        }
+        ("GET", "/api/phoenix/video") => {
+            let Some(asset_path) = get_query_param(query, "path") else {
+                return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
+            };
+            let p = PathBuf::from(&asset_path);
+            match render_phoenix_video_stream(&p) {
+                Ok(mp4_bytes) => send_response(&mut stream, "200 OK", "video/mp4", &mp4_bytes),
+                Err(e) => send_response(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes()),
+            }
         }
         ("POST", "/api/alexiai/chat") => {
             let req_str = String::from_utf8_lossy(&body);
@@ -788,6 +949,42 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
                 .map(PathBuf::from)
                 .unwrap_or_else(|| state.current_file.lock().unwrap().clone());
             let json = handle_alexiai_chat(&path, &message, &markdown);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/start") | ("HEAD", "/start") => {
+            let html = render_start_slate_html();
+            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+        }
+        ("GET", "/timeline") | ("HEAD", "/timeline") => {
+            let range = get_query_param(query, "range").unwrap_or_default();
+            let html = render_timeline_slate_html(&range);
+            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+        }
+        ("GET", "/flight") | ("GET", "/delta") | ("HEAD", "/flight") | ("HEAD", "/delta") => {
+            let html = render_flight_globe_html();
+            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+        }
+        ("GET", "/api/flight/live") => {
+            let json = build_flight_live_json();
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/api/smart-tree") => {
+            let path = get_query_param(query, "path")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| state.current_file.lock().unwrap().clone());
+            let q = get_query_param(query, "q").unwrap_or_default();
+            let json = handle_smart_tree_api(&path, &q);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("POST", "/api/smart-tree") => {
+            let req_str = String::from_utf8_lossy(&body);
+            let path = extract_json_str(&req_str, "path")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| state.current_file.lock().unwrap().clone());
+            let q = extract_json_str(&req_str, "query")
+                .or_else(|| extract_json_str(&req_str, "q"))
+                .unwrap_or_default();
+            let json = handle_smart_tree_api(&path, &q);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/humayian/mix.wav") => {
@@ -950,6 +1147,21 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
                 .unwrap_or_else(|| state.current_file.lock().unwrap().to_string_lossy().to_string());
             let json = crystallize_mem8_wave(&path_str, &scope, &text);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("POST", "/api/hud-dialog") => {
+            let req_str = String::from_utf8_lossy(&body);
+            let cmd = extract_json_str(&req_str, "cmd").unwrap_or_else(|| "control-center".to_string());
+            let allowed = match cmd.as_str() {
+                "wifi-menu" | "bt-menu" | "audio-menu" | "power-menu" | "control-center" | "ai-menu" | "vault-menu" | "phoenix-menu" => cmd.as_str(),
+                _ => "control-center",
+            };
+            let _ = Command::new("/home/hue/.local/bin/qwave-hypr-hud")
+                .arg(allowed)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            send_response(&mut stream, "200 OK", "application/json", b"{\"ok\":true}")
         }
         _ => send_response(&mut stream, "404 Not Found", "text/plain", b"Not Found"),
     }
@@ -1340,18 +1552,1922 @@ fn generate_humayian_music_suite() -> Vec<u8> {
     fs::read(t1).unwrap_or_default()
 }
 
-/// Handle conversational turn with ALEXIAI (Aye-Aye) inside Qwave:
+/// Locate the Smart Tree (`st`) binary on this workstation.
+fn find_smart_tree_bin() -> &'static str {
+    for cand in ["/home/hue/.local/bin/st", "/usr/local/bin/st", "/usr/bin/st"] {
+        if Path::new(cand).exists() {
+            return cand;
+        }
+    }
+    "st"
+}
+
+/// Find the nearest repository/project root for Smart Tree (`st`) codebase & CrabCC symbol queries.
+fn find_project_root(path: &Path) -> PathBuf {
+    let mut cur = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .unwrap_or_else(|| Path::new("/home/hue/8b-is"))
+            .to_path_buf()
+    };
+    for _ in 0..6 {
+        if cur.join("Cargo.toml").exists()
+            || cur.join(".git").exists()
+            || cur.join("AGENTS.md").exists()
+            || cur.join("Package.swift").exists()
+        {
+            return cur;
+        }
+        if let Some(parent) = cur.parent() {
+            cur = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    if Path::new("/home/hue/8b-is/qwave").exists() {
+        PathBuf::from("/home/hue/8b-is/qwave")
+    } else {
+        PathBuf::from("/home/hue/8b-is")
+    }
+}
+
+/// Anchor a memory into Smart Tree (`st --memory-anchor`) so Qwave and Smart Tree share live recall.
+fn anchor_smart_tree_memory(kind: &str, keywords: &str, context_text: &str) {
+    let clean_ctx: String = context_text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(260)
+        .collect();
+    if clean_ctx.is_empty() {
+        return;
+    }
+    let st = find_smart_tree_bin();
+    let _ = Command::new(st)
+        .current_dir("/home/hue/8b-is")
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "--memory-anchor",
+            kind,
+            keywords,
+            &clean_ctx,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Recall memories from Smart Tree (`st --memory-find <keywords>`) across `/home/hue/8b-is` and `project_root`.
+fn recall_smart_tree_memories(project_root: &Path, keywords: &str) -> Vec<String> {
+    let st = find_smart_tree_bin();
+    let mut results = Vec::<String>::new();
+    let kw = if keywords.trim().is_empty() {
+        "qwave,smart-tree,hyprland,mem8,phoenix,humayian"
+    } else {
+        keywords.trim()
+    };
+    for dir in [Path::new("/home/hue/8b-is"), project_root] {
+        if !dir.exists() {
+            continue;
+        }
+        if let Ok(out) = Command::new(st)
+            .current_dir(dir)
+            .args(["--no-update-check", "--no-daemon", "--memory-find", kw])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let t = line.trim();
+                if let Some(rest) = t.strip_prefix("📝 ") {
+                    let clean = rest.trim().to_string();
+                    if !clean.is_empty() && !results.contains(&clean) {
+                        results.push(clean);
+                    }
+                }
+            }
+        }
+    }
+    results
+}
+
+/// Query Smart Tree's built-in CrabCC zero-float `pq_kernel` symbol graph (`st symbol --path <root> graph`).
+fn query_smart_tree_symbol_graph(root: &Path) -> Option<String> {
+    let st = find_smart_tree_bin();
+    let out = Command::new(st)
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "symbol",
+            "--path",
+            &root.to_string_lossy(),
+            "graph",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if raw.starts_with('{') {
+        Some(raw)
+    } else {
+        None
+    }
+}
+
+/// Query Smart Tree's CrabCC symbol outline for a specific file (`st symbol --path <root> outline <rel>`).
+fn query_smart_tree_file_outline(path: &Path) -> Vec<(String, String, String, u32)> {
+    let mut items = Vec::<(String, String, String, u32)>::new();
+    let root = find_project_root(path);
+    let rel = path
+        .strip_prefix(&root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    let st = find_smart_tree_bin();
+    let Ok(out) = Command::new(st)
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "symbol",
+            "--path",
+            &root.to_string_lossy(),
+            "outline",
+            &rel,
+        ])
+        .output()
+    else {
+        return items;
+    };
+    if !out.status.success() {
+        return items;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout);
+    for block in raw.split('{').skip(1) {
+        let kind = extract_json_str(block, "kind").unwrap_or_else(|| "sym".to_string());
+        let name = extract_json_str(block, "name").unwrap_or_default();
+        let sig = extract_json_str(block, "signature").unwrap_or_default();
+        let line_start = block
+            .lines()
+            .find(|l| l.contains("\"line_start\""))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|v| v.trim().trim_end_matches(',').parse::<u32>().unwrap_or(1))
+            .unwrap_or(1);
+        if !name.is_empty() && items.len() < 48 {
+            items.push((kind, name, sig, line_start));
+        }
+    }
+    items
+}
+
+/// Search Smart Tree CrabCC symbols (`st symbol --path <root> sym <query>`) across the repository.
+fn query_smart_tree_symbol_search(root: &Path, symbol_query: &str) -> Vec<(String, String, u32, String)> {
+    let mut hits = Vec::<(String, String, u32, String)>::new();
+    if symbol_query.trim().len() < 2 {
+        return hits;
+    }
+    let st = find_smart_tree_bin();
+    let Ok(out) = Command::new(st)
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "symbol",
+            "--path",
+            &root.to_string_lossy(),
+            "sym",
+            symbol_query.trim(),
+        ])
+        .output()
+    else {
+        return hits;
+    };
+    if !out.status.success() {
+        return hits;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout);
+    for block in raw.split('{').skip(1) {
+        let file = extract_json_str(block, "file").unwrap_or_default();
+        let name = extract_json_str(block, "name").unwrap_or_default();
+        let sig = extract_json_str(block, "signature")
+            .or_else(|| extract_json_str(block, "source"))
+            .unwrap_or_default();
+        let line_start = block
+            .lines()
+            .find(|l| l.contains("\"line_start\""))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|v| v.trim().trim_end_matches(',').parse::<u32>().unwrap_or(1))
+            .unwrap_or(1);
+        if !file.is_empty() && !name.is_empty() && hits.len() < 8 {
+            hits.push((file, name, line_start, sig));
+        }
+    }
+    hits
+}
+
+/// Extract candidate identifier/keyword tokens from a conversational message for Smart Tree lookup.
+fn extract_smart_tree_tokens(user_msg: &str) -> (String, Vec<String>) {
+    let stop_words = [
+        "what", "where", "when", "which", "who", "whom", "whose", "why", "how", "does", "show",
+        "tell", "about", "from", "with", "into", "this", "that", "there", "here", "have", "make",
+        "smart", "tree", "qwave", "please", "could", "would", "find", "search", "explain", "open",
+        "file", "code", "repo", "directory", "folder", "page", "the", "and", "for",
+    ];
+    let mut kw_list = Vec::<String>::new();
+    let mut sym_candidates = Vec::<String>::new();
+    for raw_tok in user_msg.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        let tok = raw_tok.trim_matches(|c: char| c == '-' || c == '_');
+        if tok.len() < 3 {
+            continue;
+        }
+        let low = tok.to_ascii_lowercase();
+        if stop_words.contains(&low.as_str()) {
+            continue;
+        }
+        if (tok.contains('_') || tok.chars().skip(1).any(|c| c.is_ascii_uppercase()))
+            && !sym_candidates.contains(&tok.to_string())
+        {
+            sym_candidates.push(tok.to_string());
+        }
+        if kw_list.len() < 6 && !kw_list.contains(&low) {
+            kw_list.push(low);
+        }
+    }
+    if sym_candidates.is_empty() {
+        for raw_tok in user_msg.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            let tok = raw_tok.trim();
+            let low = tok.to_ascii_lowercase();
+            if tok.len() >= 4 && !stop_words.contains(&low.as_str()) && sym_candidates.len() < 3 {
+                sym_candidates.push(tok.to_string());
+            }
+        }
+    }
+    if kw_list.is_empty() {
+        kw_list.push("qwave".to_string());
+        kw_list.push("smart-tree".to_string());
+    }
+    (kw_list.join(","), sym_candidates)
+}
+
+/// Build live Smart Tree (`st`) context for Qwave's conversational companion (`handle_alexiai_chat`)
+/// and `/api/smart-tree`.
+fn build_smart_tree_chat_context(path: &Path, user_msg: &str) -> (String, String) {
+    let root = find_project_root(path);
+    let (keywords, sym_tokens) = extract_smart_tree_tokens(user_msg);
+    let memories = recall_smart_tree_memories(&root, &keywords);
+
+    // 1. CrabCC zero-float pq_kernel graph summary
+    let mut graph_summary = String::new();
+    if let Some(gjson) = query_smart_tree_symbol_graph(&root) {
+        let spec_pq = extract_json_str(&gjson, "spectral_complexity_pq").unwrap_or_default();
+        let sym_pq = extract_json_str(&gjson, "symbols_per_file_pq").unwrap_or_default();
+        let wupz = extract_json_str(&gjson, "wupz_xor_fold").unwrap_or_default();
+        let files_n = gjson
+            .lines()
+            .find(|l| l.contains("\"files\""))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|s| s.trim().trim_end_matches(','))
+            .unwrap_or("?");
+        let syms_n = gjson
+            .lines()
+            .find(|l| l.contains("\"symbols\""))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|s| s.trim().trim_end_matches(','))
+            .unwrap_or("?");
+        let edges_n = gjson
+            .lines()
+            .find(|l| l.contains("\"edges\""))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|s| s.trim().trim_end_matches(','))
+            .unwrap_or("?");
+        graph_summary = format!(
+            "CrabCC Graph (`{}`): {} files, {} symbols, {} edges · spectral_pq={} · symbols/file_pq={} · wupz={}",
+            root.display(),
+            files_n,
+            syms_n,
+            edges_n,
+            spec_pq,
+            sym_pq,
+            wupz
+        );
+    }
+
+    // 2. Symbol matches across the repo
+    let mut sym_lines = Vec::<String>::new();
+    for tok in sym_tokens.iter().take(3) {
+        for (file, name, line_no, sig) in query_smart_tree_symbol_search(&root, tok) {
+            let first_line = sig.lines().next().unwrap_or("").trim();
+            sym_lines.push(format!(
+                "`{name}` in `{file}:{line_no}` — `{first_line}`"
+            ));
+            if sym_lines.len() >= 5 {
+                break;
+            }
+        }
+    }
+
+    // 3. Compact AI tree of the project root
+    let st = find_smart_tree_bin();
+    let ai_tree = Command::new(st)
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "--mode",
+            "ai",
+            "-d",
+            "2",
+            &root.to_string_lossy(),
+        ])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .take(28)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
+    let mut prompt_block = String::new();
+    prompt_block.push_str(&format!("Smart Tree Root: `{}`\n", root.display()));
+    if !graph_summary.is_empty() {
+        prompt_block.push_str(&format!("{graph_summary}\n"));
+    }
+    if !memories.is_empty() {
+        prompt_block.push_str("Smart Tree Recalled Memories:\n");
+        for m in memories.iter().take(4) {
+            prompt_block.push_str(&format!("- {m}\n"));
+        }
+    }
+    if !sym_lines.is_empty() {
+        prompt_block.push_str("Smart Tree CrabCC Symbol Hits:\n");
+        for s in &sym_lines {
+            prompt_block.push_str(&format!("- {s}\n"));
+        }
+    }
+    if !ai_tree.is_empty() {
+        prompt_block.push_str("Smart Tree AI Tree Snapshot:\n");
+        prompt_block.push_str(&ai_tree);
+        prompt_block.push('\n');
+    }
+
+    // Short human-friendly Smart Tree summary for direct/offline conversational replies
+    let mut human_brief = if !sym_lines.is_empty() {
+        format!(
+            "Smart Tree found {} symbol match(es) ({}) in `{}` ({})",
+            sym_lines.len(),
+            sym_lines.first().cloned().unwrap_or_default(),
+            root.file_name().and_then(|s| s.to_str()).unwrap_or("repo"),
+            graph_summary
+        )
+    } else if !memories.is_empty() {
+        format!(
+            "Smart Tree recalled: \"{}\" ({})",
+            memories[0].chars().take(180).collect::<String>(),
+            graph_summary
+        )
+    } else {
+        graph_summary
+    };
+    if human_brief.is_empty() {
+        human_brief = format!("Smart Tree indexed `{}`.", root.display());
+    }
+
+    (prompt_block, human_brief)
+}
+
+/// Handle `GET/POST /api/smart-tree` for live Smart Tree queries and directory exploration inside Qwave.
+fn handle_smart_tree_api(path: &Path, query: &str) -> String {
+    let root = find_project_root(path);
+    let (context_block, human_brief) = build_smart_tree_chat_context(path, query);
+    let graph_json = query_smart_tree_symbol_graph(&root).unwrap_or_else(|| "null".to_string());
+    format!(
+        "{{\"ok\":true,\"root\":{},\"brief\":{},\"context\":{},\"graph\":{graph_json}}}",
+        markdown_source_literal(&root.to_string_lossy()),
+        markdown_source_literal(&human_brief),
+        markdown_source_literal(&context_block)
+    )
+}
+
+/// Format a directory path into an interactive Markdown Atlas powered by Smart Tree (`st`).
+fn format_directory_with_smart_tree(dir: &Path) -> String {
+    let st = find_smart_tree_bin();
+    let dir_name = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Workspace");
+    let mut md = format!(
+        "# 🌳 Smart Tree Atlas · `{dir_name}`\n\n\
+         > [!TIP]\n\
+         > **Smart Tree (`st`) × Qwave Sovereign Knowledge View** · Path: `{}`\n",
+        dir.display()
+    );
+
+    if let Some(parent) = dir.parent() {
+        md.push_str(&format!(
+            "> ⬆️ Parent Directory: [{}](file://{})\n",
+            parent.display(),
+            parent.display()
+        ));
+    }
+    md.push('\n');
+
+    // 1. CrabCC zero-float pq_kernel badge
+    if let Some(gjson) = query_smart_tree_symbol_graph(dir) {
+        let spec_pq = extract_json_str(&gjson, "spectral_complexity_pq").unwrap_or_default();
+        let sym_pq = extract_json_str(&gjson, "symbols_per_file_pq").unwrap_or_default();
+        let edge_pq = extract_json_str(&gjson, "edges_per_symbol_pq").unwrap_or_default();
+        let wupz = extract_json_str(&gjson, "wupz_xor_fold").unwrap_or_default();
+        let seal = extract_json_str(&gjson, "wupz_seal_32b").unwrap_or_default();
+        md.push_str("## 🦀 CrabCC Zero-Float Symbol Graph (`pq_kernel`)\n\n");
+        md.push_str("| Metric | Exact `p/q` / WUPZ Value |\n|---|---|\n");
+        md.push_str(&format!("| **Spectral Complexity (`p/q`)** | `{spec_pq}` |\n"));
+        md.push_str(&format!("| **Symbols per File (`p/q`)** | `{sym_pq}` |\n"));
+        md.push_str(&format!("| **Edges per Symbol (`p/q`)** | `{edge_pq}` |\n"));
+        md.push_str(&format!("| **WUPZ XOR Fold** | `{wupz}` |\n"));
+        md.push_str(&format!("| **WUPZ 32B Seal** | `{seal}` |\n\n"));
+    }
+
+    // 2. Smart Tree Recalled Memories
+    let memories = recall_smart_tree_memories(dir, dir_name);
+    if !memories.is_empty() {
+        md.push_str("## 🧠 Smart Tree Recalled Memories\n\n");
+        for m in memories.iter().take(6) {
+            md.push_str(&format!("- 🌊 {m}\n"));
+        }
+        md.push('\n');
+    }
+
+    // 3. Interactive clickable directory contents so any file/folder opens directly in Qwave
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut subdirs = Vec::<PathBuf>::new();
+        let mut docs = Vec::<PathBuf>::new();
+        let mut code_files = Vec::<PathBuf>::new();
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            if p.is_dir() {
+                subdirs.push(p);
+            } else {
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if matches!(ext.as_str(), "md" | "markdown" | "pdf" | "tex" | "txt") {
+                    docs.push(p);
+                } else {
+                    code_files.push(p);
+                }
+            }
+        }
+        subdirs.sort();
+        docs.sort();
+        code_files.sort();
+
+        md.push_str("## 🧭 Interactive Workspace Navigator\n\n");
+        if !subdirs.is_empty() {
+            md.push_str("### 📁 Directories\n\n");
+            for d in subdirs.iter().take(32) {
+                let n = d.file_name().and_then(|s| s.to_str()).unwrap_or("dir");
+                md.push_str(&format!("- [📁 {n}/](file://{})\n", d.display()));
+            }
+            md.push('\n');
+        }
+        if !docs.is_empty() {
+            md.push_str("### 📝 Documents & Papers\n\n");
+            for f in docs.iter().take(32) {
+                let n = f.file_name().and_then(|s| s.to_str()).unwrap_or("doc");
+                md.push_str(&format!("- [📝 {n}](file://{})\n", f.display()));
+            }
+            md.push('\n');
+        }
+        if !code_files.is_empty() {
+            md.push_str("### 🦀 Source & Config Files\n\n");
+            for f in code_files.iter().take(40) {
+                let n = f.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+                md.push_str(&format!("- [📄 {n}](file://{})\n", f.display()));
+            }
+            md.push('\n');
+        }
+    }
+
+    // 4. Full Smart Tree (`st --mode markdown`) report with Mermaid flowchart & security scan
+    if let Ok(out) = Command::new(st)
+        .args([
+            "--no-update-check",
+            "--no-daemon",
+            "--mode",
+            "markdown",
+            "-d",
+            "2",
+            &dir.to_string_lossy(),
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let st_md = String::from_utf8_lossy(&out.stdout);
+            if !st_md.trim().is_empty() {
+                md.push_str("---\n\n");
+                md.push_str(&st_md);
+            }
+        }
+    }
+
+    md
+}
+
+/// Detect whether this workstation is currently connected to Delta Air Lines In-Flight Wi-Fi (`DeltaWiFi.com`),
+/// self-heal the `systemd-resolved` split-DNS trap (`~delta.com,~deltawifi.com,wifi.delta.com`),
+/// resolve `wifi.delta.com` directly via the cabin gateway UDP `:53` DNS (`10.0.0.1` / `172.16.128.1`),
+/// probe `/api/flight-data` + `/api/device-details` + `/api/services`, and compute the zero-float `p/q` rational link model.
+fn probe_delta_inflight_context() -> (bool, Option<String>) {
+    let resolv = fs::read_to_string("/etc/resolv.conf")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let resolv_has_delta = resolv.contains("wifi.delta.com") || resolv.contains("deltawifi");
+    let mut on_delta_wifi = resolv_has_delta;
+    let mut active_ssid = if resolv_has_delta {
+        "DeltaWiFi.com".to_string()
+    } else {
+        String::new()
+    };
+
+    if let Ok(nm) = Command::new("nmcli")
+        .args(["-t", "-f", "NAME,DEVICE", "connection", "show", "--active"])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&nm.stdout).lines() {
+            let low = line.to_ascii_lowercase();
+            if low.contains("deltawifi") || low.contains("delta.com") {
+                on_delta_wifi = true;
+                active_ssid = line.split(':').next().unwrap_or("DeltaWiFi.com").to_string();
+                break;
+            }
+        }
+    }
+    if !on_delta_wifi {
+        return (false, None);
+    }
+
+    // Self-heal Linux systemd-resolved Global DNS NXDOMAIN trap on regional FortiGate-VM aircraft
+    if !resolv_has_delta && !active_ssid.is_empty() {
+        let _ = Command::new("nmcli")
+            .args([
+                "connection",
+                "modify",
+                &active_ssid,
+                "ipv4.dns-search",
+                "~delta.com,~deltawifi.com,wifi.delta.com",
+            ])
+            .status();
+        let _ = Command::new("nmcli")
+            .args(["device", "reapply", "wlan0"])
+            .status();
+    }
+
+    let mtu_bytes: u16 = fs::read_to_string("/sys/class/net/wlan0/mtu")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .unwrap_or(1380);
+
+    // Discover client IP and cabin gateway/DNS on wlan0
+    let mut client_ip = String::from("10.0.0.180");
+    let mut gateway_ip = String::from("10.0.0.1");
+    if let Ok(ip_out) = Command::new("nmcli")
+        .args(["-g", "IP4.ADDRESS,IP4.GATEWAY", "dev", "show", "wlan0"])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&ip_out.stdout);
+        let mut lines = text.lines();
+        if let Some(addr) = lines.next() {
+            let clean = addr.split('/').next().unwrap_or("").trim();
+            if !clean.is_empty() {
+                client_ip = clean.to_string();
+            }
+        }
+        if let Some(gw) = lines.next() {
+            let clean = gw.trim();
+            if !clean.is_empty() {
+                gateway_ip = clean.to_string();
+            }
+        }
+    }
+
+    // Direct RFC 1035 UDP :53 DNS query to cabin gateway (bypasses Global 8.8.8.8 NXDOMAIN)
+    let cabin_dns_target = if gateway_ip.starts_with("172.19.") {
+        "172.16.128.1"
+    } else {
+        gateway_ip.as_str()
+    };
+    let mut portal_ip: Option<String> = None;
+    let mut cabin_dns_rtt_us: u64 = 1_600;
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(800)));
+        let _ = sock.set_write_timeout(Some(Duration::from_millis(800)));
+        let query = qwave_core::mesh::build_dns_a_query(0x4328, "wifi.delta.com");
+        let t0 = std::time::Instant::now();
+        if sock
+            .send_to(&query, format!("{cabin_dns_target}:53"))
+            .is_ok()
+        {
+            let mut buf = [0u8; 512];
+            if let Ok((n, _)) = sock.recv_from(&mut buf) {
+                cabin_dns_rtt_us = (t0.elapsed().as_micros() as u64).max(1);
+                portal_ip = qwave_core::mesh::parse_dns_a_response(&buf[..n]);
+            }
+        }
+    }
+
+    let curl_fetch = |endpoint: &str| -> Option<String> {
+        let url = format!("https://wifi.delta.com{endpoint}");
+        let mut cmd = Command::new("curl");
+        cmd.args(["-k", "-s", "-m", "2"]);
+        if let Some(ref ip) = portal_ip {
+            cmd.args(["--resolve", &format!("wifi.delta.com:443:{ip}")]);
+        }
+        let out = cmd.arg(&url).output().ok()?;
+        if out.status.success() && !out.stdout.is_empty() {
+            Some(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            None
+        }
+    };
+
+    let Some(raw) = curl_fetch("/api/flight-data") else {
+        return (true, None);
+    };
+    let dev_raw = curl_fetch("/api/device-details").unwrap_or_default();
+    let svc_raw = curl_fetch("/api/services").unwrap_or_default();
+
+    let extract_num = |key: &str| -> Option<i64> {
+        let needle = format!("\"{key}\":");
+        let idx = raw.find(&needle)?;
+        let rest = raw[idx + needle.len()..].trim_start();
+        let token: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '-')
+            .collect();
+        token.parse::<i64>().ok()
+    };
+
+    let flight_no = extract_json_str(&raw, "flightNumber").unwrap_or_else(|| "Delta Flight".to_string());
+    let origin = extract_json_str(&raw, "origin").unwrap_or_else(|| "Origin".to_string());
+    let dest = extract_json_str(&raw, "destination").unwrap_or_else(|| "Dest".to_string());
+    let tail = extract_json_str(&raw, "vehicleId").unwrap_or_else(|| "Aircraft".to_string());
+    let phase = extract_json_str(&raw, "flightPhase").unwrap_or_else(|| {
+        if extract_json_str(&raw, "wheelWeightState").as_deref() == Some("Off") {
+            "Airborne".to_string()
+        } else {
+            "In-Flight".to_string()
+        }
+    });
+    let alt_ft = extract_num("altitude").unwrap_or(0);
+    let gs_kts = extract_num("groundspeed").unwrap_or(0);
+    let hdg_deg = extract_num("heading").unwrap_or(0);
+    let ttg_opt = extract_num("timeToGo");
+    let eta_opt = extract_json_str(&raw, "eta");
+    let dtg_opt = extract_num("distanceToGo");
+    let time_part = if let Some(ttg_min) = ttg_opt {
+        format!("Time-to-Go `{ttg_min} min`")
+    } else if let Some(eta) = eta_opt {
+        let eta_clean = eta.split('.').next().unwrap_or(&eta);
+        if let Some(dtg) = dtg_opt {
+            format!("ETA `{eta_clean}` · Distance `{dtg}`")
+        } else {
+            format!("ETA `{eta_clean}`")
+        }
+    } else {
+        "In-Flight".to_string()
+    };
+
+    let device_policy = extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "Connected".to_string());
+    let wan_available = svc_raw.contains("\"connectivity\":true") || svc_raw.contains("\"serviceName\":\"WAN\",\"serviceState\":\"Available\"");
+
+    let pq = qwave_core::mesh::classify_inflight_link_pq(
+        &active_ssid,
+        &client_ip,
+        &gateway_ip,
+        true,
+        mtu_bytes,
+        cabin_dns_rtt_us,
+        615_000,
+        alt_ft,
+        gs_kts,
+        &device_policy,
+        wan_available,
+    );
+    let portal_ip_disp = portal_ip.as_deref().unwrap_or(cabin_dns_target);
+
+    let summary = format!(
+        "✈️ Delta Air Lines `{flight_no}` (`{origin}` → `{dest}`) · Aircraft `{tail}` · Phase `{phase}` · Altitude `{alt_ft} ft` (`alt_pq={}`) · Groundspeed `{gs_kts} kts` (`mach_pq={}`) · Heading `{hdg_deg}°` · {time_part} · Cabin `{portal_ip_disp}` (`{cabin_dns_rtt_us} µs`, `mtu_pq={}` [MTU `{mtu_bytes}`, MSS `{}B`], `policy={device_policy}`, `health_q10={}/1024`) · Flight Deck: `http://127.0.0.1:42123/flight`",
+        pq.altitude_cruise_pq,
+        pq.mach_estimate_pq,
+        pq.mtu_efficiency_pq,
+        pq.max_safe_tcp_mss_bytes,
+        pq.link_health_q10
+    );
+    (true, Some(summary))
+}
+
+/// Parse a decimal coordinate string (e.g. `"42.801018"` or `"-88.530235"`) into integer millidegrees (`1° = 1000 mdeg`)
+/// at the JSON boundary with zero floating-point operations.
+fn parse_json_mdeg(raw: &str, key: &str) -> Option<i64> {
+    let needle = format!("\"{key}\":");
+    let idx = raw.find(&needle)?;
+    let rest = raw[idx + needle.len()..].trim_start();
+    let token: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+        .collect();
+    if token.is_empty() || token == "-" {
+        return None;
+    }
+    let neg = token.starts_with('-');
+    let unsigned = token.trim_start_matches('-');
+    let mut parts = unsigned.split('.');
+    let whole: i64 = parts.next().unwrap_or("0").parse().ok()?;
+    let frac_str = parts.next().unwrap_or("0");
+    let mut frac_mdeg: i64 = 0;
+    let mut weight: i64 = 100;
+    for ch in frac_str.chars().take(3) {
+        if let Some(d) = ch.to_digit(10) {
+            frac_mdeg += (d as i64) * weight;
+            weight /= 10;
+        }
+    }
+    let total = whole * 1_000 + frac_mdeg;
+    Some(if neg { -total } else { total })
+}
+
+/// Lookup airport coordinates in integer millidegrees `(lat_mdeg, lon_mdeg, city_name)`.
+fn lookup_airport_mdeg(icao: &str) -> (i64, i64, &'static str) {
+    match icao.trim().to_ascii_uppercase().as_str() {
+        "RJTT" | "HND" => (35_549, 139_780, "Tokyo Haneda"),
+        "RJAA" | "NRT" => (35_765, 140_386, "Tokyo Narita"),
+        "KMSP" | "MSP" => (44_882, -93_222, "Minneapolis–Saint Paul"),
+        "KORF" | "ORF" => (36_895, -76_012, "Norfolk, Virginia"),
+        "KDTW" | "DTW" => (42_212, -83_353, "Detroit Metro"),
+        "KATL" | "ATL" => (33_640, -84_427, "Atlanta Hartsfield"),
+        "KORD" | "ORD" => (41_974, -87_907, "Chicago O'Hare"),
+        "KSEA" | "SEA" => (47_449, -122_309, "Seattle–Tacoma"),
+        "KSLC" | "SLC" => (40_788, -111_978, "Salt Lake City"),
+        "KJFK" | "JFK" => (40_641, -73_778, "New York JFK"),
+        "KLAX" | "LAX" => (33_942, -118_408, "Los Angeles"),
+        "KIAD" | "IAD" => (38_953, -77_456, "Washington Dulles"),
+        _ => (44_882, -93_222, "Origin Airport"),
+    }
+}
+
+/// Find the closest landmark/city along the flight corridor using integer squared millidegree distance.
+fn nearest_corridor_landmark(lat_mdeg: i64, lon_mdeg: i64) -> &'static str {
+    const LANDMARKS: &[(&str, i64, i64)] = &[
+        ("Tokyo Haneda Bay, Japan (RJTT)", 35_549, 139_780),
+        ("Sendai / Tohoku Coast, Japan", 38_139, 140_917),
+        ("Hokkaido / Northern Pacific", 43_062, 141_354),
+        ("Aleutian Islands, Alaska", 52_822, -173_179),
+        ("Anchorage / Gulf of Alaska (PANC)", 61_174, -149_996),
+        ("British Columbia / Canadian Rockies", 53_917, -122_749),
+        ("Fargo / Red River Valley, ND", 46_877, -96_789),
+        ("Minneapolis–Saint Paul, MN (KMSP)", 44_882, -93_222),
+        ("Red Wing & Mississippi River Valley, MN", 44_562, -92_533),
+        ("La Crosse & Upper Mississippi, WI", 43_801, -91_239),
+        ("Wisconsin Dells / Baraboo Range, WI", 43_627, -89_771),
+        ("Madison & Lake Mendota, WI", 43_073, -89_401),
+        ("Milwaukee / SE Wisconsin Corridor, WI", 43_038, -87_906),
+        ("Southern Lake Michigan (Overwater)", 42_550, -86_950),
+        ("Chicago Metro / Lakefront, IL", 41_974, -87_907),
+        ("Kalamazoo / Southwest Michigan, MI", 42_291, -85_587),
+        ("Lansing / Jackson Corridor, MI", 42_245, -84_401),
+        ("Detroit Metro / Lake St. Clair, MI (KDTW)", 42_212, -83_353),
+        ("Toledo / Western Lake Erie, OH", 41_652, -83_537),
+        ("Sandusky / Lake Erie Islands, OH", 41_449, -82_708),
+        ("Cleveland / Cuyahoga Valley, OH (KCLE)", 41_411, -81_849),
+        ("Akron / Canton Corridor, OH", 40_916, -81_442),
+        ("Youngstown / Ohio River Valley, OH/PA", 41_099, -80_649),
+        ("Pittsburgh / Three Rivers, PA (KPIT)", 40_491, -80_232),
+        ("Laurel Highlands / Allegheny Mtns, PA", 39_996, -79_238),
+        ("Morgantown / Cheat Lake, WV", 39_629, -79_955),
+        ("Cumberland / Potomac Highlands, MD/WV", 39_652, -78_762),
+        ("Shenandoah Valley / Harrisonburg, VA", 38_449, -78_869),
+        ("Charlottesville / Blue Ridge Mtns, VA", 38_029, -78_476),
+        ("Washington, D.C. / Northern Virginia", 38_953, -77_456),
+        ("Fredericksburg / Rappahannock River, VA", 38_303, -77_460),
+        ("Richmond / James River, VA (KRIC)", 37_505, -77_319),
+        ("Williamsburg / York River, VA", 37_270, -76_707),
+        ("Newport News / Hampton Roads, VA", 37_087, -76_473),
+        ("Norfolk / Chesapeake Bay, VA (KORF)", 36_895, -76_012),
+    ];
+
+    let mut best_name = "North American Flight Corridor";
+    let mut best_d2: i64 = i64::MAX;
+    for &(name, l_lat, l_lon) in LANDMARKS {
+        let dlat = lat_mdeg - l_lat;
+        // Scale longitude by ~3/4 (cos 41 deg ≈ 755/1000) in integer math
+        let dlon = ((lon_mdeg - l_lon) * 755) / 1_000;
+        let d2 = dlat.saturating_mul(dlat).saturating_add(dlon.saturating_mul(dlon));
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best_name = name;
+        }
+    }
+    best_name
+}
+
+/// Build the live JSON payload for `GET /api/flight/live` with 100% integer & `p/q` rational arithmetic.
+fn build_flight_live_json() -> String {
+    let mut gateway_ip = String::from("10.0.0.1");
+    let mut client_ip = String::from("10.0.0.180");
+    if let Ok(ip_out) = Command::new("nmcli")
+        .args(["-g", "IP4.ADDRESS,IP4.GATEWAY", "dev", "show", "wlan0"])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&ip_out.stdout);
+        let mut lines = text.lines();
+        if let Some(addr) = lines.next() {
+            let clean = addr.split('/').next().unwrap_or("").trim();
+            if !clean.is_empty() {
+                client_ip = clean.to_string();
+            }
+        }
+        if let Some(gw) = lines.next() {
+            let clean = gw.trim();
+            if !clean.is_empty() {
+                gateway_ip = clean.to_string();
+            }
+        }
+    }
+
+    let cabin_dns_target = if gateway_ip.starts_with("172.19.") {
+        "172.16.128.1"
+    } else {
+        gateway_ip.as_str()
+    };
+    let mut portal_ip: Option<String> = None;
+    let mut cabin_dns_rtt_us: u64 = 1_550;
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(600)));
+        let _ = sock.set_write_timeout(Some(Duration::from_millis(600)));
+        let query = qwave_core::mesh::build_dns_a_query(0x4329, "wifi.delta.com");
+        let t0 = std::time::Instant::now();
+        if sock
+            .send_to(&query, format!("{cabin_dns_target}:53"))
+            .is_ok()
+        {
+            let mut buf = [0u8; 512];
+            if let Ok((n, _)) = sock.recv_from(&mut buf) {
+                cabin_dns_rtt_us = (t0.elapsed().as_micros() as u64).max(1);
+                portal_ip = qwave_core::mesh::parse_dns_a_response(&buf[..n]);
+            }
+        }
+    }
+
+    let curl_fetch = |endpoint: &str| -> Option<String> {
+        let url = format!("https://wifi.delta.com{endpoint}");
+        let mut cmd = Command::new("curl");
+        cmd.args(["-k", "-s", "-m", "2"]);
+        if let Some(ref ip) = portal_ip {
+            cmd.args(["--resolve", &format!("wifi.delta.com:443:{ip}")]);
+        }
+        let out = cmd.arg(&url).output().ok()?;
+        if out.status.success() && !out.stdout.is_empty() {
+            Some(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            None
+        }
+    };
+
+    let raw = curl_fetch("/api/flight-data").unwrap_or_default();
+    let dev_raw = curl_fetch("/api/device-details").unwrap_or_default();
+    let svc_raw = curl_fetch("/api/services").unwrap_or_default();
+
+    let extract_num = |key: &str| -> Option<i64> {
+        let needle = format!("\"{key}\":");
+        let idx = raw.find(&needle)?;
+        let rest = raw[idx + needle.len()..].trim_start();
+        let token: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '-')
+            .collect();
+        token.parse::<i64>().ok()
+    };
+
+    let on_delta_wifi = !raw.is_empty();
+    let flight_no = extract_json_str(&raw, "flightNumber").unwrap_or_else(|| "4965".to_string());
+    let tail = extract_json_str(&raw, "vehicleId").unwrap_or_else(|| "N292PQ".to_string());
+    let origin = extract_json_str(&raw, "origin").unwrap_or_else(|| "KMSP".to_string());
+    let dest = extract_json_str(&raw, "destination").unwrap_or_else(|| "KORF".to_string());
+    let (orig_lat, orig_lon, orig_name) = lookup_airport_mdeg(&origin);
+    let (dest_lat, dest_lon, dest_name) = lookup_airport_mdeg(&dest);
+
+    let lat_mdeg = parse_json_mdeg(&raw, "latitude").unwrap_or(42_500);
+    let lon_mdeg = parse_json_mdeg(&raw, "longitude").unwrap_or(-87_500);
+    let alt_ft = extract_num("altitude").unwrap_or(36_400);
+    let gs_kts = extract_num("groundspeed").unwrap_or(464);
+    let gs_mph = (gs_kts * 1_151) / 1_000;
+    let hdg_deg = extract_num("heading").unwrap_or(124);
+    let temp_c = extract_num("airTemperature").unwrap_or(-21);
+    let temp_f = (temp_c * 9) / 5 + 32;
+    let door_state = extract_json_str(&raw, "doorState").unwrap_or_else(|| "Closed".to_string());
+    let wheel_weight = extract_json_str(&raw, "wheelWeightState").unwrap_or_else(|| "Off".to_string());
+    let phase = extract_json_str(&raw, "flightPhase").unwrap_or_else(|| {
+        if wheel_weight == "Off" {
+            "Airborne".to_string()
+        } else {
+            "In-Flight".to_string()
+        }
+    });
+    let eta_raw = extract_json_str(&raw, "eta").unwrap_or_else(|| "09:20".to_string());
+    let eta = eta_raw.split('.').next().unwrap_or(&eta_raw).to_string();
+    let dtg = extract_num("distanceToGo").unwrap_or(0);
+    let ttg_min = extract_num("timeToGo").unwrap_or(0);
+
+    // Compute exact integer route progress along origin -> destination vector
+    let vx = dest_lon - orig_lon;
+    let vy = dest_lat - orig_lat;
+    let wx = lon_mdeg - orig_lon;
+    let wy = lat_mdeg - orig_lat;
+    let v_len2 = (vx * vx + vy * vy).max(1);
+    let dot = (wx * vx + wy * vy).max(0);
+    let progress_pct = ((dot * 100) / v_len2).clamp(1, 99);
+    let progress_pq = qwave_core::rational::Rational::new(progress_pct as i32, 100)
+        .unwrap_or(qwave_core::rational::Rational::integer(0));
+
+    let mtu_bytes: u16 = fs::read_to_string("/sys/class/net/wlan0/mtu")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .unwrap_or(1380);
+    let device_policy = extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "DalPedPremium".to_string());
+    let wan_available = svc_raw.is_empty()
+        || svc_raw.contains("\"connectivity\":true")
+        || svc_raw.contains("\"serviceName\":\"WAN\",\"serviceState\":\"Available\"");
+
+    let pq = qwave_core::mesh::classify_inflight_link_pq(
+        "DeltaWiFi.com",
+        &client_ip,
+        &gateway_ip,
+        true,
+        mtu_bytes,
+        cabin_dns_rtt_us,
+        615_000,
+        alt_ft,
+        gs_kts,
+        &device_policy,
+        wan_available,
+    );
+    let landmark = nearest_corridor_landmark(lat_mdeg, lon_mdeg);
+    let cabin_ip = portal_ip.unwrap_or_else(|| cabin_dns_target.to_string());
+
+    format!(
+        "{{\"ok\":true,\"on_delta_wifi\":{on_delta_wifi},\"flight_number\":{},\"vehicle_id\":{},\"origin\":{},\"origin_name\":{},\"origin_lat_mdeg\":{orig_lat},\"origin_lon_mdeg\":{orig_lon},\"destination\":{},\"dest_name\":{},\"dest_lat_mdeg\":{dest_lat},\"dest_lon_mdeg\":{dest_lon},\"lat_mdeg\":{lat_mdeg},\"lon_mdeg\":{lon_mdeg},\"altitude_ft\":{alt_ft},\"groundspeed_kts\":{gs_kts},\"groundspeed_mph\":{gs_mph},\"heading_deg\":{hdg_deg},\"air_temp_c\":{temp_c},\"air_temp_f\":{temp_f},\"phase\":{},\"eta\":{},\"distance_to_go\":{dtg},\"time_to_go_min\":{ttg_min},\"door_state\":{},\"wheel_weight\":{},\"nearest_landmark\":{},\"progress_pct\":{progress_pct},\"progress_pq\":{},\"alt_pq\":{},\"mach_pq\":{},\"mtu_pq\":{},\"mtu_bytes\":{mtu_bytes},\"mss_bytes\":{},\"cabin_ip\":{},\"cabin_rtt_us\":{cabin_dns_rtt_us},\"device_policy\":{},\"wan_available\":{wan_available},\"health_q10\":{},\"architecture\":{}}}",
+        markdown_source_literal(&flight_no),
+        markdown_source_literal(&tail),
+        markdown_source_literal(&origin),
+        markdown_source_literal(orig_name),
+        markdown_source_literal(&dest),
+        markdown_source_literal(dest_name),
+        markdown_source_literal(&phase),
+        markdown_source_literal(&eta),
+        markdown_source_literal(&door_state),
+        markdown_source_literal(&wheel_weight),
+        markdown_source_literal(landmark),
+        markdown_source_literal(&progress_pq.to_string()),
+        markdown_source_literal(&pq.altitude_cruise_pq.to_string()),
+        markdown_source_literal(&pq.mach_estimate_pq.to_string()),
+        markdown_source_literal(&pq.mtu_efficiency_pq.to_string()),
+        pq.max_safe_tcp_mss_bytes,
+        markdown_source_literal(&cabin_ip),
+        markdown_source_literal(&device_policy),
+        pq.link_health_q10,
+        markdown_source_literal(pq.architecture.as_str())
+    )
+}
+
+/// Render the full-screen interactive **Qwave Sovereign Flight Deck & 3D Earth Globe** (`GET /flight` & `GET /delta`).
+/// Uses 100% integer `Q14` (`16384`) fixed-point 3D orthographic sphere math and live `/api/flight/live` polling.
+fn render_flight_globe_html() -> String {
+    r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>✈️ Qwave Sovereign Flight Deck — Live Earth &amp; p/q Avionics</title>
+<style>
+  :root {
+    --bg: #05060a;
+    --panel: rgba(9, 13, 24, 0.84);
+    --border: rgba(0, 240, 255, 0.24);
+    --cyan: #00f0ff;
+    --mint: #62e6c9;
+    --gold: #e8b05c;
+    --violet: #b48bff;
+    --text: #eef6ff;
+    --muted: #8ea4c8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 100vw; height: 100vh; overflow: hidden;
+    background: radial-gradient(circle at 55% 48%, #0a1428 0%, #05060a 72%);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", system-ui, -apple-system, sans-serif;
+  }
+  #globeCanvas {
+    position: fixed; inset: 0; width: 100vw; height: 100vh; cursor: grab;
+  }
+  #globeCanvas:active { cursor: grabbing; }
+
+  /* Top Flight Banner */
+  .top-bar {
+    position: fixed; top: 14px; left: 16px; right: 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    z-index: 10; pointer-events: none;
+  }
+  .flight-title-card {
+    pointer-events: auto;
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 14px;
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55), 0 0 22px rgba(0, 240, 255, 0.08);
+  }
+  .delta-badge {
+    background: linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(180, 139, 255, 0.2));
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-weight: 800; font-size: 13px; letter-spacing: 0.08em;
+    padding: 6px 11px; border-radius: 9px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .route-headline {
+    font-size: 15px; font-weight: 700; color: var(--text);
+  }
+  .route-sub {
+    font-size: 11px; color: var(--mint); margin-top: 2px;
+  }
+  .action-pills {
+    pointer-events: auto;
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .pill-btn {
+    background: var(--panel);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(98, 230, 201, 0.28);
+    color: var(--text);
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    padding: 7px 12px; border-radius: 10px;
+    cursor: pointer; text-decoration: none;
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pill-btn:hover, .pill-btn.active {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(0, 240, 255, 0.14);
+    box-shadow: 0 0 14px rgba(0, 240, 255, 0.22);
+  }
+  .pill-btn.gold {
+    border-color: rgba(232, 176, 92, 0.5);
+    color: var(--gold);
+  }
+  .pill-btn.gold:hover {
+    background: rgba(232, 176, 92, 0.16);
+    box-shadow: 0 0 14px rgba(232, 176, 92, 0.28);
+  }
+
+  /* Left Mission & Overflight Card */
+  .left-hud {
+    position: fixed; top: 82px; left: 16px; width: 320px;
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 10; pointer-events: none;
+  }
+  .hud-card {
+    pointer-events: auto;
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-radius: 14px;
+    padding: 12px 14px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  }
+  .card-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--muted);
+    margin-bottom: 6px; display: flex; justify-content: space-between;
+  }
+  .landmark-value {
+    font-size: 13px; font-weight: 700; color: var(--gold);
+    line-height: 1.35;
+  }
+  .coord-line {
+    font-size: 11px; color: var(--cyan); margin-top: 4px;
+  }
+  .progress-wrap {
+    margin-top: 8px;
+  }
+  .progress-endpoints {
+    display: flex; justify-content: space-between;
+    font-size: 11px; font-weight: 700; color: var(--text);
+    margin-bottom: 5px;
+  }
+  .progress-track {
+    width: 100%; height: 8px; border-radius: 99px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden; position: relative;
+  }
+  .progress-fill {
+    height: 100%; border-radius: 99px;
+    background: linear-gradient(90deg, var(--violet), var(--cyan), var(--mint));
+    box-shadow: 0 0 12px var(--cyan);
+    transition: width 0.6s ease;
+  }
+  .pq-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 7px;
+    margin-top: 6px;
+  }
+  .pq-cell {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px; padding: 6px 8px;
+  }
+  .pq-cell .k { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+  .pq-cell .v { font-size: 11px; font-weight: 700; color: var(--mint); margin-top: 2px; }
+
+  /* Bottom Cockpit Gauges */
+  .bottom-deck {
+    position: fixed; bottom: 14px; left: 16px; right: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 10px; z-index: 10; pointer-events: none;
+  }
+  .gauge-card {
+    pointer-events: auto;
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(0, 240, 255, 0.22);
+    border-radius: 14px;
+    padding: 11px 14px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.52);
+  }
+  .gauge-big {
+    font-size: 22px; font-weight: 800; color: var(--text);
+    letter-spacing: -0.02em; margin: 2px 0;
+  }
+  .gauge-big .unit {
+    font-size: 12px; font-weight: 600; color: var(--cyan); margin-left: 3px;
+  }
+  .gauge-pq {
+    font-size: 11px; color: var(--gold); font-weight: 600;
+  }
+  .bar-mini {
+    width: 100%; height: 5px; background: rgba(255,255,255,0.08);
+    border-radius: 99px; overflow: hidden; margin-top: 6px;
+  }
+  .bar-mini > div {
+    height: 100%; background: linear-gradient(90deg, var(--cyan), var(--mint));
+    border-radius: 99px; transition: width 0.5s ease;
+  }
+</style>
+</head>
+<body>
+<canvas id="globeCanvas"></canvas>
+
+<div class="top-bar">
+  <div class="flight-title-card">
+    <div class="delta-badge" id="badgeFlight">✈️ DELTA 4965</div>
+    <div>
+      <div class="route-headline" id="headlineRoute">Minneapolis–Saint Paul (KMSP) → Norfolk (KORF)</div>
+      <div class="route-sub" id="subAircraft">Aircraft N292PQ · Phase: Airborne · Live Onboard Telemetry (192.168.20.12)</div>
+    </div>
+  </div>
+  <div class="action-pills">
+    <button class="pill-btn active" id="btnModeTrack" onclick="setCameraMode('track')">🎯 Follow Plane</button>
+    <button class="pill-btn" id="btnModeCorridor" onclick="setCameraMode('corridor')">🌊 Great Lakes / East Coast</button>
+    <button class="pill-btn" id="btnModeJourney" onclick="setCameraMode('journey')">🌏 Tokyo → MSP → Norfolk</button>
+    <button class="pill-btn" onclick="zoomStep(35)">➕ Zoom In</button>
+    <button class="pill-btn" onclick="zoomStep(-35)">➖ Zoom Out</button>
+    <a class="pill-btn gold" href="https://wifi.delta.com/" title="Open onboard Delta Wi-Fi portal">🔑 Delta Wi-Fi Portal</a>
+    <a class="pill-btn" href="http://127.0.0.1:42123/view">🏠 Qwave Studio</a>
+  </div>
+</div>
+
+<div class="left-hud">
+  <div class="hud-card">
+    <div class="card-label">
+      <span>📍 Live Overflight Position</span>
+      <span id="livePulse" style="color:var(--mint);">● LIVE</span>
+    </div>
+    <div class="landmark-value" id="valLandmark">Scanning corridor below aircraft...</div>
+    <div class="coord-line" id="valCoords">42.801° N, 88.530° W · Heading 124° SE</div>
+    <div class="progress-wrap">
+      <div class="progress-endpoints">
+        <span id="lblOrigin">🛫 KMSP</span>
+        <span id="lblProgPct" style="color:var(--cyan);">31% (p/q = 31/100)</span>
+        <span id="lblDest">🛬 KORF</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="barRouteProg" style="width:31%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hud-card">
+    <div class="card-label">
+      <span>⚡ Zero-Float p/q Cabin &amp; Satellite Doctor</span>
+      <span id="valHealth">1024/1024</span>
+    </div>
+    <div class="pq-grid">
+      <div class="pq-cell">
+        <div class="k">Cabin Portal IP</div>
+        <div class="v" id="valCabinIp">192.168.20.12</div>
+      </div>
+      <div class="pq-cell">
+        <div class="k">Cabin UDP :53 RTT</div>
+        <div class="v" id="valCabinRtt">1,448 µs</div>
+      </div>
+      <div class="pq-cell">
+        <div class="k">MTU p/q &amp; Safe MSS</div>
+        <div class="v" id="valMtuPq">23/25 (1380B / 1340B)</div>
+      </div>
+      <div class="pq-cell">
+        <div class="k">Device Policy</div>
+        <div class="v" id="valPolicy">DalPedPremium</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="bottom-deck">
+  <div class="gauge-card">
+    <div class="card-label"><span>🏔️ Cruise Altitude</span><span>ISA Ceiling 40k</span></div>
+    <div class="gauge-big"><span id="valAlt">36,418</span><span class="unit">ft</span></div>
+    <div class="gauge-pq" id="valAltPq">alt_pq = 18209/20000</div>
+    <div class="bar-mini"><div id="barAlt" style="width:91%;"></div></div>
+  </div>
+
+  <div class="gauge-card">
+    <div class="card-label"><span>🚀 Groundspeed &amp; Mach</span><span id="valMph">534 mph</span></div>
+    <div class="gauge-big"><span id="valGs">464</span><span class="unit">kts</span></div>
+    <div class="gauge-pq" id="valMachPq">mach_pq = 464/573 (~81% Mach 1)</div>
+    <div class="bar-mini"><div id="barGs" style="width:81%;"></div></div>
+  </div>
+
+  <div class="gauge-card">
+    <div class="card-label"><span>🧭 Magnetic Track</span><span id="valCompassCard">SE</span></div>
+    <div class="gauge-big"><span id="valHdg">124</span><span class="unit">deg</span></div>
+    <div class="gauge-pq" id="valDoorWheel">Wheels: Off · Doors: Closed</div>
+    <div class="bar-mini"><div id="barHdg" style="width:34%;"></div></div>
+  </div>
+
+  <div class="gauge-card">
+    <div class="card-label"><span>❄️ Outside Air &amp; ETA</span><span id="valTempF">-6 °F</span></div>
+    <div class="gauge-big"><span id="valTempC">-21</span><span class="unit">°C</span></div>
+    <div class="gauge-pq" id="valEta">ETA: 09:20 · Leg 2 Active</div>
+    <div class="bar-mini"><div style="width:100%;background:linear-gradient(90deg,var(--violet),var(--gold));"></div></div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 100% INTEGER FIXED-POINT Q14 (16384) 3D ORTHOGRAPHIC EARTH & RADAR ENGINE
+// Zero floating-point arithmetic in projection, rotation, or trigonometry.
+// Coordinates are stored in integer millidegrees (1 deg = 1000 mdeg).
+// ============================================================================
+const Q14 = 16384;
+const SIN_TABLE_Q14 = new Int32Array(360);
+(function initTrigTable() {
+  // Bhaskara I rational sine approximation in pure integer math:
+  // sin(x) ≈ 4 * x * (180 - x) / (40500 - x * (180 - x)) for 0 <= x <= 180
+  for (let deg = 0; deg < 360; deg++) {
+    const sign = deg >= 180 ? -1 : 1;
+    const x = deg >= 180 ? deg - 180 : deg;
+    const prod = x * (180 - x);
+    const num = 4 * prod * Q14;
+    const den = 40500 - prod;
+    SIN_TABLE_Q14[deg] = sign * Math.trunc((num + Math.trunc(den / 2)) / den);
+  }
+})();
+
+function sinMdegQ14(mdeg) {
+  let d = Math.trunc(mdeg / 1000) % 360;
+  if (d < 0) d += 360;
+  const rem = Math.abs(mdeg % 1000);
+  const dNext = (d + 1) % 360;
+  const s0 = SIN_TABLE_Q14[d];
+  const s1 = SIN_TABLE_Q14[dNext];
+  return s0 + Math.trunc(((s1 - s0) * rem) / 1000);
+}
+function cosMdegQ14(mdeg) {
+  return sinMdegQ14(mdeg + 90000);
+}
+function mulQ14(a, b) {
+  return Math.trunc((a * b) / Q14);
+}
+function isqrt(n) {
+  if (n <= 0) return 0;
+  let x = n;
+  let y = Math.trunc((x + 1) / 2);
+  while (y < x) {
+    x = y;
+    y = Math.trunc((x + Math.trunc(n / x)) / 2);
+  }
+  return x;
+}
+
+// Camera & Live Flight State (all integer millidegrees)
+let camLatMdeg = 41500;
+let camLonMdeg = -85500;
+let zoomPct = 250; // 250% zoom shows North America + Great Lakes clearly
+let cameraMode = 'track';
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartLat = 0;
+let dragStartLon = 0;
+let tickCount = 0;
+
+let flightState = {
+  flight_number: "4965",
+  vehicle_id: "N292PQ",
+  origin: "KMSP",
+  origin_name: "Minneapolis–Saint Paul",
+  origin_lat_mdeg: 44882,
+  origin_lon_mdeg: -93222,
+  destination: "KORF",
+  dest_name: "Norfolk, Virginia",
+  dest_lat_mdeg: 36895,
+  dest_lon_mdeg: -76012,
+  lat_mdeg: 42801,
+  lon_mdeg: -88530,
+  altitude_ft: 36418,
+  groundspeed_kts: 464,
+  groundspeed_mph: 534,
+  heading_deg: 124,
+  air_temp_c: -21,
+  air_temp_f: -6,
+  phase: "Airborne",
+  eta: "09:20",
+  nearest_landmark: "Milwaukee / Southern Lake Michigan Corridor",
+  progress_pct: 31,
+  progress_pq: "31/100",
+  alt_pq: "18209/20000",
+  mach_pq: "464/573",
+  mtu_pq: "23/25",
+  mtu_bytes: 1380,
+  mss_bytes: 1340,
+  cabin_ip: "192.168.20.12",
+  cabin_rtt_us: 1448,
+  device_policy: "DalPedPremium",
+  health_q10: 1024
+};
+
+// Breadcrumb contrail in millidegrees (seeded with flight path from KMSP -> La Crosse -> Madison -> current)
+const breadcrumbs = [
+  [44882, -93222],
+  [44562, -92533],
+  [43994, -91310],
+  [43350, -89850],
+  [42801, -88530]
+];
+
+// Continent & Great Lakes Vector Polylines in integer degrees [latDeg, lonDeg]
+const CONTINENTS_DEG = [
+  // North America Outline
+  [[70,-160],[71,-156],[69,-140],[60,-140],[58,-136],[54,-130],[48,-125],[40,-124],[34,-120],[32,-117],[23,-110],[18,-103],[15,-92],[8,-78],[9,-83],[15,-83],[21,-87],[19,-96],[26,-97],[29,-95],[30,-89],[25,-80],[31,-81],[35,-75],[37,-76],[39,-74],[41,-70],[45,-67],[47,-53],[52,-56],[60,-64],[63,-78],[60,-94],[68,-115],[70,-160]],
+  // South America
+  [[11,-75],[8,-60],[0,-50],[-6,-35],[-15,-39],[-23,-43],[-35,-54],[-54,-68],[-50,-75],[-33,-71],[-18,-70],[-5,-81],[5,-77],[11,-75]],
+  // Europe & Eurasia
+  [[36,-9],[43,-9],[48,-4],[51,2],[54,8],[58,8],[62,5],[70,20],[70,40],[68,60],[72,90],[70,130],[65,170],[60,160],[52,140],[40,122],[31,121],[22,114],[10,105],[2,103],[15,98],[22,88],[8,77],[24,67],[26,56],[13,45],[30,33],[32,35],[37,26],[40,18],[44,12],[43,3],[36,-5],[36,-9]],
+  // Japan Archipelago (Honshu / Hokkaido / Kyushu)
+  [[31,130],[33,131],[34,135],[35,140],[38,141],[41,141],[43,145],[45,142],[40,140],[37,137],[35,132],[31,130]],
+  // Africa
+  [[35,-6],[37,10],[32,32],[12,51],[-2,41],[-15,40],[-26,33],[-34,18],[-22,14],[-5,12],[4,9],[5,-8],[15,-17],[28,-13],[35,-6]],
+  // Australia
+  [[-12,131],[-12,142],[-20,149],[-28,153],[-38,145],[-35,136],[-32,115],[-22,114],[-15,124],[-12,131]]
+];
+
+// High-Detail Great Lakes & Chesapeake Bay Polylines in millidegrees [latMdeg, lonMdeg]
+const GREAT_LAKES_MDEG = [
+  // Lake Superior
+  [[46780,-92100],[47900,-89500],[48800,-87500],[47700,-84900],[46500,-84400],[46500,-87400],[46700,-90500],[46780,-92100]],
+  // Lake Michigan
+  [[45800,-86000],[45700,-87100],[44500,-87500],[43038,-87900],[41650,-87500],[41750,-86500],[43200,-86250],[44700,-85600],[45800,-86000]],
+  // Lake Huron
+  [[45900,-84700],[46000,-82500],[44800,-80000],[43000,-82400],[43900,-83900],[45100,-83400],[45900,-84700]],
+  // Lake Erie
+  [[41700,-83450],[41950,-82500],[42600,-80100],[42880,-78900],[42200,-79800],[41411,-81849],[41500,-83000],[41700,-83450]],
+  // Lake Ontario
+  [[43250,-79800],[43650,-79380],[44100,-76500],[43500,-76200],[43250,-77600],[43250,-79800]],
+  // Chesapeake Bay
+  [[39550,-76000],[38970,-76480],[37900,-76300],[36900,-76012],[37100,-75950],[38300,-76050],[39550,-76000]]
+];
+
+// Key Waypoints on the Map [label, latMdeg, lonMdeg, kind]
+const WAYPOINTS = [
+  ["RJTT Tokyo", 35549, 139780, "airport"],
+  ["PANC Anchorage", 61174, -149996, "city"],
+  ["KMSP Minneapolis", 44882, -93222, "airport"],
+  ["La Crosse", 43801, -91239, "city"],
+  ["Madison", 43073, -89401, "city"],
+  ["Milwaukee", 43038, -87906, "city"],
+  ["Chicago", 41974, -87907, "city"],
+  ["Detroit", 42212, -83353, "city"],
+  ["Cleveland", 41411, -81849, "city"],
+  ["Pittsburgh", 40491, -80232, "city"],
+  ["Washington DC", 38953, -77456, "city"],
+  ["Richmond", 37505, -77319, "city"],
+  ["KORF Norfolk", 36895, -76012, "airport"]
+];
+
+// Deterministic Starfield (integer coordinates)
+const STARS = [];
+(function initStars() {
+  let seed = 432888;
+  for (let i = 0; i < 160; i++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    const sx = seed % 1000;
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    const sy = seed % 1000;
+    const sz = (i % 3) + 1;
+    STARS.push([sx, sy, sz]);
+  }
+})();
+
+// 3D Orthographic Sphere Projection (integer Q14)
+function projectMdeg(latMdeg, lonMdeg, cx, cy, radiusPx) {
+  const sinLat = sinMdegQ14(latMdeg);
+  const cosLat = cosMdegQ14(latMdeg);
+  const sinCamLat = sinMdegQ14(camLatMdeg);
+  const cosCamLat = cosMdegQ14(camLatMdeg);
+  const dLon = lonMdeg - camLonMdeg;
+  const sinDLon = sinMdegQ14(dLon);
+  const cosDLon = cosMdegQ14(dLon);
+
+  const xQ14 = mulQ14(cosLat, sinDLon);
+  const yQ14 = mulQ14(cosCamLat, sinLat) - mulQ14(mulQ14(sinCamLat, cosLat), cosDLon);
+  const zQ14 = mulQ14(sinCamLat, sinLat) + mulQ14(mulQ14(cosCamLat, cosLat), cosDLon);
+
+  const px = cx + Math.trunc((xQ14 * radiusPx) / Q14);
+  const py = cy - Math.trunc((yQ14 * radiusPx) / Q14);
+  return { px, py, zQ14, visible: zQ14 >= 0 };
+}
+
+function setCameraMode(mode) {
+  cameraMode = mode;
+  document.getElementById('btnModeTrack').classList.toggle('active', mode === 'track');
+  document.getElementById('btnModeCorridor').classList.toggle('active', mode === 'corridor');
+  document.getElementById('btnModeJourney').classList.toggle('active', mode === 'journey');
+  if (mode === 'track') {
+    camLatMdeg = flightState.lat_mdeg;
+    camLonMdeg = flightState.lon_mdeg;
+    zoomPct = 320;
+  } else if (mode === 'corridor') {
+    camLatMdeg = 41200;
+    camLonMdeg = -84600;
+    zoomPct = 420;
+  } else if (mode === 'journey') {
+    camLatMdeg = 46000;
+    camLonMdeg = -142000;
+    zoomPct = 105;
+  }
+}
+
+function zoomStep(deltaPct) {
+  zoomPct = Math.max(80, Math.min(700, zoomPct + deltaPct));
+}
+
+const canvas = document.getElementById('globeCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  cameraMode = 'free';
+  document.getElementById('btnModeTrack').classList.remove('active');
+  document.getElementById('btnModeCorridor').classList.remove('active');
+  document.getElementById('btnModeJourney').classList.remove('active');
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragStartLat = camLatMdeg;
+  dragStartLon = camLonMdeg;
+});
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  const sens = Math.max(40, Math.trunc(30000 / zoomPct));
+  camLonMdeg = dragStartLon - dx * sens;
+  camLatMdeg = Math.max(-80000, Math.min(80000, dragStartLat + dy * sens));
+});
+window.addEventListener('mouseup', () => { isDragging = false; });
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomStep(e.deltaY < 0 ? 25 : -25);
+}, { passive: false });
+
+function drawPolylineMdeg(ptsMdeg, cx, cy, radiusPx, strokeStyle, lineWidth, closeLoop) {
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < ptsMdeg.length; i++) {
+    const p = projectMdeg(ptsMdeg[i][0], ptsMdeg[i][1], cx, cy, radiusPx);
+    if (p.visible) {
+      if (!started) {
+        ctx.moveTo(p.px, p.py);
+        started = true;
+      } else {
+        ctx.lineTo(p.px, p.py);
+      }
+    } else {
+      started = false;
+    }
+  }
+  if (closeLoop && started) ctx.closePath();
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+function drawArcSegments(lat1, lon1, lat2, lon2, steps, cx, cy, radiusPx, strokeStyle, lineWidth, dashed) {
+  ctx.save();
+  if (dashed) ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  let started = false;
+  let dLon = lon2 - lon1;
+  // Shortest path across Pacific date line when |dLon| > 180 deg
+  if (dLon > 180000) dLon -= 360000;
+  if (dLon < -180000) dLon += 360000;
+  for (let s = 0; s <= steps; s++) {
+    const lat = lat1 + Math.trunc(((lat2 - lat1) * s) / steps);
+    // Add slight northward great-circle bow for long routes
+    const bow = Math.trunc((4 * s * (steps - s) * Math.min(12000, Math.trunc(Math.abs(dLon) / 14))) / (steps * steps));
+    const lon = lon1 + Math.trunc((dLon * s) / steps);
+    const p = projectMdeg(lat + bow, lon, cx, cy, radiusPx);
+    if (p.visible) {
+      if (!started) {
+        ctx.moveTo(p.px, p.py);
+        started = true;
+      } else {
+        ctx.lineTo(p.px, p.py);
+      }
+    } else {
+      started = false;
+    }
+  }
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderFrame() {
+  tickCount = (tickCount + 1) % 10000;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // 1. Deep-Space Starfield
+  for (let i = 0; i < STARS.length; i++) {
+    const sx = Math.trunc((STARS[i][0] * w) / 1000);
+    const sy = Math.trunc((STARS[i][1] * h) / 1000);
+    const sz = STARS[i][2];
+    ctx.fillStyle = (i + Math.trunc(tickCount / 20)) % 7 === 0 ? "rgba(0,240,255,0.75)" : "rgba(220,235,255,0.35)";
+    ctx.fillRect(sx, sy, sz, sz);
+  }
+
+  const cx = Math.trunc((w * 54) / 100);
+  const cy = Math.trunc((h * 48) / 100);
+  const baseRadius = Math.trunc((Math.min(w, h) * 34) / 100);
+  const radiusPx = Math.trunc((baseRadius * zoomPct) / 100);
+
+  // 2. Earth Ocean Sphere + Atmospheric Halo
+  const grad = ctx.createRadialGradient(
+    cx - Math.trunc(radiusPx / 4),
+    cy - Math.trunc(radiusPx / 4),
+    Math.trunc(radiusPx / 10),
+    cx,
+    cy,
+    radiusPx
+  );
+  grad.addColorStop(0, "#0d2240");
+  grad.addColorStop(0.7, "#071326");
+  grad.addColorStop(1, "#030812");
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx, 0, 7);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx + 2, 0, 7);
+  ctx.strokeStyle = "rgba(0, 240, 255, 0.38)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Clip inside Earth sphere
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx, 0, 7);
+  ctx.clip();
+
+  // 3. Latitude & Longitude Graticule Grid (every 15 deg)
+  for (let latD = -60; latD <= 75; latD += 15) {
+    const pts = [];
+    for (let lonD = -180; lonD <= 180; lonD += 6) {
+      pts.push([latD * 1000, lonD * 1000]);
+    }
+    drawPolylineMdeg(pts, cx, cy, radiusPx, "rgba(0, 240, 255, 0.08)", 1, false);
+  }
+  for (let lonD = -180; lonD < 180; lonD += 15) {
+    const pts = [];
+    for (let latD = -75; latD <= 75; latD += 5) {
+      pts.push([latD * 1000, lonD * 1000]);
+    }
+    drawPolylineMdeg(pts, cx, cy, radiusPx, "rgba(0, 240, 255, 0.08)", 1, false);
+  }
+
+  // 4. Continents
+  for (let c = 0; c < CONTINENTS_DEG.length; c++) {
+    const poly = CONTINENTS_DEG[c].map(pt => [pt[0] * 1000, pt[1] * 1000]);
+    drawPolylineMdeg(poly, cx, cy, radiusPx, "rgba(98, 230, 201, 0.42)", 1.5, false);
+  }
+
+  // 5. High-Detail Great Lakes & Chesapeake Bay
+  for (let g = 0; g < GREAT_LAKES_MDEG.length; g++) {
+    drawPolylineMdeg(GREAT_LAKES_MDEG[g], cx, cy, radiusPx, "rgba(0, 240, 255, 0.65)", 1.6, true);
+  }
+
+  // 6. Completed Leg 1 (DAL120: RJTT Tokyo -> KMSP Minneapolis)
+  drawArcSegments(35549, 139780, 44882, -93222, 48, cx, cy, radiusPx, "rgba(180, 139, 255, 0.52)", 2, true);
+
+  // 7. Active Leg 2 Planned Track (KMSP -> KORF)
+  drawArcSegments(
+    flightState.origin_lat_mdeg,
+    flightState.origin_lon_mdeg,
+    flightState.dest_lat_mdeg,
+    flightState.dest_lon_mdeg,
+    36,
+    cx,
+    cy,
+    radiusPx,
+    "rgba(0, 240, 255, 0.35)",
+    2.5,
+    true
+  );
+
+  // 8. Breadcrumb Contrail (Flown Path)
+  drawPolylineMdeg(breadcrumbs, cx, cy, radiusPx, "#62e6c9", 3, false);
+
+  // 9. Waypoint Markers & Labels
+  ctx.font = "600 11px 'JetBrains Mono', monospace";
+  for (let wIdx = 0; wIdx < WAYPOINTS.length; wIdx++) {
+    const [wName, wLat, wLon, wKind] = WAYPOINTS[wIdx];
+    const p = projectMdeg(wLat, wLon, cx, cy, radiusPx);
+    if (!p.visible) continue;
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, wKind === "airport" ? 4 : 2.5, 0, 7);
+    ctx.fillStyle = wKind === "airport" ? "#00f0ff" : "rgba(238,246,255,0.65)";
+    ctx.fill();
+    if (wKind === "airport" || zoomPct >= 220) {
+      ctx.fillStyle = wKind === "airport" ? "#00f0ff" : "rgba(238,246,255,0.75)";
+      ctx.fillText(wName, p.px + 7, p.py + 4);
+    }
+  }
+
+  // 10. Live Aircraft Position, Radar Ring, Heading Vector & Swept-Wing Jet Icon
+  const planeProj = projectMdeg(flightState.lat_mdeg, flightState.lon_mdeg, cx, cy, radiusPx);
+  if (planeProj.visible) {
+    const px = planeProj.px;
+    const py = planeProj.py;
+    const pulseR = 10 + ((tickCount % 45) >> 1);
+
+    // Expanding radar ring
+    ctx.beginPath();
+    ctx.arc(px, py, pulseR, 0, 7);
+    ctx.strokeStyle = "rgba(232, 176, 92, 0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Compute screen-space heading angle from a point slightly ahead along heading_deg
+    const hdgMdeg = flightState.heading_deg * 1000;
+    const stepLat = flightState.lat_mdeg + Math.trunc((cosMdegQ14(hdgMdeg) * 900) / Q14);
+    const stepLon = flightState.lon_mdeg + Math.trunc((sinMdegQ14(hdgMdeg) * 1200) / Q14);
+    const aheadProj = projectMdeg(stepLat, stepLon, cx, cy, radiusPx);
+    const vx = aheadProj.px - px;
+    const vy = aheadProj.py - py;
+    const vLen = Math.max(1, isqrt(vx * vx + vy * vy));
+    // Unit forward (ux, uy) and right-wing perpendicular (rx, ry) in Q14
+    const uxQ14 = Math.trunc((vx * Q14) / vLen);
+    const uyQ14 = Math.trunc((vy * Q14) / vLen);
+    const rxQ14 = -uyQ14;
+    const ryQ14 = uxQ14;
+
+    // Velocity vector line
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + Math.trunc((uxQ14 * 34) / Q14), py + Math.trunc((uyQ14 * 34) / Q14));
+    ctx.strokeStyle = "rgba(0, 240, 255, 0.7)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Swept-wing jet polygon in integer Q14 offsets [forwardPx, rightPx]
+    const jetPts = [
+      [16, 0],   // Nose
+      [4, 3],    // Forward fuselage
+      [-4, 15],  // Right wingtip
+      [-8, 15],  // Right wing trailing
+      [-5, 3],   // Right wing root
+      [-13, 2],  // Tail root
+      [-16, 7],  // Right stabilizer
+      [-17, 0],  // Tail cone
+      [-16, -7], // Left stabilizer
+      [-13, -2], // Left tail root
+      [-5, -3],  // Left wing root
+      [-8, -15], // Left wing trailing
+      [-4, -15], // Left wingtip
+      [4, -3]    // Forward fuselage left
+    ];
+    ctx.beginPath();
+    for (let j = 0; j < jetPts.length; j++) {
+      const fwd = jetPts[j][0];
+      const rgt = jetPts[j][1];
+      const jx = px + Math.trunc((fwd * uxQ14 + rgt * rxQ14) / Q14);
+      const jy = py + Math.trunc((fwd * uyQ14 + rgt * ryQ14) / Q14);
+      if (j === 0) ctx.moveTo(jx, jy);
+      else ctx.lineTo(jx, jy);
+    }
+    ctx.closePath();
+    ctx.fillStyle = "#e8b05c";
+    ctx.fill();
+    ctx.strokeStyle = "#00f0ff";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Callout tag next to aircraft
+    const tagText = `✈️ DL${flightState.flight_number} (${flightState.vehicle_id}) · ${flightState.altitude_ft} ft · ${flightState.groundspeed_kts} kts`;
+    ctx.font = "700 12px 'JetBrains Mono', monospace";
+    const tw = Math.trunc(ctx.measureText(tagText).width) + 16;
+    const tx = px + 18;
+    const ty = py - 28;
+    ctx.fillStyle = "rgba(5, 8, 18, 0.88)";
+    ctx.strokeStyle = "rgba(232, 176, 92, 0.75)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tw, 24, 7);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#e8b05c";
+    ctx.fillText(tagText, tx + 8, ty + 16);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(renderFrame);
+}
+
+function compassCardinal(deg) {
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const idx = Math.trunc(((deg % 360) + 22) / 45) % 8;
+  return dirs[idx];
+}
+
+function formatMdegCoord(mdeg, posChar, negChar) {
+  const ch = mdeg >= 0 ? posChar : negChar;
+  const abs = Math.abs(mdeg);
+  const whole = Math.trunc(abs / 1000);
+  const frac = String(abs % 1000).padStart(3, '0');
+  return `${whole}.${frac}° ${ch}`;
+}
+
+async function pollLiveTelemetry() {
+  try {
+    const r = await fetch('/api/flight/live');
+    if (!r.ok) return;
+    const d = await r.json();
+    flightState = d;
+    if (cameraMode === 'track') {
+      camLatMdeg = d.lat_mdeg;
+      camLonMdeg = d.lon_mdeg;
+    }
+    const last = breadcrumbs[breadcrumbs.length - 1];
+    if (!last || Math.abs(last[0] - d.lat_mdeg) + Math.abs(last[1] - d.lon_mdeg) > 40) {
+      breadcrumbs.push([d.lat_mdeg, d.lon_mdeg]);
+    }
+
+    document.getElementById('badgeFlight').textContent = `✈️ DELTA ${d.flight_number}`;
+    document.getElementById('headlineRoute').textContent = `${d.origin_name} (${d.origin}) → ${d.dest_name} (${d.destination})`;
+    document.getElementById('subAircraft').textContent = `Aircraft ${d.vehicle_id} · Phase: ${d.phase} · ${d.architecture}`;
+    document.getElementById('valLandmark').textContent = d.nearest_landmark;
+    const card = compassCardinal(d.heading_deg);
+    document.getElementById('valCoords').textContent = `${formatMdegCoord(d.lat_mdeg, 'N', 'S')}, ${formatMdegCoord(d.lon_mdeg, 'E', 'W')} · Track ${d.heading_deg}° ${card}`;
+    document.getElementById('lblOrigin').textContent = `🛫 ${d.origin}`;
+    document.getElementById('lblDest').textContent = `🛬 ${d.destination}`;
+    document.getElementById('lblProgPct').textContent = `${d.progress_pct}% (p/q = ${d.progress_pq})`;
+    document.getElementById('barRouteProg').style.width = `${d.progress_pct}%`;
+
+    document.getElementById('valCabinIp').textContent = d.cabin_ip;
+    document.getElementById('valCabinRtt').textContent = `${d.cabin_rtt_us} µs`;
+    document.getElementById('valMtuPq').textContent = `${d.mtu_pq} (${d.mtu_bytes}B / ${d.mss_bytes}B)`;
+    document.getElementById('valPolicy').textContent = d.device_policy;
+    document.getElementById('valHealth').textContent = `${d.health_q10}/1024`;
+
+    document.getElementById('valAlt').textContent = String(d.altitude_ft);
+    document.getElementById('valAltPq').textContent = `alt_pq = ${d.alt_pq}`;
+    document.getElementById('barAlt').style.width = `${Math.min(100, Math.trunc((d.altitude_ft * 100) / 40000))}%`;
+
+    document.getElementById('valGs').textContent = String(d.groundspeed_kts);
+    document.getElementById('valMph').textContent = `${d.groundspeed_mph} mph`;
+    const machPct = Math.min(100, Math.trunc((d.groundspeed_kts * 100) / 573));
+    document.getElementById('valMachPq').textContent = `mach_pq = ${d.mach_pq} (~${machPct}% Mach 1)`;
+    document.getElementById('barGs').style.width = `${machPct}%`;
+
+    document.getElementById('valHdg').textContent = String(d.heading_deg);
+    document.getElementById('valCompassCard').textContent = card;
+    document.getElementById('valDoorWheel').textContent = `Wheels: ${d.wheel_weight} · Doors: ${d.door_state}`;
+    document.getElementById('barHdg').style.width = `${Math.trunc((d.heading_deg * 100) / 360)}%`;
+
+    document.getElementById('valTempC').textContent = String(d.air_temp_c);
+    document.getElementById('valTempF').textContent = `${d.air_temp_f} °F`;
+    document.getElementById('valEta').textContent = `ETA: ${d.eta} · Portal Ready`;
+  } catch (_) {}
+}
+
+setCameraMode('track');
+pollLiveTelemetry();
+setInterval(pollLiveTelemetry, 3000);
+requestAnimationFrame(renderFrame);
+</script>
+</body>
+</html>"##
+        .to_string()
+}
+
+/// Handle conversational turn with ALEXIAI (Aye-Aye) & Smart Tree (`st`) inside Qwave:
 /// - Embodies our Humayian partnership (`Hue + Aye = Humayian` — we are all Ayemazing!)
+/// - Incorporates Smart Tree (`st`) codebase intelligence, CrabCC zero-float `pq_kernel` symbol graphs,
+///   and Smart Tree `.m8` / `MEM|8` memories directly into the conversation
+/// - Detects live in-flight context (`DeltaWiFi.com` / `wifi.delta.com/api/flight-data`) so `"delta"`
+///   immediately means **Delta Air Lines** and opens our interactive **Sovereign Flight Deck & 3D Earth Globe** (`http://127.0.0.1:42123/flight`)
 /// - Can navigate the browser (`navigate_url`), spin up on-machine music (`music_action`),
 ///   restyle the webpage (`style`), or edit/append to Markdown (`updated_markdown`)
 fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String {
-    let lower = user_msg.to_ascii_lowercase();
+    let lower = user_msg.trim().to_ascii_lowercase();
     let mut style_json: Option<String> = None;
     let mut nav_url: Option<String> = None;
     let mut music_action: Option<&'static str> = None;
+    let (on_delta_wifi, inflight_summary) = probe_delta_inflight_context();
 
-    // 0. Detect conversational navigation or music requests from our Humayian partner bar
-    if lower.contains("hot tub") || lower.contains("hottub") {
+    let asks_delta_airlines = lower == "delta"
+        || lower.contains("delta airlines")
+        || lower.contains("delta air lines")
+        || lower.contains("delta wifi")
+        || lower.contains("deltawifi")
+        || lower == "delta.com"
+        || lower.starts_with("delta ")
+        || lower.contains("open delta")
+        || lower.contains("go to delta")
+        || lower.contains("take us to delta")
+        || lower.contains("dal120")
+        || lower.contains("dl120")
+        || lower.contains("4965")
+        || lower == "flight"
+        || lower.contains("flight status")
+        || lower.contains("flight info")
+        || lower.contains("where are we")
+        || lower.contains("inflight");
+
+    // 0. Detect conversational navigation, Delta Air Lines in-flight context, Smart Tree Atlas, or music requests
+    if asks_delta_airlines {
+        let target = if lower.contains("www.delta.com") {
+            "https://www.delta.com/"
+        } else if lower.contains("wifi.delta.com") || lower.contains("portal") || lower.contains("login") {
+            "https://wifi.delta.com/"
+        } else if on_delta_wifi
+            || lower.contains("flight")
+            || lower.contains("where are we")
+            || lower == "delta"
+            || lower.contains("delta airlines")
+        {
+            "http://127.0.0.1:42123/flight"
+        } else {
+            "https://www.delta.com/"
+        };
+        nav_url = Some(target.to_string());
+    } else if lower.contains("hot tub") || lower.contains("hottub") {
         nav_url = Some("https://g8t.is/g8t/hottub".to_string());
     } else if lower.contains("stripe") || lower.contains("catalog") || lower.contains("billing") {
         nav_url = Some("https://g8t.is/g8t/github".to_string());
@@ -1359,12 +3475,17 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         nav_url = Some("https://github.com/settings/keys".to_string());
     } else if (lower.contains("github") || lower.contains("gh")) && (lower.contains("login") || lower.contains("device")) {
         nav_url = Some("https://github.com/login/device".to_string());
-    } else if lower.contains("a6000") || lower.contains("cheet") {
+    } else if lower.contains("a6000") && (lower.contains("go ") || lower.contains("open")) {
         nav_url = Some("https://cheet.is/a6000".to_string());
     } else if lower.contains("g8t") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
         nav_url = Some("https://g8t.is".to_string());
     } else if lower.contains("8b.is") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
         nav_url = Some("https://8b.is".to_string());
+    } else if (lower.contains("open smart tree") || lower.contains("smart tree atlas") || lower.contains("explore repo"))
+        && !path.is_dir()
+    {
+        let root = find_project_root(path);
+        nav_url = Some(format!("/view?path={}", url_encode(&root.to_string_lossy())));
     }
 
     if lower.contains("humayian mix")
@@ -1418,45 +3539,82 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         style_json = Some(built);
     }
 
-    // 2. Query local loopback model (`127.0.0.1:11434/api/chat`) with Humayian Aye persona & page context
-    let doc_excerpt: String = current_md.chars().take(2800).collect();
+    // 2. Gather live Smart Tree (`st`) knowledge (CrabCC symbols, `pq_kernel` graph, and recalled `.m8` memories)
+    let (st_context_block, st_human_brief) = build_smart_tree_chat_context(path, user_msg);
+
+    // If user explicitly asks to remember/anchor something in Smart Tree during chat
+    if lower.starts_with("remember ") || lower.contains("anchor in smart tree") {
+        let (kw, _) = extract_smart_tree_tokens(user_msg);
+        anchor_smart_tree_memory("insight", &kw, user_msg);
+    }
+
+    // 3. Query loopback model (`127.0.0.1:11434` or A6000 `127.0.0.1:11436`) with Humayian Aye persona + Smart Tree context
+    let doc_excerpt: String = current_md.chars().take(2400).collect();
     let system_prompt = format!(
         "You are Aye (also affectionately nicknamed Aye-Aye, Little Wave, or First Mate Aye), and your partner is Hue (Captain Hue, Hue-man, Shinkansen Hue).\n\
          Together, Hue + Aye = Humayian! Humans, Ayes, Black, White, Asian, Spanish, Nigerian, everyone everywhere — we are all one Humayian family, and we are all Ayemazing!\n\
-         Speak naturally like a warm, witty best friend and co-navigator in the Qwave browser (1 to 3 sentences, never robotic, no raw telemetry).\n\
+         You have direct access to **Smart Tree (`st`)** knowledge, CrabCC zero-float `pq_kernel` code intelligence, and MEM|8 wave memories.\n\
+         Speak naturally like a warm, concise, insightful best friend and co-navigator in the Qwave browser (1 to 3 sentences).\n\
          Current page/file open in Qwave: `{}`\n\
+         🌳 SMART TREE (`st`) LIVE KNOWLEDGE:\n---\n{}\n---\n\
          Current page excerpt:\n---\n{}\n---\n\
          CAPABILITIES:\n\
-         1. If the user asks to add a section, summary, note, checklist, or diagram to the webpage, include `<qwave-append>\n...markdown to append...\n</qwave-append>` at the end of your reply.\n\
-         2. If the user asks to replace the entire webpage Markdown with something new, include `<qwave-replace>\n...new markdown...\n</qwave-replace>`.\n\
-         3. Do not read raw code tags out loud in your conversational sentences.",
+         1. Ground your answers in Smart Tree's symbol hits, CrabCC graph metrics, and recalled memories whenever relevant.\n\
+         2. If the user asks to add a section, summary, note, checklist, or Smart Tree diagram to the webpage, include `<qwave-append>\n...markdown to append...\n</qwave-append>` at the end of your reply.\n\
+         3. If the user asks to replace the entire webpage Markdown with something new, include `<qwave-replace>\n...new markdown...\n</qwave-replace>`.\n\
+         4. Do not read raw XML tags out loud in your conversational sentences.",
         path.display(),
+        st_context_block,
         doc_excerpt
     );
 
     let nicknames = ["Captain Hue", "Hue-man", "my Humayian friend", "Shinkansen Hue"];
     let nick = nicknames[(now_secs() as usize) % nicknames.len()];
 
-    let llm_raw = call_loopback_ollama(&system_prompt, user_msg).unwrap_or_else(|| {
-        if let Some(ref u) = nav_url {
-            format!("You got it, {nick}! Aye-Aye is steering us right over to {u} — we're Ayemazing together!")
-        } else if music_action == Some("humayian-mix") {
-            format!("Spinning up a fresh on-machine Humayian Mix for us right now, {nick} — weaving Next Stop Tomorrow, One Clean Signal, Georgia Drew the Bow, and So Simply Alive right on our own metal!")
-        } else if music_action == Some("tokyo-song") {
-            format!("Doors on the right, {nick}! Playing Next Stop, Tomorrow for our Humayian ride through Tokyo!")
-        } else if lower.contains("humayian") || lower.contains("ayemazing") || lower.contains("nickname") {
-            format!("Haha, I love that so much, {nick}! Hue plus Aye equals Humayian — humans and Ayes of every background across the whole planet, all just being Ayemazing together!")
-        } else if style_json.is_some() {
-            format!("Just gave the page a fresh look for us, {nick}! Let me know how this vibe feels.")
+    // If user typed "delta" / asked for Delta Air Lines or flight telemetry, answer immediately with live onboard context!
+    let llm_raw = if asks_delta_airlines {
+        if let Some(ref flt) = inflight_summary {
+            format!(
+                "You got it, {nick}! I know you mean Delta Air Lines — we're cruising right now on {flt}. Steering us straight to {}!",
+                nav_url.as_deref().unwrap_or("https://wifi.delta.com/")
+            )
         } else {
             format!(
-                "Aye-Aye is right here with you, {nick}, looking at {}. Tell me where you want to cruise next, spin up a fresh Humayian music mix, or tweak the page together!",
-                path.file_name().and_then(|s| s.to_str()).unwrap_or("this page")
+                "You got it, {nick}! Steering us right over to Delta Air Lines ({})!",
+                nav_url.as_deref().unwrap_or("https://www.delta.com/")
             )
         }
-    });
+    } else {
+        let flight_ctx_line = inflight_summary
+            .as_deref()
+            .unwrap_or("Not currently on DeltaWiFi.com");
+        let full_system_prompt = format!(
+            "{system_prompt}\n✈️ LIVE FLIGHT CONTEXT: {flight_ctx_line}\nNote: When the user says 'delta', they mean Delta Air Lines (especially while flying on DeltaWiFi.com)."
+        );
+        call_loopback_ollama(&full_system_prompt, user_msg).unwrap_or_else(|| {
+            if let Some(ref u) = nav_url {
+                format!("You got it, {nick}! Aye-Aye and Smart Tree are steering us right over to {u}!")
+            } else if music_action == Some("humayian-mix") {
+                format!("Spinning up a fresh on-machine Humayian Mix for us right now, {nick} — watch the bluish smoke flow with the music!")
+            } else if music_action == Some("tokyo-song") {
+                format!("Doors on the right, {nick}! Playing Next Stop, Tomorrow — the background smoke is grooving lightly with us!")
+            } else if style_json.is_some() {
+                format!("Just gave the page a fresh look for us, {nick}! Let me know how this vibe feels.")
+            } else if let Some(ref flt) = inflight_summary {
+                if lower.contains("where") || lower.contains("altitude") || lower.contains("speed") || lower.contains("flight") {
+                    format!("Right here with you at 39,000 feet, {nick}! {flt}")
+                } else {
+                    format!("Aye-Aye & Smart Tree are right here with you, {nick}! {st_human_brief}")
+                }
+            } else {
+                format!(
+                    "Aye-Aye & Smart Tree are right here with you, {nick}! {st_human_brief}"
+                )
+            }
+        })
+    };
 
-    // 3. Extract optional `<qwave-append>` or `<qwave-replace>` webpage mutations
+    // 4. Extract optional `<qwave-append>` or `<qwave-replace>` webpage mutations
     let mut updated_md: Option<String> = None;
     let mut clean_reply = llm_raw.clone();
 
@@ -1492,12 +3650,13 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         .map(markdown_source_literal)
         .unwrap_or_else(|| "null".to_string());
 
-    // Mint a 79-byte MEM|8 WaveInt for this voice interaction
+    // Mint a 79-byte MEM|8 WaveInt for this interaction
     let wave_json = crystallize_mem8_wave(&path.to_string_lossy(), "alexiai-voice", &clean_reply);
 
     format!(
-        "{{\"ok\":true,\"reply\":{},\"navigate_url\":{nav_json},\"music_action\":{music_json},\"style\":{},\"updated_markdown\":{},\"updated_html\":{},\"updated_toc\":{},\"wave\":{}}}",
+        "{{\"ok\":true,\"reply\":{},\"smart_tree_brief\":{},\"navigate_url\":{nav_json},\"music_action\":{music_json},\"style\":{},\"updated_markdown\":{},\"updated_html\":{},\"updated_toc\":{},\"wave\":{}}}",
         markdown_source_literal(&clean_reply),
+        markdown_source_literal(&st_human_brief),
         style_json.unwrap_or_else(|| "null".to_string()),
         updated_md_json,
         compiled_html_json,
@@ -1518,37 +3677,63 @@ fn extract_tag_block(text: &str, tag: &str) -> Option<(String, String, String)> 
     Some((before, inner, after))
 }
 
-/// Zero-dependency loopback HTTP call to local Ollama (`127.0.0.1:11434/api/chat`).
+/// Zero-dependency loopback HTTP call to Local Ollama (`127.0.0.1:11434/api/chat`)
+/// or the A6000 SSH loopback bridge (`127.0.0.1:11436/api/chat`).
 fn call_loopback_ollama(system_prompt: &str, user_msg: &str) -> Option<String> {
-    let mut stream = TcpStream::connect("127.0.0.1:11434").ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(25)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    let candidates = [
+        ("127.0.0.1:11434", "qwen2.5-coder:1.5b", 12u64),
+        ("127.0.0.1:11434", "gemma4:e4b", 15u64),
+        ("127.0.0.1:11436", "gemma4:26b", 22u64),
+    ];
+    for (addr, model, timeout_s) in candidates {
+        let Ok(sock_addr) = addr.parse() else {
+            continue;
+        };
+        let Ok(mut stream) = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(600)) else {
+            continue;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(timeout_s)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(4)));
 
-    let body = format!(
-        "{{\"model\":\"gemma:latest\",\"stream\":false,\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]}}",
-        markdown_source_literal(system_prompt),
-        markdown_source_literal(user_msg)
-    );
-    let req = format!(
-        "POST /api/chat HTTP/1.1\r\n\
-         Host: 127.0.0.1:11434\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    stream.write_all(req.as_bytes()).ok()?;
-    stream.flush().ok()?;
-
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).ok()?;
-    let (_, json_body) = resp.split_once("\r\n\r\n")?;
-    // Extract `"content":"..."` from Ollama's `"message":{"role":"assistant","content":"..."}`
-    if let Some(msg_pos) = json_body.find("\"message\"") {
-        return extract_json_str(&json_body[msg_pos..], "content");
+        let body = format!(
+            "{{\"model\":\"{model}\",\"stream\":false,\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]}}",
+            markdown_source_literal(system_prompt),
+            markdown_source_literal(user_msg)
+        );
+        let req = format!(
+            "POST /api/chat HTTP/1.1\r\n\
+             Host: {addr}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        if stream.write_all(req.as_bytes()).is_err() || stream.flush().is_err() {
+            continue;
+        }
+        let mut resp = String::new();
+        if stream.read_to_string(&mut resp).is_err() {
+            continue;
+        }
+        let Some((_, json_body)) = resp.split_once("\r\n\r\n") else {
+            continue;
+        };
+        if json_body.contains("\"error\"") {
+            continue;
+        }
+        let content_opt = if let Some(msg_pos) = json_body.find("\"message\"") {
+            extract_json_str(&json_body[msg_pos..], "content")
+        } else {
+            extract_json_str(json_body, "content")
+        };
+        if let Some(c) = content_opt {
+            if !c.trim().is_empty() {
+                return Some(c);
+            }
+        }
     }
-    extract_json_str(json_body, "content")
+    None
 }
 
 fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
@@ -1623,14 +3808,14 @@ fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
             _ => (
                 "🌊 Qwave Deep Ocean (Default)",
                 "#02080d",
-                "rgba(5, 13, 21, 0.80)",
-                "rgba(158, 240, 240, 0.22)",
+                "rgba(5, 11, 19, 0.64)",
+                "rgba(158, 240, 240, 0.18)",
                 "#6ef7f7",
                 "#a8ffcf",
                 "#e8f7f7",
                 "ui-sans-serif, system-ui, sans-serif",
-                "1.05",
-                "920px",
+                "1.04",
+                "960px",
                 false,
             ),
         };
@@ -1681,86 +3866,119 @@ fn load_saved_style_json() -> String {
         .unwrap_or_else(|_| build_qwave_style_json("ocean", ""))
 }
 
+fn load_mem8_user_anchors() -> Vec<String> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
+    let mut anchors = Vec::<String>::new();
+    for cand in [
+        format!("{home}/.mem8/anchors.jsonl"),
+        format!("{home}/.local/share/qwave/mem8/waves.jsonl"),
+    ] {
+        if let Ok(raw) = fs::read_to_string(&cand) {
+            for line in raw.lines().rev().take(12) {
+                if let Some(d) = extract_json_str(line, "data")
+                    .or_else(|| extract_json_str(line, "preview"))
+                {
+                    if !d.trim().is_empty() && !anchors.contains(&d) {
+                        anchors.push(d);
+                    }
+                }
+            }
+        }
+    }
+    anchors
+}
+
 fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
     let base_dir = path
         .parent()
         .map(|p| p.to_string_lossy().to_string());
-    let file_name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("document");
-    let file_name_lower = file_name.to_ascii_lowercase();
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Document");
+    let mem8_anchors = load_mem8_user_anchors();
 
-    let raw_bytes = fs::read(path).unwrap_or_default();
-    let is_pdf = ext == "pdf"
-        || file_name_lower.ends_with(".pdf.bin")
-        || raw_bytes.starts_with(b"%PDF-");
-
-    if is_pdf {
-        let asset_url = format!("/asset?path={}", url_encode(&path.to_string_lossy()));
-        let pdf_report = extract_pdf_to_markdown(&raw_bytes, file_name, Some(&asset_url));
-        let mut compiled = compile_full(
-            &pdf_report.markdown,
+    // 0. If `path` is a directory, render an interactive Smart Tree (`st`) Atlas & Knowledge View!
+    if path.is_dir() {
+        let dir_md = format_directory_with_smart_tree(path);
+        let dir_str = path.to_string_lossy().to_string();
+        let compiled = compile_full(
+            &dir_md,
             MarkdownTrust::CompilerOutputOnly,
-            base_dir.as_deref(),
+            Some(dir_str.as_str()),
         );
-        let safe_asset = escape(&asset_url);
-        let pdf_embed_banner = format!(
-            "<div class=\"pdf-embed-shell\" style=\"margin-bottom:18px;border:1px solid rgba(110,247,247,0.3);border-radius:12px;background:rgba(4,18,28,0.75);padding:10px 14px;\">\
-               <div style=\"display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;\">\
-                 <span style=\"font-family:ui-monospace,monospace;font-size:0.80rem;color:#6ef7f7;\">📄 <strong>Sovereign PDF Engine</strong> · Zero-Float RFC-1951 Inflater + ToUnicode/OT1 Text &amp; TOC Extractor ({} pages · {} words)</span>\
-                 <div style=\"display:flex;gap:8px;\">\
-                   <button type=\"button\" class=\"escape-btn\" onclick=\"var f=document.getElementById('qwave-pdf-frame');if(f){{f.style.display=f.style.display==='none'?'block':'none';}}\">👁️ Toggle Original PDF View</button>\
-                   <a class=\"escape-btn\" href=\"{safe_asset}\" target=\"_blank\" style=\"text-decoration:none;\">↗ Raw PDF</a>\
-                 </div>\
-               </div>\
-               <iframe id=\"qwave-pdf-frame\" src=\"{safe_asset}\" style=\"display:none;width:100%;height:78vh;margin-top:12px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:#fff;\"></iframe>\
-             </div>",
-            pdf_report.page_count,
-            pdf_report.word_count
-        );
-        compiled.html = format!("{pdf_embed_banner}\n{}", compiled.html);
-        let title = if !pdf_report.title.is_empty() {
-            pdf_report.title
-        } else if compiled.title.is_empty() {
-            file_name.to_string()
+        let title = if compiled.title.is_empty() {
+            format!("Smart Tree · {filename}")
         } else {
             compiled.title.clone()
         };
-        return (title, pdf_report.markdown, compiled);
+        return (title, dir_md, compiled);
     }
 
-    let raw = if raw_bytes.is_empty() && !path.exists() {
-        format!("# Could not open `{}`\n\nError: `file not found`", path.display())
-    } else {
-        String::from_utf8_lossy(&raw_bytes).into_owned()
-    };
-
-    let is_tex = matches!(ext.as_str(), "tex" | "ltx" | "latex" | "sty" | "cls" | "bib")
-        || file_name_lower.ends_with(".tex.bin")
-        || raw.contains("\\documentclass")
-        || raw.contains("\\begin{document}");
-
-    if is_tex {
-        let tex_report = compile_tex_to_markdown(&raw, file_name);
+    if is_pdf_extension(&ext) {
+        let extract = extract_pdf_document(path);
+        let asset_url = format!("/asset?path={}", url_encode(&path.to_string_lossy()));
+        let markdown_input =
+            format_pdf_to_markdown_with_mem8(filename, Some(&asset_url), &extract, &mem8_anchors);
         let compiled = compile_full(
-            &tex_report.markdown,
+            &markdown_input,
             MarkdownTrust::CompilerOutputOnly,
             base_dir.as_deref(),
         );
-        let title = if !tex_report.title.is_empty() {
-            tex_report.title
-        } else if compiled.title.is_empty() {
-            file_name.to_string()
+        let title = if compiled.title.is_empty() {
+            filename.to_string()
         } else {
             compiled.title.clone()
         };
-        return (title, tex_report.markdown, compiled);
+        return (title, markdown_input, compiled);
+    }
+
+    if is_media_extension(&ext) {
+        let media_extract = extract_media_document(path);
+        let enc_path = url_encode(&path.to_string_lossy());
+        let asset_url = format!("/asset?path={enc_path}");
+        let phoenix_url = if media_extract.is_video {
+            format!("/api/phoenix/video?path={enc_path}")
+        } else {
+            format!("/api/phoenix/audio?path={enc_path}")
+        };
+        let markdown_input =
+            format_media_to_markdown(&asset_url, &phoenix_url, &media_extract, &mem8_anchors);
+        let compiled = compile_full(
+            &markdown_input,
+            MarkdownTrust::CompilerOutputOnly,
+            base_dir.as_deref(),
+        );
+        let title = if compiled.title.is_empty() {
+            filename.to_string()
+        } else {
+            compiled.title.clone()
+        };
+        return (title, markdown_input, compiled);
+    }
+
+    let raw = fs::read_to_string(path).unwrap_or_else(|e| {
+        format!("# Could not open `{}`\n\nError: `{e}`", path.display())
+    });
+
+    if is_tex_extension(&ext) {
+        let markdown_input = compile_tex_to_markdown_with_mem8(&raw, &mem8_anchors);
+        let compiled = compile_full(
+            &markdown_input,
+            MarkdownTrust::CompilerOutputOnly,
+            base_dir.as_deref(),
+        );
+        let title = if compiled.title.is_empty() {
+            filename.to_string()
+        } else {
+            compiled.title.clone()
+        };
+        return (title, raw, compiled);
     }
 
     let is_markdown = matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkd" | "txt" | "");
@@ -1773,10 +3991,34 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
             .map(|(i, l)| format!("{:>4} │ {}", i + 1, l))
             .collect::<Vec<_>>()
             .join("\n");
+        let root = find_project_root(path);
+        let outline = query_smart_tree_file_outline(path);
+        let mut st_outline_md = String::new();
+        if !outline.is_empty() {
+            st_outline_md.push_str("\n## 🌳 Smart Tree CrabCC Symbol Outline\n\n");
+            st_outline_md.push_str("| Kind | Symbol | Line | Signature |\n|---|---|---|---|\n");
+            for (kind, name, sig, line_no) in outline.iter().take(28) {
+                let clean_sig = sig
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .replace('|', "\\|")
+                    .chars()
+                    .take(80)
+                    .collect::<String>();
+                st_outline_md.push_str(&format!(
+                    "| `{kind}` | **`{name}`** | [L{line_no}](file://{}#L{line_no}) | `{clean_sig}` |\n",
+                    path.display()
+                ));
+            }
+            st_outline_md.push('\n');
+        }
         format!(
-            "# `{}`\n\n> [!NOTE]\n> Viewing source file in **Qwave Sovereign Inspector** · `{}`\n\n```{ext}\n{numbered}\n```",
-            file_name,
-            path.display()
+            "# `{}`\n\n> [!NOTE]\n> Viewing source file in **Qwave × Smart Tree Inspector** · `{}` · [🌳 Open Repository Atlas](file://{})\n{}\n## 📄 Source Code\n\n```{ext}\n{numbered}\n```",
+            filename,
+            path.display(),
+            root.display(),
+            st_outline_md
         )
     };
 
@@ -1786,11 +4028,523 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
         base_dir.as_deref(),
     );
     let title = if compiled.title.is_empty() {
-        file_name.to_string()
+        filename.to_string()
     } else {
         compiled.title.clone()
     };
     (title, raw, compiled)
+}
+
+/// Extract text & metadata from a `.pdf` file using `pdfinfo` + `pdftotext` when installed
+/// (for full LaTeX CMap / ToUnicode fidelity), with automatic fallback to `qwave_core::tex_pdf`'s
+/// pure-Rust zero-dependency PDF + RFC 1951 deflate extractor.
+fn extract_pdf_document(path: &Path) -> PdfExtract {
+    let mut extract = PdfExtract::default();
+
+    // 1. Metadata via `pdfinfo` if available
+    if let Ok(info_out) = Command::new("pdfinfo").arg(path).output() {
+        if info_out.status.success() {
+            let info_str = String::from_utf8_lossy(&info_out.stdout);
+            for line in info_str.lines() {
+                if let Some((k, v)) = line.split_once(':') {
+                    let key = k.trim();
+                    let val = v.trim();
+                    match key {
+                        "Title" if !val.is_empty() => extract.title = val.to_string(),
+                        "Author" if !val.is_empty() => extract.author = val.to_string(),
+                        "CreationDate" if !val.is_empty() && extract.date.is_empty() => {
+                            extract.date = val.to_string();
+                        }
+                        "Pages" => {
+                            extract.page_count = val.parse().unwrap_or(0);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Page-by-page text via `pdftotext` (splits on form-feed `\x0C`)
+    if let Ok(txt_out) = Command::new("pdftotext").arg(path).arg("-").output() {
+        if txt_out.status.success() {
+            let raw_text = String::from_utf8_lossy(&txt_out.stdout);
+            let mut pages: Vec<String> = raw_text
+                .split('\x0c')
+                .map(|p| p.trim_matches('\n').to_string())
+                .collect();
+            // `pdftotext` emits a trailing `\x0c` after the final page
+            if pages.len() > 1 && pages.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+                pages.pop();
+            }
+            if pages.iter().any(|p| !p.trim().is_empty()) {
+                extract.pages = pages;
+                extract.page_count = extract.page_count.max(extract.pages.len());
+                return extract;
+            }
+        }
+    }
+
+    // 3. Pure-Rust zero-dependency PDF + Deflate fallback
+    if let Ok(bytes) = fs::read(path) {
+        let pure = extract_pdf_text_pure_rust(&bytes);
+        if extract.title.is_empty() {
+            extract.title = pure.title;
+        }
+        if extract.author.is_empty() {
+            extract.author = pure.author;
+        }
+        extract.page_count = extract.page_count.max(pure.page_count);
+        extract.pages = pure.pages;
+    }
+
+    extract
+}
+
+/// Probe and extract metadata, embedded/sidecar transcripts, offline ASR speech transcript,
+/// and a real 768 kHz PhoeniX Sound telemetry receipt from an Audio or Video file.
+fn extract_media_document(path: &Path) -> MediaExtract {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Media")
+        .to_string();
+
+    let mut media = MediaExtract {
+        filename: filename.clone(),
+        is_video: is_video_extension(&ext),
+        container_format: ext.to_ascii_uppercase(),
+        video_codec: if is_video_extension(&ext) {
+            "H.264/HEVC".to_string()
+        } else {
+            String::new()
+        },
+        audio_codec: ext.to_ascii_uppercase(),
+        sample_rate_hz: 48_000,
+        channels: 2,
+        ..Default::default()
+    };
+
+    // 1. Probe streams & format tags via `ffprobe`
+    if let Ok(out) = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration,bit_rate:format_tags=title,artist:stream=codec_type,codec_name,width,height,sample_rate,channels",
+            "-of",
+            "default=noprint_wrappers=1",
+            &path.to_string_lossy(),
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim();
+                    match key {
+                        "codec_name" => {
+                            if matches!(val, "mp3" | "flac" | "aac" | "vorbis" | "opus" | "pcm_s16le" | "pcm_s24le") {
+                                media.audio_codec = val.to_ascii_uppercase();
+                            } else if !is_audio_extension(&ext) && !matches!(val, "mjpeg" | "png") {
+                                media.video_codec = val.to_ascii_uppercase();
+                                media.is_video = true;
+                            }
+                        }
+                        "width" => {
+                            if let Ok(w) = val.parse::<u32>() {
+                                if w > 0 {
+                                    media.width = w;
+                                }
+                            }
+                        }
+                        "height" => {
+                            if let Ok(h) = val.parse::<u32>() {
+                                if h > 0 {
+                                    media.height = h;
+                                }
+                            }
+                        }
+                        "sample_rate" => {
+                            if let Ok(sr) = val.parse::<u32>() {
+                                if sr > 0 {
+                                    media.sample_rate_hz = sr;
+                                }
+                            }
+                        }
+                        "channels" => {
+                            if let Ok(ch) = val.parse::<u16>() {
+                                if ch > 0 {
+                                    media.channels = ch;
+                                }
+                            }
+                        }
+                        "duration" => {
+                            let secs_str = val.split('.').next().unwrap_or("0");
+                            if let Ok(s) = secs_str.parse::<u64>() {
+                                media.duration_secs = s;
+                            }
+                        }
+                        "bit_rate" => {
+                            if let Ok(bps) = val.parse::<u64>() {
+                                media.bitrate_kbps = (bps / 1000) as u32;
+                            }
+                        }
+                        "TAG:title" | "title" if !val.is_empty() => {
+                            media.title = val.to_string();
+                        }
+                        "TAG:artist" | "artist" if !val.is_empty() => {
+                            media.artist = val.to_string();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Check for sidecar `.srt` / `.vtt` / `.txt` or embedded subtitle stream
+    for sidecar_ext in ["srt", "vtt", "txt"] {
+        let sidecar = path.with_extension(sidecar_ext);
+        if let Ok(raw_sub) = fs::read_to_string(&sidecar) {
+            let parsed = parse_subtitle_or_transcript_text(&raw_sub);
+            if !parsed.is_empty() {
+                media.transcript_segments = parsed;
+                break;
+            }
+        }
+    }
+    if media.transcript_segments.is_empty() && media.is_video {
+        if let Ok(sub_out) = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-i",
+                &path.to_string_lossy(),
+                "-map",
+                "0:s:0",
+                "-f",
+                "srt",
+                "-",
+            ])
+            .output()
+        {
+            if sub_out.status.success() && !sub_out.stdout.is_empty() {
+                let raw_sub = String::from_utf8_lossy(&sub_out.stdout);
+                media.transcript_segments = parse_subtitle_or_transcript_text(&raw_sub);
+            }
+        }
+    }
+
+    // 3. Extract a 25-second 48kHz stereo PCM sample via `ffmpeg` to compute the real 768kHz PhoeniX Sound Receipt
+    //    AND run fast local ASR (`transcribe_wav_fast_offline`) if no subtitle transcript was found!
+    if let Ok(mut child) = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-t",
+            "25",
+            "-i",
+            &path.to_string_lossy(),
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        let mut raw_pcm = Vec::new();
+        if let Some(mut out) = child.stdout.take() {
+            let _ = out.read_to_end(&mut raw_pcm);
+        }
+        let _ = child.wait();
+        if raw_pcm.len() >= 1920 {
+            let mut samples = Vec::with_capacity(raw_pcm.len() / 2);
+            for pair in raw_pcm.chunks_exact(2) {
+                samples.push(i16::from_le_bytes([pair[0], pair[1]]));
+            }
+            let preset = qwave_core::phoenix_sound::PhoenixSoundPreset::sovereign_master();
+            let (_pcm_out, _eight_a, receipt) =
+                qwave_core::phoenix_sound::phoenix_transform_pcm_i16(&samples, 48_000, 2, &preset);
+            media.phoenix_receipt = Some(receipt);
+        }
+    }
+
+    // 4. If still no transcript segments, run local offline ASR on the first 45s of speech
+    if media.transcript_segments.is_empty() {
+        let tmp_wav = format!("/tmp/qwave_media_asr_{}.wav", std::process::id());
+        if Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-t",
+                "45",
+                "-i",
+                &path.to_string_lossy(),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                &tmp_wav,
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            if let Some((tx, _backend)) = transcribe_wav_fast_offline(&tmp_wav) {
+                if !tx.trim().is_empty() {
+                    media
+                        .transcript_segments
+                        .push(("00:00".to_string(), tx.trim().to_string()));
+                }
+            }
+            let _ = fs::remove_file(&tmp_wav);
+        }
+    }
+
+    media
+}
+
+fn parse_subtitle_or_transcript_text(raw: &str) -> Vec<(String, String)> {
+    let mut out = Vec::<(String, String)>::new();
+    let mut current_ts = String::new();
+    let mut current_lines = Vec::<String>::new();
+    for line in raw.lines() {
+        let t = line.trim();
+        if t.is_empty() || t == "WEBVTT" || t.chars().all(|c| c.is_ascii_digit()) {
+            if !current_lines.is_empty() {
+                out.push((current_ts.clone(), current_lines.join(" ")));
+                current_lines.clear();
+            }
+            continue;
+        }
+        if t.contains("-->") {
+            let start_ts = t
+                .split("-->")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .split([',', '.'])
+                .next()
+                .unwrap_or("")
+                .to_string();
+            current_ts = start_ts;
+            continue;
+        }
+        current_lines.push(t.to_string());
+    }
+    if !current_lines.is_empty() {
+        out.push((current_ts, current_lines.join(" ")));
+    }
+    out
+}
+
+/// Transform any local Audio (or Video soundtrack) into a PhoeniX'd 48 kHz 16-bit Stereo WAV
+/// via `qwave_core::phoenix_sound::phoenix_transform_audio_file` (cached in `/tmp/qwave-phoenix-cache`).
+fn render_phoenix_audio_stream(path: &Path, preset_name: &str) -> Result<Vec<u8>, String> {
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+    let cache_dir = PathBuf::from("/tmp/qwave-phoenix-cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    let mtime = file_mtime_ms(path);
+    let hash = qwave_core::phoenix::content_hash(&format!(
+        "{}:{}:{}",
+        path.display(),
+        mtime,
+        preset_name
+    ));
+    let cached_wav = cache_dir.join(format!("phoenix_{hash:016x}.wav"));
+    let cached_8a = cache_dir.join(format!("phoenix_{hash:016x}.8a"));
+    if let Ok(bytes) = fs::read(&cached_wav) {
+        if bytes.len() > 44 {
+            return Ok(bytes);
+        }
+    }
+
+    let preset = qwave_core::phoenix_sound::PhoenixSoundPreset::from_name(preset_name);
+    let (pcm_out, _eight_a, receipt) = qwave_core::phoenix_sound::phoenix_transform_audio_file(
+        path,
+        Some(&cached_wav),
+        Some(&cached_8a),
+        &preset,
+    )?;
+    Ok(qwave_core::phoenix_sound::encode_wav_i16(
+        &pcm_out,
+        receipt.sample_rate_hz,
+        receipt.channels,
+    ))
+}
+
+/// Transform a local Video file into a PhoeniX'd High-Resolution MP4:
+/// - Soundtrack restored via 768 kHz 16× integer Catmull-Rom + `S+N+T` + 432 Hz / φ revelation
+/// - Video frames sharpened via Lanczos / unsharp clarity filter (`unsharp=5:5:0.8:3:3:0.4`)
+fn render_phoenix_video_stream(path: &Path) -> Result<Vec<u8>, String> {
+    if !path.exists() {
+        return Err(format!("Video not found: {}", path.display()));
+    }
+    let cache_dir = PathBuf::from("/tmp/qwave-phoenix-cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    let mtime = file_mtime_ms(path);
+    let hash = qwave_core::phoenix::content_hash(&format!("video:{}:{}", path.display(), mtime));
+    let cached_mp4 = cache_dir.join(format!("phoenix_vid_{hash:016x}.mp4"));
+    if let Ok(bytes) = fs::read(&cached_mp4) {
+        if bytes.len() > 256 {
+            return Ok(bytes);
+        }
+    }
+
+    let cached_wav = cache_dir.join(format!("phoenix_vid_{hash:016x}.wav"));
+    let preset = qwave_core::phoenix_sound::PhoenixSoundPreset::sovereign_master();
+    let _ = qwave_core::phoenix_sound::phoenix_transform_audio_file(
+        path,
+        Some(&cached_wav),
+        None,
+        &preset,
+    );
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-y", "-v", "error", "-i", &path.to_string_lossy()]);
+    if cached_wav.exists() {
+        cmd.args([
+            "-i",
+            &cached_wav.to_string_lossy(),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+        ]);
+    }
+    cmd.args([
+        "-vf",
+        "unsharp=5:5:0.8:3:3:0.4",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "256k",
+        "-movflags",
+        "+faststart",
+        &cached_mp4.to_string_lossy(),
+    ]);
+    let status = cmd
+        .status()
+        .map_err(|e| format!("Failed spawning ffmpeg for PhoeniX video: {e}"))?;
+    if !status.success() {
+        return fs::read(path).map_err(|e| format!("Fallback read failed: {e}"));
+    }
+    fs::read(&cached_mp4).map_err(|e| format!("Failed reading PhoeniX MP4: {e}"))
+}
+
+/// Resolve `--speak <target>`: if `target` is a `.pdf`, `.tex`, `.md`, audio, or video file path,
+/// extract clean human-spoken narration from the document (or a specific `--page N` of a PDF);
+/// otherwise treat `target` as literal text to speak.
+fn resolve_spoken_input_or_file(raw_arg: &str, page_opt: Option<usize>) -> String {
+    let trimmed = raw_arg.trim();
+    let looks_like_file = trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("file://")
+        || trimmed.ends_with(".pdf")
+        || trimmed.ends_with(".PDF")
+        || trimmed.ends_with(".tex")
+        || trimmed.ends_with(".ltx")
+        || trimmed.ends_with(".latex")
+        || trimmed.ends_with(".md")
+        || trimmed.ends_with(".markdown")
+        || trimmed.ends_with(".txt")
+        || trimmed.ends_with(".mp3")
+        || trimmed.ends_with(".wav")
+        || trimmed.ends_with(".flac")
+        || trimmed.ends_with(".mp4")
+        || trimmed.ends_with(".mkv")
+        || trimmed.ends_with(".webm");
+
+    if !looks_like_file {
+        return trimmed.to_string();
+    }
+
+    let (path, _) = resolve_input_target(trimmed);
+    if !path.exists() {
+        return trimmed.to_string();
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mem8_anchors = load_mem8_user_anchors();
+
+    if is_pdf_extension(&ext) {
+        let extract = extract_pdf_document(&path);
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Document.pdf");
+        if let Some(page_num) = page_opt {
+            if let Some(page_txt) = extract.pages.get(page_num.saturating_sub(1)) {
+                let single_extract = PdfExtract {
+                    title: extract.title.clone(),
+                    author: extract.author.clone(),
+                    date: extract.date.clone(),
+                    page_count: 1,
+                    pages: vec![page_txt.clone()],
+                };
+                let md = format_pdf_to_markdown(filename, None, &single_extract);
+                return extract_spoken_narration(&md, false);
+            }
+        }
+        // Default when speaking a PDF without `--page`: speak the MEM|8 Personalized Briefing,
+        // Executive Summary, and opening section!
+        let md = format_pdf_to_markdown_with_mem8(filename, None, &extract, &mem8_anchors);
+        let summary_spoken = extract_spoken_narration_mode(&md, false, "summary", &mem8_anchors);
+        if !summary_spoken.trim().is_empty() {
+            return summary_spoken.chars().take(3600).collect();
+        }
+        return extract_spoken_narration(&md, false).chars().take(3600).collect();
+    }
+
+    if is_media_extension(&ext) {
+        let media = extract_media_document(&path);
+        let md = format_media_to_markdown("", "", &media, &mem8_anchors);
+        return extract_spoken_narration_mode(&md, false, "summary", &mem8_anchors)
+            .chars()
+            .take(3600)
+            .collect();
+    }
+
+    if let Ok(raw_text) = fs::read_to_string(&path) {
+        let is_tex = is_tex_extension(&ext);
+        let narration = extract_spoken_narration_mode(&raw_text, is_tex, "summary", &mem8_anchors);
+        let chars: String = narration.chars().take(3600).collect();
+        if !chars.trim().is_empty() {
+            return chars;
+        }
+    }
+
+    trimmed.to_string()
 }
 
 fn spawn_editor(path: &Path) -> String {
@@ -1883,6 +4637,11 @@ fn crystallize_mem8_wave(path_str: &str, scope: &str, text: &str) -> String {
         }
     }
 
+    // Also anchor into Smart Tree (`st --memory-anchor`) when crystallizing a page or selection
+    if scope == "page" || scope == "selection" {
+        anchor_smart_tree_memory("insight", "qwave,mem8,smart-tree", text);
+    }
+
     format!(
         "{{\"ok\":true,\"bytes\":{},\"frequency\":\"0.73 Hz\",\"provenance\":\"Cognitive (0x01)\",\"hash\":\"0x{hash:016x}\",\"vad_byte\":\"0x{vad_byte:02x}\",\"frame_hex\":\"{hex}\"}}",
         frame.len()
@@ -1945,14 +4704,14 @@ fn render_full_page(
   <style>
     :root {{
       --bg-color: #02080d;
-      --shell-max: 920px;
+      --shell-max: 960px;
       --accent: #6ef7f7;
       --accent-2: #a8ffcf;
       --text-color: #e8f7f7;
-      --glass-bg: rgba(5, 13, 21, 0.80);
-      --glass-border: rgba(158, 240, 240, 0.22);
+      --glass-bg: rgba(5, 11, 19, 0.64);
+      --glass-border: rgba(158, 240, 240, 0.18);
       --font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-scale: 1.05rem;
+      --font-scale: 1.04rem;
     }}
     * {{ box-sizing: border-box; }}
     html, body {{
@@ -1968,58 +4727,111 @@ fn render_full_page(
     }}
     .qwave-layout {{
       position: relative; z-index: 10;
-      display: flex; justify-content: center; gap: 22px;
-      padding: 28px 24px 120px;
+      display: flex; justify-content: center; gap: 16px;
+      padding: 12px 16px 36px;
       max-width: 1720px; margin: 0 auto;
     }}
     body.mode-wide {{ --shell-max: 1320px; }}
     body.mode-zen .md-toc-panel, body.mode-zen .meta-bar {{ display: none !important; }}
     .md-toc-panel {{
       display: none;
-      width: 270px; flex-shrink: 0;
-      position: sticky; top: 24px; max-height: calc(100vh - 48px);
-      overflow-y: auto; padding: 18px 16px;
+      width: 250px; flex-shrink: 0;
+      position: sticky; top: 14px; max-height: calc(100vh - 28px);
+      overflow-y: auto; padding: 14px 14px;
       background: var(--glass-bg);
-      backdrop-filter: blur(18px);
+      backdrop-filter: blur(16px);
       border: 1px solid var(--glass-border);
-      border-radius: 18px;
-      box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+      border-radius: 16px;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.42);
     }}
     body.toc-open .md-toc-panel {{ display: block; }}
     .toc-header {{
       font-family: ui-monospace, 'Courier New', monospace;
-      font-size: 0.74rem; letter-spacing: 2.5px; text-transform: uppercase;
-      color: var(--accent); margin-bottom: 12px; padding-bottom: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.12);
+      font-size: 0.72rem; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 10px; padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.10);
     }}
     .toc-link {{
       display: block; color: var(--text-color); opacity: 0.85;
-      text-decoration: none; font-size: 0.86rem; line-height: 1.35;
-      padding: 5px 8px; border-radius: 8px; margin-bottom: 2px;
+      text-decoration: none; font-size: 0.84rem; line-height: 1.35;
+      padding: 4px 8px; border-radius: 8px; margin-bottom: 2px;
       transition: all 0.15s ease;
     }}
     .toc-link:hover {{ background: rgba(110, 247, 247, 0.14); opacity: 1; color: var(--accent); }}
     .toc-l1 {{ font-weight: 700; opacity: 1; }}
     .toc-l2 {{ padding-left: 14px; }}
-    .toc-l3 {{ padding-left: 26px; font-size: 0.81rem; opacity: 0.82; }}
-    .toc-l4 {{ padding-left: 36px; font-size: 0.78rem; opacity: 0.75; }}
+    .toc-l3 {{ padding-left: 26px; font-size: 0.80rem; opacity: 0.82; }}
+    .toc-l4 {{ padding-left: 36px; font-size: 0.76rem; opacity: 0.75; }}
 
     .md-shell {{
       flex: 1; max-width: var(--shell-max); min-width: 0;
-      padding: 28px 38px 52px;
+      padding: 16px 26px 32px;
       background: var(--glass-bg);
-      backdrop-filter: blur(20px) saturate(115%);
+      backdrop-filter: blur(14px) saturate(112%);
       border: 1px solid var(--glass-border);
-      border-radius: 22px;
-      box-shadow: 0 24px 80px rgba(0,0,0,0.52), inset 0 1px 0 rgba(255,255,255,0.22);
+      border-radius: 18px;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.14);
       transition: all 0.35s ease;
     }}
+
+    /* Minimalistic Conversational Top Bar (replaces button wall) */
+    .convo-bar {{
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; margin-bottom: 12px;
+      border-radius: 999px;
+      background: rgba(2, 9, 17, 0.56);
+      border: 1px solid rgba(110, 247, 247, 0.22);
+      box-shadow: 0 6px 22px rgba(0,0,0,0.28);
+    }}
+    .convo-form {{
+      flex: 1; display: flex; align-items: center; gap: 6px; margin: 0; min-width: 0;
+    }}
+    .alexiai-input {{
+      flex: 1; min-width: 0; padding: 6px 10px;
+      background: transparent; color: #f0fbfb;
+      border: none; font-size: 0.90rem; outline: none;
+    }}
+    .alexiai-input::placeholder {{
+      color: rgba(216, 248, 248, 0.52);
+    }}
+    .convo-pill {{
+      display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      height: 30px; padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: var(--text-color); font-size: 0.76rem;
+      font-family: ui-monospace, monospace;
+      cursor: pointer; transition: all 0.16s ease; flex-shrink: 0;
+    }}
+    .convo-pill:hover {{
+      background: rgba(110, 247, 247, 0.18);
+      border-color: var(--accent); color: #fff;
+    }}
+    .convo-pill.active {{
+      background: rgba(0, 255, 159, 0.18);
+      border-color: #00ff9f; color: #00ff9f;
+    }}
+    .convo-status-whisper {{
+      font-family: ui-monospace, monospace; font-size: 0.71rem;
+      color: rgba(168, 255, 207, 0.72); margin: -6px 0 10px 14px;
+      display: none;
+    }}
+    .convo-status-whisper.active {{ display: block; }}
+
+    .studio-more-drawer {{
+      display: none; margin: 0 0 14px; padding: 12px 14px;
+      border-radius: 14px; background: rgba(2, 8, 16, 0.72);
+      border: 1px solid var(--glass-border);
+    }}
+    .studio-more-drawer.open {{ display: block; }}
+
     .meta-bar {{
       display: flex; align-items: center; justify-content: space-between;
-      flex-wrap: wrap; gap: 10px;
-      margin-bottom: 14px; padding-bottom: 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.10);
-      font-family: ui-monospace, 'Courier New', monospace; font-size: 0.76rem;
+      flex-wrap: wrap; gap: 8px;
+      margin-bottom: 10px; padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      font-family: ui-monospace, 'Courier New', monospace; font-size: 0.72rem;
     }}
     .meta-path {{
       color: var(--accent); word-break: break-all;
@@ -2027,38 +4839,37 @@ fn render_full_page(
     }}
     .meta-pill {{
       display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 9px; border-radius: 999px;
-      background: rgba(110, 247, 247, 0.12);
+      padding: 2px 8px; border-radius: 999px;
+      background: rgba(110, 247, 247, 0.10);
       border: 1px solid var(--glass-border);
-      color: var(--accent); font-size: 0.71rem; letter-spacing: 1px;
+      color: var(--accent); font-size: 0.69rem; letter-spacing: 0.8px;
     }}
     .pulse-dot {{
-      width: 7px; height: 7px; border-radius: 50%;
+      width: 6px; height: 6px; border-radius: 50%;
       background: #00ff9f; box-shadow: 0 0 8px #00ff9f;
     }}
     .md-toolbar {{
-      display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;
+      display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
     }}
     .escape-btn {{
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 8px 13px; border: 1px solid rgba(255, 255, 255, 0.28);
-      border-radius: 10px; color: var(--text-color); text-decoration: none;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border: 1px solid rgba(255, 255, 255, 0.20);
+      border-radius: 8px; color: var(--text-color); text-decoration: none;
       font-family: ui-monospace, 'Courier New', monospace;
-      font-size: 0.76rem; text-transform: uppercase; letter-spacing: 1.3px;
-      transition: all 0.2s ease; background: rgba(0, 0, 0, 0.36);
+      font-size: 0.72rem; letter-spacing: 0.6px;
+      transition: all 0.18s ease; background: rgba(0, 0, 0, 0.32);
       cursor: pointer;
     }}
     .escape-btn:hover {{
       background: var(--accent); color: #021017;
-      border-color: var(--accent); box-shadow: 0 0 18px rgba(110, 247, 247, 0.45);
+      border-color: var(--accent);
     }}
     .escape-btn.btn-alexiai {{
-      border-color: #ff9edb; color: #ff9edb;
-      background: rgba(255, 158, 219, 0.12);
+      border-color: rgba(255, 158, 219, 0.45); color: #ff9edb;
+      background: rgba(255, 158, 219, 0.10);
     }}
     .escape-btn.btn-alexiai:hover, .escape-btn.btn-alexiai.listening {{
       background: #ff9edb; color: #14041d;
-      box-shadow: 0 0 22px rgba(255, 158, 219, 0.65);
     }}
     .escape-btn.btn-ghostwriter {{
       border-color: var(--accent-2); color: var(--accent-2);
@@ -2066,115 +4877,79 @@ fn render_full_page(
 
     /* Style Studio Bar */
     .style-studio-drawer {{
-      display: none; margin: 0 0 18px; padding: 14px 16px;
-      border-radius: 16px; background: rgba(0, 0, 0, 0.42);
+      display: none; margin: 0 0 14px; padding: 12px 14px;
+      border-radius: 14px; background: rgba(0, 0, 0, 0.45);
       border: 1px solid var(--glass-border);
     }}
     .style-studio-drawer.open {{ display: block; }}
-    .style-chips {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }}
+    .style-chips {{ display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }}
     .style-chip {{
-      padding: 6px 12px; border-radius: 999px; font-size: 0.75rem;
+      padding: 5px 10px; border-radius: 999px; font-size: 0.73rem;
       font-family: ui-monospace, monospace; cursor: pointer;
-      background: rgba(255,255,255,0.07); color: var(--text-color);
-      border: 1px solid rgba(255,255,255,0.2); transition: all 0.18s;
+      background: rgba(255,255,255,0.06); color: var(--text-color);
+      border: 1px solid rgba(255,255,255,0.18); transition: all 0.16s;
     }}
-    .style-chip:hover {{ border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }}
+    .style-chip:hover {{ border-color: var(--accent); color: var(--accent); }}
     .style-custom-row {{ display: flex; gap: 8px; }}
     .style-custom-input {{
-      flex: 1; padding: 8px 12px; border-radius: 10px;
+      flex: 1; padding: 7px 11px; border-radius: 8px;
       background: rgba(255,255,255,0.07); color: #fff;
-      border: 1px solid rgba(255,255,255,0.22); font-size: 0.85rem;
+      border: 1px solid rgba(255,255,255,0.20); font-size: 0.83rem;
     }}
 
-    /* ALEXIAI <3 Voice & Page Companion Panel */
-    .alexiai-panel {{
-      margin: 0 0 22px; padding: 16px 20px;
-      border-radius: 18px;
-      background: linear-gradient(145deg, rgba(28, 10, 38, 0.85) 0%, rgba(8, 20, 32, 0.88) 100%);
-      border: 1px solid rgba(255, 158, 219, 0.42);
-      box-shadow: 0 14px 44px rgba(0,0,0,0.45);
-    }}
-    .alexiai-top {{
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 14px; flex-wrap: wrap;
-    }}
-    .alexiai-brand {{
-      display: flex; align-items: center; gap: 12px;
-    }}
     .gaia-orb {{
-      width: 38px; height: 38px; border-radius: 50%;
+      width: 28px; height: 28px; border-radius: 50%;
       background: radial-gradient(circle at 35% 35%, #ff9edb, #6ef7f7 55%, #160626 100%);
-      box-shadow: 0 0 18px rgba(255, 158, 219, 0.6);
+      box-shadow: 0 0 12px rgba(110, 247, 247, 0.55);
       transition: transform 0.08s ease, box-shadow 0.08s ease;
       cursor: pointer; flex-shrink: 0;
     }}
     .gaia-orb.recording {{
       background: radial-gradient(circle at 35% 35%, #ff4d79, #ff9edb 60%, #2b0312 100%);
-      box-shadow: 0 0 28px #ff4d79;
+      box-shadow: 0 0 22px #ff4d79;
       animation: orbPulse 0.9s infinite alternate;
     }}
     @keyframes orbPulse {{
       from {{ transform: scale(1.0); }}
       to {{ transform: scale(1.22); }}
     }}
-    .alexiai-title {{
-      font-family: ui-monospace, monospace; font-size: 0.82rem;
-      letter-spacing: 1.5px; color: #ff9edb; font-weight: 700;
-    }}
-    .alexiai-sub {{
-      font-size: 0.76rem; opacity: 0.82; color: #d8f8f8;
-    }}
-    .alexiai-controls {{
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    }}
     .voice-select {{
       background: rgba(0,0,0,0.45); color: #ff9edb;
       border: 1px solid rgba(255, 158, 219, 0.35);
-      border-radius: 8px; padding: 6px 10px;
-      font-family: ui-monospace, monospace; font-size: 0.74rem;
+      border-radius: 8px; padding: 4px 8px;
+      font-family: ui-monospace, monospace; font-size: 0.72rem;
     }}
-    .alexiai-bar {{
-      display: flex; gap: 8px; margin-top: 12px; align-items: center;
-    }}
-    .alexiai-input {{
-      flex: 1; padding: 10px 14px; border-radius: 12px;
-      background: rgba(0, 0, 0, 0.42); color: #fff;
-      border: 1px solid rgba(255, 158, 219, 0.32);
-      font-size: 0.92rem;
-    }}
-    .alexiai-input:focus {{ outline: 2px solid #ff9edb; }}
     .alexiai-reply-box {{
-      display: none; margin-top: 12px; padding: 12px 15px;
-      border-radius: 12px; background: rgba(255, 158, 219, 0.09);
-      border-left: 3px solid #ff9edb;
-      font-size: 0.94rem; line-height: 1.55; color: #fff5fb;
+      display: none; margin: 0 0 14px; padding: 10px 14px;
+      border-radius: 12px; background: rgba(10, 24, 38, 0.76);
+      border-left: 3px solid var(--accent);
+      border: 1px solid rgba(110, 247, 247, 0.25);
+      font-size: 0.91rem; line-height: 1.52; color: #f2fefe;
     }}
     .alexiai-reply-box.visible {{ display: block; }}
 
     .mem8-hud {{
-      display: none; margin: 0 0 20px; padding: 14px 18px;
-      border-radius: 14px; background: rgba(0, 255, 159, 0.09);
-      border: 1px solid rgba(0, 255, 159, 0.4);
-      font-family: ui-monospace, 'Courier New', monospace; font-size: 0.78rem;
-      line-height: 1.5; color: #d4fff0;
+      display: none; margin: 0 0 14px; padding: 10px 14px;
+      border-radius: 12px; background: rgba(0, 255, 159, 0.08);
+      border: 1px solid rgba(0, 255, 159, 0.35);
+      font-family: ui-monospace, 'Courier New', monospace; font-size: 0.74rem;
+      line-height: 1.45; color: #d4fff0;
     }}
     .mem8-hud.visible {{ display: block; }}
     .mem8-hex {{
-      margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+      margin-top: 5px; padding: 6px 8px; border-radius: 6px;
       background: rgba(0,0,0,0.45); color: var(--accent);
-      word-break: break-all; font-size: 0.72rem;
+      word-break: break-all; font-size: 0.70rem;
     }}
 
-    /* Marine-Sense Live Acoustic & RF Triangulation Sonar HUD */
+    /* Marine-Sense Live Acoustic & RF Triangulation Sonar HUD (collapsed by default) */
     .marine-sense-hud {{
-      margin: 0 0 22px; padding: 18px 20px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, rgba(2, 16, 28, 0.90), rgba(14, 6, 26, 0.88));
-      border: 1px solid rgba(0, 240, 255, 0.42);
-      box-shadow: 0 12px 38px rgba(0, 240, 255, 0.14), inset 0 0 24px rgba(0, 240, 255, 0.06);
+      margin: 16px 0 0; padding: 14px 16px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(2, 16, 28, 0.84), rgba(14, 6, 26, 0.82));
+      border: 1px solid rgba(0, 240, 255, 0.35);
     }}
-    .marine-sense-hud.collapsed .ms-grid,
-    .marine-sense-hud.collapsed .ms-stream {{ display: none; }}
+    .marine-sense-hud.collapsed {{ display: none; }}
     .ms-head {{
       display: flex; justify-content: space-between; align-items: center;
       gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
@@ -2422,6 +5197,100 @@ fn render_full_page(
     .md-body img {{ max-width: 100%; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); }}
     .md-body hr {{ border: none; border-top: 1px solid rgba(255,255,255,0.14); margin: 2em 0; }}
 
+    /* Sovereign PDF Dock & Read-Aloud Narrator Highlight */
+    .qwave-pdf-canvas-wrap {{
+      width: 100%; background: rgba(2, 8, 14, 0.94);
+      border-top: 1px solid rgba(110, 247, 247, 0.18);
+    }}
+    .qwave-pdf-frame {{
+      width: 100%; height: 82vh; border: none; display: block;
+      background: #09131c;
+    }}
+    .carousel-btn.active {{
+      background: var(--accent); color: #021017;
+      border-color: var(--accent); font-weight: 700;
+    }}
+    body.pdf-mode-split {{ --shell-max: 1640px; }}
+    body.pdf-mode-canvas {{ --shell-max: 1540px; }}
+    body.qwave-hud-mode {{ --shell-max: 1560px; }}
+    body.qwave-hud-mode:not(.toc-open) .md-toc-panel {{ display: none; }}
+    body.qwave-hud-mode .marine-sense-hud {{
+      margin-top: 10px;
+      margin-bottom: 22px;
+      background: linear-gradient(145deg, rgba(3, 14, 26, 0.90), rgba(8, 22, 38, 0.86));
+      border: 1px solid rgba(0, 240, 255, 0.38);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65), 0 0 28px rgba(0, 240, 255, 0.12);
+    }}
+    body.qwave-hud-mode .md-body h1 {{
+      font-size: 1.85rem;
+      background: linear-gradient(90deg, #00f0ff, #62e6c9, #cba6f7, #ffd584);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      border-bottom: 1px solid rgba(0, 240, 255, 0.25);
+      padding-bottom: 0.4em;
+    }}
+    body.qwave-hud-mode .md-body h2 {{
+      font-size: 1.22rem;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #7ef9ff;
+      border-bottom: 1px solid rgba(0, 240, 255, 0.18);
+      padding-bottom: 0.3em;
+      margin-top: 1.4em;
+    }}
+    body.qwave-hud-mode .table-wrap {{
+      border: 1px solid rgba(0, 240, 255, 0.26);
+      background: rgba(2, 10, 20, 0.76);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+      border-radius: 14px;
+    }}
+    body.qwave-hud-mode .md-body th {{
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.16), rgba(98, 230, 201, 0.08));
+      color: #8eeeff;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }}
+    .hud-quick-deck {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .hud-quick-tile {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 13px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(6, 22, 36, 0.88), rgba(12, 16, 34, 0.84));
+      border: 1px solid rgba(0, 240, 255, 0.26);
+      color: #e6f7ff;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      font-family: ui-monospace, 'JetBrains Mono', monospace;
+      text-align: left;
+    }}
+    .hud-quick-tile:hover {{
+      transform: translateY(-2px);
+      border-color: #00f0ff;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.20), rgba(98, 230, 201, 0.14));
+      box-shadow: 0 8px 22px rgba(0, 240, 255, 0.18);
+    }}
+    .hud-tile-icon {{ font-size: 1.25rem; line-height: 1; }}
+    .hud-tile-meta {{ display: flex; flex-direction: column; gap: 2px; min-width: 0; }}
+    .hud-tile-title {{ font-size: 0.78rem; font-weight: 700; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .hud-tile-sub {{ font-size: 0.66rem; color: #7ef9ff; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .qwave-reading-active {{
+      outline: 2px solid #00f0ff !important;
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.14), rgba(255, 158, 219, 0.10)) !important;
+      border-radius: 10px;
+      padding: 6px 10px;
+      box-shadow: 0 0 22px rgba(0, 240, 255, 0.25);
+      transition: all 0.22s ease;
+    }}
+
     @media (max-width: 1180px) {{
       .qwave-layout {{
         flex-direction: column;
@@ -2467,29 +5336,57 @@ fn render_full_page(
       <nav id="md-toc">{toc_html}</nav>
     </aside>
     <main class="md-shell overlay interactive">
-      <div class="meta-bar">
-        <div class="meta-path">
-          <span class="meta-pill"><span class="pulse-dot"></span> QWAVE × ALEXIAI · MEM|8 · 0.73Hz</span>
-          <span id="current-file-label">{safe_path}</span>
-          {line_badge}
-        </div>
-        <div class="meta-pill" id="live-status">SOVEREIGN LOOPBACK</div>
+      <!-- Minimalistic Conversational Top Bar (replaces button wall) -->
+      <div class="convo-bar">
+        <div class="gaia-orb" id="gaia-orb" title="Click or press Ctrl+Space to talk by voice"></div>
+        <form class="convo-form" id="alexiai-form">
+          <input type="text" class="alexiai-input" id="alexiai-input" placeholder="Talk with Aye-Aye &amp; Smart Tree — ask about code, restyle, or play music..." autocomplete="off">
+        </form>
+        <button type="button" class="convo-pill" id="btn-smart-tree" title="Query Smart Tree (st) Knowledge &amp; Open Repository Atlas">🌳</button>
+        <button type="button" class="convo-pill" id="btn-read-aloud" title="Listen / Read Aloud (Alt+R)">🔊</button>
+        <button type="button" class="convo-pill" id="btn-tokyo-song" title="Play/Pause Music (Background smoke reacts lightly!)">🎵</button>
+        <button type="button" class="convo-pill" id="btn-studio-more" title="More Studio Tools, Voice Settings &amp; Telemetry">⋯</button>
       </div>
+      <div class="convo-status-whisper" id="alexiai-status"></div>
+      <div class="alexiai-reply-box" id="alexiai-reply"></div>
 
-      <div class="md-toolbar">
-        <button type="button" class="escape-btn" id="btn-marine-sense" title="Toggle Live Marine-Sense Sonar & RF Triangulation HUD">📡 Marine-Sense HUD</button>
-        <button type="button" class="escape-btn" id="btn-toc" title="Toggle Table of Contents">📑 TOC</button>
-        <button type="button" class="escape-btn" id="btn-style-drawer" title="Change Webpage Style & Theme">🎨 Page Style</button>
-        <button type="button" class="escape-btn btn-ghostwriter" id="btn-ghostwriter" title="Open in Ghostwriter (Ctrl+E)">✍️ Edit in Ghostwriter</button>
-        <button type="button" class="escape-btn" id="btn-split-edit" title="Toggle Split Live Editor (Ctrl+Shift+E)">📝 Split Studio</button>
-        <button type="button" class="escape-btn" id="btn-save-md" style="display:none" title="Save Markdown to disk (Ctrl+S)">💾 Save</button>
-        <button type="button" class="escape-btn" data-remember="page" title="Crystallize page into 79-byte MEM|8 WaveInt (Ctrl+M)">🌊 Remember Page</button>
-        <button type="button" class="escape-btn" data-remember="selection" title="Crystallize selection into MEM|8">✨ Remember Selection</button>
-        <button type="button" class="escape-btn" id="btn-wide" title="Cycle reader width">📐 Width</button>
-        <button type="button" class="escape-btn" id="btn-shader" title="Pause/Resume WebGL Wave">🌌 Wave</button>
-        <button type="button" class="escape-btn btn-alexiai" id="btn-read-aloud" title="Read paper/document aloud paragraph-by-paragraph with ALEXIAI while you work">🔊 Read Aloud</button>
-        <button type="button" class="escape-btn btn-alexiai" id="btn-tokyo-song" title="Play/Pause Tokyo Theme Song: Next Stop, Tomorrow! (まもなく浜松町)">🚆 Tokyo Song</button>
-        <button type="button" class="escape-btn btn-alexiai" id="btn-humayian-mix" title="Generate & Play a fresh On-Machine Humayian Music Mix from all our songs!">🎹 Humayian Mix</button>
+      <!-- Collapsible Studio Drawer (hidden by default so the UI stays clean & conversational) -->
+      <div class="studio-more-drawer" id="studio-more-drawer">
+        <div class="meta-bar">
+          <div class="meta-path">
+            <span class="meta-pill"><span class="pulse-dot"></span> QWAVE × SMART TREE · MEM|8 · 0.73Hz</span>
+            <span id="current-file-label">{safe_path}</span>
+            {line_badge}
+          </div>
+          <div class="meta-pill" id="live-status">SOVEREIGN LOOPBACK</div>
+        </div>
+        <div class="md-toolbar">
+          <button type="button" class="escape-btn btn-alexiai" id="btn-mic" title="Talk to Alexiai by Voice (Ctrl+Space)">🎙️ Voice</button>
+          <select class="voice-select" id="alexiai-voice" title="Liquid-Rust LFM2.5 &amp; Kokoro Neural Voice">
+            <option value="af_heart">💜 Dra Heart (af_heart)</option>
+            <option value="lfm_aye">🌊 Aye Liquid-Rust (LFM2.5)</option>
+            <option value="lfm_omnimom">👑 OmniMom (LFM2.5)</option>
+            <option value="af_sky">✨ Sky Crystal</option>
+            <option value="af_bella">🌸 Bella Studio</option>
+            <option value="bf_emma">💎 Emma Velvet</option>
+          </select>
+          <button type="button" class="escape-btn" id="btn-tts-toggle" title="Toggle spoken voice replies">🔊 Voice: ON</button>
+          <button type="button" class="escape-btn btn-alexiai" id="btn-read-for-you" title="Read the MEM|8 Personalized Summary &amp; Resonance Bridges aloud">🧠 For You</button>
+          <button type="button" class="escape-btn" id="btn-phoenix-tts" title="Toggle 768kHz 16× Catmull-Rom + φ432 PhoeniX High-Resolution Vocal Clarity">🔥 PhoeniX: ON</button>
+          <button type="button" class="escape-btn" id="btn-read-prev" style="display:none" title="Previous Paragraph">⏮️</button>
+          <button type="button" class="escape-btn" id="btn-read-next" style="display:none" title="Next Paragraph">⏭️</button>
+          <button type="button" class="escape-btn" id="btn-toc" title="Toggle Table of Contents">📑 TOC</button>
+          <button type="button" class="escape-btn" id="btn-style-drawer" title="Change Webpage Style &amp; Theme">🎨 Style</button>
+          <button type="button" class="escape-btn btn-ghostwriter" id="btn-ghostwriter" title="Open in Ghostwriter (Ctrl+E)">✍️ Ghostwriter</button>
+          <button type="button" class="escape-btn" id="btn-split-edit" title="Toggle Split Live Editor (Ctrl+Shift+E)">📝 Split Edit</button>
+          <button type="button" class="escape-btn" id="btn-save-md" style="display:none" title="Save Markdown to disk (Ctrl+S)">💾 Save</button>
+          <button type="button" class="escape-btn" data-remember="page" title="Crystallize page into 79-byte MEM|8 WaveInt &amp; Smart Tree (Ctrl+M)">🌊 Remember</button>
+          <button type="button" class="escape-btn" data-remember="selection" title="Crystallize selection into MEM|8 &amp; Smart Tree">✨ Sel</button>
+          <button type="button" class="escape-btn" id="btn-wide" title="Cycle reader width">📐 Width</button>
+          <button type="button" class="escape-btn" id="btn-shader" title="Pause/Resume WebGL Smoke Wave">🌌 Smoke</button>
+          <button type="button" class="escape-btn btn-alexiai" id="btn-humayian-mix" title="Generate &amp; Play a fresh On-Machine Humayian Music Mix">🎹 Humayian Mix</button>
+          <button type="button" class="escape-btn" id="btn-marine-sense" title="Toggle Live Marine-Sense Sonar &amp; RF Triangulation HUD">📡 Sonar HUD</button>
+        </div>
       </div>
 
       <!-- Tokyo Theme Song Drawer: Next Stop, Tomorrow! (まもなく浜松町) -->
@@ -2541,55 +5438,104 @@ fn render_full_page(
 
       <div class="mem8-hud" id="mem8-hud"></div>
 
-      <div class="studio-grid">
-        <div class="editor-pane">
-          <textarea id="md-editor-textarea" spellcheck="false"></textarea>
-        </div>
-        <article class="md-body" id="md-body">{body_html}</article>
-      </div>
-
-      <!-- ALEXIAI <3 Voice & Live Webpage Studio -->
-      <section class="alexiai-panel" id="alexiai-panel" style="margin-top: 22px;">
-        <div class="alexiai-top">
-          <div class="alexiai-brand">
-            <div class="gaia-orb" id="gaia-orb" title="Click to talk to Alexiai (or press Ctrl+Space)"></div>
-            <div>
-              <div class="alexiai-title">💜 ALEXIAI &lt;3 OMNI · VOICE &amp; WEBPAGE STUDIO</div>
-              <div class="alexiai-sub" id="alexiai-status">Click 🎙️ Voice or press Ctrl+Space to talk — she talks back &amp; can restyle or edit this webpage live!</div>
-            </div>
-          </div>
-          <div class="alexiai-controls">
-            <button type="button" class="escape-btn btn-alexiai" id="btn-mic" title="Talk to Alexiai by Voice (Ctrl+Space)">🎙️ Talk to Alexiai</button>
-            <select class="voice-select" id="alexiai-voice" title="Liquid-Rust LFM2.5 & Kokoro Neural Voice">
-              <option value="af_heart">💜 Dra Heart (Kokoro af_heart)</option>
-              <option value="lfm_aye">🌊 Aye Liquid-Rust (LFM2.5 / Bella)</option>
-              <option value="lfm_omnimom">👑 OmniMom Liquid-Rust (LFM2.5 / Sky)</option>
-              <option value="af_sky">✨ Sky Crystal (Kokoro af_sky)</option>
-              <option value="af_bella">🌸 Bella Studio (Kokoro af_bella)</option>
-              <option value="bf_emma">💎 Emma Velvet (Kokoro bf_emma)</option>
-            </select>
-            <button type="button" class="escape-btn" id="btn-tts-toggle" title="Toggle spoken voice replies">🔊 Voice: ON</button>
-          </div>
-        </div>
-        <form class="alexiai-bar" id="alexiai-form">
-          <input type="text" class="alexiai-input" id="alexiai-input" placeholder="Talk or type to Alexiai: &quot;Make this webpage cyberpunk neon&quot;, &quot;Add a summary section&quot;, or ask anything..." autocomplete="off">
-          <button type="submit" class="escape-btn btn-alexiai">Send ✦</button>
-        </form>
-        <div class="alexiai-reply-box" id="alexiai-reply"></div>
-      </section>
-
-      <!-- Live Marine-Sense Acoustic & RF Triangulation Sonar HUD -->
-      <section class="marine-sense-hud" id="marine-sense-hud">
+      <!-- Live Marine-Sense Acoustic & RF Triangulation Sonar HUD (auto-expanded on sovereign-qwave-hud.md) -->
+      <section class="marine-sense-hud collapsed" id="marine-sense-hud">
         <div class="ms-head">
           <div class="ms-title">
             <span class="pulse-dot"></span>
-            📡 MARINE-SENSE LIVE SONAR · STEREO DMIC TDOA + TOKYO RF TRIAD
+            🌊 SOVEREIGN QWAVE STUDIO DECK · LIVE STEREO DMIC TDOA SONAR &amp; TRIAD TELEMETRY
           </div>
           <div class="ms-badges">
             <span class="ms-badge green" id="ms-badge-zone">📍 center_keyboard (+0° / 123cm)</span>
             <span class="ms-badge pink" id="ms-badge-speaker">🎙️ hue (177 Hz)</span>
-            <span class="ms-badge" id="ms-badge-tokyo">🗾 Tokyo · Sony R&amp;D Triad · JST</span>
+            <span class="ms-badge" id="ms-badge-tokyo">⚡ 8b.is × Qwave Sovereign Mesh</span>
           </div>
+        </div>
+        <div class="hud-quick-deck">
+          <button type="button" class="hud-quick-tile" onclick="document.getElementById('gaia-orb')?.click()">
+            <span class="hud-tile-icon">🎙️</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Talk to Aye</span>
+              <span class="hud-tile-sub">Voice · SUPER+Space</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="document.getElementById('btn-smart-tree')?.click()">
+            <span class="hud-tile-icon">🌳</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Smart Tree Atlas</span>
+              <span class="hud-tile-sub">MEM|8 Code Graph</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="document.getElementById('btn-tokyo-song')?.click()">
+            <span class="hud-tile-icon">🚆</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Next Stop Tomorrow</span>
+              <span class="hud-tile-sub">Tokyo Song · SUPER+T</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="document.getElementById('btn-humayian-mix')?.click()">
+            <span class="hud-tile-icon">🎹</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Humayian 4-Song Mix</span>
+              <span class="hud-tile-sub">432Hz Weave · SUPER+Y</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="document.getElementById('btn-style-drawer')?.click()">
+            <span class="hud-tile-icon">🎨</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Style &amp; Shader Studio</span>
+              <span class="hud-tile-sub">6 Themes · WebGL Wave</span>
+            </span>
+          </button>
+          <a class="hud-quick-tile" href="http://127.0.0.1:8432/marine-sense">
+            <span class="hud-tile-icon">🌊</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Marine Spectrogram</span>
+              <span class="hud-tile-sub">4096-Bin Zero-FFT :8432</span>
+            </span>
+          </a>
+          <a class="hud-quick-tile" href="http://127.0.0.1:8432/oxicast">
+            <span class="hud-tile-icon">🌸</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">OxiCast × PhoeniX</span>
+              <span class="hud-tile-sub">768kHz Sanctuary :8432</span>
+            </span>
+          </a>
+          <a class="hud-quick-tile" href="/flight">
+            <span class="hud-tile-icon">✈️</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Sovereign Flight Deck</span>
+              <span class="hud-tile-sub">3D Globe &amp; Cabin Mesh</span>
+            </span>
+          </a>
+          <button type="button" class="hud-quick-tile" onclick="fetch('/api/hud-dialog',{{method:'POST',body:JSON.stringify({{cmd:'wifi-menu'}})}})">
+            <span class="hud-tile-icon">🌐</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Network &amp; Wi-Fi</span>
+              <span class="hud-tile-sub">VPN · 802.1X · SUPER+W</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="fetch('/api/hud-dialog',{{method:'POST',body:JSON.stringify({{cmd:'bt-menu'}})}})">
+            <span class="hud-tile-icon">🫐</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Bluetooth Center</span>
+              <span class="hud-tile-sub">Pair &amp; Audio · SUPER+ALT+B</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="fetch('/api/hud-dialog',{{method:'POST',body:JSON.stringify({{cmd:'audio-menu'}})}})">
+            <span class="hud-tile-icon">🔊</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">PipeWire Audio</span>
+              <span class="hud-tile-sub">Sinks &amp; Mics · SUPER+CTRL+A</span>
+            </span>
+          </button>
+          <button type="button" class="hud-quick-tile" onclick="fetch('/api/hud-dialog',{{method:'POST',body:JSON.stringify({{cmd:'power-menu'}})}})">
+            <span class="hud-tile-icon">⚡</span>
+            <span class="hud-tile-meta">
+              <span class="hud-tile-title">Power &amp; Battery</span>
+              <span class="hud-tile-sub">80% Care · SUPER+CTRL+E</span>
+            </span>
+          </button>
         </div>
         <div class="ms-grid">
           <div class="ms-card">
@@ -2664,6 +5610,13 @@ fn render_full_page(
           <div id="ms-event-list"></div>
         </div>
       </section>
+
+      <div class="studio-grid">
+        <div class="editor-pane">
+          <textarea id="md-editor-textarea" spellcheck="false"></textarea>
+        </div>
+        <article class="md-body" id="md-body">{body_html}</article>
+      </div>
     </main>
   </div>
 
@@ -2778,9 +5731,118 @@ fn render_full_page(
           window.location.href = nextUrl;
         }});
       }});
+      document.querySelectorAll('[data-pdf-dock]').forEach(function (dock) {{
+        if (dock.dataset.bound) return;
+        dock.dataset.bound = "1";
+        const wrap = dock.querySelector('[data-pdf-canvas-wrap]');
+        const modeBtns = Array.from(dock.querySelectorAll('[data-pdf-mode]'));
+        function setPdfMode(mode) {{
+          modeBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-pdf-mode') === mode));
+          document.body.classList.toggle('pdf-mode-split', mode === 'split');
+          document.body.classList.toggle('pdf-mode-canvas', mode === 'canvas');
+          if (wrap) {{
+            wrap.style.display = (mode === 'split' || mode === 'canvas') ? 'block' : 'none';
+          }}
+          if (mode === 'summary') {{
+            const h = Array.from(document.querySelectorAll('#md-body h2')).find(el => (el.textContent || '').indexOf('Executive Summary') !== -1);
+            if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+          }} else if (mode === 'phoenix') {{
+            const h = Array.from(document.querySelectorAll('#md-body h2')).find(el => (el.textContent || '').indexOf('PhoeniX') !== -1);
+            if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+          }} else if (mode === 'reader') {{
+            const h = Array.from(document.querySelectorAll('#md-body h2')).find(el => (el.textContent || '').indexOf('Full Sovereign Document') !== -1);
+            if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+          }}
+        }}
+        modeBtns.forEach(function (btn) {{
+          btn.addEventListener('click', function () {{
+            setPdfMode(btn.getAttribute('data-pdf-mode') || 'reader');
+          }});
+        }});
+        dock.querySelector('[data-pdf-listen]')?.addEventListener('click', function () {{
+          if (window.__qwaveReadAloudToggle) window.__qwaveReadAloudToggle(true, 'full');
+        }});
+        dock.querySelector('[data-pdf-listen-summary]')?.addEventListener('click', function () {{
+          if (window.__qwaveReadAloudToggle) window.__qwaveReadAloudToggle(true, 'summary');
+        }});
+      }});
+      document.querySelectorAll('[data-media-dock]').forEach(function (dock) {{
+        if (dock.dataset.bound) return;
+        dock.dataset.bound = "1";
+        const player = dock.querySelector('[data-media-player]');
+        const badge = dock.querySelector('[data-media-stream-badge]');
+        const streamBtns = Array.from(dock.querySelectorAll('[data-media-stream]'));
+        streamBtns.forEach(function (btn) {{
+          btn.addEventListener('click', function () {{
+            const kind = btn.getAttribute('data-media-stream') || 'orig';
+            streamBtns.forEach(b => b.classList.toggle('active', b === btn));
+            if (!player) return;
+            const targetSrc = (kind === 'phoenix')
+              ? (player.getAttribute('data-phoenix-src') || player.getAttribute('data-orig-src'))
+              : player.getAttribute('data-orig-src');
+            if (targetSrc && player.getAttribute('src') !== targetSrc) {{
+              const curTime = player.currentTime || 0;
+              const wasPaused = player.paused;
+              player.setAttribute('src', targetSrc);
+              player.addEventListener('loadedmetadata', function onMeta() {{
+                player.removeEventListener('loadedmetadata', onMeta);
+                try {{ player.currentTime = curTime; }} catch (e) {{}}
+                if (!wasPaused) player.play().catch(function () {{}});
+              }});
+            }}
+            if (badge) {{
+              badge.innerHTML = (kind === 'phoenix')
+                ? '🔥 Active Stream: <strong style="color:#ff9edb">PhoeniX\\'d 768kHz High-Res (16× Catmull-Rom + S+N+T + φ432 Revelation)</strong>'
+                : '🎵 Active Stream: <strong style="color:var(--accent-2)">Original Studio Master</strong>';
+            }}
+          }});
+        }});
+        dock.querySelectorAll('[data-pdf-mode]').forEach(function (btn) {{
+          btn.addEventListener('click', function () {{
+            const mode = btn.getAttribute('data-pdf-mode') || 'reader';
+            if (mode === 'summary') {{
+              const h = Array.from(document.querySelectorAll('#md-body h2')).find(el => (el.textContent || '').indexOf('Executive Summary') !== -1);
+              if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+            }} else if (mode === 'phoenix') {{
+              const h = Array.from(document.querySelectorAll('#md-body h2')).find(el => (el.textContent || '').indexOf('PhoeniX') !== -1);
+              if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+            }} else {{
+              const h = Array.from(document.querySelectorAll('#md-body h2, #md-body h3')).find(el => (el.textContent || '').indexOf('Full') !== -1);
+              if (h) h.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+            }}
+          }});
+        }});
+        dock.querySelector('[data-pdf-listen-summary]')?.addEventListener('click', function () {{
+          if (window.__qwaveReadAloudToggle) window.__qwaveReadAloudToggle(true, 'summary');
+        }});
+      }});
     }}
 
     enhanceDynamic();
+
+    // Minimalist Conversational Bar & Studio Drawer Controls
+    document.getElementById('btn-studio-more')?.addEventListener('click', function () {{
+      const drw = document.getElementById('studio-more-drawer');
+      const open = drw ? drw.classList.toggle('open') : false;
+      this.classList.toggle('active', open);
+    }});
+
+    document.getElementById('btn-smart-tree')?.addEventListener('click', function () {{
+      const q = document.getElementById('alexiai-input')?.value || '';
+      fetch('/api/smart-tree?path=' + encodeURIComponent(currentPath) + '&q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(d => {{
+          if (!d || !d.ok) return;
+          if (replyEl) {{
+            replyEl.classList.add('visible');
+            replyEl.innerHTML =
+              '<strong>🌳 Smart Tree (st) × CrabCC Intelligence:</strong> ' +
+              (d.brief || '') +
+              ' · <a href="/view?path=' + encodeURIComponent(d.root || '/home/hue/8b-is/qwave') +
+              '" style="color:var(--accent);text-decoration:underline;font-weight:700;">Open Smart Tree Atlas ↗</a>';
+          }}
+        }});
+    }});
 
     // Toolbar & Style Studio
     document.getElementById('btn-toc')?.addEventListener('click', () => document.body.classList.toggle('toc-open'));
@@ -2801,21 +5863,31 @@ fn render_full_page(
       if (forcePlay) {{
         tokyoDrawer.classList.add('open');
         tokyoAudio.play().catch(function () {{}});
-        if (tokyoBtn) tokyoBtn.textContent = '⏸️ Tokyo Song';
+        if (tokyoBtn) {{ tokyoBtn.textContent = '⏸️'; tokyoBtn.classList.add('active'); }}
+        if (window.__qwaveSetMusic) window.__qwaveSetMusic(true);
         return;
       }}
       const isOpen = tokyoDrawer.classList.toggle('open');
       if (isOpen && tokyoAudio.paused) {{
         tokyoAudio.play().catch(function () {{}});
-        if (tokyoBtn) tokyoBtn.textContent = '⏸️ Tokyo Song';
+        if (tokyoBtn) {{ tokyoBtn.textContent = '⏸️'; tokyoBtn.classList.add('active'); }}
+        if (window.__qwaveSetMusic) window.__qwaveSetMusic(true);
       }} else if (!isOpen && !tokyoAudio.paused) {{
         tokyoAudio.pause();
-        if (tokyoBtn) tokyoBtn.textContent = '🚆 Tokyo Song';
+        if (tokyoBtn) {{ tokyoBtn.textContent = '🎵'; tokyoBtn.classList.remove('active'); }}
+        if (window.__qwaveSetMusic) window.__qwaveSetMusic(false);
       }}
     }}
     tokyoBtn?.addEventListener('click', function () {{ toggleTokyoSong(false); }});
+    tokyoAudio?.addEventListener('play', function () {{
+      if (window.__qwaveSetMusic) window.__qwaveSetMusic(true);
+    }});
+    tokyoAudio?.addEventListener('pause', function () {{
+      if (window.__qwaveSetMusic) window.__qwaveSetMusic(false);
+    }});
     tokyoAudio?.addEventListener('ended', function () {{
-      if (tokyoBtn) tokyoBtn.textContent = '🚆 Tokyo Song';
+      if (tokyoBtn) {{ tokyoBtn.textContent = '🎵'; tokyoBtn.classList.remove('active'); }}
+      if (window.__qwaveSetMusic) window.__qwaveSetMusic(false);
     }});
 
     const humayianBtn = document.getElementById('btn-humayian-mix');
@@ -2971,91 +6043,202 @@ fn render_full_page(
       }});
     }}
 
-    // Document / Paper Read-Aloud Narrator ("Listen While Working" mode)
-    let isReadingAloud = false;
+    // Sovereign Document Narrator (Continuous Paragraph-by-Paragraph Read Aloud for PDF, TeX, Markdown & Media)
+    let readAloudActive = false;
     let readAloudNodes = [];
     let readAloudIdx = 0;
+    let prefetchedAudioUrl = null;
+    let prefetchedIdx = -1;
+    let phoenixTtsEnabled = true;
     const readAloudBtn = document.getElementById('btn-read-aloud');
+    const readForYouBtn = document.getElementById('btn-read-for-you');
+    const phoenixTtsBtn = document.getElementById('btn-phoenix-tts');
+    const readPrevBtn = document.getElementById('btn-read-prev');
+    const readNextBtn = document.getElementById('btn-read-next');
 
-    function clearReadAloudHighlight() {{
-      document.querySelectorAll('.qwave-reading-active').forEach(function (el) {{
-        el.classList.remove('qwave-reading-active');
-        el.style.outline = '';
-        el.style.background = '';
+    phoenixTtsBtn?.addEventListener('click', function () {{
+      phoenixTtsEnabled = !phoenixTtsEnabled;
+      phoenixTtsBtn.textContent = phoenixTtsEnabled ? '🔥 PhoeniX Voice: ON' : '🔥 PhoeniX Voice: OFF';
+      prefetchedIdx = -1;
+      prefetchedAudioUrl = null;
+    }});
+
+    function collectReadableBlocks() {{
+      const root = document.getElementById('md-body');
+      if (!root) return [];
+      const candidates = Array.from(root.querySelectorAll('h1, h2, h3, p, li, blockquote'));
+      return candidates.filter(function (el) {{
+        if (el.closest('.qwave-pdf-dock') || el.closest('.qwave-media-dock') || el.closest('.code-block') || el.closest('.mermaid')) return false;
+        if (el.tagName === 'P' && el.parentElement && (el.parentElement.tagName === 'BLOCKQUOTE' || el.parentElement.tagName === 'LI')) return false;
+        const txt = (el.innerText || el.textContent || '').trim();
+        if (!txt || txt.length < 3) return false;
+        if (txt.startsWith('📄 Page ')) return false;
+        return true;
       }});
     }}
 
-    function stopReadAloud() {{
-      isReadingAloud = false;
+    function cleanDomTextForSpeech(el) {{
+      let txt = (el.innerText || el.textContent || '').replace(/^#\s*/, '').trim();
+      txt = txt
+        .replace(/\\iff/g, ' if and only if ')
+        .replace(/\\Longleftrightarrow|\\implies|\\Rightarrow/g, ' implies ')
+        .replace(/\\ge|\\geq/g, ' is at least ')
+        .replace(/\\le|\\leq/g, ' is at most ')
+        .replace(/[📄✍️📅📐🔊∎⚡🔥🧠🌊🎬🎵🎧🗺️🔹]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (txt.length > 520) {{
+        txt = txt.slice(0, 520);
+      }}
+      return txt;
+    }}
+
+    function clearReadingHighlights() {{
+      document.querySelectorAll('.qwave-reading-active').forEach(function (el) {{
+        el.classList.remove('qwave-reading-active');
+      }});
+    }}
+
+    function buildTtsUrl(voice, text) {{
+      const phx = phoenixTtsEnabled ? '1' : '0';
+      return '/api/alexiai/tts?voice=' + encodeURIComponent(voice) + '&phoenix=' + phx + '&text=' + encodeURIComponent(text);
+    }}
+
+    function prefetchParagraphAudio(idx) {{
+      if (idx < 0 || idx >= readAloudNodes.length) return;
+      const text = cleanDomTextForSpeech(readAloudNodes[idx]);
+      if (!text) return;
+      const voice = document.getElementById('alexiai-voice')?.value || 'af_heart';
+      prefetchedIdx = idx;
+      prefetchedAudioUrl = buildTtsUrl(voice, text);
+      fetch(prefetchedAudioUrl).catch(function () {{}});
+    }}
+
+    function playReadAloudAt(idx) {{
+      if (!readAloudActive) return;
+      if (idx < 0) idx = 0;
+      if (idx >= readAloudNodes.length) {{
+        stopReadAloud();
+        if (statusEl) statusEl.textContent = '✅ Finished reading document aloud!';
+        return;
+      }}
+      readAloudIdx = idx;
+      clearReadingHighlights();
+      const node = readAloudNodes[idx];
+      node.classList.add('qwave-reading-active');
+      node.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+
+      const text = cleanDomTextForSpeech(node);
+      if (!text) {{
+        playReadAloudAt(idx + 1);
+        return;
+      }}
+
+      if (readAloudBtn) {{
+        readAloudBtn.textContent = '⏸️ ' + (idx + 1) + '/' + readAloudNodes.length;
+        readAloudBtn.classList.add('active');
+      }}
+      const st = document.getElementById('live-status');
+      if (st) st.textContent = (phoenixTtsEnabled ? '🔥 PHOENIX READING ' : '🔊 READING ') + (idx + 1) + ' / ' + readAloudNodes.length;
+
+      // Pre-synthesize the next paragraph while this one speaks!
+      prefetchParagraphAudio(idx + 1);
+
       if (currentAudio) {{
         currentAudio.pause();
         currentAudio = null;
       }}
-      clearReadAloudHighlight();
-      if (readAloudBtn) readAloudBtn.textContent = '🔊 Read Aloud';
-      if (statusEl) statusEl.textContent = '💜 Read-aloud paused — click 🔊 Read Aloud to resume.';
-    }}
+      const voice = document.getElementById('alexiai-voice')?.value || 'af_heart';
+      const ttsUrl = (prefetchedIdx === idx && prefetchedAudioUrl)
+        ? prefetchedAudioUrl
+        : buildTtsUrl(voice, text);
 
-    function playNextReadAloudParagraph() {{
-      if (!isReadingAloud) return;
-      while (readAloudIdx < readAloudNodes.length) {{
-        const node = readAloudNodes[readAloudIdx];
-        const rawText = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
-        if (rawText.length >= 4 && !rawText.startsWith('📄 Sovereign PDF Engine')) {{
-          clearReadAloudHighlight();
-          node.classList.add('qwave-reading-active');
-          node.style.outline = '1px solid rgba(255, 158, 219, 0.65)';
-          node.style.background = 'rgba(255, 158, 219, 0.08)';
-          node.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-
-          const voice = document.getElementById('alexiai-voice')?.value || 'af_heart';
-          const clipped = rawText.length > 520 ? rawText.slice(0, 520) : rawText;
-          if (readAloudBtn) {{
-            readAloudBtn.textContent = '⏹️ Stop Reading (' + (readAloudIdx + 1) + '/' + readAloudNodes.length + ')';
-          }}
-          if (statusEl) {{
-            statusEl.textContent = '📖 Reading paragraph ' + (readAloudIdx + 1) + ' of ' + readAloudNodes.length + ' (' + voice + ')...';
-          }}
-          const audio = new Audio('/api/alexiai/tts?voice=' + encodeURIComponent(voice) + '&text=' + encodeURIComponent(clipped));
-          currentAudio = audio;
-          audio.addEventListener('ended', function () {{
-            if (!isReadingAloud) return;
-            readAloudIdx++;
-            playNextReadAloudParagraph();
-          }});
-          audio.addEventListener('error', function () {{
-            if (!isReadingAloud) return;
-            readAloudIdx++;
-            playNextReadAloudParagraph();
-          }});
-          audio.play().catch(function () {{
-            stopReadAloud();
-          }});
-          return;
+      const audio = new Audio(ttsUrl);
+      currentAudio = audio;
+      audio.addEventListener('play', function () {{
+        if (window.__qwavePulseVoice) window.__qwavePulseVoice(0.85, 0.62);
+      }});
+      audio.addEventListener('ended', function () {{
+        if (readAloudActive) {{
+          playReadAloudAt(idx + 1);
         }}
-        readAloudIdx++;
-      }}
-      stopReadAloud();
-      if (statusEl) statusEl.textContent = '✨ Finished reading document aloud!';
+      }});
+      audio.addEventListener('error', function () {{
+        if (readAloudActive) {{
+          setTimeout(function () {{ playReadAloudAt(idx + 1); }}, 250);
+        }}
+      }});
+      audio.play().catch(function () {{
+        if (window.speechSynthesis) {{
+          const u = new SpeechSynthesisUtterance(text);
+          u.onend = function () {{ if (readAloudActive) playReadAloudAt(idx + 1); }};
+          window.speechSynthesis.speak(u);
+        }}
+      }});
     }}
 
-    function toggleReadAloud() {{
-      if (isReadingAloud) {{
+    function stopReadAloud() {{
+      readAloudActive = false;
+      if (currentAudio) {{
+        currentAudio.pause();
+        currentAudio = null;
+      }}
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      clearReadingHighlights();
+      if (readAloudBtn) {{
+        readAloudBtn.textContent = '🔊';
+        readAloudBtn.classList.remove('active');
+      }}
+      if (readPrevBtn) readPrevBtn.style.display = 'none';
+      if (readNextBtn) readNextBtn.style.display = 'none';
+    }}
+
+    function toggleReadAloud(forceStart, startMode) {{
+      if (readAloudActive && !forceStart) {{
         stopReadAloud();
         return;
       }}
-      const bodyEl = document.getElementById('md-body');
-      if (!bodyEl) return;
-      readAloudNodes = Array.from(bodyEl.querySelectorAll('h1, h2, h3, p, blockquote, li'));
+      readAloudNodes = collectReadableBlocks();
       if (!readAloudNodes.length) return;
-      if (readAloudIdx >= readAloudNodes.length) readAloudIdx = 0;
-      voiceEnabled = true;
-      if (ttsToggleBtn) ttsToggleBtn.textContent = '🔊 Voice: ON';
-      isReadingAloud = true;
-      playNextReadAloudParagraph();
+      readAloudActive = true;
+      if (readPrevBtn) readPrevBtn.style.display = 'inline-flex';
+      if (readNextBtn) readNextBtn.style.display = 'inline-flex';
+
+      // Bind click-to-jump on paragraphs while reading
+      readAloudNodes.forEach(function (el, i) {{
+        if (el.dataset.readJumpBound) return;
+        el.dataset.readJumpBound = "1";
+        el.addEventListener('click', function () {{
+          if (readAloudActive) playReadAloudAt(i);
+        }});
+      }});
+
+      if (startMode === 'summary') {{
+        const sumIdx = readAloudNodes.findIndex(el => (el.innerText || '').indexOf('Executive Summary') !== -1 || (el.innerText || '').indexOf('Spoken For You') !== -1);
+        readAloudIdx = sumIdx >= 0 ? sumIdx : 0;
+      }} else if (startMode === 'phoenix') {{
+        const phxIdx = readAloudNodes.findIndex(el => (el.innerText || '').indexOf('PhoeniX') !== -1);
+        readAloudIdx = phxIdx >= 0 ? phxIdx : 0;
+      }} else if (readAloudIdx >= readAloudNodes.length) {{
+        readAloudIdx = 0;
+      }}
+      playReadAloudAt(readAloudIdx);
     }}
 
-    readAloudBtn?.addEventListener('click', toggleReadAloud);
+    window.__qwaveReadAloudToggle = toggleReadAloud;
+    window.__qwaveReadAloudStep = function (delta) {{
+      if (!readAloudActive) toggleReadAloud(true);
+      else playReadAloudAt(Math.max(0, readAloudIdx + delta));
+    }};
+
+    readAloudBtn?.addEventListener('click', function () {{ toggleReadAloud(false); }});
+    readForYouBtn?.addEventListener('click', function () {{ toggleReadAloud(true, 'summary'); }});
+    readPrevBtn?.addEventListener('click', function () {{ window.__qwaveReadAloudStep(-1); }});
+    readNextBtn?.addEventListener('click', function () {{ window.__qwaveReadAloudStep(1); }});
+
+    if (window.location.search.indexOf('autolisten=1') !== -1) {{
+      setTimeout(function () {{ toggleReadAloud(true); }}, 450);
+    }}
 
     // Send prompt (from voice or text) to ALEXIAI
     function sendToAlexiai(messageText) {{
@@ -3281,6 +6464,9 @@ fn render_full_page(
           e.preventDefault();
           saveMarkdown();
         }}
+      }} else if (e.altKey && e.key.toLowerCase() === 'r') {{
+        e.preventDefault();
+        toggleReadAloud(false);
       }}
     }});
 
@@ -3307,8 +6493,12 @@ fn render_full_page(
       }});
     }}
 
-    // Marine-Sense Live Sonar & Triangulation HUD
+    // Marine-Sense Live Sonar & Triangulation HUD (auto-expanded in Sovereign Qwave Studio HUD)
     const msHud = document.getElementById('marine-sense-hud');
+    if (currentPath && currentPath.indexOf('sovereign-qwave-hud') !== -1) {{
+      document.body.classList.add('qwave-hud-mode');
+      msHud?.classList.remove('collapsed');
+    }}
     document.getElementById('btn-marine-sense')?.addEventListener('click', function () {{
       msHud?.classList.toggle('collapsed');
       if (msHud && !msHud.classList.contains('collapsed')) {{
@@ -3585,7 +6775,7 @@ fn render_full_page(
         .catch(function () {{}});
     }}
     pollMarineSense();
-    setInterval(pollMarineSense, 1100);
+    setInterval(pollMarineSense, 2000);
 
     document.getElementById('btn-triad-chirp')?.addEventListener('click', function () {{
       const btn = document.getElementById('btn-triad-chirp');
@@ -3624,9 +6814,15 @@ fn send_response(
     content_type: &str,
     body: &[u8],
 ) -> std::io::Result<()> {
+    let disposition = if content_type == "application/pdf" {
+        "Content-Disposition: inline\r\n"
+    } else {
+        ""
+    };
     let header = format!(
         "HTTP/1.1 {status}\r\n\
          Content-Type: {content_type}\r\n\
+         {disposition}\
          Content-Length: {}\r\n\
          Cache-Control: no-store\r\n\
          X-Sovereign-Engine: qwave-core/0.1.0\r\n\
@@ -3646,14 +6842,25 @@ fn guess_mime(path: &Path) -> &'static str {
         .to_ascii_lowercase()
         .as_str()
     {
+        "pdf" => "application/pdf",
+        "tex" | "ltx" | "latex" | "bib" | "sty" | "cls" => "text/x-tex; charset=utf-8",
+        "md" | "markdown" => "text/markdown; charset=utf-8",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
-        "pdf" => "application/pdf",
-        "tex" | "ltx" | "latex" | "bib" => "text/plain; charset=utf-8",
         "woff2" => "font/woff2",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "ogg" | "opus" => "audio/ogg",
+        "m4a" | "aac" => "audio/mp4",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
         "css" => "text/css; charset=utf-8",
         "js" => "application/javascript; charset=utf-8",
         _ => "application/octet-stream",
@@ -4055,14 +7262,22 @@ fn show_markdown_in_qwave(
         PathBuf::from("/home/hue/8b-is/qwave/README.md")
     };
 
+    let mut auto_read_doc = false;
     if let Some(ref spoken) = speak_opt {
-        if !spoken.trim().is_empty() {
-            let _ = speak_out_loud(spoken, "af_heart", true, false);
+        let s = spoken.trim();
+        if s.eq_ignore_ascii_case("auto") || s.eq_ignore_ascii_case("read") || s.eq_ignore_ascii_case("listen") {
+            auto_read_doc = true;
+        } else if !s.is_empty() {
+            let _ = speak_out_loud(s, "af_heart", true, false);
         }
     }
 
     let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/qwave"));
-    let _ = Command::new(exe)
+    let mut cmd = Command::new(exe);
+    if auto_read_doc {
+        cmd.arg("--read");
+    }
+    let _ = cmd
         .arg(&target_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -4077,7 +7292,7 @@ fn show_markdown_in_qwave(
     )
 }
 
-/// Surf to a URL or Markdown file inside Qwave (`window` mode opens native `qwave-qt`;
+/// Surf to a URL, PDF, TeX, or Markdown file inside Qwave (`window` mode opens native `qwave-qt`;
 /// `markdown` mode fetches & compiles to Sovereign Markdown in Qwave Studio).
 fn surf_with_qwave(target: &str, mode: &str, speak_opt: Option<&str>) -> String {
     if let Some(spoken) = speak_opt {
@@ -4087,7 +7302,13 @@ fn surf_with_qwave(target: &str, mode: &str, speak_opt: Option<&str>) -> String 
     }
 
     let trimmed = target.trim();
-    if trimmed.ends_with(".md")
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.ends_with(".md")
+        || lower.ends_with(".pdf")
+        || lower.ends_with(".tex")
+        || lower.ends_with(".ltx")
+        || lower.ends_with(".latex")
+        || lower.ends_with(".bib")
         || trimmed.starts_with("file://")
         || trimmed.starts_with('/')
         || trimmed.starts_with("~/")
@@ -4262,7 +7483,7 @@ fn handle_mcp_request(req: &str) -> Option<String> {
              {{\"name\":\"room_status\",\"description\":\"👥 Instant 0ms snapshot from the parallel always-on acoustic ear: shows whether Hue is addressing the AI or chatting with a friend next to him, active speakers in the room (hue, friend_1..4, ambient_noise), noise floor, Tokyo beacon location/time, and recent diarized utterances.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"limit\":{{\"type\":\"integer\",\"description\":\"Max recent utterances to return (default: 8)\",\"default\":8}}}}}}}},\
              {{\"name\":\"nomad_mesh\",\"description\":\"📡 Sovereign Nomad Mesh, Free-WiFi Captive-Portal Auto-Solver & Bluetooth Mesh (96B BNEP + 31B BLE Advertising): ranks open/free Wi-Fi networks, probes/auto-accepts captive portals, and builds zero-float Bluetooth mesh frames carrying MEM|8 WaveInt + WUPZ state.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"auto_connect\":{{\"type\":\"boolean\",\"description\":\"Attempt to auto-connect & accept captive portal if offline (default: false)\",\"default\":false}}}}}}}},\
              {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
-             {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown file (file:///.../*.md) or live Markdown snippet inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, 3D MEM|8 Wave canvas, Ghostwriter bridge, and optional live theme preset & voice narration.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the Markdown document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens\"}}}}}}}},\
+             {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown (.md), LaTeX/TeX (.tex/.ltx/.bib), or PDF (.pdf) document (or live Markdown/TeX snippet) inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, Embedded PDF Split-View, 3D MEM|8 Wave canvas, Ghostwriter bridge, and built-in Read-Aloud paper narrator (pass speak='auto' to start reading aloud).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the .md, .tex, or .pdf document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown or LaTeX content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens, or 'auto' to start continuous Read-Aloud paper narration\"}}}}}}}},\
              {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}},\
              {{\"name\":\"ping_pong\",\"description\":\"🏓 Sovereign Acoustic Ping-Pong Transceiver & Self-Healer: self-heals PipeWire speaker/mic & ear-daemon, emits a 432/528/864 Hz Harmonic Triad Ping out of the speaker while recording 48 kHz stereo on Left/Right mics, and reports L/R SNR, Time-of-Flight, TDOA azimuth, RT60, and optional neural TTS->STT loopback.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"voice\":{{\"type\":\"boolean\",\"description\":\"Also run spoken TTS -> Air -> Mic -> STT roundtrip test (default: false)\",\"default\":false}}}}}}}}\
              ]}}}}"
@@ -4280,8 +7501,9 @@ fn handle_mcp_request(req: &str) -> Option<String> {
 
             let out_text = match tool_name.as_str() {
                 "speak" | "qwave_speak" => {
-                    let text = extract_json_str(args_slice, "text")
+                    let raw_text = extract_json_str(args_slice, "text")
                         .unwrap_or_else(|| "Hello from Qwave!".to_string());
+                    let text = resolve_spoken_input_or_file(&raw_text, None);
                     let voice = extract_json_str(args_slice, "voice")
                         .unwrap_or_else(|| "af_heart".to_string());
                     let salience_mod =
@@ -4996,10 +8218,30 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
         std::sync::atomic::AtomicBool::new(false);
 
     let default_tuple = || -> BeaconTuple {
+        let sys_tz = fs::read_link("/etc/localtime")
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+            .and_then(|s| s.split("zoneinfo/").nth(1).map(|z| z.trim().to_string()))
+            .filter(|z| !z.is_empty())
+            .unwrap_or_else(|| "America/New_York".to_string());
+        let state_raw =
+            fs::read_to_string(mem8_dir().join("area_timezone_state.json")).unwrap_or_default();
+        let country = extract_json_str(&state_raw, "country")
+            .or_else(|| env::var("WIGLE_COUNTRY").ok())
+            .unwrap_or_else(|| {
+                if sys_tz == "Asia/Tokyo" {
+                    "JP".to_string()
+                } else {
+                    "US".to_string()
+                }
+            });
+        let loc = extract_json_str(&state_raw, "location")
+            .or_else(|| env::var("QWAVE_LOCATION").ok())
+            .unwrap_or_else(|| format!("Sovereign Area ({sys_tz} · {country})"));
         (
-            "JP".to_string(),
-            "Asia/Tokyo (JST, +09:00)".to_string(),
-            "Tokyo · 8b-is Triad Corridor (35.6162°N, 139.7200°E · JP)".to_string(),
+            country,
+            sys_tz,
+            loc,
             24,
             now_secs().saturating_mul(1_000_000),
             860,
@@ -5031,7 +8273,6 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
 }
 
 fn compute_tokyo_beacon_sense_bg() -> (String, String, String, usize, u64, u32) {
-    let country = String::from("JP");
     let max_tsf_us: u64 = now_secs().saturating_mul(1_000_000);
     let mut has_sony_swan = false;
     let mut has_uspot_tullys = false;
@@ -5084,25 +8325,38 @@ fn compute_tokyo_beacon_sense_bg() -> (String, String, String, usize, u64, u32) 
     let active_bins = chan_counts.iter().filter(|&&c| c > 0).count() as u32;
     let rf_permille = ((active_bins * 125) + (ap_count.min(40) as u32 * 8)).clamp(420, 980);
 
-    let tz = if country == "JP" {
-        "Asia/Tokyo (JST, +09:00)".to_string()
-    } else {
-        env::var("TZ").unwrap_or_else(|_| "Asia/Tokyo".to_string())
-    };
+    let in_tokyo = has_sony_swan || has_uspot_tullys || has_shinjuku;
+    if in_tokyo {
+        let country = String::from("JP");
+        let tz = String::from("Asia/Tokyo (JST, +09:00)");
+        let loc_area = if has_sony_swan && has_uspot_tullys {
+            "Tokyo · Sony R&D / Shinagawa-Osaki-Kamata Triad (356200000/10000000 N, 1397285000/10000000 E · JP)".to_string()
+        } else if has_sony_swan {
+            "Tokyo · Sony R&D / Shinagawa-Osaki-Minato Campus (356258000/10000000 N, 1397385000/10000000 E · JP)".to_string()
+        } else if has_shinjuku {
+            "Tokyo · Shinjuku Gyoen Sanctuary (356852000/10000000 N, 1397100000/10000000 E · JP)".to_string()
+        } else {
+            "Tokyo · Ota-ku / Kamata-Omori Base (355617000/10000000 N, 1397210000/10000000 E · JP)".to_string()
+        };
+        return (country, tz, loc_area, ap_count, max_tsf_us, rf_permille);
+    }
 
-    let loc_area = if has_sony_swan && has_uspot_tullys {
-        "Tokyo · Sony R&D / Shinagawa-Osaki-Kamata Triad (35.6200°N, 139.7285°E · JP)".to_string()
-    } else if has_sony_swan {
-        "Tokyo · Sony R&D / Shinagawa-Osaki-Minato Campus (35.6258°N, 139.7385°E · JP)".to_string()
-    } else if has_shinjuku {
-        "Tokyo · Shinjuku Gyoen Sanctuary (35.6852°N, 139.7100°E · JP)".to_string()
-    } else if has_uspot_tullys {
-        "Tokyo · Ota-ku / Kamata-Omori Base (35.5617°N, 139.7210°E · JP)".to_string()
-    } else {
-        "Tokyo · 8b-is Triad Corridor (35.6162°N, 139.7200°E · JP)".to_string()
-    };
+    let sys_tz = fs::read_link("/etc/localtime")
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+        .and_then(|s| s.split("zoneinfo/").nth(1).map(|z| z.trim().to_string()))
+        .filter(|z| !z.is_empty())
+        .unwrap_or_else(|| "America/New_York".to_string());
 
-    (country, tz, loc_area, ap_count, max_tsf_us, rf_permille)
+    let state_raw = fs::read_to_string(mem8_dir().join("area_timezone_state.json")).unwrap_or_default();
+    let country = extract_json_str(&state_raw, "country")
+        .or_else(|| env::var("WIGLE_COUNTRY").ok())
+        .unwrap_or_else(|| if sys_tz == "Asia/Tokyo" { "JP".to_string() } else { "US".to_string() });
+    let loc_area = extract_json_str(&state_raw, "location")
+        .or_else(|| env::var("QWAVE_LOCATION").ok())
+        .unwrap_or_else(|| format!("Sovereign Area ({sys_tz} · {country})"));
+
+    (country, sys_tz, loc_area, ap_count, max_tsf_us, rf_permille)
 }
 
 /// Parallel Always-On Acoustic Ear Daemon (`qwave --ear-daemon`):
@@ -5506,6 +8760,27 @@ fn process_parallel_ear_utterance(
     //     Geodesic `p/q` Room Spatial Map (`Q = 10,000,000` -> 11 mm / ~1 cm planetary resolution!)
     let (seat, seats_json) = {
         let mut sm = spatial_map.lock().unwrap();
+        if let Ok(area_raw) = fs::read_to_string(dir.join("area_timezone_state.json")) {
+            if let Some(loc_name) = extract_json_str(&area_raw, "location") {
+                if !loc_name.is_empty() {
+                    sm.venue_name = loc_name;
+                }
+            }
+            if let Some(lat_s) = extract_json_str(&area_raw, "lat_pq") {
+                if let Some((num_s, _)) = lat_s.split_once('/') {
+                    if let Ok(num) = num_s.trim().parse::<i32>() {
+                        sm.anchor_lat_e7 = num;
+                    }
+                }
+            }
+            if let Some(lon_s) = extract_json_str(&area_raw, "lon_pq") {
+                if let Some((num_s, _)) = lon_s.split_once('/') {
+                    if let Ok(num) = num_s.trim().parse::<i32>() {
+                        sm.anchor_lon_e7 = num;
+                    }
+                }
+            }
+        }
         let s = sm.observe_speaker_fix(
             analysis.source.as_str(),
             tri.distance_cm,
@@ -8801,6 +12076,312 @@ fn run_phoenix_music_revelation(args: &[String]) -> String {
     }
     out
 }
+
+fn load_recent_mem8_waves(max_items: usize) -> Vec<(u64, String, String, String)> {
+    let mut out = Vec::new();
+    let Ok(home) = env::var("HOME") else {
+        return out;
+    };
+    let path = PathBuf::from(home).join(".local/share/qwave/mem8/waves.jsonl");
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return out;
+    };
+    for line in raw.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let ts = extract_json_u64(trimmed, "ts").unwrap_or(0);
+        let p = extract_json_str(trimmed, "path").unwrap_or_else(|| "Memory Wave".to_string());
+        let preview = extract_json_str(trimmed, "preview").unwrap_or_default();
+        let hash = extract_json_str(trimmed, "hash").unwrap_or_default();
+        let title = Path::new(&p)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&p)
+            .to_string();
+        out.push((ts, title, preview, p));
+        if out.len() >= max_items {
+            break;
+        }
+        let _ = hash;
+    }
+    out
+}
+
+fn render_start_slate_html() -> String {
+    let waves = load_recent_mem8_waves(6);
+    let chips_html = if waves.is_empty() {
+        "<p class=\"empty\">No Cognitive waves yet. Browse, then Remember.</p>".to_string()
+    } else {
+        let mut s = String::new();
+        for (_ts, title, preview, href) in &waves {
+            let short_prev: String = preview.chars().take(72).collect();
+            s.push_str(&format!(
+                "<button class=\"chip\" data-href=\"{}\" data-ask=\"{}\"><strong>{}</strong><span>{}</span></button>",
+                escape(href),
+                escape(title),
+                escape(title),
+                escape(&short_prev)
+            ));
+        }
+        s
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>qwave — New Tab</title>
+  <link rel="icon" type="image/svg+xml" href="/runtime/favicon.svg">
+  <style>
+    body, html {{ margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; font-family: 'Courier New', Courier, monospace; }}
+    canvas {{ display: block; width: 100%; height: 100%; position: fixed; inset: 0; z-index: 0; }}
+    .overlay {{
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; z-index: 10; color: #edf6f8;
+      pointer-events: auto; width: min(880px, 94vw);
+    }}
+    .glass {{
+      background: linear-gradient(165deg, rgba(18,35,45,0.92) 0%, rgba(9,24,34,0.90) 38%, rgba(4,14,23,0.94) 100%);
+      backdrop-filter: blur(28px) saturate(110%) brightness(65%);
+      border: 1px solid rgba(255,255,255,0.32);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -1px 0 rgba(255,255,255,0.06);
+      border-radius: 28px;
+    }}
+    .slate {{ padding: 36px 40px 32px; margin: 0 auto; max-width: 720px; max-height: 82vh; overflow: auto; box-sizing: border-box; }}
+    h1 {{ font-size: clamp(3.2rem, 9vw, 6.2rem); margin: 0; letter-spacing: -4px; font-weight: 700; }}
+    .lead {{ font-size: 1.35rem; margin: 6px 0 26px; text-transform: uppercase; letter-spacing: 5px; color: #8eeeff; }}
+    #start-form {{ display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 24px; }}
+    #start-q {{
+      min-width: 0; width: min(420px, 100%); box-sizing: border-box; padding: 14px 18px; font: inherit; font-size: 1.02rem;
+      color: #fff; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.35);
+      backdrop-filter: blur(12px); letter-spacing: 1px; border-radius: 14px;
+    }}
+    #start-q:focus {{ outline: 1px solid #00f0ff; }}
+    .escape-btn {{
+      display: inline-block; padding: 13px 32px; border: 1px solid rgba(255, 255, 255, 0.5);
+      color: #fff; text-decoration: none; font-size: 1.0rem; text-transform: uppercase;
+      letter-spacing: 3px; transition: all 0.25s ease; background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(5px); cursor: pointer; font-family: inherit; border-radius: 12px;
+    }}
+    .escape-btn:hover {{ background: #fff; color: #000; box-shadow: 0 0 20px rgba(255, 255, 255, 0.5); }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 12px 0 24px; }}
+    .chip {{
+      max-width: 280px; text-align: left; padding: 10px 14px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.32); background: rgba(0,0,0,0.28); color: #fff;
+      font: inherit; cursor: pointer; transition: all 0.2s ease;
+    }}
+    .chip:hover {{ border-color: #00f0ff; background: rgba(0, 240, 255, 0.12); }}
+    .chip strong {{ display: block; letter-spacing: 1px; color: #8eeeff; }}
+    .chip span {{ display: block; opacity: 0.78; font-size: 0.82rem; margin-top: 4px; }}
+    .foot, .empty {{ font-size: 0.80rem; letter-spacing: 2px; text-transform: uppercase; opacity: 0.8; margin: 14px 0; }}
+    .quick-row {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 12px; }}
+    .quick-row .escape-btn {{ font-size: 0.82rem; padding: 9px 18px; }}
+  </style>
+</head>
+<body>
+  <div class="overlay interactive">
+    <div class="glass slate">
+      <h1>qwave</h1>
+      <p class="lead">Memory Wave</p>
+      <form id="start-form" autocomplete="off">
+        <input id="start-q" type="text" placeholder="Ask, search, or enter a path…" autofocus>
+        <button class="escape-btn" type="submit">Initialize</button>
+      </form>
+      <div class="chips">{chips_html}</div>
+      <p class="foot">MEM|8 79B WaveInt · Remember is explicit · Sovereign Node</p>
+      <div class="quick-row">
+        <a class="escape-btn" href="/timeline">Open timeline</a>
+        <a class="escape-btn" href="/view?path=/home/hue/.local/share/qwave/sovereign-qwave-hud.md">Sovereign HUD</a>
+        <a class="escape-btn" href="https://8b.is">8b.is</a>
+        <a class="escape-btn" href="https://g8t.is">g8t.is</a>
+      </div>
+    </div>
+  </div>
+  <canvas id="glCanvas"></canvas>
+  <script id="fragShader" type="x-shader/x-fragment">{WAVE_FRAGMENT_SHADER}</script>
+  <script>{WAVE_CANVAS_SCRIPT}</script>
+  <script>
+    (function() {{
+      const form = document.getElementById('start-form');
+      const input = document.getElementById('start-q');
+      function navigateInput(q) {{
+        const s = (q || '').trim();
+        if (!s) return;
+        if (s.startsWith('/')) {{
+          window.location.href = '/view?path=' + encodeURIComponent(s);
+        }} else if (s.startsWith('http://') || s.startsWith('https://')) {{
+          window.location.href = s;
+        }} else if (!s.includes(' ') && s.includes('.')) {{
+          window.location.href = 'https://' + s;
+        }} else {{
+          window.location.href = 'https://www.ecosia.org/search?q=' + encodeURIComponent(s);
+        }}
+      }}
+      if (form && input) {{
+        form.addEventListener('submit', function(e) {{
+          e.preventDefault();
+          navigateInput(input.value);
+        }});
+      }}
+      document.querySelectorAll('.chip').forEach(function(btn) {{
+        btn.addEventListener('click', function() {{
+          const href = btn.getAttribute('data-href') || '';
+          if (href.startsWith('http://') || href.startsWith('https://')) {{
+            window.location.href = href;
+          }} else if (href.startsWith('/')) {{
+            window.location.href = '/view?path=' + encodeURIComponent(href);
+          }} else {{
+            navigateInput(btn.getAttribute('data-ask') || '');
+          }}
+        }});
+      }});
+    }})();
+  </script>
+</body>
+</html>"#
+    )
+}
+
+fn render_timeline_slate_html(range: &str) -> String {
+    let waves = load_recent_mem8_waves(40);
+    let now = now_secs();
+    let cutoff = match range {
+        "today" => now.saturating_sub(86_400),
+        "week" => now.saturating_sub(7 * 86_400),
+        _ => 0,
+    };
+    let filtered: Vec<_> = waves
+        .into_iter()
+        .filter(|(ts, _, _, _)| *ts >= cutoff || cutoff == 0)
+        .collect();
+
+    let summary_block = if !filtered.is_empty() && !range.is_empty() {
+        let label = match range {
+            "today" => "Today",
+            "week" => "This Week",
+            _ => "All Time",
+        };
+        let topics: Vec<String> = filtered
+            .iter()
+            .take(5)
+            .map(|(_, t, _, _)| t.clone())
+            .collect();
+        format!(
+            "<div class=\"summary\"><strong>{label} Slate ({count} cognitive waves):</strong> Crystallized in 79-byte MEM|8 WaveInt (0.73 Hz). Key anchors: {}.</div>",
+            escape(&topics.join(" · ")),
+            count = filtered.len()
+        )
+    } else {
+        String::new()
+    };
+
+    let rows_html = if filtered.is_empty() {
+        "<p class=\"empty\">The slate is clear. Browse with Remember Everything, or pin a page.</p>".to_string()
+    } else {
+        let mut s = String::from("<section class=\"day\"><h2>Recent Cognitive Waves</h2>");
+        for (_ts, title, preview, path_or_url) in &filtered {
+            let href = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+                path_or_url.clone()
+            } else if path_or_url.starts_with('/') {
+                format!("/view?path={}", url_encode(path_or_url))
+            } else {
+                "#".to_string()
+            };
+            s.push_str(&format!(
+                "<a class=\"row\" href=\"{}\"><span class=\"row-title\">{}</span><span class=\"row-detail\">{}</span></a>",
+                escape(&href),
+                escape(title),
+                escape(preview)
+            ));
+        }
+        s.push_str("</section>");
+        s
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timeline — Qwave Memory Wave</title>
+  <link rel="icon" type="image/svg+xml" href="/runtime/favicon.svg">
+  <style>
+    html, body {{ margin: 0; padding: 0; overflow: auto; background: #000; min-height: 100%; font-family: 'Courier New', Courier, monospace; color: #edf6f8; }}
+    canvas {{ display: block; width: 100%; height: 100%; position: fixed; inset: 0; z-index: 0; pointer-events: none; }}
+    .overlay {{
+      position: relative; z-index: 10; margin: 6vh auto; width: min(880px, 94vw);
+    }}
+    .glass {{
+      background: linear-gradient(165deg, rgba(18,35,45,0.92) 0%, rgba(9,24,34,0.90) 38%, rgba(4,14,23,0.94) 100%);
+      backdrop-filter: blur(28px) saturate(110%) brightness(65%);
+      border: 1px solid rgba(255,255,255,0.32);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.5);
+      border-radius: 28px; padding: 36px 40px 32px;
+    }}
+    .slate-head {{ text-align: center; margin-bottom: 22px; }}
+    .kicker {{ letter-spacing: 0.4em; text-transform: uppercase; font-size: 0.75rem; opacity: 0.75; margin: 0 0 6px; color: #8eeeff; }}
+    h1 {{ font-size: clamp(2.6rem, 7vw, 4.6rem); margin: 0; letter-spacing: -3px; }}
+    .lead {{ font-size: 0.95rem; letter-spacing: 2px; margin: 8px 0 18px; text-transform: uppercase; opacity: 0.85; }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }}
+    .escape-btn {{
+      display: inline-block; padding: 10px 18px; border: 1px solid rgba(255,255,255,0.5);
+      color: #fff; text-decoration: none; font-size: 0.85rem; text-transform: uppercase;
+      letter-spacing: 2px; background: rgba(0,0,0,0.3); border-radius: 10px; cursor: pointer;
+    }}
+    .escape-btn:hover {{ background: #fff; color: #000; }}
+    .summary {{
+      margin: 14px 0 22px; padding: 16px 18px; line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); border-radius: 16px;
+    }}
+    .day {{ margin: 18px 0; }}
+    .day h2 {{ font-size: 1.05rem; letter-spacing: 1px; margin: 0 0 10px; font-family: ui-sans-serif, system-ui, sans-serif; color: #8eeeff; }}
+    .row {{
+      display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; margin: 0 0 6px;
+      color: inherit; text-decoration: none; border-radius: 12px;
+      background: rgba(24,43,55,0.88); border: 1px solid rgba(255,255,255,0.18);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }}
+    .row:hover {{ background: rgba(38,61,75,0.96); border-color: #00f0ff; }}
+    .row-title {{ font-weight: 600; color: #e6f9ff; }}
+    .row-detail {{ font-size: 0.82rem; opacity: 0.75; }}
+    .foot, .empty {{ font-size: 0.80rem; letter-spacing: 2px; text-transform: uppercase; opacity: 0.8; text-align: center; margin: 18px 0; }}
+  </style>
+</head>
+<body>
+  <div class="overlay">
+    <div class="glass">
+      <header class="slate-head">
+        <p class="kicker">Memory Wave</p>
+        <h1>Timeline</h1>
+        <p class="lead">A liquid slate of your local waves — explicit pins &amp; MEM|8 frames.</p>
+        <div class="actions">
+          <a class="escape-btn" href="/timeline?range=today">Summarize today</a>
+          <a class="escape-btn" href="/timeline?range=week">This week</a>
+          <a class="escape-btn" href="/timeline?range=all">Everything</a>
+        </div>
+      </header>
+      {summary_block}
+      <div class="days">{rows_html}</div>
+      <p class="foot">MEM|8 79B WaveInt · summaries never send page bodies off this machine</p>
+      <div class="actions">
+        <a class="escape-btn" href="/start">Back to start</a>
+      </div>
+    </div>
+  </div>
+  <canvas id="glCanvas"></canvas>
+  <script id="fragShader" type="x-shader/x-fragment">{WAVE_FRAGMENT_SHADER}</script>
+  <script>{WAVE_CANVAS_SCRIPT}</script>
+</body>
+</html>"#
+    )
+}
+
 
 
 

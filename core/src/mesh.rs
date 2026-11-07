@@ -109,6 +109,13 @@ const KNOWN_FREE_PORTAL_SSIDS: &[&str] = &[
     "excelsior",
     "haneda-free-wifi",
     "narita-free-wifi",
+    "deltawifi.com",
+    "deltawifi",
+    "gogoinflight",
+    "aainflight",
+    "united_wi-fi",
+    "ana-wifi",
+    "jal-wifi",
     "tokyometro",
     "toei_bus",
     "toei_subway",
@@ -1261,6 +1268,258 @@ pub fn crc16_ccitt(data: &[u8]) -> u16 {
     crc
 }
 
+/// Classification of commercial aircraft onboard Wi-Fi cabin network architecture
+/// observed across live airborne telemetry (`DeltaWiFi.com` / Viasat / Intelsat / Hughes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InflightCabinArchitecture {
+    /// Widebody Kong API Gateway cabin architecture (e.g., Airbus A350-900 `N510DN` `DAL120` `RJTT → KMSP`):
+    /// - Client subnet `172.19.0.0/23`, gateway `172.19.0.1`, DNS & portal `172.16.128.1`
+    /// - DHCP provides `domain_name = wifi.delta.com` (`search wifi.delta.com`)
+    /// - `/api/flight-data` provides integer `timeToGo` (minutes) and `flightPhase` (`"Cruise"`).
+    WidebodyKong172,
+    /// Regional / Narrowbody FortiGate-VM cabin architecture (e.g., CRJ-900 `N292PQ` `Delta 4965` `KMSP → KORF`):
+    /// - Client subnet `10.0.0.0/23`, gateway & DNS `10.0.0.1` (`52:54:00:4a:e4:b2` QEMU/KVM FortiGate-VM `FGVMSLTM...` in DHCP Option 224)
+    /// - MTU `1380` (`23/25` of 1500 due to 120-byte GRE/IPsec/GTP cabin-to-satellite tunnel header)
+    /// - DHCP **omits** `domain_name` / `domain_search`, causing `systemd-resolved` Global DNS (`8.8.8.8`/`1.1.1.1`)
+    ///   to return `NXDOMAIN` for `wifi.delta.com` unless `~delta.com,~deltawifi.com,wifi.delta.com` is attached or `10.0.0.1:53` is queried directly
+    /// - Onboard portal resolves on `10.0.0.1:53` to `192.168.20.12` (`wifi.delta.com`) & `192.168.20.11` (`deltawifi.com`)
+    /// - Cabin gateway (`10.0.0.1`) & portal (`192.168.20.12`) drop 100% of ICMP echo requests while answering UDP `:53` (`~1.6 ms`) and TCP `:443` (`~1.5 ms`).
+    RegionalFortiGate10,
+    /// Other airborne Wi-Fi portal (`DeltaWiFi.com`, `gogoinflight`, `aainflight`, `united_wi-fi`, `ana-wifi`, `jal-wifi`).
+    GenericInflight,
+    /// Standard terrestrial Wi-Fi / Ethernet network.
+    GroundNetwork,
+}
+
+impl InflightCabinArchitecture {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::WidebodyKong172 => "Widebody-Kong-172 (172.19.0.0/23 -> 172.16.128.1)",
+            Self::RegionalFortiGate10 => "Regional-FortiGate-10 (10.0.0.0/23 -> 10.0.0.1 / 192.168.20.12)",
+            Self::GenericInflight => "Generic-Inflight-Cabin",
+            Self::GroundNetwork => "Ground-Network",
+        }
+    }
+}
+
+/// Zero-float `p/q` rational telemetry & link-budget model for an airborne Wi-Fi connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InflightLinkMetricsPq {
+    pub architecture: InflightCabinArchitecture,
+    /// `mtu_bytes / 1500` reduced rational (e.g., `1380 / 1500 = 23 / 25` on `DeltaWiFi.com`).
+    pub mtu_efficiency_pq: crate::rational::Rational,
+    /// Tunnel encapsulation overhead in bytes (`1500 - mtu_bytes`, e.g., `120` bytes for `MTU=1380`).
+    pub tunnel_overhead_bytes: u16,
+    /// Safe TCP Maximum Segment Size (`mtu_bytes - 40`, e.g., `1340` bytes) to prevent PMTUD blackholes when cabin firewall blocks ICMP.
+    pub max_safe_tcp_mss_bytes: u16,
+    /// Ratio of geostationary satellite RTT (`~615,000 µs`) to local cabin portal RTT (`~1,550 µs`), e.g., `12300 / 31`.
+    pub satellite_to_cabin_rtt_pq: crate::rational::Rational,
+    /// Cruise altitude normalized against `40,000 ft` ceiling (`alt_ft / 40000`).
+    pub altitude_cruise_pq: crate::rational::Rational,
+    /// Groundspeed Mach number rational estimate at cruise (`groundspeed_kts / 573`, where 573 kts = Mach 1 at ISA tropopause `-56.5°C`).
+    pub mach_estimate_pq: crate::rational::Rational,
+    /// True when the OS `/etc/resolv.conf` lacks `wifi.delta.com` while connected to `DeltaWiFi.com` (the `systemd-resolved` `NXDOMAIN` split-DNS trap).
+    pub needs_dns_search_heal: bool,
+    /// Overall link readiness score in `Q10` (`0..=1024`), combining cabin DNS, portal TLS, `devicePolicy`, and satellite `WAN`/`IFC` state.
+    pub link_health_q10: u32,
+}
+
+/// Compute exact `p/q` rational link metrics and diagnose split-DNS / MTU / satellite state without floats.
+#[allow(clippy::too_many_arguments)]
+pub fn classify_inflight_link_pq(
+    ssid: &str,
+    client_ip: &str,
+    gateway_ip: &str,
+    resolv_has_delta_search: bool,
+    mtu_bytes: u16,
+    cabin_dns_rtt_us: u64,
+    satellite_rtt_us: u64,
+    altitude_ft: i64,
+    groundspeed_kts: i64,
+    device_policy: &str,
+    wan_available: bool,
+) -> InflightLinkMetricsPq {
+    use crate::rational::Rational;
+
+    let ssid_low = ssid.trim().to_ascii_lowercase();
+    let is_delta_ssid = ssid_low.contains("deltawifi") || ssid_low.contains("delta.com");
+    let is_inflight_ssid = is_delta_ssid
+        || ssid_low.contains("gogoinflight")
+        || ssid_low.contains("aainflight")
+        || ssid_low.contains("united_wi-fi")
+        || ssid_low.contains("ana-wifi")
+        || ssid_low.contains("jal-wifi");
+
+    let architecture = if client_ip.starts_with("172.19.") || gateway_ip == "172.19.0.1" || gateway_ip == "172.16.128.1" {
+        InflightCabinArchitecture::WidebodyKong172
+    } else if (is_inflight_ssid || resolv_has_delta_search)
+        && (client_ip.starts_with("10.0.0.") || client_ip.starts_with("10.0.1.") || gateway_ip == "10.0.0.1")
+    {
+        InflightCabinArchitecture::RegionalFortiGate10
+    } else if is_inflight_ssid || resolv_has_delta_search {
+        InflightCabinArchitecture::GenericInflight
+    } else {
+        InflightCabinArchitecture::GroundNetwork
+    };
+
+    let clamped_mtu = if mtu_bytes == 0 { 1500 } else { mtu_bytes };
+    let mtu_efficiency_pq = Rational::new(clamped_mtu as i32, 1500)
+        .unwrap_or(Rational::integer(1));
+    let tunnel_overhead_bytes = 1500u16.saturating_sub(clamped_mtu);
+    let max_safe_tcp_mss_bytes = clamped_mtu.saturating_sub(40);
+
+    let safe_cabin_us = cabin_dns_rtt_us.clamp(1, 10_000_000) as u32;
+    let safe_sat_us = satellite_rtt_us.clamp(1, 10_000_000) as i32;
+    let satellite_to_cabin_rtt_pq = Rational::new(safe_sat_us, safe_cabin_us)
+        .unwrap_or(Rational::integer(1));
+
+    let safe_alt = altitude_ft.clamp(0, 100_000) as i32;
+    let altitude_cruise_pq = Rational::new(safe_alt, 40_000)
+        .unwrap_or(Rational::integer(0));
+
+    let safe_gs = groundspeed_kts.clamp(0, 2_000) as i32;
+    let mach_estimate_pq = Rational::new(safe_gs, 573)
+        .unwrap_or(Rational::integer(0));
+
+    let needs_dns_search_heal = (is_delta_ssid
+        || matches!(
+            architecture,
+            InflightCabinArchitecture::WidebodyKong172 | InflightCabinArchitecture::RegionalFortiGate10
+        ))
+        && !resolv_has_delta_search;
+
+    let mut health: u32 = 0;
+    if architecture != InflightCabinArchitecture::GroundNetwork {
+        health += 256; // Cabin link associated
+    }
+    if cabin_dns_rtt_us > 0 && cabin_dns_rtt_us < 50_000 {
+        health += 256; // Fast cabin DNS (<50ms)
+    }
+    if !needs_dns_search_heal {
+        health += 128; // Split-DNS routing domain healthy
+    }
+    let pol_low = device_policy.to_ascii_lowercase();
+    if pol_low.contains("premium") || pol_low.contains("authenticated") || pol_low.contains("full") {
+        health += 256; // Authenticated for full satellite internet (e.g. DalPedPremium)
+    } else if pol_low.contains("messaging") || pol_low.contains("free") {
+        health += 128; // Messaging tier active
+    }
+    if wan_available {
+        health += 128; // Satellite WAN link up
+    }
+
+    InflightLinkMetricsPq {
+        architecture,
+        mtu_efficiency_pq,
+        tunnel_overhead_bytes,
+        max_safe_tcp_mss_bytes,
+        satellite_to_cabin_rtt_pq,
+        altitude_cruise_pq,
+        mach_estimate_pq,
+        needs_dns_search_heal,
+        link_health_q10: health.min(1024),
+    }
+}
+
+/// Build a minimal RFC 1035 UDP DNS `A` record query packet (`QTYPE=1`, `QCLASS=1`) in 100% safe integer Rust.
+/// Used by `qwave` to query the cabin gateway (`10.0.0.1:53` or `172.16.128.1:53`) directly when `systemd-resolved`
+/// Global DNS (`8.8.8.8`/`1.1.1.1`) falsely returns `NXDOMAIN` for onboard domains like `wifi.delta.com`.
+pub fn build_dns_a_query(tx_id: u16, hostname: &str) -> Vec<u8> {
+    let mut pkt = Vec::with_capacity(64);
+    pkt.extend_from_slice(&tx_id.to_be_bytes());
+    pkt.extend_from_slice(&[0x01, 0x00]); // Flags: Standard query, RD=1
+    pkt.extend_from_slice(&[0x00, 0x01]); // QDCOUNT = 1
+    pkt.extend_from_slice(&[0x00, 0x00]); // ANCOUNT = 0
+    pkt.extend_from_slice(&[0x00, 0x00]); // NSCOUNT = 0
+    pkt.extend_from_slice(&[0x00, 0x00]); // ARCOUNT = 0
+    for label in hostname.trim_matches('.').split('.') {
+        let bytes = label.as_bytes();
+        if bytes.is_empty() || bytes.len() > 63 {
+            continue;
+        }
+        pkt.push(bytes.len() as u8);
+        pkt.extend_from_slice(bytes);
+    }
+    pkt.push(0x00); // Root label terminator
+    pkt.extend_from_slice(&[0x00, 0x01]); // QTYPE = A (1)
+    pkt.extend_from_slice(&[0x00, 0x01]); // QCLASS = IN (1)
+    pkt
+}
+
+/// Parse an RFC 1035 UDP DNS response and extract the first IPv4 `A` record (`TYPE=1, CLASS=1, RDLENGTH=4`).
+pub fn parse_dns_a_response(pkt: &[u8]) -> Option<String> {
+    if pkt.len() < 12 {
+        return None;
+    }
+    let flags = u16::from_be_bytes([pkt[2], pkt[3]]);
+    let rcode = flags & 0x000F;
+    if rcode != 0 {
+        return None; // NXDOMAIN or SERVFAIL
+    }
+    let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]) as usize;
+    let ancount = u16::from_be_bytes([pkt[6], pkt[7]]) as usize;
+    if ancount == 0 {
+        return None;
+    }
+
+    let skip_name = |buf: &[u8], mut pos: usize| -> Option<usize> {
+        let mut jumps = 0usize;
+        while pos < buf.len() {
+            let len = buf[pos];
+            if len == 0 {
+                return Some(pos + 1);
+            }
+            if (len & 0xC0) == 0xC0 {
+                // DNS compression pointer (2 bytes)
+                if pos + 2 > buf.len() {
+                    return None;
+                }
+                return Some(pos + 2);
+            }
+            pos = pos.checked_add(1 + (len as usize))?;
+            jumps += 1;
+            if jumps > 64 {
+                return None;
+            }
+        }
+        None
+    };
+
+    let mut idx = 12usize;
+    for _ in 0..qdcount {
+        idx = skip_name(pkt, idx)?;
+        idx = idx.checked_add(4)?; // QTYPE (2) + QCLASS (2)
+        if idx > pkt.len() {
+            return None;
+        }
+    }
+
+    for _ in 0..ancount {
+        idx = skip_name(pkt, idx)?;
+        if idx + 10 > pkt.len() {
+            return None;
+        }
+        let rtype = u16::from_be_bytes([pkt[idx], pkt[idx + 1]]);
+        let rclass = u16::from_be_bytes([pkt[idx + 2], pkt[idx + 3]]);
+        let rdlen = u16::from_be_bytes([pkt[idx + 8], pkt[idx + 9]]) as usize;
+        idx += 10;
+        if idx + rdlen > pkt.len() {
+            return None;
+        }
+        if rtype == 1 && rclass == 1 && rdlen == 4 {
+            return Some(format!(
+                "{}.{}.{}.{}",
+                pkt[idx],
+                pkt[idx + 1],
+                pkt[idx + 2],
+                pkt[idx + 3]
+            ));
+        }
+        idx += rdlen;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1443,5 +1702,69 @@ DA\\:F8\\:50\\:6D\\:54\\:BF:GlobalWiFi_kdq:3:2422 MHz:92:WPA2
         let adv31 = frame.to_ble_adv_31(0x66, "DIRECT!");
         assert_eq!(&adv31[0..2], b"8B");
         assert_eq!(adv31[2], 3);
+    }
+
+    #[test]
+    fn inflight_pq_link_classifier_and_raw_dns_a_record_doctor() {
+        // 1. Flight DAL120 (RJTT -> KMSP, Airbus A350 N510DN, Widebody Kong 172.19.1.189/23 -> 172.16.128.1)
+        let dal120 = classify_inflight_link_pq(
+            "DeltaWiFi.com",
+            "172.19.1.189",
+            "172.19.0.1",
+            true,
+            1380,
+            1_200,
+            615_000,
+            39_981,
+            505,
+            "DalPedPremium",
+            true,
+        );
+        assert_eq!(dal120.architecture, InflightCabinArchitecture::WidebodyKong172);
+        assert_eq!(dal120.mtu_efficiency_pq, Rational::new(23, 25).unwrap());
+        assert_eq!(dal120.tunnel_overhead_bytes, 120);
+        assert_eq!(dal120.max_safe_tcp_mss_bytes, 1340);
+        assert!(!dal120.needs_dns_search_heal);
+        assert_eq!(dal120.link_health_q10, 1024);
+
+        // 2. Flight 4965 (KMSP -> KORF, CRJ-900 N292PQ, Regional FortiGate-VM 10.0.0.180/23 -> 10.0.0.1 / 192.168.20.12)
+        // Before split-DNS heal (resolv_has_delta_search = false):
+        let dl4965_unhealed = classify_inflight_link_pq(
+            "DeltaWiFi.com",
+            "10.0.0.180",
+            "10.0.0.1",
+            false,
+            1380,
+            1_627,
+            615_000,
+            32_126,
+            457,
+            "DalPedPremium",
+            true,
+        );
+        assert_eq!(
+            dl4965_unhealed.architecture,
+            InflightCabinArchitecture::RegionalFortiGate10
+        );
+        assert!(dl4965_unhealed.needs_dns_search_heal);
+        assert_eq!(dl4965_unhealed.link_health_q10, 896);
+
+        // 3. Raw UDP DNS A query + response parser for wifi.delta.com -> 192.168.20.12
+        let q = build_dns_a_query(0x1234, "wifi.delta.com");
+        assert_eq!(&q[0..2], &[0x12, 0x34]);
+        let mut fake_resp = q.clone();
+        fake_resp[2] = 0x81; // QR=1, RD=1
+        fake_resp[3] = 0x80; // RA=1, RCODE=0
+        fake_resp[6] = 0x00;
+        fake_resp[7] = 0x01; // ANCOUNT=1
+        // Compressed pointer 0xC00C, TYPE=A (1), CLASS=IN (1), TTL=60, RDLENGTH=4, 192.168.20.12
+        fake_resp.extend_from_slice(&[
+            0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x04, 192, 168, 20,
+            12,
+        ]);
+        assert_eq!(
+            parse_dns_a_response(&fake_resp).as_deref(),
+            Some("192.168.20.12")
+        );
     }
 }

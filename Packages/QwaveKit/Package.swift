@@ -34,6 +34,12 @@ let package = Package(
             name: "WebCredentials",
             targets: ["WebCredentials"]
         ),
+        // Slim Rust C-ABI bridge linked by the PhoenixAudioExtension (AUv3)
+        // on macOS and iOS.
+        .library(
+            name: "SovereignCore",
+            targets: ["SovereignCore"]
+        ),
         // Read-only MCP surface. Deliberately NOT part of the QwaveKit umbrella
         // product: the MCP SDK links EventSource (an SSE/URLSession client) on
         // Apple platforms, and the browser must not gain that code just because

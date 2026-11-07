@@ -31,3 +31,9 @@ zig-core/zig-out/
 
 
 core/target/
+
+# External reference checkouts, local sync patches, and Smart Tree metadata
+docs/reference/noctalia-shell/
+*-dirty.patch
+.st/
+**/.st/

@@ -20,15 +20,21 @@ public enum LocalDocumentResolver {
         "README.mdown", "README",
     ]
     public static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mdx"]
+    public static let texExtensions: Set<String> = ["tex", "ltx", "latex", "bib"]
 
     public static func isMarkdownURL(_ url: URL) -> Bool {
         markdownExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    public static func isTexURL(_ url: URL) -> Bool {
+        texExtensions.contains(url.pathExtension.lowercased())
     }
 
     public static func isMarkdownMIME(_ mime: String?) -> Bool {
         guard let mime else { return false }
         let lower = mime.lowercased()
         return lower == "text/markdown" || lower == "text/x-markdown" || lower.hasPrefix("text/markdown;")
+            || lower == "text/x-tex" || lower == "application/x-tex" || lower == "application/x-latex"
     }
 
     public static func resolve(_ url: URL, fileManager: FileManager = .default) -> LocalDocument {
@@ -47,7 +53,31 @@ public enum LocalDocumentResolver {
                 return .markdown(source: source, fileURL: url)
             }
         }
+        if isTexURL(url) {
+            if let source = try? String(contentsOf: url, encoding: .utf8) {
+                return .markdown(source: convertTexToMarkdown(source), fileURL: url)
+            }
+        }
         return .file(url)
+    }
+
+    /// Lightweight Swift TeX-to-Markdown adapter for local `.tex` files on macOS/iOS.
+    public static func convertTexToMarkdown(_ tex: String) -> String {
+        var s = tex
+        if let docRange = s.range(of: "\\begin{document}") {
+            s = String(s[docRange.upperBound...])
+        }
+        if let endRange = s.range(of: "\\end{document}") {
+            s = String(s[..<endRange.lowerBound])
+        }
+        s = s.replacingOccurrences(of: "\\[", with: "\n$$\n")
+        s = s.replacingOccurrences(of: "\\]", with: "\n$$\n")
+        s = s.replacingOccurrences(of: "\\(", with: "$")
+        s = s.replacingOccurrences(of: "\\)", with: "$")
+        s = s.replacingOccurrences(of: "\\maketitle", with: "")
+        s = s.replacingOccurrences(of: "\\tableofcontents", with: "")
+        s = s.replacingOccurrences(of: "\\noindent", with: "")
+        return s
     }
 
     private static func resolveDirectory(_ directory: URL, fileManager: FileManager) -> LocalDocument {

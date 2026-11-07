@@ -141,3 +141,111 @@ __attribute__((weak)) const char *qw_channel_notice(uint8_t channel) {
     (void)channel;
     return 0;
 }
+
+__attribute__((weak)) struct qwave_phoenix_sound *
+qw_phoenix_sound_new(uint32_t sample_rate_hz, uint8_t preset_id) {
+    (void)sample_rate_hz;
+    (void)preset_id;
+    return 0;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_free(struct qwave_phoenix_sound *engine) {
+    (void)engine;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_set_preset(struct qwave_phoenix_sound *engine,
+                            uint8_t preset_id) {
+    (void)engine;
+    (void)preset_id;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_set_feel(struct qwave_phoenix_sound *engine,
+                          bool automagic, uint16_t voice_pct,
+                          uint16_t bass_pct, uint16_t space_pct) {
+    (void)engine;
+    (void)automagic;
+    (void)voice_pct;
+    (void)bass_pct;
+    (void)space_pct;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_set_alexandra_reset(struct qwave_phoenix_sound *engine,
+                                     bool active) {
+    (void)engine;
+    (void)active;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_set_params(struct qwave_phoenix_sound *engine,
+                            int32_t naad_sub_q10, int32_t svara_vocal_q10,
+                            int32_t warmth_q10, int32_t goonj_velvet_q10,
+                            int32_t air_q10, int32_t stereo_width_q10) {
+    (void)engine;
+    (void)naad_sub_q10;
+    (void)svara_vocal_q10;
+    (void)warmth_q10;
+    (void)goonj_velvet_q10;
+    (void)air_q10;
+    (void)stereo_width_q10;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_process_i16(struct qwave_phoenix_sound *engine,
+                             int16_t *interleaved_stereo, size_t frames) {
+    (void)engine;
+    (void)interleaved_stereo;
+    (void)frames;
+}
+
+__attribute__((weak)) void
+qw_phoenix_sound_telemetry(const struct qwave_phoenix_sound *engine,
+                           uint16_t *out_buckets_64, uint16_t *out_vocal_64,
+                           uint32_t *out_dom_hz, uint16_t *out_soul_q10) {
+    (void)engine;
+    if (out_buckets_64 != 0) {
+        for (size_t i = 0; i < 64; ++i) {
+            out_buckets_64[i] = 0;
+        }
+    }
+    if (out_vocal_64 != 0) {
+        for (size_t i = 0; i < 64; ++i) {
+            out_vocal_64[i] = 0;
+        }
+    }
+    if (out_dom_hz != 0) {
+        *out_dom_hz = 432;
+    }
+    if (out_soul_q10 != 0) {
+        *out_soul_q10 = 980;
+    }
+}
+
+__attribute__((weak)) bool
+qw_i1_evaluate_deed(const char *creator_id, const char *secret_phrase,
+                    const char *canonical_url, const char *page_text,
+                    uint8_t ingest_mode, bool original_author_revoked,
+                    struct QwI1DeedSummary *out_summary) {
+    (void)creator_id;
+    (void)secret_phrase;
+    (void)canonical_url;
+    (void)page_text;
+    if (out_summary == 0) {
+        return false;
+    }
+    out_summary->soul_tag = 0x8B15000100000432ULL;
+    out_summary->deed_seal = (ingest_mode <= 1 && !original_author_revoked) ? 0x51574156ULL : 0;
+    out_summary->stylometric_q10 = 910;
+    out_summary->shingle_q10 = 880;
+    out_summary->organic_authenticity_q10 = 940;
+    out_summary->combined_match_q10 = 900;
+    out_summary->smart_tree_savings_q10 = 780;
+    out_summary->smart_tree_nodes = 12;
+    out_summary->redaction_count = 0;
+    out_summary->can_ingest_i1 = (ingest_mode <= 1 && !original_author_revoked);
+    out_summary->can_summarize_local = (ingest_mode <= 2);
+    return true;
+}

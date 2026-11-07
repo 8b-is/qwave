@@ -344,6 +344,170 @@ pub unsafe extern "C" fn qw_phoenix_free(phoenix: *mut Phoenix) {
     }
 }
 
+// ── PhoeniX Sound Revelation & Marine-Sense AUv3 C ABI ─────────────────────
+
+/// C ABI: allocate a real-time [`crate::phoenix_sound::PhoenixLiveProcessor`]
+/// for macOS / iOS Audio Unit v3 (`AUv3`) plugins (`preset_id`: `0..=4`).
+#[unsafe(no_mangle)]
+pub extern "C" fn qw_phoenix_sound_new(
+    sample_rate_hz: u32,
+    preset_id: u8,
+) -> *mut crate::phoenix_sound::PhoenixLiveProcessor {
+    let preset = crate::phoenix_sound::PhoenixSoundPreset::from_id(preset_id);
+    Box::into_raw(Box::new(crate::phoenix_sound::PhoenixLiveProcessor::new(
+        sample_rate_hz.max(8_000),
+        preset,
+    )))
+}
+
+/// C ABI: release a [`crate::phoenix_sound::PhoenixLiveProcessor`] created by `qw_phoenix_sound_new`.
+///
+/// # Safety
+/// `engine` must come from `qw_phoenix_sound_new` and not be freed twice.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_free(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+) {
+    if !engine.is_null() {
+        unsafe { drop(Box::from_raw(engine)) };
+    }
+}
+
+/// C ABI: switch the active PhoeniX preset (`0=Sovereign`, `1=Goonj`, `2=Naad`, `3=Sanctuary432`, `4=VocalClarity`, `5=AlexandraSanctuary`).
+///
+/// # Safety
+/// `engine` must be a valid pointer from `qw_phoenix_sound_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_set_preset(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+    preset_id: u8,
+) {
+    if !engine.is_null() {
+        let eng = unsafe { &mut *engine };
+        eng.preset = crate::phoenix_sound::PhoenixSoundPreset::from_id(preset_id);
+    }
+}
+
+/// C ABI: update the Auto-Magical Svara & Fletcher-Munson self-tuning mode and 3 human-feel macros (`0..=200` percent).
+///
+/// # Safety
+/// `engine` must be a valid pointer from `qw_phoenix_sound_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_set_feel(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+    automagic: bool,
+    voice_pct: u16,
+    bass_pct: u16,
+    space_pct: u16,
+) {
+    if !engine.is_null() {
+        let eng = unsafe { &mut *engine };
+        eng.set_feel_controls(automagic, voice_pct, bass_pct, space_pct);
+    }
+}
+
+/// C ABI: toggle the built-in 432Hz x phi Alexandra Sanctuary Nervous-System Reset Wave (`true` = soothing reset active).
+///
+/// # Safety
+/// `engine` must be a valid pointer from `qw_phoenix_sound_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_set_alexandra_reset(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+    active: bool,
+) {
+    if !engine.is_null() {
+        let eng = unsafe { &mut *engine };
+        eng.alexandra_reset_active = active;
+        if active {
+            eng.preset = crate::phoenix_sound::PhoenixSoundPreset::alexandra_sanctuary();
+        }
+    }
+}
+
+/// C ABI: fine-tune individual PhoeniX harmonic parameters (`0..=1024` Q10 scale; `stereo_width_q10` `512..=2048`)
+/// from an AUv3 host parameter tree (Logic Pro, GarageBand, MainStage, AUM).
+///
+/// # Safety
+/// `engine` must be a valid pointer from `qw_phoenix_sound_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_set_params(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+    naad_sub_q10: i32,
+    svara_vocal_q10: i32,
+    warmth_q10: i32,
+    goonj_velvet_q10: i32,
+    air_q10: i32,
+    stereo_width_q10: i32,
+) {
+    if !engine.is_null() {
+        let eng = unsafe { &mut *engine };
+        eng.preset.naad_sub_q10 = (naad_sub_q10 as i64).clamp(0, 1024);
+        eng.preset.svara_formant_q10 = (svara_vocal_q10 as i64).clamp(0, 1024);
+        eng.preset.warmth_q10 = (warmth_q10 as i64).clamp(0, 1024);
+        eng.preset.goonj_velvet_q10 = (goonj_velvet_q10 as i64).clamp(0, 1024);
+        eng.preset.air_q10 = (air_q10 as i64).clamp(0, 1024);
+        eng.preset.stereo_width_q10 = (stereo_width_q10 as i64).clamp(512, 2048);
+    }
+}
+
+/// C ABI: real-time zero-allocation in-place stereo `s16le` processing (`frames * 2` samples).
+///
+/// # Safety
+/// `engine` must be valid; `interleaved_stereo` must point to at least `frames * 2` writable `i16` values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_process_i16(
+    engine: *mut crate::phoenix_sound::PhoenixLiveProcessor,
+    interleaved_stereo: *mut i16,
+    frames: usize,
+) {
+    if engine.is_null() || interleaved_stereo.is_null() || frames == 0 {
+        return;
+    }
+    let eng = unsafe { &mut *engine };
+    let slice = unsafe { core::slice::from_raw_parts_mut(interleaved_stereo, frames * 2) };
+    eng.process_stereo_in_place(slice);
+}
+
+/// C ABI: snapshot the 64 Time-Domain Marine Salience anchor buckets (`20 Hz .. 384,000 Hz`),
+/// the 64 isolated Singer-Only Vocal Salience buckets, the dominant pitch in Hz, and Soul score (`0..=1024`).
+///
+/// # Safety
+/// Non-null output pointers must point to writable buffers of the documented sizes (`64` `u16`s for buckets).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qw_phoenix_sound_telemetry(
+    engine: *const crate::phoenix_sound::PhoenixLiveProcessor,
+    out_buckets_64: *mut u16,
+    out_vocal_64: *mut u16,
+    out_dom_hz: *mut u32,
+    out_soul_q10: *mut u16,
+) {
+    if engine.is_null() {
+        return;
+    }
+    let eng = unsafe { &*engine };
+    if !out_buckets_64.is_null() {
+        let dst = unsafe { core::slice::from_raw_parts_mut(out_buckets_64, 64) };
+        dst.copy_from_slice(&eng.marine_buckets_q10);
+    }
+    if !out_vocal_64.is_null() {
+        let dst = unsafe { core::slice::from_raw_parts_mut(out_vocal_64, 64) };
+        if eng.vocal_confidence_q10 >= 140 {
+            dst.copy_from_slice(&eng.marine_vocal_q10);
+        } else {
+            dst.fill(0);
+        }
+    }
+    let (dom_hz, _shruti_r, _shruti_name, soul_auth) = eng.live_telemetry();
+    if !out_dom_hz.is_null() {
+        let hz = (dom_hz.num.max(1) as u32) / dom_hz.den.max(1);
+        unsafe { *out_dom_hz = hz };
+    }
+    if !out_soul_q10.is_null() {
+        let soul = ((soul_auth.num.max(0) as u32 * 1024) / soul_auth.den.max(1)).min(1024) as u16;
+        unsafe { *out_soul_q10 = soul };
+    }
+}
+
 // ── MD5, RFC 1321, dependency-free (the 16-byte prefix of the wave ABI) ────
 
 /// MD5 digest, 16 bytes — the wave ABI's identity prefix.
@@ -717,5 +881,44 @@ mod tests {
             snr_restored > snr_degraded + 25.0 && snr_restored > snr_hold + 15.0,
             "SNR must improve substantially: degraded={snr_degraded:.2} dB, hold={snr_hold:.2} dB, restored={snr_restored:.2} dB"
         );
+    }
+
+    #[test]
+    fn qw_phoenix_sound_c_abi_roundtrip_and_vocal_emotion() {
+        let engine = qw_phoenix_sound_new(48_000, 4); // VocalClarity
+        assert!(!engine.is_null());
+
+        let mut stereo = vec![0i16; 1024 * 2];
+        for i in 0..1024 {
+            // Centered singer vocal wave (~432 Hz)
+            let phase = ((i * 432) % 48_000) as i32;
+            let s = if phase < 24_000 { 6000i16 } else { -6000i16 };
+            stereo[i * 2] = s;
+            stereo[i * 2 + 1] = s;
+        }
+
+        let mut buckets = [0u16; 64];
+        let mut vocal = [0u16; 64];
+        let mut dom_hz = 0u32;
+        let mut soul_q10 = 0u16;
+
+        unsafe {
+            qw_phoenix_sound_set_preset(engine, 4);
+            qw_phoenix_sound_set_params(engine, 520, 740, 440, 420, 560, 1280);
+            qw_phoenix_sound_process_i16(engine, stereo.as_mut_ptr(), 1024);
+            qw_phoenix_sound_telemetry(
+                engine,
+                buckets.as_mut_ptr(),
+                vocal.as_mut_ptr(),
+                &mut dom_hz,
+                &mut soul_q10,
+            );
+            qw_phoenix_sound_free(engine);
+        }
+
+        assert!(buckets.iter().any(|&b| b > 0), "full music buckets must be populated");
+        assert!(vocal.iter().any(|&v| v > 0), "vocal-only salience buckets must be populated for centered vocal");
+        assert!(dom_hz > 0, "dominant pitch must be non-zero");
+        assert!(soul_q10 <= 1024, "soul score must stay in Q10 bounds");
     }
 }

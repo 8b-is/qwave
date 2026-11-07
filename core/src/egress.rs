@@ -15,11 +15,13 @@ use core::ffi::{CStr, c_char};
 /// Permitted Category-A hosts. Favicon and remote-markdown fetches are
 /// deliberately absent: their host is whatever page you navigated to, so
 /// they are page-driven and cannot be allowlisted to a fixed set.
-pub const HOSTS: [&str; 4] = [
+pub const HOSTS: [&str; 5] = [
     // Auto-update feed (Sparkle). User-consented.
     "github.com",
     // Memory Wave remote AI provider, default endpoint (off by default).
     "api.x.ai",
+    // Sovereign i1.is AI provenance, Soul Signature, & consented ingestion registry (user-initiated).
+    "i1.is",
     // Omnibox autocomplete suggestions (off by default). DuckDuckGo and
     // Ecosia are the only engines with a vetted keyless autocomplete
     // endpoint.
