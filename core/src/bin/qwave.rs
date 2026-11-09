@@ -17,7 +17,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -287,18 +287,39 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "--clone-studio" || a == "--tune-voice")
+    {
+        let name = args
+            .iter()
+            .position(|a| a == "--name" || a == "--voice" || a == "-V")
+            .and_then(|npos| args.get(npos + 1))
+            .or_else(|| args.get(pos + 1).filter(|s| !s.starts_with('-')))
+            .map(String::as_str)
+            .unwrap_or("hue");
+        println!("{}", open_voice_clone_studio(name));
+        return ExitCode::SUCCESS;
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--clone-voice") {
         let target = args
             .get(pos + 1)
+            .filter(|s| !s.starts_with('-'))
             .map(String::as_str)
-            .unwrap_or("/home/hue/8b-is/hello.wav");
+            .unwrap_or("5");
         let name = args
             .iter()
             .position(|a| a == "--name" || a == "--voice" || a == "-V")
             .and_then(|npos| args.get(npos + 1))
             .map(String::as_str)
             .unwrap_or("hue");
-        println!("{}", clone_voice_from_wav(target, name));
+        let force_batch = args
+            .iter()
+            .any(|a| a == "--batch" || a == "--json" || a == "--no-interactive");
+        let force_interactive = args.iter().any(|a| a == "-i" || a == "--interactive");
+        let interactive = force_interactive || (!force_batch && std::io::stdin().is_terminal());
+        println!("{}", clone_voice_with_mode(target, name, interactive));
         return ExitCode::SUCCESS;
     }
 
@@ -1678,8 +1699,16 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
     let profile = cloned_opt
         .clone()
         .unwrap_or_else(|| resolve_persona_salience_profile(voice, &state.salience_profile));
+    let tuning_opt = load_voice_clone_tuning(voice, cloned_opt.as_ref(), &profile);
 
-    let kokoro_voice = select_kokoro_blend_for_profile(voice, cloned_opt.as_ref(), &profile);
+    let kokoro_voice = tuning_opt
+        .as_ref()
+        .map(|t| t.kokoro_blend.clone())
+        .unwrap_or_else(|| select_kokoro_blend_for_profile(voice, cloned_opt.as_ref(), &profile));
+    let speed_str = tuning_opt
+        .as_ref()
+        .map(|t| format_speed_permille(t.speed_permille))
+        .unwrap_or_else(|| "1.00".to_string());
 
     let kokoro_bin = if Path::new("/usr/local/bin/kokoro-speak").exists() {
         "/usr/local/bin/kokoro-speak"
@@ -1691,7 +1720,16 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
 
     if let Ok(status) = Command::new(kokoro_bin)
         .env("PIPER_ESPEAKNG_DATA_DIRECTORY", "/usr/share")
-        .args(["-V", &kokoro_voice, "-o", &wav_path, "say", &spoken])
+        .args([
+            "-V",
+            &kokoro_voice,
+            "-s",
+            &speed_str,
+            "-o",
+            &wav_path,
+            "say",
+            &spoken,
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -1701,7 +1739,11 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
                 let _ = fs::remove_file(&wav_path);
                 let _ = fs::remove_file(format!("{wav_path}.stt.json"));
                 if !bytes.is_empty() {
-                    return combine_salient_speech_wav(&bytes, &profile);
+                    let salient = combine_salient_speech_wav(&bytes, &profile);
+                    if let Some(ref tuning) = tuning_opt {
+                        return apply_voice_clone_shaping_wav(&salient, &profile, tuning);
+                    }
+                    return salient;
                 }
             }
         }
@@ -1718,7 +1760,11 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
         .output()
     {
         if !out.stdout.is_empty() {
-            return combine_salient_speech_wav(&out.stdout, &profile);
+            let salient = combine_salient_speech_wav(&out.stdout, &profile);
+            if let Some(ref tuning) = tuning_opt {
+                return apply_voice_clone_shaping_wav(&salient, &profile, tuning);
+            }
+            return salient;
         }
     }
 
@@ -7471,6 +7517,247 @@ fn resolve_persona_salience_profile(
     }
 }
 
+/// Persistent tuning parameters for a cloned `.m8sp` voice (`~/.local/share/qwave/mem8/voices/<slug>.json`).
+#[derive(Clone, Debug)]
+struct VoiceCloneTuning {
+    kokoro_blend: String,
+    speed_permille: u32,
+    f0_target_hz: i32,
+    chest_gain_q10: i32,
+    presence_gain_q10: i32,
+    air_gain_q10: i32,
+    ref_wav_path: String,
+}
+
+fn format_speed_permille(speed_permille: u32) -> String {
+    let clamped = speed_permille.clamp(650, 1450);
+    let whole = clamped / 1000;
+    let hundredths = (clamped % 1000) / 10;
+    format!("{whole}.{hundredths:02}")
+}
+
+fn voice_tuning_path(slug: &str) -> PathBuf {
+    voices_dir().join(format!("{slug}.json"))
+}
+
+fn save_voice_clone_tuning(slug: &str, tuning: &VoiceCloneTuning) {
+    let json = format!(
+        "{{\"kokoro_blend\":{},\"speed_permille\":{},\"f0_target_hz\":{},\"chest_gain_q10\":{},\"presence_gain_q10\":{},\"air_gain_q10\":{},\"ref_wav_path\":{}}}",
+        markdown_source_literal(&tuning.kokoro_blend),
+        tuning.speed_permille,
+        tuning.f0_target_hz,
+        tuning.chest_gain_q10,
+        tuning.presence_gain_q10,
+        tuning.air_gain_q10,
+        markdown_source_literal(&tuning.ref_wav_path)
+    );
+    let _ = fs::write(voice_tuning_path(slug), json);
+}
+
+fn load_voice_clone_tuning(
+    voice: &str,
+    cloned_opt: Option<&SpeakerSalienceProfile>,
+    prof: &SpeakerSalienceProfile,
+) -> Option<VoiceCloneTuning> {
+    let slug = sanitize_persona_slug(voice);
+    let path = voice_tuning_path(&slug);
+    let default_f0 = (prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32)).clamp(80, 300);
+    let default_blend = select_kokoro_blend_for_profile(voice, cloned_opt, prof);
+    let default_ref = voices_dir()
+        .join(format!("{slug}_ref.wav"))
+        .to_string_lossy()
+        .to_string();
+
+    if let Ok(raw) = fs::read_to_string(&path) {
+        let kokoro_blend = extract_json_str(&raw, "kokoro_blend").unwrap_or(default_blend);
+        let speed_permille =
+            (extract_json_u64(&raw, "speed_permille").unwrap_or(1000) as u32).clamp(700, 1350);
+        let f0_target_hz = (extract_json_u64(&raw, "f0_target_hz").unwrap_or(default_f0 as u64)
+            as i32)
+            .clamp(80, 300);
+        let chest_gain_q10 =
+            (extract_json_u64(&raw, "chest_gain_q10").unwrap_or(1024) as i32).clamp(700, 1536);
+        let presence_gain_q10 =
+            (extract_json_u64(&raw, "presence_gain_q10").unwrap_or(1024) as i32).clamp(700, 1536);
+        let air_gain_q10 =
+            (extract_json_u64(&raw, "air_gain_q10").unwrap_or(1024) as i32).clamp(700, 1536);
+        let ref_wav_path = extract_json_str(&raw, "ref_wav_path").unwrap_or(default_ref);
+        return Some(VoiceCloneTuning {
+            kokoro_blend,
+            speed_permille,
+            f0_target_hz,
+            chest_gain_q10,
+            presence_gain_q10,
+            air_gain_q10,
+            ref_wav_path,
+        });
+    }
+
+    if cloned_opt.is_some() {
+        return Some(VoiceCloneTuning {
+            kokoro_blend: default_blend,
+            speed_permille: 1000,
+            f0_target_hz: default_f0,
+            chest_gain_q10: 1080,
+            presence_gain_q10: 1040,
+            air_gain_q10: 980,
+            ref_wav_path: default_ref,
+        });
+    }
+    None
+}
+
+/// Zero-float 3-Band Vocal Tract Formant Analyzer + Syllable-Nucleus Cadence Estimator:
+/// Splits reference speech into Chest (`<350 Hz`), Vocal Presence (`350..2400 Hz`), and Air (`>2400 Hz`)
+/// bands using integer 1-pole crossover filters and measures natural speaking cadence (`speed_permille`).
+fn analyze_vocal_tract_eq_and_cadence(pcm: &[i16], sr: u32) -> (i32, i32, i32, u32) {
+    if pcm.is_empty() {
+        return (1024, 1024, 1024, 1000);
+    }
+    let mut lpf_low: i32 = 0;
+    let mut lpf_mid: i32 = 0;
+    let mut e_low: i64 = 0;
+    let mut e_mid: i64 = 0;
+    let mut e_high: i64 = 0;
+
+    for &sample in pcm {
+        let s = sample as i32;
+        if s.abs() < 180 {
+            continue;
+        }
+        lpf_low = (lpf_low * 14 + s * 2) >> 4;
+        lpf_mid = (lpf_mid * 9 + s * 7) >> 4;
+        let low = lpf_low;
+        let mid = lpf_mid - lpf_low;
+        let high = s - lpf_mid;
+        e_low += (low as i64).abs();
+        e_mid += (mid as i64).abs();
+        e_high += (high as i64).abs();
+    }
+
+    let total_e = (e_low + e_mid + e_high).max(1);
+    // Reference neutral speech energy distribution: ~50% low, ~36% mid, ~14% high
+    let low_pct = ((e_low * 100) / total_e) as i32;
+    let mid_pct = ((e_mid * 100) / total_e) as i32;
+    let high_pct = ((e_high * 100) / total_e) as i32;
+
+    let chest_gain_q10 = (1024 + (low_pct - 50) * 8).clamp(820, 1360);
+    let presence_gain_q10 = (1024 + (mid_pct - 36) * 8).clamp(840, 1340);
+    let air_gain_q10 = (1024 + (high_pct - 14) * 10).clamp(800, 1340);
+
+    // Estimate syllable rate across 40ms frames
+    let frame_len = ((sr.max(8_000) as usize) / 25).max(160);
+    let mut frame_energies = Vec::new();
+    let mut idx = 0usize;
+    while idx + frame_len <= pcm.len() {
+        let e: i64 = pcm[idx..idx + frame_len]
+            .iter()
+            .map(|&v| (v as i64).abs())
+            .sum::<i64>()
+            / (frame_len as i64);
+        frame_energies.push(e);
+        idx += frame_len;
+    }
+
+    let mean_e = if frame_energies.is_empty() {
+        0
+    } else {
+        frame_energies.iter().sum::<i64>() / (frame_energies.len() as i64)
+    };
+    let threshold = (mean_e * 9) / 10;
+    let mut peaks = 0u32;
+    let mut last_peak_frame = 0usize;
+    let mut voiced_frames = 0u32;
+    for i in 1..frame_energies.len().saturating_sub(1) {
+        if frame_energies[i] > mean_e / 3 {
+            voiced_frames += 1;
+        }
+        if frame_energies[i] > threshold
+            && frame_energies[i] >= frame_energies[i - 1]
+            && frame_energies[i] >= frame_energies[i + 1]
+            && (peaks == 0 || i >= last_peak_frame + 3)
+        {
+            peaks += 1;
+            last_peak_frame = i;
+        }
+    }
+
+    let speed_permille = if voiced_frames >= 12 && peaks >= 2 {
+        // 25 frames/sec; ~3.8 syllables/sec is 1000 permille (1.00x)
+        let syl_per_100s = (peaks * 2500) / voiced_frames.max(1);
+        ((syl_per_100s * 1000) / 380).clamp(880, 1160)
+    } else {
+        1000
+    };
+
+    (
+        chest_gain_q10,
+        presence_gain_q10,
+        air_gain_q10,
+        speed_permille,
+    )
+}
+
+/// Apply the cloned speaker's 3-Band Vocal Tract Formant EQ (`chest_gain_q10`, `presence_gain_q10`,
+/// `air_gain_q10`) and true `f0`-locked rational pitch/formant resampling in 100% integer math.
+fn apply_voice_clone_shaping_wav(
+    wav_bytes: &[u8],
+    prof: &SpeakerSalienceProfile,
+    tuning: &VoiceCloneTuning,
+) -> Vec<u8> {
+    let Some((sample_rate, mut samples)) = decode_wav_i16(wav_bytes) else {
+        return wav_bytes.to_vec();
+    };
+    if samples.len() < 512 {
+        return wav_bytes.to_vec();
+    }
+
+    // Measure the synthesized base voice's actual fundamental frequency
+    let raw_f0_pq = estimate_true_f0_autocorr_pq(&samples, sample_rate, prof.f0_hz, "hue");
+    let raw_f0_hz = (raw_f0_pq.num / (raw_f0_pq.den.max(1) as i32)).clamp(85, 290);
+    let target_f0_hz = tuning.f0_target_hz.clamp(80, 300);
+
+    // 1. 3-Band Vocal Tract Formant Crossover EQ
+    let mut lpf_low: i32 = 0;
+    let mut lpf_mid: i32 = 0;
+    for sample in &mut samples {
+        let s = *sample as i32;
+        lpf_low = (lpf_low * 14 + s * 2) >> 4;
+        lpf_mid = (lpf_mid * 9 + s * 7) >> 4;
+        let low = lpf_low;
+        let mid = lpf_mid - lpf_low;
+        let high = s - lpf_mid;
+        let shaped = ((low * tuning.chest_gain_q10)
+            + (mid * tuning.presence_gain_q10)
+            + (high * tuning.air_gain_q10))
+            >> 10;
+        *sample = shaped.clamp(-32_767, 32_767) as i16;
+    }
+
+    // 2. True f0-Locked Rational Pitch & Formant Resampling (Q12: 4096 = 1.00x)
+    // Blend 65% of the exact f0 ratio so formants shift naturally into the speaker's register
+    let exact_ratio_q12 = (target_f0_hz * 4096) / raw_f0_hz.max(85);
+    let step_q12 = (((4096 * 35) + (exact_ratio_q12 * 65)) / 100).clamp(3440, 4820) as usize;
+    let total = samples.len();
+    if step_q12 != 4096 && total > 1024 {
+        let out_len = ((total * 4096) / step_q12).max(1);
+        let mut resampled = Vec::with_capacity(out_len);
+        for out_idx in 0..out_len {
+            let pos_q12 = out_idx * step_q12;
+            let idx0 = (pos_q12 >> 12).min(total - 1);
+            let idx1 = (idx0 + 1).min(total - 1);
+            let frac_q12 = (pos_q12 & 0xfff) as i32;
+            let s0 = samples[idx0] as i32;
+            let s1 = samples[idx1] as i32;
+            let interp = ((s0 * (4096 - frac_q12)) + (s1 * frac_q12)) >> 12;
+            resampled.push(interp.clamp(-32_767, 32_767) as i16);
+        }
+        samples = resampled;
+    }
+
+    encode_wav_i16(sample_rate, &samples)
+}
+
 /// Select a distinct 256-D Kokoro neural style blend for both built-in personas and cloned `.m8sp`
 /// voice profiles using 100% integer acoustic features (`f0_hz`, `vad_byte`, and 16-bin prosody contour).
 fn select_kokoro_blend_for_profile(
@@ -7509,31 +7796,32 @@ fn select_kokoro_blend_for_profile(
     contour_sig = contour_sig.wrapping_add(prof.best_grain_pcm.len().wrapping_mul(7));
 
     let w_primary = match contour_sig % 3 {
-        0 => 7,
-        1 => 6,
-        _ => 8,
+        0 => 6,
+        1 => 7,
+        _ => 5,
     };
     let w_secondary = 10 - w_primary;
 
     if is_male_persona {
+        // Prioritize natural American male voices (`am_*`) so American speakers don't get a default British accent
         let male_voices = [
             "am_michael",
             "am_adam",
-            "bm_lewis",
-            "am_echo",
             "am_onyx",
-            "bm_george",
+            "am_echo",
             "am_liam",
             "am_fenrir",
+            "am_eric",
+            "am_puck",
         ];
-        let primary_idx = if f0_int < 115 {
-            4 + (contour_sig % 2) // am_onyx / bm_george
-        } else if f0_int <= 138 {
-            contour_sig % 4 // am_michael / am_adam / bm_lewis / am_echo
+        let primary_idx = if f0_int < 112 {
+            (contour_sig % 2) * 2 // am_michael or am_onyx (deep warm baritone)
+        } else if f0_int <= 135 {
+            contour_sig % 4 // am_michael / am_adam / am_onyx / am_echo
         } else {
-            (contour_sig + 2) % 8
+            (contour_sig + 2) % male_voices.len()
         };
-        let secondary_idx = (primary_idx + 1 + ((contour_sig >> 3) % 6)) % male_voices.len();
+        let secondary_idx = (primary_idx + 1 + ((contour_sig >> 2) % 5)) % male_voices.len();
         format!(
             "{}.{w_primary}+{}.{w_secondary}",
             male_voices[primary_idx], male_voices[secondary_idx]
@@ -7637,39 +7925,381 @@ fn estimate_true_f0_autocorr_pq(
     raw_f0
 }
 
-/// Zero-float Voice Cloning Engine (`qwave --clone-voice <wav_or_secs> [--name <persona>]`):
-/// Extracts the speaker's exact `p/q` fundamental frequency (`f0_hz`), 16-bin prosody contour,
-/// highest-salience glottal harmonic template (`best_grain_pcm`), and `qUltraKotoro` `QuantTern`
-/// affect code (`qt:`), saving the cloned `M8SP` voice profile to `~/.local/share/qwave/mem8/voices/<name>.m8sp`.
-fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
-    let slug = sanitize_persona_slug(persona_name);
+fn format_clone_voice_result_json(
+    slug: &str,
+    out_path: &Path,
+    prof: &SpeakerSalienceProfile,
+    tuning: &VoiceCloneTuning,
+) -> String {
+    let qt_code = format!("qt:{:02x}", prof.vad_byte);
+    let mut env_str = String::from("[");
+    for (i, &v) in prof.prosody_envelope_q15.iter().enumerate() {
+        if i > 0 {
+            env_str.push(',');
+        }
+        env_str.push_str(&v.to_string());
+    }
+    env_str.push(']');
+
+    format!(
+        "{{\"ok\":true,\"action\":\"clone_voice\",\"persona\":{},\"profile_path\":{},\"base_kokoro_blend\":{},\"f0_hz\":{},\"f0_pq\":\"{}/{}\",\"speed_permille\":{},\"chest_gain_q10\":{},\"presence_gain_q10\":{},\"air_gain_q10\":{},\"avg_salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"qt_code\":{},\"grains_learned\":{},\"best_grain_samples\":{},\"prosody_envelope_q15\":{env_str}}}",
+        markdown_source_literal(slug),
+        markdown_source_literal(&out_path.to_string_lossy()),
+        markdown_source_literal(&tuning.kokoro_blend),
+        tuning.f0_target_hz,
+        prof.f0_hz.num,
+        prof.f0_hz.den,
+        tuning.speed_permille,
+        tuning.chest_gain_q10,
+        tuning.presence_gain_q10,
+        tuning.air_gain_q10,
+        prof.avg_salience.num,
+        prof.avg_salience.den,
+        prof.vad_byte,
+        markdown_source_literal(&qt_code),
+        prof.grains_learned,
+        prof.best_grain_pcm.len()
+    )
+}
+
+fn record_mic_reference_wav(secs: u64, dest_wav: &str, interactive: bool, persona: &str) {
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
-    let mut temp_rec: Option<String> = None;
+    if interactive {
+        eprintln!("\n╔══════════════════════════════════════════════════════════════════════════╗");
+        eprintln!("║  🎙️  QWAVE SOVEREIGN VOICE CLONE STUDIO · MEM|8 + qUltraKotoro           ║");
+        eprintln!("╠══════════════════════════════════════════════════════════════════════════╣");
+        eprintln!(
+            "║  Persona : {:<18}   Duration : {:>2}s @ 16kHz 16-bit PCM        ║",
+            persona, secs
+        );
+        eprintln!("║  Prompt  : Read the phrase below naturally at your normal speaking pace: ║");
+        eprintln!("║                                                                          ║");
+        eprintln!(
+            "║  \"Hello Alexandra, this is {} speaking on Qwave.                   ║",
+            persona
+        );
+        eprintln!("║   One clean signal, next stop tomorrow — crystal clear in the wave.\"     ║");
+        eprintln!("╚══════════════════════════════════════════════════════════════════════════╝");
+        for count in (1..=3).rev() {
+            eprint!("\r  ⏳ Starting mic capture in {count}... ");
+            let _ = std::io::stderr().flush();
+            thread::sleep(Duration::from_millis(650));
+        }
+        eprintln!("\r  🔴 RECORDING NOW ({secs}s) — Speak naturally!                   ");
+        let _ = std::io::stderr().flush();
+    }
+
+    let _ = Command::new("sh")
+        .env("XDG_RUNTIME_DIR", &xdg_runtime)
+        .args([
+            "-c",
+            &format!(
+                "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{{print $2; exit}}'); \
+                 if [ -n \"$MIC_SRC\" ]; then pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; fi; \
+                 timeout {secs}s pw-record --rate=16000 --channels=1 --format=s16 '{dest_wav}' >/dev/null 2>&1 || arecord -f S16_LE -r 16000 -c 1 -d {secs} '{dest_wav}' >/dev/null 2>&1"
+            ),
+        ])
+        .status();
+
+    if interactive {
+        eprintln!(
+            "  ✅ Capture complete! Extracting MEM|8 vocal grains, f0, and 3-band formants..."
+        );
+    }
+}
+
+/// Interactive Voice Clone Studio (`qwave --clone-voice` in a terminal or `qwave --clone-studio <name>`):
+/// Lets the user audition their cloned voice, compare it against their recorded reference WAV,
+/// switch between 8 neural 256-D base blends (or type any custom Kokoro blend), nudge pitch/formant
+/// (`f0_hz`), adjust chest warmth vs. treble air, tune speaking cadence speed, or record an additional
+/// 5s microphone take to merge more vocal grains.
+fn run_interactive_voice_clone_studio(
+    slug: &str,
+    prof: &mut SpeakerSalienceProfile,
+    tuning: &mut VoiceCloneTuning,
+) {
+    let candidate_blends: [(&str, &str); 8] = [
+        (
+            "am_michael.6+am_adam.4",
+            "Warm American Baritone (Natural Conversational)",
+        ),
+        (
+            "am_onyx.6+am_michael.4",
+            "Deep Chest Baritone (Rich Low-End Authority)",
+        ),
+        (
+            "am_adam.6+am_echo.4",
+            "Clear Studio Baritone-Tenor (Crisp & Balanced)",
+        ),
+        (
+            "am_echo.6+am_liam.4",
+            "Agile Conversational Male (Bright & Articulate)",
+        ),
+        (
+            "am_fenrir.6+am_onyx.4",
+            "Textured Resonant Baritone (Strong Presence)",
+        ),
+        (
+            "bm_lewis.6+am_michael.4",
+            "Transatlantic Narrative Baritone (Smooth Blend)",
+        ),
+        (
+            "af_heart.7+af_bella.3",
+            "Warm Expressive Female (Aye Signature)",
+        ),
+        (
+            "af_bella.6+af_sky.4",
+            "Bright Lyrical Female (LFM Aye Signature)",
+        ),
+    ];
+
+    let mut preview_phrase =
+        format!("Hello Alexandra, this is {slug} speaking with my tuned Qwave voice.");
+    let out_path = voices_dir().join(format!("{slug}.m8sp"));
+
+    // Save initial state and play initial preview out loud
+    let _ = fs::write(&out_path, prof.to_bytes());
+    save_voice_clone_tuning(slug, tuning);
+    if slug == "hue" || slug == "primary" {
+        save_salience_profile(prof);
+    }
+
+    eprintln!("  🔊 Playing initial clone preview...");
+    let _ = speak_out_loud(&preview_phrase, slug, true, true);
+
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+
+    loop {
+        let chest_pct = (tuning.chest_gain_q10 * 100) / 1024;
+        let pres_pct = (tuning.presence_gain_q10 * 100) / 1024;
+        let air_pct = (tuning.air_gain_q10 * 100) / 1024;
+        let speed_disp = format_speed_permille(tuning.speed_permille);
+
+        eprintln!("\n╭──────────────────────────────────────────────────────────────────────────╮");
+        eprintln!(
+            "│ 🎛️  QWAVE INTERACTIVE VOICE CLONE STUDIO — Persona: {:<20} │",
+            slug
+        );
+        eprintln!("├──────────────────────────────────────────────────────────────────────────┤");
+        eprintln!("│  Neural Blend : {:<56} │", tuning.kokoro_blend);
+        eprintln!(
+            "│  Pitch (f0)   : {:>3} Hz (p/q {:}/{:<5})   Cadence Speed : {}x ({}‰)   │",
+            tuning.f0_target_hz, prof.f0_hz.num, prof.f0_hz.den, speed_disp, tuning.speed_permille
+        );
+        eprintln!(
+            "│  3-Band EQ    : Chest {:>3}% · Presence {:>3}% · Air {:>3}%   Grains : {:<4}    │",
+            chest_pct, pres_pct, air_pct, prof.grains_learned
+        );
+        eprintln!("├──────────────────────────────────────────────────────────────────────────┤");
+        eprintln!("│  [Enter / p] Play Cloned Voice       [r] Play Recorded Reference WAV     │");
+        eprintln!("│  [1 - 8]     Pick Base Voice Blend   [b <blend>] Custom Kokoro Blend     │");
+        eprintln!("│    1: am_michael.6+am_adam.4 (Warm US)   2: am_onyx.6+am_michael.4 (Deep)│");
+        eprintln!("│    3: am_adam.6+am_echo.4 (Clear US)     4: am_echo.6+am_liam.4 (Agile)  │");
+        eprintln!("│    5: am_fenrir.6+am_onyx.4 (Textured)   6: bm_lewis.6+am_michael.4 (UK) │");
+        eprintln!("│    7: af_heart.7+af_bella.3 (Warm Fem)   8: af_bella.6+af_sky.4 (Bright) │");
+        eprintln!("│  [+ / -]     Pitch Up / Down (±4Hz)  [f0 <hz>]   Set Exact Pitch (80-280)│");
+        eprintln!("│  [w / c]     Warmer Chest / Crisper  [f / s]     Faster / Slower (+5/-5%)│");
+        eprintln!("│  [t <text>]  Set Preview Phrase      [m]         Record 5s More Grains   │");
+        eprintln!("│  [q]         Save & Exit Studio                                          │");
+        eprintln!("╰──────────────────────────────────────────────────────────────────────────╯");
+        eprint!("🎛️  clone-studio ({slug}) > ");
+        let _ = std::io::stderr().flush();
+
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        let cmd = line.trim();
+        if cmd.eq_ignore_ascii_case("q")
+            || cmd.eq_ignore_ascii_case("quit")
+            || cmd.eq_ignore_ascii_case("exit")
+            || cmd.eq_ignore_ascii_case("save")
+        {
+            break;
+        }
+
+        let mut should_preview = true;
+        if cmd.is_empty() || cmd.eq_ignore_ascii_case("p") || cmd.eq_ignore_ascii_case("play") {
+            // Just play current preview
+        } else if cmd.eq_ignore_ascii_case("r") || cmd.eq_ignore_ascii_case("ref") {
+            should_preview = false;
+            if Path::new(&tuning.ref_wav_path).exists() {
+                eprintln!(
+                    "  🎧 Playing your recorded reference WAV ({})...",
+                    tuning.ref_wav_path
+                );
+                let xdg_runtime =
+                    env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+                let _ = Command::new("pw-play")
+                    .env("XDG_RUNTIME_DIR", &xdg_runtime)
+                    .arg(&tuning.ref_wav_path)
+                    .status()
+                    .or_else(|_| {
+                        Command::new("aplay")
+                            .arg("-q")
+                            .arg(&tuning.ref_wav_path)
+                            .status()
+                    });
+            } else {
+                eprintln!("  ⚠️ No reference WAV found at {}", tuning.ref_wav_path);
+            }
+        } else if let Ok(idx) = cmd.parse::<usize>() {
+            if (1..=candidate_blends.len()).contains(&idx) {
+                let (blend, desc) = candidate_blends[idx - 1];
+                tuning.kokoro_blend = blend.to_string();
+                eprintln!("  ✨ Selected Blend #{idx}: {blend} — {desc}");
+            }
+        } else if let Some(rest) = cmd
+            .strip_prefix("b ")
+            .or_else(|| cmd.strip_prefix("blend "))
+        {
+            let b = rest.trim();
+            if !b.is_empty() {
+                tuning.kokoro_blend = b.to_string();
+                eprintln!("  ✨ Custom Kokoro Blend set to: {}", tuning.kokoro_blend);
+            }
+        } else if cmd == "+" || cmd.eq_ignore_ascii_case("up") {
+            tuning.f0_target_hz = (tuning.f0_target_hz + 4).clamp(80, 280);
+            prof.f0_hz = Rational::integer(tuning.f0_target_hz);
+            eprintln!("  🔼 Target Pitch raised to {} Hz", tuning.f0_target_hz);
+        } else if cmd == "-" || cmd.eq_ignore_ascii_case("down") {
+            tuning.f0_target_hz = (tuning.f0_target_hz - 4).clamp(80, 280);
+            prof.f0_hz = Rational::integer(tuning.f0_target_hz);
+            eprintln!("  🔽 Target Pitch lowered to {} Hz", tuning.f0_target_hz);
+        } else if let Some(rest) = cmd.strip_prefix("f0 ") {
+            if let Ok(hz) = rest.trim().parse::<i32>() {
+                tuning.f0_target_hz = hz.clamp(80, 280);
+                prof.f0_hz = Rational::integer(tuning.f0_target_hz);
+                eprintln!("  🎯 Target Pitch locked to {} Hz", tuning.f0_target_hz);
+            }
+        } else if cmd.eq_ignore_ascii_case("w") || cmd.eq_ignore_ascii_case("warm") {
+            tuning.chest_gain_q10 = (tuning.chest_gain_q10 + 72).clamp(700, 1536);
+            tuning.air_gain_q10 = (tuning.air_gain_q10 - 40).clamp(700, 1536);
+            eprintln!(
+                "  🔥 Boosted chest warmth (Chest {}%, Air {}%)",
+                (tuning.chest_gain_q10 * 100) / 1024,
+                (tuning.air_gain_q10 * 100) / 1024
+            );
+        } else if cmd.eq_ignore_ascii_case("c") || cmd.eq_ignore_ascii_case("crisp") {
+            tuning.air_gain_q10 = (tuning.air_gain_q10 + 72).clamp(700, 1536);
+            tuning.presence_gain_q10 = (tuning.presence_gain_q10 + 48).clamp(700, 1536);
+            tuning.chest_gain_q10 = (tuning.chest_gain_q10 - 36).clamp(700, 1536);
+            eprintln!(
+                "  💎 Boosted vocal presence & treble air (Presence {}%, Air {}%)",
+                (tuning.presence_gain_q10 * 100) / 1024,
+                (tuning.air_gain_q10 * 100) / 1024
+            );
+        } else if cmd.eq_ignore_ascii_case("f") || cmd.eq_ignore_ascii_case("faster") {
+            tuning.speed_permille = (tuning.speed_permille + 50).clamp(750, 1350);
+            eprintln!(
+                "  ⏩ Cadence speed increased to {}x",
+                format_speed_permille(tuning.speed_permille)
+            );
+        } else if cmd.eq_ignore_ascii_case("s") || cmd.eq_ignore_ascii_case("slower") {
+            tuning.speed_permille = (tuning.speed_permille.saturating_sub(50)).clamp(750, 1350);
+            eprintln!(
+                "  ⏪ Cadence speed decreased to {}x",
+                format_speed_permille(tuning.speed_permille)
+            );
+        } else if let Some(rest) = cmd.strip_prefix("t ").or_else(|| cmd.strip_prefix("say ")) {
+            let t = rest.trim();
+            if !t.is_empty() {
+                preview_phrase = t.to_string();
+            }
+        } else if cmd.eq_ignore_ascii_case("m") || cmd.eq_ignore_ascii_case("more") {
+            let ref_file = voices_dir()
+                .join(format!("{slug}_ref.wav"))
+                .to_string_lossy()
+                .to_string();
+            record_mic_reference_wav(5, &ref_file, true, slug);
+            if let Ok(bytes) = fs::read(&ref_file) {
+                if let Some((sr, pcm)) = decode_wav_i16(&bytes) {
+                    let rep = extract_salient_grains(&pcm, sr, 8, now_secs());
+                    let new_f0 = estimate_true_f0_autocorr_pq(&pcm, sr, rep.overall_f0_hz, slug);
+                    prof.absorb_report(&rep);
+                    let f0_int = (new_f0.num / (new_f0.den.max(1) as i32)).clamp(80, 280);
+                    tuning.f0_target_hz = (tuning.f0_target_hz + f0_int) / 2;
+                    prof.f0_hz = Rational::integer(tuning.f0_target_hz);
+                    let (c_q10, p_q10, a_q10, spd) = analyze_vocal_tract_eq_and_cadence(&pcm, sr);
+                    tuning.chest_gain_q10 = (tuning.chest_gain_q10 + c_q10) / 2;
+                    tuning.presence_gain_q10 = (tuning.presence_gain_q10 + p_q10) / 2;
+                    tuning.air_gain_q10 = (tuning.air_gain_q10 + a_q10) / 2;
+                    tuning.speed_permille = (tuning.speed_permille + spd) / 2;
+                    tuning.ref_wav_path = ref_file;
+                }
+            }
+        } else {
+            // Treat any other typed sentence as a custom phrase to speak immediately!
+            preview_phrase = cmd.to_string();
+        }
+
+        let _ = fs::write(&out_path, prof.to_bytes());
+        save_voice_clone_tuning(slug, tuning);
+        if slug == "hue" || slug == "primary" {
+            save_salience_profile(prof);
+        }
+
+        if should_preview {
+            eprintln!("  🔊 Speaking: \"{preview_phrase}\"");
+            let _ = speak_out_loud(&preview_phrase, slug, true, true);
+        }
+    }
+}
+
+/// Open the Interactive Voice Clone Studio directly on an existing or default persona (`qwave --clone-studio <name>`).
+fn open_voice_clone_studio(persona_name: &str) -> String {
+    let slug = sanitize_persona_slug(persona_name);
+    let mut prof = load_named_voice_profile(&slug).unwrap_or_else(load_salience_profile);
+    let mut tuning = load_voice_clone_tuning(&slug, Some(&prof), &prof).unwrap_or_else(|| {
+        let f0_int = (prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32)).clamp(80, 280);
+        VoiceCloneTuning {
+            kokoro_blend: select_kokoro_blend_for_profile(&slug, Some(&prof), &prof),
+            speed_permille: 1000,
+            f0_target_hz: f0_int,
+            chest_gain_q10: 1080,
+            presence_gain_q10: 1040,
+            air_gain_q10: 980,
+            ref_wav_path: voices_dir()
+                .join(format!("{slug}_ref.wav"))
+                .to_string_lossy()
+                .to_string(),
+        }
+    });
+    run_interactive_voice_clone_studio(&slug, &mut prof, &mut tuning);
+    let out_path = voices_dir().join(format!("{slug}.m8sp"));
+    format_clone_voice_result_json(&slug, &out_path, &prof, &tuning)
+}
+
+fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
+    clone_voice_with_mode(target, persona_name, false)
+}
+
+/// Zero-float Voice Cloning Engine (`qwave --clone-voice <wav_or_secs> [--name <persona>] [-i|--batch]`):
+/// Extracts the speaker's exact `p/q` fundamental frequency (`f0_hz`), 16-bin prosody contour,
+/// 3-band vocal-tract formant EQ (`chest`, `presence`, `air`), speaking cadence (`speed_permille`),
+/// highest-salience glottal harmonic template (`best_grain_pcm`), and `qUltraKotoro` `QuantTern`
+/// affect code (`qt:`), saving `~/.local/share/qwave/mem8/voices/<name>.m8sp` and `<name>.json`.
+/// When `interactive` is true, launches the live terminal Voice Clone Studio after capture.
+fn clone_voice_with_mode(target: &str, persona_name: &str, interactive: bool) -> String {
+    let slug = sanitize_persona_slug(persona_name);
+    let ref_save_path = voices_dir()
+        .join(format!("{slug}_ref.wav"))
+        .to_string_lossy()
+        .to_string();
 
     let wav_path = if Path::new(target).exists() {
+        if target != ref_save_path {
+            let _ = fs::copy(target, &ref_save_path);
+        }
         target.to_string()
     } else {
         let secs: u64 = target.parse().unwrap_or(5).clamp(1, 30);
-        let rec_file = format!("/tmp/qwave_clone_{}_{}.wav", std::process::id(), now_secs());
-        let _ = Command::new("sh")
-            .env("XDG_RUNTIME_DIR", &xdg_runtime)
-            .args([
-                "-c",
-                &format!(
-                    "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{{print $2; exit}}'); \
-                     if [ -n \"$MIC_SRC\" ]; then pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; fi; \
-                     timeout {secs}s pw-record --rate=16000 --channels=1 --format=s16 '{rec_file}' >/dev/null 2>&1 || arecord -f S16_LE -r 16000 -c 1 -d {secs} '{rec_file}' >/dev/null 2>&1"
-                ),
-            ])
-            .status();
-        temp_rec = Some(rec_file.clone());
-        rec_file
+        record_mic_reference_wav(secs, &ref_save_path, interactive, &slug);
+        ref_save_path.clone()
     };
 
     let Ok(wav_bytes) = fs::read(&wav_path) else {
-        if let Some(t) = temp_rec {
-            let _ = fs::remove_file(t);
-        }
         return format!(
             "{{\"ok\":false,\"error\":\"could not read reference WAV: {}\"}}",
             markdown_source_literal(&wav_path)
@@ -7677,9 +8307,6 @@ fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
     };
 
     let Some((sr, pcm)) = decode_wav_i16(&wav_bytes) else {
-        if let Some(t) = temp_rec {
-            let _ = fs::remove_file(t);
-        }
         return "{\"ok\":false,\"error\":\"invalid 16-bit PCM WAV header\"}".to_string();
     };
 
@@ -7692,43 +8319,33 @@ fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
         prof.f0_hz = true_f0;
     }
 
+    let (chest_gain_q10, presence_gain_q10, air_gain_q10, speed_permille) =
+        analyze_vocal_tract_eq_and_cadence(&pcm, sr);
+    let f0_int = (prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32)).clamp(80, 280);
+    let base_blend = select_kokoro_blend_for_profile(&slug, Some(&prof), &prof);
+
+    let mut tuning = VoiceCloneTuning {
+        kokoro_blend: base_blend,
+        speed_permille,
+        f0_target_hz: f0_int,
+        chest_gain_q10,
+        presence_gain_q10,
+        air_gain_q10,
+        ref_wav_path: ref_save_path,
+    };
+
     let out_path = voices_dir().join(format!("{slug}.m8sp"));
     let _ = fs::write(&out_path, prof.to_bytes());
+    save_voice_clone_tuning(&slug, &tuning);
     if slug == "hue" || slug == "primary" {
         save_salience_profile(&prof);
     }
 
-    let qt_code = format!("qt:{:02x}", prof.vad_byte);
-    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
-    let base_blend = select_kokoro_blend_for_profile(&slug, Some(&prof), &prof);
-
-    if let Some(t) = temp_rec {
-        let _ = fs::remove_file(t);
+    if interactive {
+        run_interactive_voice_clone_studio(&slug, &mut prof, &mut tuning);
     }
 
-    let mut env_str = String::from("[");
-    for (i, &v) in prof.prosody_envelope_q15.iter().enumerate() {
-        if i > 0 {
-            env_str.push(',');
-        }
-        env_str.push_str(&v.to_string());
-    }
-    env_str.push(']');
-
-    format!(
-        "{{\"ok\":true,\"action\":\"clone_voice\",\"persona\":{},\"profile_path\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"avg_salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"qt_code\":{},\"grains_learned\":{},\"best_grain_samples\":{},\"prosody_envelope_q15\":{env_str}}}",
-        markdown_source_literal(&slug),
-        markdown_source_literal(&out_path.to_string_lossy()),
-        markdown_source_literal(&base_blend),
-        prof.f0_hz.num,
-        prof.f0_hz.den,
-        prof.avg_salience.num,
-        prof.avg_salience.den,
-        prof.vad_byte,
-        markdown_source_literal(&qt_code),
-        prof.grains_learned,
-        prof.best_grain_pcm.len()
-    )
+    format_clone_voice_result_json(&slug, &out_path, &prof, &tuning)
 }
 
 fn list_cloned_voices_json() -> String {
@@ -7740,10 +8357,21 @@ fn list_cloned_voices_json() -> String {
                 if let Ok(bytes) = fs::read(&p) {
                     if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
                         let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("voice");
-                        let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
-                        let blend = select_kokoro_blend_for_profile(name, Some(&prof), &prof);
+                        let tuning = load_voice_clone_tuning(name, Some(&prof), &prof);
+                        let f0_int = tuning
+                            .as_ref()
+                            .map(|t| t.f0_target_hz)
+                            .unwrap_or_else(|| prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32));
+                        let blend = tuning
+                            .as_ref()
+                            .map(|t| t.kokoro_blend.clone())
+                            .unwrap_or_else(|| {
+                                select_kokoro_blend_for_profile(name, Some(&prof), &prof)
+                            });
+                        let speed_permille =
+                            tuning.as_ref().map(|t| t.speed_permille).unwrap_or(1000);
                         items.push(format!(
-                            "{{\"persona\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"path\":{}}}",
+                            "{{\"persona\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"speed_permille\":{speed_permille},\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"path\":{}}}",
                             markdown_source_literal(name),
                             markdown_source_literal(&blend),
                             prof.f0_hz.num,
@@ -7797,8 +8425,15 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
 
     let default_prof = Mutex::new(load_salience_profile());
-    let prof = resolve_persona_salience_profile(voice, &default_prof);
-    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+    let cloned_opt = load_named_voice_profile(voice);
+    let prof = cloned_opt
+        .clone()
+        .unwrap_or_else(|| resolve_persona_salience_profile(voice, &default_prof));
+    let tuning_opt = load_voice_clone_tuning(voice, cloned_opt.as_ref(), &prof);
+    let f0_int = tuning_opt
+        .as_ref()
+        .map(|t| t.f0_target_hz)
+        .unwrap_or_else(|| prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32));
 
     if !wait {
         let _ = Command::new("sh")
