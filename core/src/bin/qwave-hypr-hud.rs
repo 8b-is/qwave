@@ -783,7 +783,7 @@ pub fn collect_hud_snapshot() -> HudSnapshot {
         .and_then(|b| SpeakerSalienceProfile::from_bytes(&b))
         .unwrap_or_default();
     let prof_f0_int = profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32);
-    if prof_f0_int > 175 || prof_f0_int < 85 {
+    if !(85..=175).contains(&prof_f0_int) {
         profile.f0_hz = Rational::integer(154);
     }
 
@@ -1472,7 +1472,7 @@ fn discover_hyprland_signature() -> Option<String> {
                 }
             }
         }
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
         for (_mtime, name, sock) in &candidates {
             if UnixStream::connect(sock).is_ok() {
                 return Some(name.clone());
@@ -2143,7 +2143,7 @@ pub fn run_portal_heal(args: &[String]) -> String {
     }
 
     let qwave_bin = find_qwave_bin();
-    let raw = Command::new(&qwave_bin)
+    let raw = Command::new(qwave_bin)
         .arg("--nomad-connect")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -2191,7 +2191,7 @@ pub fn run_wifi_love(args: &[String]) -> String {
     } else {
         "--bluetooth-love"
     };
-    let raw = Command::new(&qwave_bin)
+    let raw = Command::new(qwave_bin)
         .arg(flag)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -2269,7 +2269,7 @@ pub fn run_wifi_heal(args: &[String]) -> String {
         // to join and traverse the highest-ranked open/free captive portal!
         if state != "connected" {
             let qwave_bin = find_qwave_bin();
-            let _ = Command::new(&qwave_bin)
+            let _ = Command::new(qwave_bin)
                 .arg("--nomad-connect")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -2290,7 +2290,7 @@ pub fn run_wifi_heal(args: &[String]) -> String {
     // after a DHCP lease renewal, automatically traverse it with honest traveler inputs + Anicca recipe!
     if state == "connected" && !probe_internet_204_fast() {
         let qwave_bin = find_qwave_bin();
-        let _ = Command::new(&qwave_bin)
+        let _ = Command::new(qwave_bin)
             .arg("--nomad-connect")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -5560,7 +5560,7 @@ fn probe_usb_hardware_rate_and_bits() -> (u32, u8) {
         for line in raw.lines() {
             let trimmed = line.trim();
             if let Some(rest) = trimmed.strip_prefix("Momentary freq =") {
-                if let Some(num_tok) = rest.trim().split_whitespace().next() {
+                if let Some(num_tok) = rest.split_whitespace().next() {
                     if let Ok(parsed) = num_tok.parse::<u32>() {
                         freq_hz = parsed;
                     }
@@ -7092,12 +7092,10 @@ pub fn run_oxicast_daemon(args: &[String]) {
         return;
     };
 
-    for incoming in listener.incoming() {
-        if let Ok(stream) = incoming {
-            thread::spawn(move || {
-                handle_oxicast_http_client(stream);
-            });
-        }
+    for stream in listener.incoming().flatten() {
+        thread::spawn(move || {
+            handle_oxicast_http_client(stream);
+        });
     }
 }
 

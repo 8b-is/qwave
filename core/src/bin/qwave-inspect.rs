@@ -5,11 +5,16 @@
 //   qwave-inspect quanttern <valence> <arousal> <dominance> [threshold]
 //   qwave-inspect badge <member_hash_hex> <tier:free|supporter|patron|team|oneoff> <since_epoch> <until_epoch> [now_epoch]
 //   qwave-inspect scrub <url>
+//   qwave-inspect agy-omni [ticks]
 
 use std::env;
 use std::fmt::Write;
 use std::process::ExitCode;
 
+use qwave_core::agy_omni::{
+    AgyOmniCollarNode, GeofenceZone, NODE_BELLA_ID, NODE_BLUE_ID, PackLinkRadar,
+    bonobo_resonance_pq, synthesize_k9_sample,
+};
 use qwave_core::badge::{Badge, Channel, Tier, decide_channel};
 use qwave_core::egress;
 use qwave_core::quanttern::{DEFAULT_THRESHOLD, Vad, encode, pack_vad_byte};
@@ -27,6 +32,7 @@ fn main() -> ExitCode {
         "quanttern" => cmd_quanttern(&args[1..]),
         "badge" => cmd_badge(&args[1..]),
         "scrub" => cmd_scrub(&args[1..]),
+        "agy-omni" | "k9" => cmd_agy_omni(&args[1..]),
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -188,6 +194,99 @@ fn cmd_scrub(args: &[String]) -> ExitCode {
     }
 }
 
+fn cmd_agy_omni(args: &[String]) -> ExitCode {
+    let ticks = args
+        .first()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(8)
+        .max(1);
+    let zone = GeofenceZone::default_sanctuary();
+    let mut blue = AgyOmniCollarNode::new(
+        NODE_BLUE_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0x42; 32],
+    );
+    let mut bella = AgyOmniCollarNode::new(
+        NODE_BELLA_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0xBE; 32],
+    );
+
+    let mut last_blue_burst = None;
+    let mut last_bella_burst = None;
+    let mut last_blue_wave = None;
+    let mut last_bella_wave = None;
+
+    for t in 1..=ticks {
+        let now_nanos = (1_762_646_400 + t) * 1_000_000_000;
+        let b_sample = synthesize_k9_sample(
+            NODE_BLUE_ID,
+            t,
+            zone.anchor_lat_microdeg,
+            zone.anchor_lon_microdeg,
+        );
+        let b_burst = blue.step_cycle(b_sample);
+        let b_wave = b_burst.to_wave_int(b_sample.cadence_hz_q8, now_nanos);
+        last_blue_burst = Some(b_burst);
+        last_blue_wave = Some(b_wave);
+
+        let l_sample = synthesize_k9_sample(
+            NODE_BELLA_ID,
+            t,
+            zone.anchor_lat_microdeg,
+            zone.anchor_lon_microdeg,
+        );
+        let l_burst = bella.step_cycle(l_sample);
+        let l_wave = l_burst.to_wave_int(l_sample.cadence_hz_q8, now_nanos);
+        last_bella_burst = Some(l_burst);
+        last_bella_wave = Some(l_wave);
+    }
+
+    let radar = PackLinkRadar::evaluate(
+        blue.last_lat_microdeg,
+        blue.last_lon_microdeg,
+        bella.last_lat_microdeg,
+        bella.last_lon_microdeg,
+        &zone,
+    );
+    let b_burst = last_blue_burst.expect("ticks >= 1");
+    let l_burst = last_bella_burst.expect("ticks >= 1");
+    let b_wave = last_blue_wave.expect("ticks >= 1");
+    let l_wave = last_bella_wave.expect("ticks >= 1");
+    let (bx, by, bz) = b_wave.coordinate(None);
+    let (lx, ly, lz) = l_wave.coordinate(None);
+    let bonobo = bonobo_resonance_pq();
+    let any_breach = radar.blue_geofence_trit.raw() < 0 || radar.bella_geofence_trit.raw() < 0;
+
+    println!(
+        "{{\"ok\":true,\"ticks\":{ticks},\"bonobo_resonance_pq\":\"{}/{}\",\"waveint_bytes\":79,\"node_blue\":{{\"id\":\"0x{:02X}\",\"posture\":\"{}\",\"tryte_packed\":{},\"burst_len\":{},\"compression_pq\":\"{}/{}\",\"wave_id\":\"0x{:016x}\",\"grid\":[{bx},{by},{bz}],\"mac\":\"0x{:016X}\"}},\"node_bella\":{{\"id\":\"0x{:02X}\",\"posture\":\"{}\",\"tryte_packed\":{},\"burst_len\":{},\"compression_pq\":\"{}/{}\",\"wave_id\":\"0x{:016x}\",\"grid\":[{lx},{ly},{lz}],\"mac\":\"0x{:016X}\"}},\"pack_radar\":{{\"separation_dm\":{},\"cohesion_trit\":{},\"geofence_breach\":{}}}}}",
+        bonobo.num,
+        bonobo.den,
+        NODE_BLUE_ID,
+        b_burst.wukong_posture.label(),
+        b_burst.state_tryte.0,
+        b_burst.len,
+        b_burst.compression_pq.num,
+        b_burst.compression_pq.den,
+        b_wave.id.unwrap_or(0),
+        b_burst.mac_tag64(),
+        NODE_BELLA_ID,
+        l_burst.wukong_posture.label(),
+        l_burst.state_tryte.0,
+        l_burst.len,
+        l_burst.compression_pq.num,
+        l_burst.compression_pq.den,
+        l_wave.id.unwrap_or(0),
+        l_burst.mac_tag64(),
+        radar.separation_dm,
+        radar.pack_cohesion_trit.raw(),
+        any_breach,
+    );
+    ExitCode::SUCCESS
+}
+
 fn print_usage() {
     eprintln!(
         "qwave-inspect — sovereign core inspector\n\
@@ -196,7 +295,8 @@ fn print_usage() {
          \x20 egress <host>\n\
          \x20 quanttern <valence> <arousal> <dominance> [threshold]\n\
          \x20 badge <member_hash_hex> <tier> <since_epoch> <until_epoch> [now_epoch]\n\
-         \x20 scrub <url>"
+         \x20 scrub <url>\n\
+         \x20 agy-omni [ticks]"
     );
 }
 

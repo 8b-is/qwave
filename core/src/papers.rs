@@ -161,18 +161,10 @@ impl HuffmanTable {
 
 fn fixed_huffman_tables() -> (HuffmanTable, HuffmanTable) {
     let mut lit_lengths = [0u8; 288];
-    for i in 0..=143 {
-        lit_lengths[i] = 8;
-    }
-    for i in 144..=255 {
-        lit_lengths[i] = 9;
-    }
-    for i in 256..=279 {
-        lit_lengths[i] = 7;
-    }
-    for i in 280..=287 {
-        lit_lengths[i] = 8;
-    }
+    lit_lengths[0..=143].fill(8);
+    lit_lengths[144..=255].fill(9);
+    lit_lengths[256..=279].fill(7);
+    lit_lengths[280..=287].fill(8);
     let dist_lengths = [5u8; 32];
     (
         HuffmanTable::from_lengths(&lit_lengths).unwrap(),
@@ -519,11 +511,11 @@ fn map_pdf_literal_byte(b: u8, out: &mut String) {
         0x12 => out.push('`'),
         0x13 => out.push('\''),
         0x19 => out.push('ß'),
-        0x1a => out.push_str("æ"),
-        0x1b => out.push_str("œ"),
+        0x1a => out.push('æ'),
+        0x1b => out.push('œ'),
         0x1c => out.push('ø'),
-        0x1d => out.push_str("Æ"),
-        0x1e => out.push_str("Œ"),
+        0x1d => out.push('Æ'),
+        0x1e => out.push('Œ'),
         0x1f => out.push('Ø'),
         0x20..=0x7a => out.push(b as char),
         0x7b => out.push('–'),
@@ -1120,7 +1112,7 @@ pub fn extract_pdf_to_markdown(
                 if level == 1 && detected_title.is_empty() && page_num == 0 {
                     detected_title = t.to_string();
                     page_blocks.push(format!("# {t}"));
-                } else if level == 2 && page_num == 0 && page_blocks.len() <= 2 && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && t.to_ascii_lowercase() != "abstract" {
+                } else if level == 2 && page_num == 0 && page_blocks.len() <= 2 && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && !t.eq_ignore_ascii_case("abstract") {
                     page_blocks.push(format!("### *{t}*"));
                 } else {
                     let hashes = "#".repeat(level.clamp(2, 4) as usize);
@@ -1348,7 +1340,7 @@ fn parse_tex_preamble_macros(preamble: &str) -> Vec<(String, String)> {
         }
     }
     // Sort longest macro names first so `\Hbar` is replaced before `\H`
-    macros.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    macros.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
     macros
 }
 

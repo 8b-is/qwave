@@ -13,6 +13,11 @@
 use std::ffi::{CStr, CString};
 
 use qwave_core::Rational;
+use qwave_core::agy_omni::{
+    AgyOmniCollarNode, GeofenceZone, NODE_BELLA_ID, NODE_BLUE_ID, PackLinkRadar,
+    bonobo_resonance_pq, is_bonobo_resonant, qw_agy_omni_pack_separation_dm,
+    qw_agy_omni_pack_tryte, synthesize_k9_sample,
+};
 use qwave_core::badge::{
     Badge, Channel, GateDecision, Tier, decide_channel, qw_badge_seal, qw_badge_verify,
     qw_channel_entitled, qw_channel_notice,
@@ -199,3 +204,73 @@ fn end_to_end_egress_mem16_and_telemetry_scrubber_c_abi() {
     assert!(scrubbed.starts_with("https://github.com/p:"));
     assert!(!scrubbed.contains("secret"));
 }
+
+#[test]
+fn end_to_end_agy_omni_k9_collar_waveint_and_c_abi() {
+    let zone = GeofenceZone::default_sanctuary();
+    let mut blue = AgyOmniCollarNode::new(
+        NODE_BLUE_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0x42; 32],
+    );
+    let mut bella = AgyOmniCollarNode::new(
+        NODE_BELLA_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0xBE; 32],
+    );
+
+    let b_sample = synthesize_k9_sample(
+        NODE_BLUE_ID,
+        1,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+    );
+    let l_sample = synthesize_k9_sample(
+        NODE_BELLA_ID,
+        1,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+    );
+
+    let b_burst = blue.step_cycle(b_sample);
+    let l_burst = bella.step_cycle(l_sample);
+
+    assert!(is_bonobo_resonant(b_burst.compression_pq));
+    assert_eq!(l_burst.compression_pq, bonobo_resonance_pq());
+
+    // Project K9 burst into 79-byte MEM|8 WaveInt and validate across C ABI
+    let wave = b_burst.to_wave_int(b_sample.cadence_hz_q8, 1_762_646_400_000_000_000);
+    let frame = wave.to_frame();
+    assert_eq!(frame.len(), FRAME_SIZE);
+    let rc = unsafe { qw_wave_frame_validate(frame.as_ptr()) };
+    assert_eq!(rc, 0);
+
+    // PackLinkRadar + C ABI parity
+    let radar = PackLinkRadar::evaluate(
+        blue.last_lat_microdeg,
+        blue.last_lon_microdeg,
+        bella.last_lat_microdeg,
+        bella.last_lon_microdeg,
+        &zone,
+    );
+    let abi_sep = qw_agy_omni_pack_separation_dm(
+        blue.last_lat_microdeg,
+        blue.last_lon_microdeg,
+        bella.last_lat_microdeg,
+        bella.last_lon_microdeg,
+    );
+    assert_eq!(abi_sep, radar.separation_dm);
+
+    let t = b_burst.state_trits;
+    let abi_tryte = qw_agy_omni_pack_tryte(
+        t[0].raw(),
+        t[1].raw(),
+        t[2].raw(),
+        t[3].raw(),
+        t[4].raw(),
+    );
+    assert_eq!(abi_tryte, b_burst.state_tryte.0);
+}
+

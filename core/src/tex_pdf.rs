@@ -2336,9 +2336,8 @@ fn clean_line_for_speech(line: &str) -> String {
     }
 
     // Strip Markdown links `[label](url)` -> `label`
-        let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
         if matches!(
             c,
             '*' | '`' | '$' | '{' | '}' | '\\' | '📄' | '\u{270D}' | '\u{FE0F}' | '📅' | '📐' | '🔊' | '∎' | '⚡' | '🔥' | '🧠' | '🌊' | '🎬' | '🎵'
@@ -2429,16 +2428,15 @@ pub fn summarize_markdown_with_mem8(
             continue;
         }
         // Collect formal propositions / theorems / equations
-        if clean_line.starts_with("**Proposition")
+        if (clean_line.starts_with("**Proposition")
             || clean_line.starts_with("**Theorem")
             || clean_line.starts_with("**Lemma")
             || clean_line.starts_with("**Corollary")
             || clean_line.starts_with("**Definition")
-            || (clean_line.contains("\\iff") && clean_line.len() < 180)
+            || (clean_line.contains("\\iff") && clean_line.len() < 180))
+            && summary.formal_invariants.len() < 10
         {
-            if summary.formal_invariants.len() < 10 {
-                summary.formal_invariants.push(clean_line.to_string());
-            }
+            summary.formal_invariants.push(clean_line.to_string());
         }
         current_paras.push(clean_line.to_string());
     }
@@ -2506,7 +2504,7 @@ pub fn summarize_markdown_with_mem8(
         }
 
         // PhoeniX Crystal keep: top 2 highest-signal sentences per section
-        sec_scored.sort_by(|a, b| b.0.cmp(&a.0));
+        sec_scored.sort_by_key(|b| std::cmp::Reverse(b.0));
         let kept: Vec<String> = sec_scored.into_iter().take(2).map(|(_, s)| s).collect();
         summary.phoenix_kept_sentences += kept.len();
         if !kept.is_empty() && summary.phoenix_crystal_sections.len() < 16 {
@@ -2524,7 +2522,7 @@ pub fn summarize_markdown_with_mem8(
     }
 
     // 4. Top 6 Key Claims across the document
-    all_scored_sentences.sort_by(|a, b| b.0.cmp(&a.0));
+    all_scored_sentences.sort_by_key(|b| std::cmp::Reverse(b.0));
     let mut claim_tokens: Vec<Vec<String>> = Vec::new();
     for (_, cand) in &all_scored_sentences {
         if cand == &summary.executive_thesis {

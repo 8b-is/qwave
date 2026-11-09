@@ -7,6 +7,7 @@
 //! witness gate. Swift keeps the WebKit shell; the decisions live here,
 //! behind a small C ABI that any language can call.
 
+pub mod agy_omni;
 pub mod badge;
 pub mod egress;
 pub mod i1_soul;

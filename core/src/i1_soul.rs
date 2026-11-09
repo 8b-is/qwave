@@ -546,9 +546,9 @@ impl SoulSignature {
 
         // 1. Stylometric cadence similarity (1024 - mean absolute difference)
         let mut diff_sum = 0u32;
-        for i in 0..16 {
+        for (i, &cand_val) in cand_cadence.iter().enumerate() {
             let a = self.cadence_q10[i] as i32;
-            let b = cand_cadence[i] as i32;
+            let b = cand_val as i32;
             diff_sum += (a - b).unsigned_abs();
         }
         let mean_diff = (diff_sum / 16).min(1024);
@@ -556,8 +556,8 @@ impl SoulSignature {
 
         // 2. 256-bit SimHash Hamming similarity
         let mut hamming_dist = 0u32;
-        for i in 0..4 {
-            hamming_dist += (self.shingle_simhash[i] ^ cand_simhash[i]).count_ones();
+        for (i, &cand_hash) in cand_simhash.iter().enumerate() {
+            hamming_dist += (self.shingle_simhash[i] ^ cand_hash).count_ones();
         }
         // 0 bits different -> 1024; 128 bits (random orthogonal) -> 0
         let shingle_q10 = if hamming_dist >= 128 {
@@ -927,6 +927,7 @@ pub struct I1IngestDeed {
 
 impl I1IngestDeed {
     /// Build and seal a new `I1IngestDeed` for a page or authored document.
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         canonical_url: &str,
         raw_content: &str,

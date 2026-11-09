@@ -92,9 +92,9 @@ const SHA256_INIT: [u32; 8] = [
 #[inline]
 fn sha256_compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
-    for i in 0..16 {
+    for (i, slot) in w.iter_mut().enumerate().take(16) {
         let j = i * 4;
-        w[i] = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
+        *slot = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
     }
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);

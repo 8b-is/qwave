@@ -255,3 +255,24 @@ qw_i1_evaluate_deed(const char *creator_id, const char *secret_phrase,
     out_summary->can_summarize_local = (ingest_mode <= 2);
     return true;
 }
+
+__attribute__((weak)) uint8_t qw_agy_omni_pack_tryte(int8_t t0, int8_t t1,
+                                                     int8_t t2, int8_t t3,
+                                                     int8_t t4) {
+    (void)t0;
+    (void)t1;
+    (void)t2;
+    (void)t3;
+    (void)t4;
+    return 121; /* neutral (0, 0, 0, 0, 0) in radix-3 */
+}
+
+__attribute__((weak)) uint64_t qw_agy_omni_pack_separation_dm(
+    int32_t blue_lat_udeg, int32_t blue_lon_udeg, int32_t bella_lat_udeg,
+    int32_t bella_lon_udeg) {
+    (void)blue_lat_udeg;
+    (void)blue_lon_udeg;
+    (void)bella_lat_udeg;
+    (void)bella_lon_udeg;
+    return 0;
+}

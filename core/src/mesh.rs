@@ -264,7 +264,7 @@ pub fn rank_free_wifi_candidates_with_memory(
         });
     }
 
-    out.sort_by(|a, b| b.score_q10.cmp(&a.score_q10));
+    out.sort_by_key(|b| std::cmp::Reverse(b.score_q10));
     out
 }
 
@@ -548,7 +548,7 @@ pub fn parse_captive_portal_response_with_identity(
         let after = &body[idx + 4..];
         let trimmed = after.trim_start_matches(['"', '\'']);
         let end = trimmed
-            .find(|c: char| matches!(c, '"' | '\'' | '>' | ' ' | '\r' | '\n'))
+            .find(['"', '\'', '>', ' ', '\r', '\n'])
             .unwrap_or(trimmed.len());
         let target = trimmed[..end].trim();
         if !target.is_empty() && !target.starts_with("data:") {
@@ -598,7 +598,7 @@ fn extract_stamac_param(text: &str) -> Option<String> {
         if let Some(idx) = low.find(key) {
             let after = &text[idx + key.len()..];
             let end = after
-                .find(|c: char| matches!(c, '&' | '"' | '\'' | ' ' | '>' | '\r' | '\n'))
+                .find(['&', '"', '\'', ' ', '>', '\r', '\n'])
                 .unwrap_or(after.len());
             let raw = after[..end].trim().replace("%3A", ":").replace("%3a", ":").replace('-', ":");
             if raw.len() == 17 && raw.chars().filter(|&c| c == ':').count() == 5 {
@@ -643,10 +643,12 @@ fn url_encode_component(raw: &str) -> String {
     out
 }
 
+type PortalFormFields = (String, String, Vec<(String, String)>);
+
 fn extract_html_portal_form(
     html: &str,
     identity: &HonestPortalIdentity,
-) -> Option<(String, String, Vec<(String, String)>)> {
+) -> Option<PortalFormFields> {
     let low = html.to_ascii_lowercase();
     let form_start = low.find("<form")?;
     let form_rest = &html[form_start..];

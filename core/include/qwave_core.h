@@ -178,6 +178,18 @@ bool qw_i1_evaluate_deed(const char *creator_id,
                          bool original_author_revoked,
                          struct QwI1DeedSummary *out_summary);
 
+/* ── agy-omni / babilon-ultra-k9 (Wukong K9 & Edge Telemetry Bridge) ────── */
+
+/* Pack five trits (-1, 0, +1) into a single Tryte5 byte (0..243). */
+uint8_t qw_agy_omni_pack_tryte(int8_t t0, int8_t t1, int8_t t2, int8_t t3,
+                               int8_t t4);
+
+/* Planar pack separation in decimeters (0.1 m) between NODE_BLUE and NODE_BELLA. */
+uint64_t qw_agy_omni_pack_separation_dm(int32_t blue_lat_udeg,
+                                        int32_t blue_lon_udeg,
+                                        int32_t bella_lat_udeg,
+                                        int32_t bella_lon_udeg);
+
 #ifdef __cplusplus
 }
 #endif

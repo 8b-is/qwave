@@ -26,6 +26,11 @@ path = "src/bin/qwave-inspect.rs"
 name = "qwave-hypr-hud"
 path = "src/bin/qwave-hypr-hud.rs"
 
+[[bench]]
+name = "qwave_omni_bench"
+harness = false
+
+
 [features]
 default = []
 # Everything ON: the nightly channel links the mem|16-10 sovereign library

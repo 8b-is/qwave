@@ -863,7 +863,7 @@ impl RoomAcousticTracker {
             let mut mean_abs: u64 = 0;
             if !samples.is_empty() {
                 for &s in samples {
-                    mean_abs += (s as i32).abs() as u64;
+                    mean_abs += u64::from((s as i32).unsigned_abs());
                 }
                 mean_abs /= samples.len() as u64;
             }
@@ -905,7 +905,7 @@ impl RoomAcousticTracker {
         // Protect Hue's baritone/tenor profile centroid (`154 Hz`) from any prior high-pitch or sub-bass drift
         let cur_prof_f0 =
             self.primary_profile.f0_hz.num / (self.primary_profile.f0_hz.den.max(1) as i32);
-        if cur_prof_f0 > 175 || cur_prof_f0 < 115 {
+        if !(115..=175).contains(&cur_prof_f0) {
             self.primary_profile.f0_hz = Rational::integer(154);
         }
 
@@ -966,7 +966,7 @@ impl RoomAcousticTracker {
                 self.primary_profile.absorb_report(&report);
                 let updated_f0 = self.primary_profile.f0_hz.num
                     / (self.primary_profile.f0_hz.den.max(1) as i32);
-                if updated_f0 > 175 || updated_f0 < 115 {
+                if !(115..=175).contains(&updated_f0) {
                     self.primary_profile.f0_hz = Rational::integer(154);
                 }
             }
@@ -1048,14 +1048,11 @@ impl RoomAcousticTracker {
             .unwrap_or_default();
         // Compute speaker similarity BEFORE absorbing the new utterance so strangers/songs
         // don't artificially score 90%+ by comparing against themselves!
-        let diarized_sim_q15 = if friend_prof.grains_learned > 0 {
-            speaker_similarity_q15(&friend_prof, &report)
-        } else {
-            speaker_similarity_q15(&friend_prof, &report)
-        };
-        if chosen_slot <= 1 && on_axis_ratio_q15 >= 10_500 {
-            friend_prof.absorb_report(&report);
-        } else if chosen_slot >= 2 || friend_prof.grains_learned == 0 {
+        let diarized_sim_q15 = speaker_similarity_q15(&friend_prof, &report);
+        if (chosen_slot <= 1 && on_axis_ratio_q15 >= 10_500)
+            || chosen_slot >= 2
+            || friend_prof.grains_learned == 0
+        {
             friend_prof.absorb_report(&report);
         }
         let diarized_grains = friend_prof.grains_learned;
@@ -1433,7 +1430,7 @@ impl RoomSpatialMapPq {
 
         if let Some(seat) = self.seats.iter_mut().find(|s| s.speaker == speaker) {
             // Salience-weighted integer EMA: high-salience fixes carry 1/3 weight, normal fixes 1/4 weight
-            let num_w: i32 = if salience_q15 >= 2400 { 1 } else { 1 };
+            let num_w: i32 = 1;
             let den_w: i32 = if salience_q15 >= 2400 { 3 } else { 4 };
             let keep_w = den_w - num_w;
 
@@ -1769,8 +1766,8 @@ impl StereoPcmRingBuffer {
     #[inline]
     pub fn should_dispatch(&self) -> bool {
         let hangover = if self.cap_frames >= 64 { 4 } else { 5 };
-        (self.voiced_frames >= 3 && self.silent_frames >= hangover)
-            || (self.voiced_frames >= 3 && self.captured_frames >= self.max_utterance_frames)
+        self.voiced_frames >= 3
+            && (self.silent_frames >= hangover || self.captured_frames >= self.max_utterance_frames)
     }
 
     /// Extract the chronologically ordered stereo PCM samples for the current utterance
@@ -2171,6 +2168,7 @@ pub fn trim_salient_speech_pcm_i16(samples: &[i16], sample_rate: u32) -> Vec<i16
 /// - Decoder repetition loops on stationary noise (`"You Can Can Can..."`, `"M M M M..."`, `"be be be..."`)
 /// - Single-letter / single-word breath and click artifacts (`"M"`, `"be"`, `"And..."`, `"you"`, `"the"`)
 /// - Bracketed/parenthesized non-speech markers (`[BLANK_AUDIO]`, `(silence)`, `*music*`)
+///
 /// And collapses accidental 1-word stutters or repeated `2..=10`-word n-gram tails.
 pub fn sanitize_and_dedup_stt_transcript(raw_tx: &str) -> Option<String> {
     let mut cleaned_tokens: Vec<String> = Vec::new();
@@ -2514,7 +2512,7 @@ mod tests {
 
     #[test]
     fn salient_speech_combiner_modulates_wav_without_floats() {
-        let samples: Vec<i16> = (0..2400).map(|i| (((i % 120) as i32 - 60) * 200) as i16).collect();
+        let samples: Vec<i16> = (0..2400i32).map(|i| (((i % 120) - 60) * 200) as i16).collect();
         let wav = encode_wav_i16(24_000, &samples);
         let report = extract_salient_grains(&samples, 24_000, 2, 1700000000);
         let mut profile = SpeakerSalienceProfile::default();
@@ -2540,9 +2538,9 @@ mod tests {
         assert!(!r_noise.should_agent_respond);
 
         // 2. Primary user ("Hue") speaking on-axis at ~145 Hz (period = 110 samples at 16kHz)
-        let hue_voice: Vec<i16> = (0..3200)
+        let hue_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 110) as i32;
+                let p = i % 110;
                 let v = if p < 55 { (p - 27) * 520 } else { (82 - p) * 520 };
                 v.clamp(-18_000, 18_000) as i16
             })
@@ -2553,9 +2551,9 @@ mod tests {
         assert!(r_hue.should_agent_respond);
 
         // 3. Friend next to Hue speaking at ~266 Hz (period = 60 samples at 16kHz)
-        let friend_voice: Vec<i16> = (0..3200)
+        let friend_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 60) as i32;
+                let p = i % 60;
                 let v = if p < 30 { (p - 15) * 700 } else { (45 - p) * 700 };
                 v.clamp(-15_000, 15_000) as i16
             })
@@ -2716,9 +2714,9 @@ mod tests {
         tracker.primary_profile.f0_hz = Rational::integer(185);
         tracker.primary_profile.grains_learned = 50;
 
-        let alex_voice: Vec<i16> = (0..3200)
+        let alex_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 74) as i32; // 16000 / 74 = 216 Hz
+                let p = i % 74; // 16000 / 74 = 216 Hz
                 let v = if p < 37 { (p - 18) * 600 } else { (55 - p) * 600 };
                 v.clamp(-16_000, 16_000) as i16
             })
@@ -2727,9 +2725,9 @@ mod tests {
         assert_eq!(r_alex.source, AcousticSourceKind::OtherSpeaker(0));
         assert_eq!(r_alex.source.as_str(), "alex");
 
-        let hue_voice: Vec<i16> = (0..3200)
+        let hue_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 103) as i32; // 16000 / 103 = 155 Hz
+                let p = i % 103; // 16000 / 103 = 155 Hz
                 let v = if p < 51 { (p - 25) * 520 } else { (77 - p) * 520 };
                 v.clamp(-16_000, 16_000) as i16
             })
@@ -2739,9 +2737,9 @@ mod tests {
         assert_eq!(r_hue.source.as_str(), "hue");
 
         // 3. Verify Hue's low-register baritone sentence-ending drop (~106 Hz) stays recognized as "hue"
-        let hue_baritone_106hz: Vec<i16> = (0..3200)
+        let hue_baritone_106hz: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 151) as i32; // 16000 / 151 = 105 Hz (~106 Hz)
+                let p = i % 151; // 16000 / 151 = 105 Hz (~106 Hz)
                 let v = if p < 75 { (p - 37) * 440 } else { (113 - p) * 440 };
                 v.clamp(-16_000, 16_000) as i16
             })
@@ -2757,9 +2755,9 @@ mod tests {
         assert_eq!(r_hue_low.context, InteractionContext::ChattingWithFriend);
 
         // 4. Verify Trisha (~246 Hz, period = 65 at 16kHz) diarizes as FriendTrisha ("trisha")
-        let trisha_voice: Vec<i16> = (0..3200)
+        let trisha_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
-                let p = (i % 65) as i32; // 16000 / 65 = 246 Hz
+                let p = i % 65; // 16000 / 65 = 246 Hz
                 let v = if p < 32 { (p - 16) * 620 } else { (48 - p) * 620 };
                 v.clamp(-16_000, 16_000) as i16
             })

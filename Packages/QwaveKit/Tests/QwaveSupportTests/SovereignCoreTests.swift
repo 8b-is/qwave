@@ -50,6 +50,18 @@ final class SovereignCoreTests: XCTestCase {
                 memberHash: 0x8b15, tier: .supporter, sinceEpoch: 1, untilEpoch: 2, witnessSeal: 1)
         )
         XCTAssertNil(RustCore.channelNotice(.nightly))
+
+        // agy-omni stubs default to neutral Tryte5 (121 = 0,0,0,0,0) and 0 dm separation:
+        XCTAssertEqual(RustCore.agyOmniPackTryte(1, 1, 0, 1, 1), 121)
+        XCTAssertEqual(
+            RustCore.agyOmniPackSeparationDm(
+                blueLatMicrodeg: 47_569_200,
+                blueLonMicrodeg: 18_404_800,
+                bellaLatMicrodeg: 47_569_100,
+                bellaLonMicrodeg: 18_404_700
+            ),
+            0
+        )
     }
 
     /// The Phoenix facade over the stubs: no orchestration, no custody —

@@ -145,3 +145,26 @@ Time from `hibernator.restore()` to `restored.title == "ready-0"` (first paint w
 | FTS5 for history search | Would fix the `LIKE %query%` full table scan, but adds a dependency and migration complexity. Deferred. |
 | FTS5 trigram history search (measured 2026-08-14) | Implemented and measured: trigram `MATCH` costs **2,143 mallocs/query** at 50k rows vs **486** for `LIKE %q%` (p90 2,716 vs the 1,298 committed gate, +25% tolerance). Wall-clock wins; the repo's malloc gate is the contract and FTS5 fails it 2.1×. Deferral stands, now with numbers. Bonus findings: reading an external-content FTS table while its index is empty clobbers the index being backfilled; the FTS existence probe must run before `migrate`. |
 | Wave background (WebGL) | Renders in WebKit's GPU process (Metal-backed on Apple Silicon); an app-side rebuild would double-composite. Demand control instead: 30 fps cap, `visibilitychange` pause, reduced-motion static frame (`WaveScene.canvasScript`). |
+
+---
+
+## 5. Sovereign Rust Core × `agy-omni` Hot Paths (`core/benches/qwave_omni_bench.rs`)
+
+> Measured 2026-11-09 (`N = 9` independent windows, Rung 0 Bonobo $p/q = 3/2$ resonance, 100% zero-float `WaveInt::coordinate`, `VadPq`, `AgyOmniCollarNode`, and `PackLinkRadar`).
+
+| Hot Path (`qwave-core`) | Ops / Window | `p50` (Median) | `p90` | Spread (`p90 - p50`) | Relative Spread | Throughput |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `waveint_79b_roundtrip_and_coord` | `50,000` | **46 ns** | `50 ns` | `4 ns` | `8.7%` | **21,739,130 ops/s** |
+| `quanttern_vad_pq_gate_pack` | `100,000` | **108 ns** | `111 ns` | `3 ns` | `2.8%` | **9,259,259 ops/s** |
+| `phoenix_orchestration_decide` | `25,000` | **192 ns** | `203 ns` | `11 ns` | `5.7%` | **5,208,333 ops/s** |
+| `agy_omni_k9_collar_waveint_radar` | `50,000` | **729 ns** | `740 ns` | `11 ns` | `1.5%` | **1,371,742 ops/s** |
+| `markdown_compile_full_doc` | `1,000` | **7,993 ns** (`7.99 µs`) | `8,381 ns` | `388 ns` | `4.9%` | **125,109 docs/s** |
+| `salience_marine_1s_16khz_audio` | `200` | **32,328 ns** (`32.33 µs`) | `32,959 ns` | `631 ns` | `2.0%` | **30,932× real-time** |
+
+### `qwave --bench` End-to-End Pipeline Breakdown
+- **`marine_detector_1s_audio_us`**: `26 µs` per second of 16 kHz audio (`38,461×` real-time)
+- **`salient_grains_mem8_1s_audio_us`**: `65 µs` per second of 16 kHz audio (`15,384×` real-time, including 79B `WaveInt` crystallization)
+- **`room_diarizer_1s_audio_us`**: `68 µs` per second of 16 kHz audio (`14,705×` real-time)
+- **`salience_speech_combiner_1s_24khz_us`**: `80 µs` per second of 24 kHz TTS audio (`12,500×` real-time)
+- **`agy_omni_k9_waveint_1k_dual_ticks_us`**: `1,495 µs` for 1,000 dual-collar ticks (`2,000` collar cycles + `2,000` 79B `WaveInt` frames + `1,000` `PackLinkRadar` evaluations = **`1,337,010 cycles/sec`**)
+- **`alexiai_loopback_gaia_wupz_capsule_us`**: `596 µs` (`54%` token payload reduction: `326 B` $\rightarrow$ `147 B`)

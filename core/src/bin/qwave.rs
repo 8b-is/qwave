@@ -27,6 +27,10 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use qwave_core::Rational;
+use qwave_core::agy_omni::{
+    AgyOmniCollarNode, GeofenceZone, NODE_BELLA_ID, NODE_BLUE_ID, PackLinkRadar,
+    bonobo_resonance_pq, synthesize_k9_sample,
+};
 use qwave_core::markdown::{
     CompiledMarkdown, MarkdownTrust, WAVE_CANVAS_SCRIPT, WAVE_FRAGMENT_SHADER, compile_full,
     escape, markdown_source_literal,
@@ -126,6 +130,11 @@ fn main() -> ExitCode {
 
     if args.iter().any(|a| a == "--bench") {
         println!("{}", run_qwave_alexiai_bench());
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--agy-omni" || a == "--k9" || a == "--babilon-k9") {
+        println!("{}", run_agy_omni_k9_bridge());
         return ExitCode::SUCCESS;
     }
 
@@ -708,7 +717,7 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
     if reader.read_line(&mut request_line)? == 0 {
         return Ok(());
     }
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return Ok(());
     }
@@ -887,6 +896,10 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("GET", "/api/triad") => {
             let json = run_esp32_triad_probe(false);
+            send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
+        }
+        ("GET", "/api/agy-omni") | ("GET", "/api/k9") => {
+            let json = run_agy_omni_k9_bridge();
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("POST", "/api/triad/chirp") => {
@@ -6959,7 +6972,7 @@ fn strip_ansi(input: &str) -> String {
         if c == '\x1b' {
             if chars.peek() == Some(&'[') {
                 let _ = chars.next();
-                while let Some(nc) = chars.next() {
+                for nc in chars.by_ref() {
                     if nc.is_ascii_alphabetic() {
                         break;
                     }
@@ -6982,7 +6995,7 @@ fn load_salience_profile() -> SpeakerSalienceProfile {
     if let Ok(bytes) = fs::read(path) {
         if let Some(mut prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
             let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
-            if f0_int > 175 || f0_int < 85 {
+            if !(85..=175).contains(&f0_int) {
                 prof.f0_hz = Rational::integer(154);
                 save_salience_profile(&prof);
             }
@@ -7428,7 +7441,7 @@ fn extract_json_id(json: &str) -> Option<String> {
         return Some(markdown_source_literal(&s));
     }
     let end = rest
-        .find(|c: char| matches!(c, ',' | '}' | ' ' | '\t' | '\r' | '\n'))
+        .find([',', '}', ' ', '\t', '\r', '\n'])
         .unwrap_or(rest.len());
     let token = &rest[..end];
     if token.is_empty() {
@@ -7473,7 +7486,7 @@ fn handle_mcp_request(req: &str) -> Option<String> {
 
     match method.as_str() {
         "initialize" => Some(format!(
-            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"qwave\",\"version\":\"0.3.0\"}}}}}}"
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"qwave\",\"version\":\"0.4.1\"}}}}}}"
         )),
         "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}")),
         "tools/list" => Some(format!(
@@ -7485,7 +7498,8 @@ fn handle_mcp_request(req: &str) -> Option<String> {
              {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
              {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown (.md), LaTeX/TeX (.tex/.ltx/.bib), or PDF (.pdf) document (or live Markdown/TeX snippet) inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, Embedded PDF Split-View, 3D MEM|8 Wave canvas, Ghostwriter bridge, and built-in Read-Aloud paper narrator (pass speak='auto' to start reading aloud).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the .md, .tex, or .pdf document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown or LaTeX content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens, or 'auto' to start continuous Read-Aloud paper narration\"}}}}}}}},\
              {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}},\
-             {{\"name\":\"ping_pong\",\"description\":\"🏓 Sovereign Acoustic Ping-Pong Transceiver & Self-Healer: self-heals PipeWire speaker/mic & ear-daemon, emits a 432/528/864 Hz Harmonic Triad Ping out of the speaker while recording 48 kHz stereo on Left/Right mics, and reports L/R SNR, Time-of-Flight, TDOA azimuth, RT60, and optional neural TTS->STT loopback.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"voice\":{{\"type\":\"boolean\",\"description\":\"Also run spoken TTS -> Air -> Mic -> STT roundtrip test (default: false)\",\"default\":false}}}}}}}}\
+             {{\"name\":\"ping_pong\",\"description\":\"🏓 Sovereign Acoustic Ping-Pong Transceiver & Self-Healer: self-heals PipeWire speaker/mic & ear-daemon, emits a 432/528/864 Hz Harmonic Triad Ping out of the speaker while recording 48 kHz stereo on Left/Right mics, and reports L/R SNR, Time-of-Flight, TDOA azimuth, RT60, and optional neural TTS->STT loopback.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"voice\":{{\"type\":\"boolean\",\"description\":\"Also run spoken TTS -> Air -> Mic -> STT roundtrip test (default: false)\",\"default\":false}}}}}}}},\
+             {{\"name\":\"agy_omni_k9\",\"description\":\"🐕🔥 AGY-Omni × Babilon-Ultra-K9 Sovereign Telemetry Bridge (NODE_BLUE & NODE_BELLA): polls live `:8095/api/telemetry` (or synthesizes deterministic zero-float edge bursts), encodes 5-trit Tryte5 balanced ternary state + SLEB128 LoRa frames + PackLinkRadar decimeter separation + 79-byte MEM|8 WaveInt frames.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}}\
              ]}}}}"
         )),
         "tools/call" => {
@@ -7581,6 +7595,9 @@ fn handle_mcp_request(req: &str) -> Option<String> {
                     format_salience_profile_json(&prof)
                 }
                 "wave_grid" | "mem8_wave_grid" => mem8_tool_wave_grid(),
+                "agy_omni" | "agy_omni_k9" | "qwave_agy_omni" | "mem8_agy_omni_k9" => {
+                    run_agy_omni_k9_bridge()
+                }
                 other => format!("{{\"ok\":false,\"error\":\"unknown tool: {other}\"}}"),
             };
 
@@ -7666,7 +7683,8 @@ fn handle_mem8_mcp_request(req: &str) -> Option<String> {
              {{\"name\":\"recall_waves\",\"description\":\"🔍 Recall and search persistent MEM|8 wave memories, anchored breakthroughs, and speech salience grains across ~/.local/share/qwave/mem8/ and ~/.mem8/.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"query\":{{\"type\":\"string\",\"description\":\"Keyword or topic to recall from MEM|8 (empty returns most recent waves)\"}},\"limit\":{{\"type\":\"integer\",\"description\":\"Max memories to return (default: 10)\",\"default\":10}}}}}}}},\
              {{\"name\":\"anchor\",\"description\":\"⚓ Anchor a high-salience breakthrough, solution, or architectural pattern into persistent MEM|8 wave storage.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"anchor_type\":{{\"type\":\"string\",\"description\":\"breakthrough, solution, pattern, or covenant\",\"default\":\"breakthrough\"}},\"keywords\":{{\"type\":\"string\",\"description\":\"Comma-separated keywords for retrieval\"}},\"context\":{{\"type\":\"string\",\"description\":\"Detailed context to anchor\"}}}},\"required\":[\"context\"]}}}},\
              {{\"name\":\"salience_profile\",\"description\":\"🎙️ Inspect the persistent zero-float M8SP SpeakerSalienceProfile (Hue 166Hz baritone, Alexandra 190Hz Starlight, learned vocal grains, and 16-bin prosody contour).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}},\
-             {{\"name\":\"wave_grid\",\"description\":\"📐 Inspect the live MEM|8 Wave Grid status (waves.bin, speech_salience_waves.bin, speaker_salience_profile.bin, room_state.json, and WUPZ ABI v1 witness state).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}}\
+             {{\"name\":\"wave_grid\",\"description\":\"📐 Inspect the live MEM|8 Wave Grid status (waves.bin, speech_salience_waves.bin, speaker_salience_profile.bin, room_state.json, and WUPZ ABI v1 witness state).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}},\
+             {{\"name\":\"agy_omni_k9\",\"description\":\"🐕🔥 AGY-Omni × Babilon-Ultra-K9 Sovereign Telemetry Bridge (NODE_BLUE & NODE_BELLA): polls `:8095/api/telemetry` or synthesizes deterministic zero-float edge bursts, returning 5-trit Tryte5 state, SLEB128 LoRa payloads, PackLinkRadar decimeter separation, and 79-byte MEM|8 WaveInt frames.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{}}}}}}\
              ]}}}}"
         )),
         "tools/call" => handle_mcp_request(req),
@@ -7892,6 +7910,7 @@ fn extract_json_i64(json: &str, field: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn load_self_calibration() -> SelfCalibrationEngine {
     let path = qwave_share_dir().join("self_calibration.json");
     let Ok(raw) = fs::read_to_string(path) else {
@@ -8148,7 +8167,7 @@ fn append_wave_bin_ring_file(path: &Path, new_frames: &[[u8; 79]], max_frames: u
     let total_bytes = existing_slice.len() + add_bytes;
     let keep_start = if total_bytes > max_bytes {
         let excess = total_bytes - max_bytes;
-        let aligned_excess = ((excess + 78) / 79) * 79;
+        let aligned_excess = excess.div_ceil(79) * 79;
         aligned_excess.min(existing_slice.len())
     } else {
         0
@@ -8254,18 +8273,18 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
         let (ts, ref val) = *guard;
         let out = val.clone();
         drop(guard);
-        if ts == 0 || now.saturating_sub(ts) >= 180 {
-            if !REFRESHING.swap(true, Ordering::SeqCst) {
-                thread::spawn(move || {
-                    let fresh = compute_tokyo_beacon_sense_bg();
-                    if let Some(c) = BEACON_CACHE.get() {
-                        if let Ok(mut g) = c.lock() {
-                            *g = (now_secs(), fresh);
-                        }
+        if (ts == 0 || now.saturating_sub(ts) >= 180)
+            && !REFRESHING.swap(true, Ordering::SeqCst)
+        {
+            thread::spawn(move || {
+                let fresh = compute_tokyo_beacon_sense_bg();
+                if let Some(c) = BEACON_CACHE.get() {
+                    if let Ok(mut g) = c.lock() {
+                        *g = (now_secs(), fresh);
                     }
-                    REFRESHING.store(false, Ordering::SeqCst);
-                });
-            }
+                }
+                REFRESHING.store(false, Ordering::SeqCst);
+            });
         }
         return out;
     }
@@ -8435,7 +8454,8 @@ fn run_parallel_ear_daemon() {
 
     // Single persistent worker thread fed by a 2-slot Utterance RingBuffer (`RingBuffer<(Vec<i16>, u64), 2>`).
     // Guarantees at most ONE `liquid-rust` transcription runs at any instant and zero thread/RAM pileup!
-    let utterance_queue: Arc<(Mutex<RingBuffer<(Vec<i16>, u64), 2>>, Condvar)> =
+    type UtteranceRingQueue = (Mutex<RingBuffer<(Vec<i16>, u64), 2>>, Condvar);
+    let utterance_queue: Arc<UtteranceRingQueue> =
         Arc::new((Mutex::new(RingBuffer::new()), Condvar::new()));
     {
         let q_clone = Arc::clone(&utterance_queue);
@@ -9225,8 +9245,113 @@ fn run_hook_stop() -> String {
     )
 }
 
-/// Run an honest, integer-nanosecond benchmark of every stage in the Qwave × ALEXIAI × MEM|8
-/// zero-float acoustic salience, diarization, speech modulation, and thought compression pipeline.
+/// Bridge `babilon-ultra-k9` / `agy-omni-ui` (`127.0.0.1:8095`) and `qwave_core::agy_omni`
+/// into 79-byte `MEM|8` `WaveInt` frames and `PackLinkRadar` telemetry.
+fn run_agy_omni_k9_bridge() -> String {
+    let mut daemon_live = false;
+    let mut daemon_ticks = 0u64;
+    if let Ok(addr) = "127.0.0.1:8095".parse() {
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(120)) {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(120)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(120)));
+            let req = b"GET /api/v1/k9/status HTTP/1.1\r\nHost: 127.0.0.1:8095\r\nConnection: close\r\n\r\n";
+            if stream.write_all(req).is_ok() {
+                let mut resp = String::new();
+                if stream.read_to_string(&mut resp).is_ok() {
+                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
+                        daemon_live = extract_json_bool(body, "ok").unwrap_or(true);
+                        daemon_ticks = extract_json_u64(body, "tick")
+                            .or_else(|| extract_json_u64(body, "total_ticks"))
+                            .unwrap_or(0);
+                    }
+                }
+            }
+        }
+    }
+
+    let zone = GeofenceZone::default_sanctuary();
+    let mut blue = AgyOmniCollarNode::new(
+        NODE_BLUE_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0x42; 32],
+    );
+    let mut bella = AgyOmniCollarNode::new(
+        NODE_BELLA_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0xBE; 32],
+    );
+    let now_nanos = now_secs().saturating_mul(1_000_000_000);
+    let tick = daemon_ticks.max(1);
+
+    let b_sample = synthesize_k9_sample(
+        NODE_BLUE_ID,
+        tick,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+    );
+    let b_burst = blue.step_cycle(b_sample);
+    let b_wave = b_burst.to_wave_int(b_sample.cadence_hz_q8, now_nanos);
+    let (bx, by, bz) = b_wave.coordinate(None);
+
+    let l_sample = synthesize_k9_sample(
+        NODE_BELLA_ID,
+        tick,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+    );
+    let l_burst = bella.step_cycle(l_sample);
+    let l_wave = l_burst.to_wave_int(l_sample.cadence_hz_q8, now_nanos);
+    let (lx, ly, lz) = l_wave.coordinate(None);
+
+    let radar = PackLinkRadar::evaluate(
+        blue.last_lat_microdeg,
+        blue.last_lon_microdeg,
+        bella.last_lat_microdeg,
+        bella.last_lon_microdeg,
+        &zone,
+    );
+    let bonobo = bonobo_resonance_pq();
+    let any_breach = radar.blue_geofence_trit.raw() < 0 || radar.bella_geofence_trit.raw() < 0;
+
+    format!(
+        "{{\n\
+         \"ok\": true,\n\
+         \"daemon_8095_online\": {daemon_live},\n\
+         \"daemon_8095_total_ticks\": {daemon_ticks},\n\
+         \"bonobo_resonance_pq\": \"{}/{}\",\n\
+         \"waveint_frame_bytes\": 79,\n\
+         \"node_blue\": {{\"id\":\"0x{:02X}\",\"posture\":{},\"tryte_packed\":{},\"burst_len\":{},\"compression_pq\":\"{}/{}\",\"wave_id\":\"0x{:016x}\",\"grid\":[{bx},{by},{bz}],\"mac\":\"0x{:016X}\"}},\n\
+         \"node_bella\": {{\"id\":\"0x{:02X}\",\"posture\":{},\"tryte_packed\":{},\"burst_len\":{},\"compression_pq\":\"{}/{}\",\"wave_id\":\"0x{:016x}\",\"grid\":[{lx},{ly},{lz}],\"mac\":\"0x{:016X}\"}},\n\
+         \"pack_radar\": {{\"separation_dm\":{},\"cohesion_trit\":{},\"geofence_breach\":{}}}\n\
+         }}",
+        bonobo.num,
+        bonobo.den,
+        NODE_BLUE_ID,
+        markdown_source_literal(b_burst.wukong_posture.label()),
+        b_burst.state_tryte.0,
+        b_burst.len,
+        b_burst.compression_pq.num,
+        b_burst.compression_pq.den,
+        b_wave.id.unwrap_or(0),
+        b_burst.mac_tag64(),
+        NODE_BELLA_ID,
+        markdown_source_literal(l_burst.wukong_posture.label()),
+        l_burst.state_tryte.0,
+        l_burst.len,
+        l_burst.compression_pq.num,
+        l_burst.compression_pq.den,
+        l_wave.id.unwrap_or(0),
+        l_burst.mac_tag64(),
+        radar.separation_dm,
+        radar.pack_cohesion_trit.raw(),
+        any_breach,
+    )
+}
+
+/// Run an honest, integer-nanosecond benchmark of every stage in the Qwave × ALEXIAI × MEM|8 × agy-omni
+/// zero-float acoustic salience, diarization, speech modulation, K9 WaveInt crystallization, and thought compression pipeline.
 fn run_qwave_alexiai_bench() -> String {
     use std::time::Instant;
 
@@ -9284,7 +9409,63 @@ fn run_qwave_alexiai_bench() -> String {
     let combine_1s_us = t3.elapsed().as_nanos() / 50 / 1_000;
     let combine_rt_factor = 1_000_000u128 / combine_1s_us.max(1);
 
-    // 5. ALEXIAI Loopback GAIA p/q + WUPZ Thought Capsule Compression
+    // 5. agy-omni / babilon-ultra-k9 -> 79-byte MEM|8 WaveInt + PackLinkRadar (1,000 dual-node ticks = 2,000 collar bursts)
+    let zone = GeofenceZone::default_sanctuary();
+    let mut blue = AgyOmniCollarNode::new(
+        NODE_BLUE_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0x42; 32],
+    );
+    let mut bella = AgyOmniCollarNode::new(
+        NODE_BELLA_ID,
+        zone.anchor_lat_microdeg,
+        zone.anchor_lon_microdeg,
+        [0xBE; 32],
+    );
+    let mut k9_guard = 0u64;
+    let t_k9 = Instant::now();
+    for tick in 1..=1_000u64 {
+        let now_nanos = (1_762_646_400 + tick) * 1_000_000_000;
+        let b_sample = synthesize_k9_sample(
+            NODE_BLUE_ID,
+            tick,
+            zone.anchor_lat_microdeg,
+            zone.anchor_lon_microdeg,
+        );
+        let b_burst = blue.step_cycle(b_sample);
+        let b_wave = b_burst.to_wave_int(b_sample.cadence_hz_q8, now_nanos);
+
+        let l_sample = synthesize_k9_sample(
+            NODE_BELLA_ID,
+            tick,
+            zone.anchor_lat_microdeg,
+            zone.anchor_lon_microdeg,
+        );
+        let l_burst = bella.step_cycle(l_sample);
+        let l_wave = l_burst.to_wave_int(l_sample.cadence_hz_q8, now_nanos);
+        let radar = PackLinkRadar::evaluate(
+            blue.last_lat_microdeg,
+            blue.last_lon_microdeg,
+            bella.last_lat_microdeg,
+            bella.last_lon_microdeg,
+            &zone,
+        );
+        let (gx, gy, gz) = l_wave.coordinate(None);
+        let raw_79 = l_wave.to_frame();
+        let decoded = WaveInt::from_frame(&raw_79).expect("79B WaveInt roundtrip");
+        k9_guard ^= decoded.id.unwrap_or(0)
+            ^ b_wave.id.unwrap_or(0)
+            ^ radar.separation_dm
+            ^ ((gx as u64) << 16)
+            ^ ((gy as u64) << 8)
+            ^ (gz as u64);
+    }
+    let agy_omni_1k_ns = t_k9.elapsed().as_nanos().max(1);
+    let agy_omni_1k_us = agy_omni_1k_ns / 1_000;
+    let agy_omni_cycles_per_sec = (2_000u128 * 1_000_000_000u128) / agy_omni_1k_ns;
+
+    // 6. ALEXIAI Loopback GAIA p/q + WUPZ Thought Capsule Compression
     let raw_event = r#"{"ts":1792726498,"speaker":"hue","context":"addressing_agent","should_agent_respond":true,"primary_similarity_q15":31605,"on_axis_ratio_q15":24850,"f0_hz":173,"f0_pq":"4604000/26489","vad_byte":"0x66","text":"Um yeah like basically Hey Gemini let us offload the cognitive token work to Alexiai so you get compressed thoughts"}"#;
     let sample_tx = "Um yeah like basically Hey Gemini let us offload the cognitive token work to Alexiai so you get compressed thoughts";
     let t4 = Instant::now();
@@ -9293,11 +9474,13 @@ fn run_qwave_alexiai_bench() -> String {
     let raw_bytes = raw_event.len();
     let cap_bytes = capsule.len();
     let savings_pct = ((raw_bytes.saturating_sub(cap_bytes)) * 100) / raw_bytes.max(1);
+    let bonobo = bonobo_resonance_pq();
 
     format!(
         "{{\n\
          \"ok\": true,\n\
          \"zero_float_core\": true,\n\
+         \"bonobo_resonance_pq\": \"{}/{}\",\n\
          \"marine_detector_1s_audio_us\": {marine_1s_us},\n\
          \"marine_realtime_speedup_x\": {marine_rt_factor},\n\
          \"salient_grains_mem8_1s_audio_us\": {grains_1s_us},\n\
@@ -9306,6 +9489,8 @@ fn run_qwave_alexiai_bench() -> String {
          \"room_diarizer_realtime_speedup_x\": {diarize_rt_factor},\n\
          \"salience_speech_combiner_1s_24khz_us\": {combine_1s_us},\n\
          \"salience_speech_combiner_realtime_speedup_x\": {combine_rt_factor},\n\
+         \"agy_omni_k9_waveint_1k_dual_ticks_us\": {agy_omni_1k_us},\n\
+         \"agy_omni_collar_cycles_per_sec\": {agy_omni_cycles_per_sec},\n\
          \"alexiai_loopback_gaia_wupz_capsule_us\": {alexiai_fold_us},\n\
          \"raw_event_bytes\": {raw_bytes},\n\
          \"compressed_capsule_bytes\": {cap_bytes},\n\
@@ -9313,8 +9498,10 @@ fn run_qwave_alexiai_bench() -> String {
          \"sample_capsule\": {},\n\
          \"guard_checksum\": {}\n\
          }}",
+        bonobo.num,
+        bonobo.den,
         markdown_source_literal(&capsule),
-        acc_sal ^ (mod_wav.len() as u64) ^ (report.top_grains.len() as u64)
+        acc_sal ^ (mod_wav.len() as u64) ^ (report.top_grains.len() as u64) ^ k9_guard
     )
 }
 
@@ -9480,7 +9667,7 @@ fn broadcast_and_sync_esp32_memnet(
 
 /// Sovereign Nomad Mesh (`qwave --nomad` / `qwave --nomad-connect` / `nomad_mesh` MCP tool):
 /// 1. Discovers & ranks open/free & captive-portal Wi-Fi networks (`.Wi2_Free_at_[SK.GROUP]`, `tullys_Wi-Fi`, etc.)
-///     WITHOUT triggering destructive background Wi-Fi rescans when `wlan0` is already connected!
+///    WITHOUT triggering destructive background Wi-Fi rescans when `wlan0` is already connected!
 /// 2. Probes HTTP captive portal state (`http://connectivitycheck.gstatic.com/generate_204`), automatically
 ///    fills in honest traveler inputs (`email`, `country`, `lang`, `macaddr`, ToS checkboxes) and USEN
 ///    `/capi/welcome` flock MAC vouchers, and remembers verified recipes in `~/.local/share/qwave/mem8/portal_recipes.tsv`.
@@ -10199,18 +10386,18 @@ fn build_marine_sense_json(state: &Arc<AppState>) -> String {
         let (ts, ref val) = *guard;
         let cur = val.clone();
         drop(guard);
-        if ts == 0 || now.saturating_sub(ts) >= 60 {
-            if !NOMAD_BUSY.swap(true, Ordering::SeqCst) {
-                thread::spawn(move || {
-                    let fresh = run_nomad_mesh(false);
-                    if let Some(c) = NOMAD_CACHE.get() {
-                        if let Ok(mut g) = c.lock() {
-                            *g = (now_secs(), fresh);
-                        }
+        if (ts == 0 || now.saturating_sub(ts) >= 60)
+            && !NOMAD_BUSY.swap(true, Ordering::SeqCst)
+        {
+            thread::spawn(move || {
+                let fresh = run_nomad_mesh(false);
+                if let Some(c) = NOMAD_CACHE.get() {
+                    if let Ok(mut g) = c.lock() {
+                        *g = (now_secs(), fresh);
                     }
-                    NOMAD_BUSY.store(false, Ordering::SeqCst);
-                });
-            }
+                }
+                NOMAD_BUSY.store(false, Ordering::SeqCst);
+            });
         }
         cur
     } else {
@@ -10221,18 +10408,18 @@ fn build_marine_sense_json(state: &Arc<AppState>) -> String {
         let (ts, ref val) = *guard;
         let cur = val.clone();
         drop(guard);
-        if ts == 0 || now.saturating_sub(ts) >= 30 {
-            if !TRIAD_BUSY.swap(true, Ordering::SeqCst) {
-                thread::spawn(move || {
-                    let fresh = run_esp32_triad_probe(false);
-                    if let Some(c) = TRIAD_CACHE.get() {
-                        if let Ok(mut g) = c.lock() {
-                            *g = (now_secs(), fresh);
-                        }
+        if (ts == 0 || now.saturating_sub(ts) >= 30)
+            && !TRIAD_BUSY.swap(true, Ordering::SeqCst)
+        {
+            thread::spawn(move || {
+                let fresh = run_esp32_triad_probe(false);
+                if let Some(c) = TRIAD_CACHE.get() {
+                    if let Ok(mut g) = c.lock() {
+                        *g = (now_secs(), fresh);
                     }
-                    TRIAD_BUSY.store(false, Ordering::SeqCst);
-                });
-            }
+                }
+                TRIAD_BUSY.store(false, Ordering::SeqCst);
+            });
         }
         cur
     } else {
@@ -10786,8 +10973,8 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
     let mut sum_sq_ping_l: u64 = 0;
     let mut sum_sq_ping_r: u64 = 0;
     for f in win_start..win_end {
-        let l = (captured_samples[f * 2] as i64).abs() as u64;
-        let r = (captured_samples[f * 2 + 1] as i64).abs() as u64;
+        let l = (captured_samples[f * 2] as i64).unsigned_abs();
+        let r = (captured_samples[f * 2 + 1] as i64).unsigned_abs();
         sum_sq_ping_l += l * l;
         sum_sq_ping_r += r * r;
     }
@@ -11011,8 +11198,7 @@ fn run_i1_speedtest() -> String {
     }
 
     // Compute integer RF entropy approximation in permille (0..1000)
-    let rf_entropy_permille: u64 = if ap_count > 0 {
-        let avg_sig = signal_sum / ap_count;
+    let rf_entropy_permille: u64 = if let Some(avg_sig) = signal_sum.checked_div(ap_count) {
         ((ap_count * 73 + avg_sig * 5) % 450) + 450
     } else {
         500

@@ -1,15 +1,21 @@
-/* qwave_core_stubs.c — weak fallbacks for the sovereign core's C ABI.
+/* qwave_core_stubs.c — safe-fail fallbacks for the sovereign core's C ABI.
  *
- * The real definitions live in `core/` (Rust staticlib) and are linked by
- * the Qwave and QwaveIOS app targets. Every symbol here is declared weak, so
- * the strong Rust definitions always win in a real app, while standalone
- * package builds (`swift test`, the MCP tool) link against these safe
- * defaults instead of failing with undefined symbols.
+ * Two consumers:
+ *
+ * 1. Platforms rustc no longer supports (x86_64 iOS Simulator since rustc
+ *    1.99). core/build-apple.sh compiles this file with clang into a stub
+ *    slice of the fat staticlib, so the app links on that architecture and
+ *    every decision safely fails closed.
+ *
+ * 2. The QwaveKit RustCoreABI target declares these as weak definitions, so
+ *    standalone package builds (swift test, qwave-mcp) link instead of
+ *    failing on undefined symbols. In a real app the strong Rust
+ *    definitions (force-loaded from libqwave_core.a) always win.
  *
  * Safety of the defaults: everything returns the "nothing permitted /
  * nothing valid / nothing stored" answer, except `stable` (channel 0), which
  * is unconditionally free by the MIT constitution. A stub is only ever
- * reached in a process that deliberately did not link the core.
+ * reached in a process that deliberately did not link the real core.
  */
 
 #include "qwave_core.h"
@@ -248,4 +254,25 @@ qw_i1_evaluate_deed(const char *creator_id, const char *secret_phrase,
     out_summary->can_ingest_i1 = (ingest_mode <= 1 && !original_author_revoked);
     out_summary->can_summarize_local = (ingest_mode <= 2);
     return true;
+}
+
+__attribute__((weak)) uint8_t qw_agy_omni_pack_tryte(int8_t t0, int8_t t1,
+                                                     int8_t t2, int8_t t3,
+                                                     int8_t t4) {
+    (void)t0;
+    (void)t1;
+    (void)t2;
+    (void)t3;
+    (void)t4;
+    return 121; /* neutral (0, 0, 0, 0, 0) in radix-3 */
+}
+
+__attribute__((weak)) uint64_t qw_agy_omni_pack_separation_dm(
+    int32_t blue_lat_udeg, int32_t blue_lon_udeg, int32_t bella_lat_udeg,
+    int32_t bella_lon_udeg) {
+    (void)blue_lat_udeg;
+    (void)blue_lon_udeg;
+    (void)bella_lat_udeg;
+    (void)bella_lon_udeg;
+    return 0;
 }

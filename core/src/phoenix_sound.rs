@@ -473,6 +473,7 @@ pub fn catmull_rom_s32_16x(p0: i16, p1: i16, p2: i16, p3: i16, sub_k: u8) -> i32
 /// Detects:
 /// 1. Hard digital clipping plateaus (`|x[i]| >= 32600` for 2+ consecutive samples), and
 /// 2. Sudden sample-dropouts to zero surrounded by high-amplitude active wave energy.
+///
 /// Reconstructs the missing/clipped arc using phase-continuous integer Catmull-Rom cubic Hermite
 /// interpolation anchored on the intact slopes before and after the damaged span.
 pub fn restore_channel_catmull_rom_i16(samples: &[i16]) -> (Vec<i16>, u64) {
@@ -726,7 +727,7 @@ pub fn phoenix_transform_pcm_i16(
                     }
                     prev_period_ticks_768k = period_ticks;
 
-                    let da = current_peak_abs.abs_diff(prev_peak_abs) as u64;
+                    let da = current_peak_abs.abs_diff(prev_peak_abs);
                     amp_jitter_accum = amp_jitter_accum.saturating_add(da);
                     peak_accum = peak_accum.saturating_add(current_peak_abs as u64);
                     prev_peak_abs = current_peak_abs;
@@ -1491,7 +1492,7 @@ impl PhoenixLiveProcessor {
                         }
                         self.prev_period_ticks_768k = period_ticks;
 
-                        let da = self.current_peak_abs.abs_diff(self.prev_peak_abs) as u64;
+                        let da = self.current_peak_abs.abs_diff(self.prev_peak_abs);
                         self.amp_jitter_accum = self.amp_jitter_accum.saturating_add(da);
                         self.peak_accum = self.peak_accum.saturating_add(self.current_peak_abs as u64);
                         self.prev_peak_abs = self.current_peak_abs;

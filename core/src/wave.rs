@@ -131,8 +131,9 @@ impl WaveInt {
             _ => 0,
         };
         let x = (128i32 + x_offset).clamp(0, 255) as u8;
-        let y_norm = (self.emotional_valence.double_value() + 1.0) / 2.0;
-        let y = ((y_norm * 255.0).floor() as i32).clamp(0, 255) as u8;
+        let num = i64::from(self.emotional_valence.num);
+        let den = i64::from(self.emotional_valence.den.max(1));
+        let y = ((num + den) * 255).div_euclid(2 * den).clamp(0, 255) as u8;
         let age_seconds = if now >= self.created_at {
             (now - self.created_at) / 1_000_000_000
         } else {

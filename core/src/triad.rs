@@ -241,9 +241,9 @@ pub fn analyze_chirp_echogram_i16(
         }
     }
     if wall1_val == 0 && search1_start < search1_end {
-        for b in search1_start..search1_end {
-            if env[b] > wall1_val {
-                wall1_val = env[b];
+        for (b, &val) in env.iter().enumerate().take(search1_end).skip(search1_start) {
+            if val > wall1_val {
+                wall1_val = val;
                 wall1_bin = b;
             }
         }
@@ -256,10 +256,10 @@ pub fn analyze_chirp_echogram_i16(
     let adaptive_nlos_thresh = (noise_floor * 2).max((peak_val * 12) / 100);
     let mut wall2_bin = (wall1_bin + 6).min(num_bins.saturating_sub(1));
     let mut wall2_val = env.get(wall2_bin).copied().unwrap_or(noise_floor);
-    for b in search2_start..search2_end {
-        if env[b] >= adaptive_nlos_thresh {
+    for (b, &val) in env.iter().enumerate().take(search2_end).skip(search2_start) {
+        if val >= adaptive_nlos_thresh {
             wall2_bin = b;
-            wall2_val = env[b];
+            wall2_val = val;
         }
     }
 
@@ -275,8 +275,8 @@ pub fn analyze_chirp_echogram_i16(
                 let yj = seg[j] as i64;
                 let dx = (j - i) as i64;
                 let mut penetrations = 0u8;
-                for k in (i + 1)..j {
-                    let yk = seg[k] as i64;
+                for (k, &seg_k) in seg.iter().enumerate().take(j).skip(i + 1) {
+                    let yk = seg_k as i64;
                     // Line height at k between (i, yi) and (j, yj): yi + (yj - yi)*(k - i)/(j - i)
                     let lhs = yk * dx;
                     let rhs = yi * dx + (yj - yi) * ((k - i) as i64);

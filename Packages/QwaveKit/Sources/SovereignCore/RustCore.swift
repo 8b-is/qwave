@@ -151,6 +151,34 @@ public enum RustCore {
         guard let cString = qw_channel_notice(channel.rawValue) else { return nil }
         return String(cString: cString)
     }
+
+    // MARK: - agy-omni / babilon-ultra-k9 (Wukong K9 & Edge Telemetry Bridge)
+
+    /// Pack five balanced trits (`-1, 0, +1`) into a single `Tryte5` byte (`0..243`).
+    public static func agyOmniPackTryte(
+        _ t0: Int8,
+        _ t1: Int8,
+        _ t2: Int8,
+        _ t3: Int8,
+        _ t4: Int8
+    ) -> UInt8 {
+        qw_agy_omni_pack_tryte(t0, t1, t2, t3, t4)
+    }
+
+    /// Planar pack separation in decimeters (`0.1 m`) between `NODE_BLUE` and `NODE_BELLA`.
+    public static func agyOmniPackSeparationDm(
+        blueLatMicrodeg: Int32,
+        blueLonMicrodeg: Int32,
+        bellaLatMicrodeg: Int32,
+        bellaLonMicrodeg: Int32
+    ) -> UInt64 {
+        qw_agy_omni_pack_separation_dm(
+            blueLatMicrodeg,
+            blueLonMicrodeg,
+            bellaLatMicrodeg,
+            bellaLonMicrodeg
+        )
+    }
 }
 
 /// The Phoenix protocol over the Rust orchestration — MEM|8 first-class.
