@@ -1677,34 +1677,20 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
     let cloned_opt = load_named_voice_profile(voice);
     let profile = cloned_opt
         .clone()
-        .unwrap_or_else(|| state.salience_profile.lock().unwrap().clone());
+        .unwrap_or_else(|| resolve_persona_salience_profile(voice, &state.salience_profile));
 
-    let kokoro_voice: String = match voice {
-        "lfm_aye" | "aye" => "af_heart.6+af_bella.4".to_string(),
-        "lfm_omnimom" | "omnimom" => "af_sky.6+af_nicole.4".to_string(),
-        "alexandra" | "starlight" => "af_heart.5+bf_emma.5".to_string(),
-        "trisha" => "af_bella.6+af_nicole.4".to_string(),
-        other => {
-            if let Some(ref cp) = cloned_opt {
-                let f0_int = cp.f0_hz.num / (cp.f0_hz.den.max(1) as i32);
-                if f0_int < 165 {
-                    "am_michael.6+am_adam.4".to_string()
-                } else {
-                    "af_heart.6+af_bella.4".to_string()
-                }
-            } else {
-                other.to_string()
-            }
-        }
-    };
+    let kokoro_voice = select_kokoro_blend_for_profile(voice, cloned_opt.as_ref(), &profile);
 
     let kokoro_bin = if Path::new("/usr/local/bin/kokoro-speak").exists() {
         "/usr/local/bin/kokoro-speak"
+    } else if Path::new("/home/hue/.local/bin/kokoro-speak").exists() {
+        "/home/hue/.local/bin/kokoro-speak"
     } else {
         "kokoro-speak"
     };
 
     if let Ok(status) = Command::new(kokoro_bin)
+        .env("PIPER_ESPEAKNG_DATA_DIRECTORY", "/usr/share")
         .args(["-V", &kokoro_voice, "-o", &wav_path, "say", &spoken])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1721,9 +1707,14 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
         }
     }
 
-    // Fallback to espeak-ng WAV on stdout
+    // Fallback to espeak-ng WAV on stdout with persona-aware voice variant
+    let espeak_voice = if profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32) <= 165 {
+        "en+m3"
+    } else {
+        "en+f3"
+    };
     if let Ok(out) = Command::new("espeak-ng")
-        .args(["-v", "en+f3", "-s", "165", "--stdout", &spoken])
+        .args(["-v", espeak_voice, "-s", "165", "--stdout", &spoken])
         .output()
     {
         if !out.stdout.is_empty() {
@@ -7325,8 +7316,8 @@ fn load_salience_profile() -> SpeakerSalienceProfile {
     if let Ok(bytes) = fs::read(path) {
         if let Some(mut prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
             let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
-            if !(85..=175).contains(&f0_int) {
-                prof.f0_hz = Rational::integer(154);
+            if !(75..=320).contains(&f0_int) {
+                prof.f0_hz = Rational::integer(128);
                 save_salience_profile(&prof);
             }
             return prof;
@@ -7393,12 +7384,257 @@ fn sanitize_persona_slug(name: &str) -> String {
 fn load_named_voice_profile(voice: &str) -> Option<SpeakerSalienceProfile> {
     let slug = sanitize_persona_slug(voice);
     let path = voices_dir().join(format!("{slug}.m8sp"));
-    if let Ok(bytes) = fs::read(path) {
-        if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+    if let Ok(bytes) = fs::read(&path) {
+        if let Some(mut prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+            let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+            let is_male_slug = slug.starts_with("hue")
+                || slug.starts_with("pete")
+                || slug.starts_with("bela")
+                || slug.starts_with("male");
+            if is_male_slug && f0_int > 165 {
+                prof.f0_hz = Rational::new(prof.f0_hz.num, prof.f0_hz.den.saturating_mul(2))
+                    .unwrap_or(prof.f0_hz);
+                let _ = fs::write(&path, prof.to_bytes());
+            }
             return Some(prof);
         }
     }
     None
+}
+
+/// Resolve the active `SpeakerSalienceProfile` for a requested persona (`voice`), returning:
+/// 1. Any cloned `.m8sp` profile in `~/.local/share/qwave/mem8/voices/<voice>.m8sp`,
+/// 2. The global profile for `"hue"` / `"primary"`, or
+/// 3. A deterministic persona-specific acoustic profile for built-in voices (`aye`, `lfm_aye`,
+///    `alexandra`, `omnimom`, `trisha`, `pete`) so each persona reports its own true `speaker_f0_hz`
+///    and prosody contour.
+fn resolve_persona_salience_profile(
+    voice: &str,
+    fallback_state: &Mutex<SpeakerSalienceProfile>,
+) -> SpeakerSalienceProfile {
+    if let Some(cp) = load_named_voice_profile(voice) {
+        return cp;
+    }
+    let slug = sanitize_persona_slug(voice);
+    match slug.as_str() {
+        "aye" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(208);
+            p.vad_byte = 0x64;
+            p.grains_learned = 8;
+            p.prosody_envelope_q15 = [
+                16800, 18200, 19400, 17900, 16500, 17200, 18900, 19800, 18400, 17100, 16600, 17800,
+                19100, 18500, 17200, 16100,
+            ];
+            p
+        }
+        "lfm_aye" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(224);
+            p.vad_byte = 0x68;
+            p.grains_learned = 8;
+            p.prosody_envelope_q15 = [
+                17900, 19600, 20800, 18800, 17400, 18900, 20400, 21200, 19500, 18100, 17600, 19200,
+                20600, 19400, 18000, 16900,
+            ];
+            p
+        }
+        "alexandra" | "starlight" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(196);
+            p.vad_byte = 0x62;
+            p.grains_learned = 8;
+            p
+        }
+        "lfm_omnimom" | "omnimom" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(186);
+            p.vad_byte = 0x56;
+            p.grains_learned = 8;
+            p
+        }
+        "trisha" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(232);
+            p.vad_byte = 0x69;
+            p.grains_learned = 8;
+            p
+        }
+        "pete" => {
+            let mut p = SpeakerSalienceProfile::default();
+            p.f0_hz = Rational::integer(118);
+            p.vad_byte = 0x52;
+            p.grains_learned = 8;
+            p
+        }
+        _ => fallback_state.lock().unwrap().clone(),
+    }
+}
+
+/// Select a distinct 256-D Kokoro neural style blend for both built-in personas and cloned `.m8sp`
+/// voice profiles using 100% integer acoustic features (`f0_hz`, `vad_byte`, and 16-bin prosody contour).
+fn select_kokoro_blend_for_profile(
+    voice: &str,
+    cloned_opt: Option<&SpeakerSalienceProfile>,
+    prof: &SpeakerSalienceProfile,
+) -> String {
+    let slug = sanitize_persona_slug(voice);
+    if cloned_opt.is_none() {
+        match slug.as_str() {
+            "aye" => return "af_heart.7+af_bella.3".to_string(),
+            "lfm_aye" => return "af_bella.6+af_sky.4".to_string(),
+            "lfm_omnimom" | "omnimom" => return "af_sky.6+af_nicole.4".to_string(),
+            "alexandra" | "starlight" => return "bf_emma.6+af_heart.4".to_string(),
+            "trisha" => return "af_nova.6+af_jessica.4".to_string(),
+            "pete" => return "bm_george.6+am_echo.4".to_string(),
+            _ => {}
+        }
+        if voice.contains('_') || voice.contains('+') {
+            return voice.to_string();
+        }
+    }
+
+    let f0_int = (prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32)).clamp(80, 320);
+    let is_male_persona = slug.starts_with("hue")
+        || slug.starts_with("pete")
+        || slug.starts_with("bela")
+        || slug.starts_with("male")
+        || f0_int <= 165;
+
+    // Compute a deterministic acoustic contour signature from the 16-bin prosody envelope + grain
+    let mut contour_sig: usize = (prof.vad_byte as usize).wrapping_mul(13);
+    for (idx, &v) in prof.prosody_envelope_q15.iter().enumerate() {
+        contour_sig = contour_sig.wrapping_add((v as usize).wrapping_mul(idx + 3));
+    }
+    contour_sig = contour_sig.wrapping_add(prof.best_grain_pcm.len().wrapping_mul(7));
+
+    let w_primary = match contour_sig % 3 {
+        0 => 7,
+        1 => 6,
+        _ => 8,
+    };
+    let w_secondary = 10 - w_primary;
+
+    if is_male_persona {
+        let male_voices = [
+            "am_michael",
+            "am_adam",
+            "bm_lewis",
+            "am_echo",
+            "am_onyx",
+            "bm_george",
+            "am_liam",
+            "am_fenrir",
+        ];
+        let primary_idx = if f0_int < 115 {
+            4 + (contour_sig % 2) // am_onyx / bm_george
+        } else if f0_int <= 138 {
+            contour_sig % 4 // am_michael / am_adam / bm_lewis / am_echo
+        } else {
+            (contour_sig + 2) % 8
+        };
+        let secondary_idx = (primary_idx + 1 + ((contour_sig >> 3) % 6)) % male_voices.len();
+        format!(
+            "{}.{w_primary}+{}.{w_secondary}",
+            male_voices[primary_idx], male_voices[secondary_idx]
+        )
+    } else {
+        let female_voices = [
+            "af_heart", "af_bella", "af_sky", "af_nova", "bf_emma", "af_kore", "af_sarah",
+            "af_river",
+        ];
+        let primary_idx = contour_sig % female_voices.len();
+        let secondary_idx = (primary_idx + 1 + ((contour_sig >> 3) % 6)) % female_voices.len();
+        format!(
+            "{}.{w_primary}+{}.{w_secondary}",
+            female_voices[primary_idx], female_voices[secondary_idx]
+        )
+    }
+}
+
+/// Zero-float Fundamental Pitch (`f0`) Estimator via Low-Pass Autocorrelation (`80..=300 Hz`):
+/// Resolves true glottal fundamental period `p/q` without getting fooled by 2nd-harmonic formant
+/// zero-crossings (`192 Hz` / `223 Hz` -> true fundamental `96..138 Hz`).
+fn estimate_true_f0_autocorr_pq(
+    pcm: &[i16],
+    sample_rate: u32,
+    raw_f0: Rational,
+    persona_slug: &str,
+) -> Rational {
+    let sr = sample_rate.max(8_000) as usize;
+    let is_male_slug = persona_slug.starts_with("hue")
+        || persona_slug.starts_with("pete")
+        || persona_slug.starts_with("bela")
+        || persona_slug.starts_with("male");
+
+    if pcm.len() >= 512 {
+        // Find the highest-energy 2048-sample voiced window
+        let win_len = pcm.len().min(2048);
+        let step = (win_len / 2).max(1);
+        let mut best_start = 0usize;
+        let mut best_energy: i64 = 0;
+        let mut start = 0usize;
+        while start + win_len <= pcm.len() {
+            let energy: i64 = pcm[start..start + win_len]
+                .iter()
+                .map(|&s| (s as i64).abs())
+                .sum();
+            if energy > best_energy {
+                best_energy = energy;
+                best_start = start;
+            }
+            start += step;
+        }
+
+        let slice = &pcm[best_start..best_start + win_len];
+        // 4-tap moving average low-pass filter to attenuate high-frequency sibilants and F2/F3
+        let mut lpf = Vec::with_capacity(slice.len());
+        for i in 0..slice.len() {
+            let s0 = slice[i] as i32;
+            let s1 = slice[i.saturating_sub(1)] as i32;
+            let s2 = slice[i.saturating_sub(2)] as i32;
+            let s3 = slice[i.saturating_sub(3)] as i32;
+            lpf.push((s0 + s1 + s2 + s3) >> 2);
+        }
+
+        let min_lag = (sr / 300).max(20);
+        let max_lag = (sr / 80).min(lpf.len() / 2);
+        if max_lag > min_lag {
+            let compare_len = (lpf.len() - max_lag).min(1024);
+            let mut best_lag = min_lag;
+            let mut best_corr: i64 = i64::MIN;
+            let mut corr_by_lag = vec![0i64; max_lag + 1];
+
+            for lag in min_lag..=max_lag {
+                let mut sum: i64 = 0;
+                for i in 0..compare_len {
+                    sum += (lpf[i] as i64) * (lpf[i + lag] as i64);
+                }
+                corr_by_lag[lag] = sum;
+                if sum > best_corr {
+                    best_corr = sum;
+                    best_lag = lag;
+                }
+            }
+
+            if best_corr > 0 {
+                // Sub-harmonic octave check: if 2 * best_lag has strong correlation, prefer true fundamental
+                let double_lag = best_lag * 2;
+                if double_lag <= max_lag && corr_by_lag[double_lag] * 10 >= best_corr * 6 {
+                    best_lag = double_lag;
+                } else if is_male_slug && (sr / best_lag) > 165 && double_lag <= max_lag {
+                    best_lag = double_lag;
+                }
+                return Rational::new(sample_rate as i32, best_lag as u32).unwrap_or(raw_f0);
+            }
+        }
+    }
+
+    let raw_int = raw_f0.num / (raw_f0.den.max(1) as i32);
+    if is_male_slug && raw_int > 165 {
+        return Rational::new(raw_f0.num, raw_f0.den.saturating_mul(2)).unwrap_or(raw_f0);
+    }
+    raw_f0
 }
 
 /// Zero-float Voice Cloning Engine (`qwave --clone-voice <wav_or_secs> [--name <persona>]`):
@@ -7448,14 +7684,12 @@ fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
     };
 
     let report = extract_salient_grains(&pcm, sr, 8, now_secs());
-    let mut prof = load_named_voice_profile(&slug).unwrap_or_else(|| {
-        let mut p = SpeakerSalienceProfile::default();
-        p.f0_hz = report.overall_f0_hz;
-        p
-    });
+    let true_f0 = estimate_true_f0_autocorr_pq(&pcm, sr, report.overall_f0_hz, &slug);
+    let mut prof = SpeakerSalienceProfile::default();
+    prof.f0_hz = true_f0;
     prof.absorb_report(&report);
-    if report.overall_f0_hz.num > 0 {
-        prof.f0_hz = report.overall_f0_hz;
+    if true_f0.num > 0 {
+        prof.f0_hz = true_f0;
     }
 
     let out_path = voices_dir().join(format!("{slug}.m8sp"));
@@ -7466,11 +7700,7 @@ fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
 
     let qt_code = format!("qt:{:02x}", prof.vad_byte);
     let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
-    let base_blend = if f0_int < 165 {
-        "am_michael.6+am_adam.4"
-    } else {
-        "af_heart.6+af_bella.4"
-    };
+    let base_blend = select_kokoro_blend_for_profile(&slug, Some(&prof), &prof);
 
     if let Some(t) = temp_rec {
         let _ = fs::remove_file(t);
@@ -7489,7 +7719,7 @@ fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
         "{{\"ok\":true,\"action\":\"clone_voice\",\"persona\":{},\"profile_path\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"avg_salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"qt_code\":{},\"grains_learned\":{},\"best_grain_samples\":{},\"prosody_envelope_q15\":{env_str}}}",
         markdown_source_literal(&slug),
         markdown_source_literal(&out_path.to_string_lossy()),
-        markdown_source_literal(base_blend),
+        markdown_source_literal(&base_blend),
         prof.f0_hz.num,
         prof.f0_hz.den,
         prof.avg_salience.num,
@@ -7511,9 +7741,11 @@ fn list_cloned_voices_json() -> String {
                     if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
                         let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("voice");
                         let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+                        let blend = select_kokoro_blend_for_profile(name, Some(&prof), &prof);
                         items.push(format!(
-                            "{{\"persona\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"path\":{}}}",
+                            "{{\"persona\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"path\":{}}}",
                             markdown_source_literal(name),
+                            markdown_source_literal(&blend),
                             prof.f0_hz.num,
                             prof.f0_hz.den,
                             prof.vad_byte,
@@ -7526,7 +7758,7 @@ fn list_cloned_voices_json() -> String {
         }
     }
     format!(
-        "{{\"ok\":true,\"builtin_blends\":[\"lfm_aye (af_heart.6+af_bella.4)\",\"lfm_omnimom (af_sky.6+af_nicole.4)\",\"alexandra (af_heart.5+bf_emma.5)\",\"trisha (af_bella.6+af_nicole.4)\"],\"cloned_voices\":[{}]}}",
+        "{{\"ok\":true,\"builtin_blends\":[\"aye (af_heart.7+af_bella.3)\",\"lfm_aye (af_bella.6+af_sky.4)\",\"lfm_omnimom (af_sky.6+af_nicole.4)\",\"alexandra (bf_emma.6+af_heart.4)\",\"trisha (af_nova.6+af_jessica.4)\",\"pete (bm_george.6+am_echo.4)\"],\"cloned_voices\":[{}]}}",
         items.join(",")
     )
 }
@@ -7564,7 +7796,8 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
     write_tts_expected(text, pre_est_secs);
     let _ = fs::write(mem8_dir().join("last_tts_text.txt"), text);
 
-    let prof = load_salience_profile();
+    let default_prof = Mutex::new(load_salience_profile());
+    let prof = resolve_persona_salience_profile(voice, &default_prof);
     let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
 
     if !wait {

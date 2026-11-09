@@ -618,9 +618,11 @@ impl SpeakerSalienceProfile {
 /// Combine the user's learned `MEM|8` highest-salience vocal profile into an outgoing TTS WAV
 /// using 100% integer (`i16`/`i32`/`i64`) DSP:
 /// 1. Modulates the speech dynamic cadence envelope using the user's 16-bin salient prosody contour.
-/// 2. Phase-locks a subtle (`1/24` amplitude) harmonic resonance overtone from the user's
-///    highest-salience vocal grain (`best_grain_pcm`) onto voiced peaks so the system's voice
-///    carries the user's own acoustic warmth and cadence.
+/// 2. Applies a vocal-tract spectral warmth filter tuned from the user's highest-salience vocal
+///    grain (`best_grain_pcm`).
+/// 3. For full speech utterances (`> 4800` samples), applies a zero-float rational linear-interpolated
+///    pitch/formant/cadence shift (`step_q12` around `4096`) anchored to `profile.f0_hz` so every
+///    cloned `.m8sp` persona carries its own fundamental pitch and cadence signature.
 pub fn combine_salient_speech_wav(tts_wav: &[u8], profile: &SpeakerSalienceProfile) -> Vec<u8> {
     if profile.grains_learned == 0 {
         return tts_wav.to_vec();
@@ -643,23 +645,71 @@ pub fn combine_salient_speech_wav(tts_wav: &[u8], profile: &SpeakerSalienceProfi
         / 16;
     let avg_env = avg_env.max(1024);
 
+    // Derive vocal-tract warmth coefficient in Q3 (5..=7 out of 8) from best_grain_pcm
+    let grain_warmth_q3: i32 = if profile.best_grain_pcm.len() >= 16 {
+        let mut energy_sum: i64 = 0;
+        let mut diff_sum: i64 = 0;
+        let mut prev: i64 = profile.best_grain_pcm[0] as i64;
+        for &g in &profile.best_grain_pcm {
+            let cur = g as i64;
+            energy_sum += cur.abs();
+            diff_sum += (cur - prev).abs();
+            prev = cur;
+        }
+        // Lower diff/energy ratio -> warmer chest resonance (5/8 current + 3/8 prev)
+        if energy_sum > 0 && diff_sum * 4 < energy_sum {
+            5
+        } else if energy_sum > 0 && diff_sum * 2 < energy_sum {
+            6
+        } else {
+            7
+        }
+    } else {
+        7
+    };
+    let prev_weight_q3 = 8 - grain_warmth_q3;
+
     let mut prev_s: i32 = 0;
     for (i, sample) in samples.iter_mut().enumerate() {
         let bin = (i * 16 / total).min(15);
         let env_target = profile.prosody_envelope_q15[bin] as u32;
-        // Prosodic gain in Q10 (1024 = 1.0x), bounded to [896..=1184] (~0.88x .. 1.15x)
-        // so cadence inflection is natural and never distorts or layers a second voice grain
-        let raw_gain_q10 = (env_target * 1024 / avg_env).clamp(896, 1184);
-        // Blend 7/8 base + 1/8 learned prosody contour (`>> 3`)
-        let gain_q10 = ((1024 * 7 + raw_gain_q10) >> 3) as i32;
+        // Prosodic gain in Q10 (1024 = 1.0x), bounded to [864..=1216] (~0.84x .. 1.19x)
+        let raw_gain_q10 = (env_target * 1024 / avg_env).clamp(864, 1216);
+        // Blend 5/8 base + 3/8 learned prosody contour (`>> 3`)
+        let gain_q10 = ((1024 * 5 + raw_gain_q10 * 3) >> 3) as i32;
 
         let s = (*sample as i32 * gain_q10) >> 10;
 
-        // Gentle integer 1-pole warmth smoothing (`7/8 current + 1/8 prev`)
-        let smoothed = (s * 7 + prev_s) >> 3;
+        // Integer 1-pole vocal-tract warmth filter
+        let smoothed = (s * grain_warmth_q3 + prev_s * prev_weight_q3) >> 3;
         prev_s = smoothed;
 
         *sample = smoothed.clamp(-Q15_ONE, Q15_ONE) as i16;
+    }
+
+    // Apply subtle zero-float rational pitch/formant resampling for full utterances (`> 4800` samples)
+    if total > 4800 && !profile.best_grain_pcm.is_empty() {
+        let f0_int = (profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32)).clamp(80, 320);
+        let anchor_hz = if f0_int <= 165 { 128 } else { 205 };
+        // Gentle pitch/formant ratio in Q12 (4096 = 1.0x), bounded to [3850..=4342] (~0.94x .. 1.06x)
+        let raw_ratio_q12 = 4096 + ((f0_int - anchor_hz) * 5);
+        let sig_offset = ((profile.vad_byte as i32 & 0x0f) - 8) * 3;
+        let step_q12 = (raw_ratio_q12 + sig_offset).clamp(3850, 4342) as usize;
+        if step_q12 != 4096 {
+            let out_len = ((total * 4096) / step_q12).max(1);
+            let mut resampled = Vec::with_capacity(out_len);
+            for out_idx in 0..out_len {
+                let pos_q12 = out_idx * step_q12;
+                let idx0 = (pos_q12 >> 12).min(total - 1);
+                let idx1 = (idx0 + 1).min(total - 1);
+                let frac_q12 = (pos_q12 & 0xfff) as i32;
+                let s0 = samples[idx0] as i32;
+                let s1 = samples[idx1] as i32;
+                let interp = ((s0 * (4096 - frac_q12)) + (s1 * frac_q12)) >> 12;
+                resampled.push(interp.clamp(-Q15_ONE, Q15_ONE) as i16);
+            }
+            samples = resampled;
+        }
     }
 
     encode_wav_i16(sample_rate, &samples)
