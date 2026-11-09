@@ -9432,19 +9432,19 @@ fn process_parallel_ear_utterance(
             std::slice::from_ref(&event_json),
             512,
         );
-    }
 
-    // Push into the in-memory 64-slot `ear_inbox` RingBuffer and atomically flush to `ear_inbox.jsonl`
-    if let Ok(mut ring) = inbox_ring.lock() {
-        ring.push_overwrite(event_json.clone());
-        let mut buf = String::with_capacity(ring.len() * 256);
-        for item in ring.iter_oldest_first() {
-            buf.push_str(item);
-            buf.push('\n');
-        }
-        let tmp_inbox = dir.join("ear_inbox.jsonl.tmp");
-        if fs::write(&tmp_inbox, buf.as_bytes()).is_ok() {
-            let _ = fs::rename(&tmp_inbox, dir.join("ear_inbox.jsonl"));
+        // Push into the in-memory 64-slot `ear_inbox` RingBuffer and atomically flush to `ear_inbox.jsonl`
+        if let Ok(mut ring) = inbox_ring.lock() {
+            ring.push_overwrite(event_json.clone());
+            let mut buf = String::with_capacity(ring.len() * 256);
+            for item in ring.iter_oldest_first() {
+                buf.push_str(item);
+                buf.push('\n');
+            }
+            let tmp_inbox = dir.join("ear_inbox.jsonl.tmp");
+            if fs::write(&tmp_inbox, buf.as_bytes()).is_ok() {
+                let _ = fs::rename(&tmp_inbox, dir.join("ear_inbox.jsonl"));
+            }
         }
     }
 
