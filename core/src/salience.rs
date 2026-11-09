@@ -85,7 +85,9 @@ impl MarineIntDetector {
 
         if abs_s >= self.clip_threshold {
             let energy_q15 = abs_s;
-            let is_peak = self.prev_prev_sample <= self.prev_sample && self.prev_sample > s && self.prev_sample > 0;
+            let is_peak = self.prev_prev_sample <= self.prev_sample
+                && self.prev_sample > s
+                && self.prev_sample > 0;
 
             if is_peak {
                 let current_peak_idx = index.saturating_sub(1);
@@ -280,7 +282,9 @@ pub fn extract_salient_grains(
                 for i in 1..top_grains.len() {
                     let cur = &top_grains[i];
                     let min_g = &top_grains[min_idx];
-                    if (cur.salience_q15, cur.peak_amp_q15) < (min_g.salience_q15, min_g.peak_amp_q15) {
+                    if (cur.salience_q15, cur.peak_amp_q15)
+                        < (min_g.salience_q15, min_g.peak_amp_q15)
+                    {
                         min_idx = i;
                     }
                 }
@@ -301,11 +305,8 @@ pub fn extract_salient_grains(
                 Rational::new((avg_sal_q15 as i32) * 4, Q15_ONE as u32).unwrap_or(Rational::ZERO);
             let arousal_pq = Rational::new((peak_amp as i32) * 2 - Q15_ONE, Q15_ONE as u32)
                 .unwrap_or(Rational::ZERO);
-            let dominance_pq = Rational::new(
-                (local_detector.valid_peaks.min(16) as i32) - 4,
-                12,
-            )
-            .unwrap_or(Rational::ZERO);
+            let dominance_pq = Rational::new((local_detector.valid_peaks.min(16) as i32) - 4, 12)
+                .unwrap_or(Rational::ZERO);
 
             let vad_pq = VadPq::new(valence_pq, arousal_pq, dominance_pq);
             let vad_byte = pack_vad_pq_byte(vad_pq, default_threshold_pq());
@@ -313,7 +314,8 @@ pub fn extract_salient_grains(
             let hash = fnv1a_pcm_i16(chunk);
             let amp_pq =
                 Rational::new(peak_amp.max(1) as i32, Q15_ONE as u32).unwrap_or(Rational::ONE);
-            let phase_pq = Rational::new((start_sample % 628) as i32, 100).unwrap_or(Rational::ZERO);
+            let phase_pq =
+                Rational::new((start_sample % 628) as i32, 100).unwrap_or(Rational::ZERO);
 
             let wave = WaveInt {
                 base_amplitude: amp_pq,
@@ -755,7 +757,8 @@ pub fn speaker_similarity_q15(
     }
 
     let prof_f0 = (profile.f0_hz.num / (profile.f0_hz.den.max(1) as i32)).clamp(50, 640);
-    let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
+    let utt_f0 =
+        (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
 
     // When comparing against a male baritone/tenor profile (`88..=186 Hz`, Hue) and the utterance
     // is within Hue's natural baritone/tenor span (`88..=186 Hz`, including noisy-bar formant lift),
@@ -781,8 +784,18 @@ pub fn speaker_similarity_q15(
     };
 
     // Normalized 16-bin prosody contour L1 similarity
-    let prof_sum: i32 = profile.prosody_envelope_q15.iter().map(|&x| x as i32).sum::<i32>().max(16);
-    let utt_sum: i32 = best.envelope_q15.iter().map(|&x| x as i32).sum::<i32>().max(16);
+    let prof_sum: i32 = profile
+        .prosody_envelope_q15
+        .iter()
+        .map(|&x| x as i32)
+        .sum::<i32>()
+        .max(16);
+    let utt_sum: i32 = best
+        .envelope_q15
+        .iter()
+        .map(|&x| x as i32)
+        .sum::<i32>()
+        .max(16);
     let mut l1_diff_q12: i32 = 0;
     for i in 0..16 {
         let p_norm = (profile.prosody_envelope_q15[i] as i32 * 4096) / prof_sum;
@@ -909,20 +922,19 @@ impl RoomAcousticTracker {
             self.primary_profile.f0_hz = Rational::integer(154);
         }
 
-        let utt_f0 = (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
+        let utt_f0 =
+            (report.overall_f0_hz.num / (report.overall_f0_hz.den.max(1) as i32)).clamp(50, 640);
 
         // 2. Compare against Primary User ("Hue") profile
         let primary_sim_q15 = speaker_similarity_q15(&self.primary_profile, &report);
 
         // Compute on-axis amplitude ratio relative to Hue's normal direct-to-mic speaking level
         let baseline_amp = (self.primary_on_axis_amp_q15 as u32).max(512);
-        let on_axis_ratio_q15 = ((grain_avg_env * (Q15_ONE as u32)) / baseline_amp)
-            .min(Q15_ONE as u32) as u16;
+        let on_axis_ratio_q15 =
+            ((grain_avg_env * (Q15_ONE as u32)) / baseline_amp).min(Q15_ONE as u32) as u16;
 
         // Check if transcript contains an explicit direct-address wake word to the AI
-        let has_ai_wake_word = transcript_hint
-            .map(is_hey_aye_wake_phrase)
-            .unwrap_or(false);
+        let has_ai_wake_word = transcript_hint.map(is_hey_aye_wake_phrase).unwrap_or(false);
 
         let mentions_trisha = transcript_hint
             .map(|t| {
@@ -964,8 +976,8 @@ impl RoomAcousticTracker {
             // strictly when `utt_f0` is within `95..=178 Hz` so higher-pitched voices never shift his F0!
             if (95..=178).contains(&utt_f0) {
                 self.primary_profile.absorb_report(&report);
-                let updated_f0 = self.primary_profile.f0_hz.num
-                    / (self.primary_profile.f0_hz.den.max(1) as i32);
+                let updated_f0 =
+                    self.primary_profile.f0_hz.num / (self.primary_profile.f0_hz.den.max(1) as i32);
                 if !(115..=175).contains(&updated_f0) {
                     self.primary_profile.f0_hz = Rational::integer(154);
                 }
@@ -976,8 +988,8 @@ impl RoomAcousticTracker {
             // - If a friend (`OtherSpeaker`) spoke within the last 60 seconds AND Hue didn't use an AI wake word -> `ChattingWithFriend`
             // - Or if Hue addresses a human in the room ("Alex", "Trisha", "Chris") without an AI wake word -> `ChattingWithFriend`
             // - Or if Hue is speaking far off-axis (`on_axis_ratio_q15 < 13_000`, ~40% of normal mic energy, turned toward friend) without wake word -> `ChattingWithFriend`
-            let friend_spoke_recently = self.last_other_ts > 0
-                && timestamp_secs.saturating_sub(self.last_other_ts) <= 60;
+            let friend_spoke_recently =
+                self.last_other_ts > 0 && timestamp_secs.saturating_sub(self.last_other_ts) <= 60;
             let turned_off_axis = on_axis_ratio_q15 < 13_000;
 
             let context = if !has_ai_wake_word
@@ -1043,9 +1055,7 @@ impl RoomAcousticTracker {
             }
         };
 
-        let mut friend_prof = self.friend_profiles[chosen_slot]
-            .take()
-            .unwrap_or_default();
+        let mut friend_prof = self.friend_profiles[chosen_slot].take().unwrap_or_default();
         // Compute speaker similarity BEFORE absorbing the new utterance so strangers/songs
         // don't artificially score 90%+ by comparing against themselves!
         let diarized_sim_q15 = speaker_similarity_q15(&friend_prof, &report);
@@ -1119,7 +1129,11 @@ pub fn triangulate_stereo_dmic_i16(
         return (StereoMicTriangulation::default(), Vec::new());
     }
 
-    let block_frames = if frames_48k < 960 { frames_48k } else { 480usize };
+    let block_frames = if frames_48k < 960 {
+        frames_48k
+    } else {
+        480usize
+    };
     let mut blocks: Vec<(usize, usize, i64, i64, i64)> =
         Vec::with_capacity((frames_48k / block_frames.max(1)) + 2);
     let mut peak_block_abs: i64 = 0;
@@ -1201,7 +1215,8 @@ pub fn triangulate_stereo_dmic_i16(
     }
 
     let total_energy = (active_left_energy + active_right_energy).max(1);
-    let ild_pct = (((active_right_energy - active_left_energy) * 100) / total_energy).clamp(-100, 100) as i16;
+    let ild_pct =
+        (((active_right_energy - active_left_energy) * 100) / total_energy).clamp(-100, 100) as i16;
 
     // Combine TDOA lag angle (~7 deg per 48kHz sample lag) and ILD level cue
     let tdoa_deg = (best_lag as i32) * 7;
@@ -1240,17 +1255,18 @@ pub fn triangulate_stereo_dmic_i16(
         (0u16, 2u8)
     };
 
-    let spatial_zone = if bt_mic_energy_q15 > (mean_abs as u16).saturating_mul(2) && bt_mic_energy_q15 > 800 {
-        "near_bt_speaker"
-    } else if distance_cm > 190 {
-        "far_room"
-    } else if azimuth_deg < -18 {
-        "left_of_laptop"
-    } else if azimuth_deg > 18 {
-        "right_of_laptop"
-    } else {
-        "center_keyboard"
-    };
+    let spatial_zone =
+        if bt_mic_energy_q15 > (mean_abs as u16).saturating_mul(2) && bt_mic_energy_q15 > 800 {
+            "near_bt_speaker"
+        } else if distance_cm > 190 {
+            "far_room"
+        } else if azimuth_deg < -18 {
+            "left_of_laptop"
+        } else if azimuth_deg > 18 {
+            "right_of_laptop"
+        } else {
+            "center_keyboard"
+        };
 
     // Delay-and-Sum Beamforming + 3:1 Decimation (`48 kHz` stereo -> `16 kHz` phase-aligned mono)
     let out_len_16k = frames_48k / 3;
@@ -1260,7 +1276,8 @@ pub fn triangulate_stereo_dmic_i16(
         for sub in 0..3usize {
             let f_idx = k * 3 + sub;
             let l = interleaved_lr_48k[f_idx * 2] as i32;
-            let r_idx = (f_idx as isize - best_lag as isize).clamp(0, (frames_48k - 1) as isize) as usize;
+            let r_idx =
+                (f_idx as isize - best_lag as isize).clamp(0, (frames_48k - 1) as isize) as usize;
             let r = interleaved_lr_48k[r_idx * 2 + 1] as i32;
             acc += (l + r) / 2;
         }
@@ -1351,8 +1368,10 @@ pub fn project_polar_to_latlon_pq(
     let sin_val = sin_deg_q15(bearing_deg) as i64;
     let cos_val = cos_deg_q15(bearing_deg) as i64;
     let d = distance_cm as i64;
-    let east_cm = ((d * sin_val + if sin_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
-    let north_cm = ((d * cos_val + if cos_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
+    let east_cm =
+        ((d * sin_val + if sin_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
+    let north_cm =
+        ((d * cos_val + if cos_val >= 0 { 16_384 } else { -16_384 }) / (Q15_ONE as i64)) as i32;
 
     // 1 degree of latitude = 11,113,300 cm = 10,000,000 e7-ticks (~1.11 cm per e7 tick)
     let delta_lat_e7 = ((north_cm as i64) * (GEODESIC_PQ_DEN as i64) / 11_113_300) as i32;
@@ -1540,7 +1559,18 @@ pub fn is_hey_aye_wake_phrase(text: &str) -> bool {
         if matches!(w0, "hey" | "hi" | "hello" | "yo" | "ok" | "okay" | "oi")
             && matches!(
                 w1,
-                "aye" | "i" | "eye" | "ai" | "a" | "hi" | "high" | "ay" | "eh" | "there" | "whats" | "what"
+                "aye"
+                    | "i"
+                    | "eye"
+                    | "ai"
+                    | "a"
+                    | "hi"
+                    | "high"
+                    | "ay"
+                    | "eh"
+                    | "there"
+                    | "whats"
+                    | "what"
             )
         {
             return true;
@@ -1727,7 +1757,8 @@ impl StereoPcmRingBuffer {
             self.data[dst_start + copy_len..dst_start + self.frame_samples].fill(0);
         }
 
-        let history_before = (self.total_frames_written as usize).min(self.cap_frames.saturating_sub(1));
+        let history_before =
+            (self.total_frames_written as usize).min(self.cap_frames.saturating_sub(1));
         self.write_frame_idx = (self.write_frame_idx + 1) % self.cap_frames;
         self.total_frames_written = self.total_frames_written.wrapping_add(1);
 
@@ -1932,12 +1963,12 @@ impl SelfCalibrationEngine {
                 ((1024u32 * 10) / (measured_distance_cm as u32)).clamp(512, 2048);
             self.distance_scale_q10 = (((self.distance_scale_q10 as u32) * 3 + target_scale_q10)
                 / 4)
-                .clamp(512, 2048) as u16;
+            .clamp(512, 2048) as u16;
         }
         let target_az_offset = (-measured_azimuth_deg).clamp(-15, 15);
         self.azimuth_offset_deg =
-            (((self.azimuth_offset_deg as i32) * 3 + (target_az_offset as i32)) / 4)
-                .clamp(-15, 15) as i16;
+            (((self.azimuth_offset_deg as i32) * 3 + (target_az_offset as i32)) / 4).clamp(-15, 15)
+                as i16;
 
         // 2. Boundary self-tuning: if initial or final word was missed, expand pre-roll / hangover
         if !exp_words.is_empty() {
@@ -2261,7 +2292,11 @@ pub fn sanitize_and_dedup_stt_transcript(raw_tx: &str) -> Option<String> {
         if norm.is_empty() {
             continue;
         }
-        if dedup_norms.last().map(|prev| prev == &norm).unwrap_or(false) {
+        if dedup_norms
+            .last()
+            .map(|prev| prev == &norm)
+            .unwrap_or(false)
+        {
             continue;
         }
         dedup_tokens.push(tok);
@@ -2379,6 +2414,15 @@ pub fn contextualize_room_transcript(
         "subtitles by",
         "amara org",
         "translated by",
+        "i'm going to be here to help you",
+        "i'm going to be a little bit",
+        "i don't know if i'm going to",
+        "i'm going to go to the next",
+        "and i'll see you next time",
+        "see you next time",
+        "see you in the next",
+        "thanks for listening",
+        "thank you very much for watching",
     ];
     for &pat in NOISE_HALLUCINATIONS {
         if low.contains(pat) {
@@ -2448,16 +2492,8 @@ pub fn contextualize_room_transcript(
 
     // Normalize leading "Hey I " / "Hey eye " / "Hey, I! " wake phrase to "Hey Aye "
     for prefix in [
-        "Hey, I! ",
-        "Hey, I, ",
-        "Hey, I ",
-        "hey, i ",
-        "Hey I ",
-        "hey i ",
-        "Hey eye ",
-        "hey eye ",
-        "Hey AI ",
-        "hey ai ",
+        "Hey, I! ", "Hey, I, ", "Hey, I ", "hey, i ", "Hey I ", "hey i ", "Hey eye ", "hey eye ",
+        "Hey AI ", "hey ai ",
     ] {
         if let Some(rest) = repaired.strip_prefix(prefix) {
             repaired = format!("Hey Aye {rest}");
@@ -2512,7 +2548,9 @@ mod tests {
 
     #[test]
     fn salient_speech_combiner_modulates_wav_without_floats() {
-        let samples: Vec<i16> = (0..2400i32).map(|i| (((i % 120) - 60) * 200) as i16).collect();
+        let samples: Vec<i16> = (0..2400i32)
+            .map(|i| (((i % 120) - 60) * 200) as i16)
+            .collect();
         let wav = encode_wav_i16(24_000, &samples);
         let report = extract_salient_grains(&samples, 24_000, 2, 1700000000);
         let mut profile = SpeakerSalienceProfile::default();
@@ -2541,7 +2579,11 @@ mod tests {
         let hue_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 110;
-                let v = if p < 55 { (p - 27) * 520 } else { (82 - p) * 520 };
+                let v = if p < 55 {
+                    (p - 27) * 520
+                } else {
+                    (82 - p) * 520
+                };
                 v.clamp(-18_000, 18_000) as i16
             })
             .collect();
@@ -2554,23 +2596,30 @@ mod tests {
         let friend_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 60;
-                let v = if p < 30 { (p - 15) * 700 } else { (45 - p) * 700 };
+                let v = if p < 30 {
+                    (p - 15) * 700
+                } else {
+                    (45 - p) * 700
+                };
                 v.clamp(-15_000, 15_000) as i16
             })
             .collect();
-        let r_friend = tracker.classify_and_learn(&friend_voice, sr, 1008, Some("Hey Chris check this out"));
+        let r_friend =
+            tracker.classify_and_learn(&friend_voice, sr, 1008, Some("Hey Chris check this out"));
         assert_eq!(r_friend.source, AcousticSourceKind::OtherSpeaker(0));
         assert_eq!(r_friend.context, InteractionContext::FriendSpeaking);
         assert!(!r_friend.should_agent_respond);
 
         // 4. Hue replies to his friend 3 seconds later (dyadic turn-taking, no AI wake word) -> ChattingWithFriend!
-        let r_side = tracker.classify_and_learn(&hue_voice, sr, 1011, Some("Yeah that looks awesome"));
+        let r_side =
+            tracker.classify_and_learn(&hue_voice, sr, 1011, Some("Yeah that looks awesome"));
         assert_eq!(r_side.source, AcousticSourceKind::PrimaryUser);
         assert_eq!(r_side.context, InteractionContext::ChattingWithFriend);
         assert!(!r_side.should_agent_respond);
 
         // 5. Hue addresses Gemini directly during the conversation ("Hey Gemini what do you think?") -> AddressingAgent!
-        let r_wake = tracker.classify_and_learn(&hue_voice, sr, 1014, Some("Hey Gemini what do you think?"));
+        let r_wake =
+            tracker.classify_and_learn(&hue_voice, sr, 1014, Some("Hey Gemini what do you think?"));
         assert_eq!(r_wake.source, AcousticSourceKind::PrimaryUser);
         assert_eq!(r_wake.context, InteractionContext::AddressingAgent);
         assert!(r_wake.should_agent_respond);
@@ -2585,7 +2634,11 @@ mod tests {
 
         let wave_at = |idx: isize| -> i16 {
             let p = idx.rem_euclid(300) as i32;
-            let v = if p < 150 { (p - 75) * 180 } else { (225 - p) * 180 };
+            let v = if p < 150 {
+                (p - 75) * 180
+            } else {
+                (225 - p) * 180
+            };
             v.clamp(-16_000, 16_000) as i16
         };
 
@@ -2610,15 +2663,27 @@ mod tests {
 
         let (tri_c, mono_c) = triangulate_stereo_dmic_i16(&center_lr, None);
         assert_eq!(mono_c.len(), frames_48k / 3);
-        assert!(tri_c.azimuth_deg.abs() <= 7, "center azimuth was {}", tri_c.azimuth_deg);
+        assert!(
+            tri_c.azimuth_deg.abs() <= 7,
+            "center azimuth was {}",
+            tri_c.azimuth_deg
+        );
         assert_eq!(tri_c.spatial_zone, "center_keyboard");
 
         let (tri_r, _) = triangulate_stereo_dmic_i16(&right_lr, None);
-        assert!(tri_r.azimuth_deg > 18, "right azimuth was {}", tri_r.azimuth_deg);
+        assert!(
+            tri_r.azimuth_deg > 18,
+            "right azimuth was {}",
+            tri_r.azimuth_deg
+        );
         assert_eq!(tri_r.spatial_zone, "right_of_laptop");
 
         let (tri_l, _) = triangulate_stereo_dmic_i16(&left_lr, None);
-        assert!(tri_l.azimuth_deg < -18, "left azimuth was {}", tri_l.azimuth_deg);
+        assert!(
+            tri_l.azimuth_deg < -18,
+            "left azimuth was {}",
+            tri_l.azimuth_deg
+        );
         assert_eq!(tri_l.spatial_zone, "left_of_laptop");
     }
 
@@ -2662,7 +2727,9 @@ mod tests {
         assert!(is_hey_aye_wake_phrase("Hey, I need a ring buffer"));
         assert!(is_hey_aye_wake_phrase("Hey eye can you hear me?"));
         assert!(is_hey_aye_wake_phrase("Aye, check the logs"));
-        assert!(!is_hey_aye_wake_phrase("Hey Chesney! You're getting out of the house"));
+        assert!(!is_hey_aye_wake_phrase(
+            "Hey Chesney! You're getting out of the house"
+        ));
         assert!(!is_hey_aye_wake_phrase("Hey Peter how did you sleep?"));
     }
 
@@ -2675,7 +2742,11 @@ mod tests {
         // 60ms active near-field speech at ~155 Hz (period = 310 samples at 48kHz, mean_abs ~ 1350)
         for n in 0..2880isize {
             let p = n.rem_euclid(310) as i32;
-            let s = if p < 155 { (p - 77) * 35 } else { (232 - p) * 35 };
+            let s = if p < 155 {
+                (p - 77) * 35
+            } else {
+                (232 - p) * 35
+            };
             let sample = s.clamp(-2700, 2700) as i16;
             stereo_48k.push(sample);
             stereo_48k.push(sample);
@@ -2695,7 +2766,11 @@ mod tests {
         laptop_tone_48k.extend(std::iter::repeat_n(15i16, 1920 * 2));
         for n in 0..2880isize {
             let p = n.rem_euclid(111) as i32; // ~432 Hz
-            let s = if p < 55 { (p - 27) * 320 } else { (83 - p) * 320 };
+            let s = if p < 55 {
+                (p - 27) * 320
+            } else {
+                (83 - p) * 320
+            };
             let sample = s.clamp(-9000, 9000) as i16;
             laptop_tone_48k.push(sample);
             laptop_tone_48k.push(sample);
@@ -2717,22 +2792,32 @@ mod tests {
         let alex_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 74; // 16000 / 74 = 216 Hz
-                let v = if p < 37 { (p - 18) * 600 } else { (55 - p) * 600 };
+                let v = if p < 37 {
+                    (p - 18) * 600
+                } else {
+                    (55 - p) * 600
+                };
                 v.clamp(-16_000, 16_000) as i16
             })
             .collect();
-        let r_alex = tracker.classify_and_learn(&alex_voice, 16_000, 2000, Some("Where do you know that?"));
+        let r_alex =
+            tracker.classify_and_learn(&alex_voice, 16_000, 2000, Some("Where do you know that?"));
         assert_eq!(r_alex.source, AcousticSourceKind::OtherSpeaker(0));
         assert_eq!(r_alex.source.as_str(), "alex");
 
         let hue_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 103; // 16000 / 103 = 155 Hz
-                let v = if p < 51 { (p - 25) * 520 } else { (77 - p) * 520 };
+                let v = if p < 51 {
+                    (p - 25) * 520
+                } else {
+                    (77 - p) * 520
+                };
                 v.clamp(-16_000, 16_000) as i16
             })
             .collect();
-        let r_hue = tracker.classify_and_learn(&hue_voice, 16_000, 2003, Some("Hey Aye let us test this"));
+        let r_hue =
+            tracker.classify_and_learn(&hue_voice, 16_000, 2003, Some("Hey Aye let us test this"));
         assert_eq!(r_hue.source, AcousticSourceKind::PrimaryUser);
         assert_eq!(r_hue.source.as_str(), "hue");
 
@@ -2740,7 +2825,11 @@ mod tests {
         let hue_baritone_106hz: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 151; // 16000 / 151 = 105 Hz (~106 Hz)
-                let v = if p < 75 { (p - 37) * 440 } else { (113 - p) * 440 };
+                let v = if p < 75 {
+                    (p - 37) * 440
+                } else {
+                    (113 - p) * 440
+                };
                 v.clamp(-16_000, 16_000) as i16
             })
             .collect();
@@ -2758,12 +2847,20 @@ mod tests {
         let trisha_voice: Vec<i16> = (0..3200i32)
             .map(|i| {
                 let p = i % 65; // 16000 / 65 = 246 Hz
-                let v = if p < 32 { (p - 16) * 620 } else { (48 - p) * 620 };
+                let v = if p < 32 {
+                    (p - 16) * 620
+                } else {
+                    (48 - p) * 620
+                };
                 v.clamp(-16_000, 16_000) as i16
             })
             .collect();
-        let r_trisha =
-            tracker.classify_and_learn(&trisha_voice, 16_000, 2008, Some("Hi everyone in the room"));
+        let r_trisha = tracker.classify_and_learn(
+            &trisha_voice,
+            16_000,
+            2008,
+            Some("Hi everyone in the room"),
+        );
         assert_eq!(r_trisha.source, AcousticSourceKind::FriendTrisha);
         assert_eq!(r_trisha.source.as_str(), "trisha");
         assert!(r_trisha.speaker_grains_learned > 0);
@@ -2787,10 +2884,11 @@ mod tests {
         assert_eq!(cal.preroll_bonus_frames, 1);
         assert_eq!(cal.hangover_bonus_frames, 1);
         // Learned substitution ("sleep" -> "speak") from aligned 3-word window ("friend [speak/sleep] back")
-        assert!(cal
-            .learned_word_corrections
-            .iter()
-            .any(|(h, e)| h == "sleep" && e == "speak"));
+        assert!(
+            cal.learned_word_corrections
+                .iter()
+                .any(|(h, e)| h == "sleep" && e == "speak")
+        );
         assert_eq!(
             cal.apply_word_corrections("Can you sleep to me"),
             "Can you speak to me"
@@ -2861,16 +2959,17 @@ mod tests {
             None
         );
         assert_eq!(
-            sanitize_and_dedup_stt_transcript(
-                "be be be be be be be be be be be be be be be be be"
-            ),
+            sanitize_and_dedup_stt_transcript("be be be be be be be be be be be be be be be be be"),
             None
         );
         // 2. Single-letter / single-word breath and mic click artifacts are rejected
         assert_eq!(sanitize_and_dedup_stt_transcript("M"), None);
         assert_eq!(sanitize_and_dedup_stt_transcript("And..."), None);
         assert_eq!(sanitize_and_dedup_stt_transcript("be"), None);
-        assert_eq!(sanitize_and_dedup_stt_transcript("[BLANK_AUDIO] (silence)"), None);
+        assert_eq!(
+            sanitize_and_dedup_stt_transcript("[BLANK_AUDIO] (silence)"),
+            None
+        );
 
         // 3. Explicit 1-word wake words and commands ARE preserved
         assert_eq!(
@@ -2897,7 +2996,11 @@ mod tests {
         let mut padded_pcm = vec![5i16; 16_000]; // 1.0s leading silence
         for i in 0..8_000usize {
             let p = (i % 100) as i32;
-            let s = if p < 50 { (p - 25) * 400 } else { (75 - p) * 400 };
+            let s = if p < 50 {
+                (p - 25) * 400
+            } else {
+                (75 - p) * 400
+            };
             padded_pcm.push(s.clamp(-16_000, 16_000) as i16);
         }
         padded_pcm.extend(std::iter::repeat_n(5i16, 16_000)); // 1.0s trailing silence
@@ -2906,4 +3009,3 @@ mod tests {
         assert!(trimmed.len() >= 8_000);
     }
 }
-

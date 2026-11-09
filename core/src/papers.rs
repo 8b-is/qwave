@@ -987,9 +987,7 @@ fn is_likely_section_heading(line: &str, font_milli: i64) -> Option<u8> {
     if font_milli >= 11_800 {
         let mut parts = t.splitn(2, ' ');
         if let (Some(num_tok), Some(rest_title)) = (parts.next(), parts.next()) {
-            let valid_num = num_tok
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b == b'.')
+            let valid_num = num_tok.bytes().all(|b| b.is_ascii_digit() || b == b'.')
                 && num_tok.bytes().any(|b| b.is_ascii_digit());
             let starts_upper = rest_title
                 .chars()
@@ -1096,10 +1094,7 @@ pub fn extract_pdf_to_markdown(
                 continue;
             }
             // Skip lonely page number at the very end of the stream
-            if idx + 1 == raw_lines.len()
-                && t.len() <= 4
-                && t.bytes().all(|b| b.is_ascii_digit())
-            {
+            if idx + 1 == raw_lines.len() && t.len() <= 4 && t.bytes().all(|b| b.is_ascii_digit()) {
                 continue;
             }
 
@@ -1112,7 +1107,16 @@ pub fn extract_pdf_to_markdown(
                 if level == 1 && detected_title.is_empty() && page_num == 0 {
                     detected_title = t.to_string();
                     page_blocks.push(format!("# {t}"));
-                } else if level == 2 && page_num == 0 && page_blocks.len() <= 2 && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && !t.eq_ignore_ascii_case("abstract") {
+                } else if level == 2
+                    && page_num == 0
+                    && page_blocks.len() <= 2
+                    && !t
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false)
+                    && !t.eq_ignore_ascii_case("abstract")
+                {
                     page_blocks.push(format!("### *{t}*"));
                 } else {
                     let hashes = "#".repeat(level.clamp(2, 4) as usize);
@@ -1182,9 +1186,7 @@ pub fn extract_pdf_to_markdown(
     }
 
     let embed_note = if let Some(url) = asset_url {
-        format!(
-            " · [🖼️ Open Raw PDF]({url})"
-        )
+        format!(" · [🖼️ Open Raw PDF]({url})")
     } else {
         String::new()
     };
@@ -1301,7 +1303,10 @@ fn parse_tex_preamble_macros(preamble: &str) -> Vec<(String, String)> {
         while let Some(pos) = search.find(starter) {
             let after = &search[pos + starter.len()..];
             let mut cursor = 0usize;
-            while cursor < after.len() && (after.as_bytes()[cursor].is_ascii_whitespace() || after.as_bytes()[cursor] == b'*') {
+            while cursor < after.len()
+                && (after.as_bytes()[cursor].is_ascii_whitespace()
+                    || after.as_bytes()[cursor] == b'*')
+            {
                 cursor += 1;
             }
             if cursor >= after.len() || after.as_bytes()[cursor] != b'{' {
@@ -1358,7 +1363,8 @@ fn expand_tex_macros(input: &str, macros: &[(String, String)]) -> String {
         while i < bytes.len() {
             if cur[i..].starts_with(name) {
                 let after_idx = i + nlen;
-                let followed_by_alpha = after_idx < bytes.len() && bytes[after_idx].is_ascii_alphabetic();
+                let followed_by_alpha =
+                    after_idx < bytes.len() && bytes[after_idx].is_ascii_alphabetic();
                 if !followed_by_alpha {
                     next.push_str(repl);
                     i = after_idx;
@@ -1544,28 +1550,35 @@ pub fn compile_tex_to_markdown(tex_src: &str, file_name: &str) -> TexDocumentRep
     let macros = parse_tex_preamble_macros(preamble);
     let expanded_body = expand_tex_macros(raw_body, &macros);
 
-    let title_raw = find_command_arg(&uncommented, "\\title")
-        .unwrap_or_else(|| {
-            file_name
-                .strip_suffix(".tex")
-                .or_else(|| file_name.strip_suffix(".tex.bin"))
-                .unwrap_or(file_name)
-                .replace(['_', '-'], " ")
-        });
+    let title_raw = find_command_arg(&uncommented, "\\title").unwrap_or_else(|| {
+        file_name
+            .strip_suffix(".tex")
+            .or_else(|| file_name.strip_suffix(".tex.bin"))
+            .unwrap_or(file_name)
+            .replace(['_', '-'], " ")
+    });
     let title = convert_tex_inline(&title_raw.replace("\\\\", " — ").replace('\n', " "))
         .trim()
         .to_string();
 
     let author = find_command_arg(&uncommented, "\\author")
         .map(|a| {
-            convert_tex_inline(&a.replace("\\\\", " · ").replace("\\and", " & ").replace('\n', " "))
-                .trim()
-                .to_string()
+            convert_tex_inline(
+                &a.replace("\\\\", " · ")
+                    .replace("\\and", " & ")
+                    .replace('\n', " "),
+            )
+            .trim()
+            .to_string()
         })
         .unwrap_or_default();
 
     let date = find_command_arg(&uncommented, "\\date")
-        .map(|d| convert_tex_inline(&d.replace("\\today", "2026")).trim().to_string())
+        .map(|d| {
+            convert_tex_inline(&d.replace("\\today", "2026"))
+                .trim()
+                .to_string()
+        })
         .unwrap_or_default();
 
     let mut work = expanded_body.replace("\\maketitle", "");
@@ -1606,7 +1619,10 @@ pub fn compile_tex_to_markdown(tex_src: &str, file_name: &str) -> TexDocumentRep
                     }
                 }
                 let wrapped = if env_name.starts_with("align") {
-                    format!("\n$$\n\\begin{{aligned}}\n{}\n\\end{{aligned}}\n$$\n", inner.trim())
+                    format!(
+                        "\n$$\n\\begin{{aligned}}\n{}\n\\end{{aligned}}\n$$\n",
+                        inner.trim()
+                    )
                 } else {
                     format!("\n$$\n{}\n$$\n", inner.trim())
                 };
@@ -1730,7 +1746,11 @@ pub fn compile_tex_to_markdown(tex_src: &str, file_name: &str) -> TexDocumentRep
             if t.starts_with('{') {
                 if let Some((key, rest_idx)) = extract_braced(t, 0) {
                     let citation_text = convert_tex_inline(t[rest_idx..].trim()).replace('\n', " ");
-                    refs_md.push_str(&format!("- **[{}]** {}\n", key.trim(), citation_text.trim()));
+                    refs_md.push_str(&format!(
+                        "- **[{}]** {}\n",
+                        key.trim(),
+                        citation_text.trim()
+                    ));
                 }
             }
         }
@@ -1804,8 +1824,8 @@ pub fn compile_tex_to_markdown(tex_src: &str, file_name: &str) -> TexDocumentRep
             continue;
         }
 
-        if let Some(arg) = find_command_arg(trimmed, "\\part*")
-            .or_else(|| find_command_arg(trimmed, "\\part"))
+        if let Some(arg) =
+            find_command_arg(trimmed, "\\part*").or_else(|| find_command_arg(trimmed, "\\part"))
         {
             section_count += 1;
             final_lines.push(format!("\n## Part: {}\n", convert_tex_inline(&arg)));
@@ -1820,10 +1840,7 @@ pub fn compile_tex_to_markdown(tex_src: &str, file_name: &str) -> TexDocumentRep
             sec_num += 1;
             subsec_num = 0;
             section_count += 1;
-            final_lines.push(format!(
-                "\n## {sec_num}. {}\n",
-                convert_tex_inline(&arg)
-            ));
+            final_lines.push(format!("\n## {sec_num}. {}\n", convert_tex_inline(&arg)));
             continue;
         }
         if let Some(arg) = find_command_arg(trimmed, "\\subsection*") {
@@ -2023,6 +2040,9 @@ Every equilibrium satisfies $\E[R] \le 0$.
         assert!(rep.markdown.contains("## 1. Introduction"));
         assert!(rep.markdown.contains("\\mathbb{E}[R]"));
         assert!(rep.markdown.contains("\\operatorname{arg\\,max}"));
-        assert!(rep.markdown.contains("**Proposition 1 (Extraction Bound).**"));
+        assert!(
+            rep.markdown
+                .contains("**Proposition 1 (Extraction Bound).**")
+        );
     }
 }

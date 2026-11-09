@@ -1649,7 +1649,7 @@ fn speak_async(text: &str) {
         .spawn();
 }
 
-/// Capture a short voice utterance via `qwave --listen 5` (with fallback to latest `ear_inbox.jsonl` utterance).
+/// Capture a short voice utterance via `qwave --listen 5` (never falling back to stale `ear_inbox.jsonl` history).
 fn capture_voice_utterance(secs: &str, override_text: Option<&str>) -> String {
     if let Some(t) = override_text {
         return sanitize_no_float(t.trim());
@@ -1667,9 +1667,7 @@ fn capture_voice_utterance(secs: &str, override_text: Option<&str>) -> String {
         }
     }
 
-    // Fallback to latest utterance from ear_inbox.jsonl
-    let snap = collect_hud_snapshot();
-    snap.latest_text
+    String::new()
 }
 
 fn parse_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -1755,13 +1753,61 @@ pub fn extract_sse_deltas(raw_http: &str) -> String {
     sanitize_no_float(reply.trim())
 }
 
+/// Shape an AI text reply into a warm, natural 1–2 sentence spoken conversational turn,
+/// stripping markdown code blocks, tables, bullet symbols, and parenthetical metadata.
+fn shape_spoken_conversational_reply(raw: &str) -> String {
+    let mut cleaned = String::with_capacity(raw.len().min(360));
+    let mut in_code_block = false;
+    for line in raw.lines() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block || t.is_empty() || t.starts_with('|') {
+            continue;
+        }
+        let stripped = t.trim_start_matches(['#', '*', '-', '>', ' ']);
+        if stripped.is_empty() {
+            continue;
+        }
+        if !cleaned.is_empty() {
+            cleaned.push(' ');
+        }
+        cleaned.push_str(stripped);
+    }
+
+    let mut sentences = 0usize;
+    let mut spoken = String::new();
+    for ch in cleaned.chars() {
+        if matches!(ch, '`' | '*' | '#' | '<' | '>' | '[' | ']') {
+            continue;
+        }
+        spoken.push(ch);
+        if matches!(ch, '.' | '!' | '?') && spoken.trim().len() >= 16 {
+            sentences += 1;
+            if sentences >= 2 || spoken.len() >= 240 {
+                break;
+            }
+        }
+        if spoken.len() >= 320 {
+            break;
+        }
+    }
+    sanitize_no_float(spoken.trim())
+}
+
 fn query_loopback_alexiai(prompt: &str) -> Option<String> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8787);
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(1500)).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
-    let body = format!("{{\"prompt\":\"{}\"}}", json_escape(prompt));
+    let conversational_prompt = format!(
+        "[Voice conversation with Hue: reply naturally, warmly, and concisely in 1 or 2 spoken sentences without markdown or code blocks.] {}",
+        prompt
+    );
+    let body = format!("{{\"prompt\":\"{}\"}}", json_escape(&conversational_prompt));
     let req = format!(
         "POST /api/chat HTTP/1.1\r\n\
          Host: localhost:8787\r\n\
@@ -1780,7 +1826,7 @@ fn query_loopback_alexiai(prompt: &str) -> Option<String> {
     if parsed.is_empty() {
         None
     } else {
-        Some(parsed)
+        Some(shape_spoken_conversational_reply(&parsed))
     }
 }
 
@@ -1796,22 +1842,23 @@ pub fn run_ask_aye(args: &[String]) -> String {
         capture_voice_utterance(secs, prompt_override)
     };
 
+    if !dry_run && prompt.trim().is_empty() {
+        return "{\"ok\":false,\"action\":\"ask-aye\",\"reason\":\"no_speech_detected\"}"
+            .to_string();
+    }
+
     let reply = if dry_run {
         "Aye is online on loopback port 8787 with zero-float salience ready".to_string()
     } else {
-        query_loopback_alexiai(&prompt).unwrap_or_else(|| {
-            format!(
-                "Aye heard you say: {}. Loopback companion is standing by.",
-                prompt
-            )
-        })
+        query_loopback_alexiai(&prompt)
+            .unwrap_or_else(|| "I am right here with you, Hue.".to_string())
     };
 
-    if !dry_run {
+    if !dry_run && !reply.trim().is_empty() {
         send_desktop_notification("ALEXIAI <3 (Aye)", &reply);
         let qwave_bin = find_qwave_bin();
         let _ = Command::new(qwave_bin)
-            .args(["--speak", &reply])
+            .args(["--voice", "lfm_aye", "--speak", &reply])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -6346,6 +6393,34 @@ pub fn run_phoenix_menu(args: &[String]) -> String {
     "{\"ok\":true,\"action\":\"phoenix-menu\",\"status\":\"noop\",\"trit\":\"0\"}".to_string()
 }
 
+/// Read `(volume_pct, is_muted)` for a PipeWire / PulseAudio sink using pure integer parsing.
+fn read_sink_volume_and_mute(sink_name: &str) -> (i32, bool) {
+    let mut vol_pct: i32 = 45;
+    if let Ok(out) = Command::new("pactl")
+        .args(["get-sink-volume", sink_name])
+        .output()
+    {
+        let txt = String::from_utf8_lossy(&out.stdout);
+        for tok in txt.split_whitespace() {
+            if let Some(num_s) = tok.strip_suffix('%') {
+                if let Ok(v) = num_s.trim().parse::<i32>() {
+                    vol_pct = v.clamp(0, 100);
+                    break;
+                }
+            }
+        }
+    }
+    let is_muted = Command::new("pactl")
+        .args(["get-sink-mute", sink_name])
+        .output()
+        .map(|o| {
+            let s = String::from_utf8_lossy(&o.stdout);
+            s.contains("yes") || s.contains("true")
+        })
+        .unwrap_or(false);
+    (vol_pct, is_muted)
+}
+
 /// Run the real-time PipeWire streaming PhoeniX Sound Revelation Daemon (`qwave-hypr-hud phoenix-daemon`).
 pub fn run_phoenix_daemon(args: &[String]) {
     if args.iter().any(|a| a == "--dry-run") {
@@ -6402,23 +6477,20 @@ pub fn run_phoenix_daemon(args: &[String]) {
         }
     }
 
+    // Respect user's existing hardware & virtual sink volume and mute state (never force 100% / 65536!).
+    // If the sink was previously pinned above 65% by a legacy daemon, initialize to a comfortable 45%.
+    let (hw_vol, hw_muted) = read_sink_volume_and_mute(&primary_hw_sink);
+    let safe_init_vol = if hw_vol > 65 { 45 } else { hw_vol };
+    let vol_arg = format!("{safe_init_vol}%");
+    let mute_arg = if hw_muted { "1" } else { "0" };
     let _ = Command::new("pactl")
-        .args(["set-sink-mute", &primary_hw_sink, "0"])
+        .args(["set-sink-volume", &primary_hw_sink, &vol_arg])
         .status();
     let _ = Command::new("pactl")
-        .args(["set-sink-volume", &primary_hw_sink, "65536"])
-        .status();
-    // Ensure USB HiFi DAC ALSA hardware mixer is at 100% (0.00 dB) unmuted for full 24-bit dynamic range
-    let _ = Command::new("amixer")
-        .args(["-c", "2", "sset", "PCM", "100%", "unmute"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .args(["set-sink-volume", PHOENIX_SINK_NAME, &vol_arg])
         .status();
     let _ = Command::new("pactl")
-        .args(["set-sink-mute", PHOENIX_SINK_NAME, "0"])
-        .status();
-    let _ = Command::new("pactl")
-        .args(["set-sink-volume", PHOENIX_SINK_NAME, "65536"])
+        .args(["set-sink-mute", PHOENIX_SINK_NAME, mute_arg])
         .status();
     let _ = Command::new("pactl")
         .args(["set-default-sink", PHOENIX_SINK_NAME])
@@ -6519,6 +6591,8 @@ pub fn run_phoenix_daemon(args: &[String]) {
     let mut s32_buf = vec![0i32; 2048 * upsample_factor];
     let mut s32_byte_buf = vec![0u8; 2048 * upsample_factor * 4];
     let mut chunk_counter: u64 = 0;
+    let mut last_synced_vol: i32 = safe_init_vol;
+    let mut last_synced_mute: bool = hw_muted;
 
     // Non-blocking `.8a` (`8a∞`) 16-byte UDP telemetry broadcaster on port 8432 for ESP32-WROOM & OxiCast nodes
     let udp_8a = UdpSocket::bind("0.0.0.0:0").ok();
@@ -6547,7 +6621,7 @@ pub fn run_phoenix_daemon(args: &[String]) {
             pcm_buf[i] = i16::from_le_bytes([pair[0], pair[1]]);
         }
 
-        // Hot-reload preset and Auto-Magical Feel controls every 16 chunks (~340ms)
+        // Hot-reload preset, Auto-Magical Feel controls, and user volume/mute sync every 16 chunks (~340ms)
         if chunk_counter & 15 == 0 {
             let slug = read_active_phoenix_preset_slug();
             let target = PhoenixSoundPreset::from_name(&slug);
@@ -6557,19 +6631,28 @@ pub fn run_phoenix_daemon(args: &[String]) {
             let (f_auto, f_v, f_b, f_s) = read_phoenix_feel_controls();
             processor.set_feel_controls(f_auto, f_v, f_b, f_s);
             processor.alexandra_reset_active = read_alexandra_reset_active();
+
+            let (cur_vol, cur_mute) = read_sink_volume_and_mute(PHOENIX_SINK_NAME);
+            if cur_vol != last_synced_vol {
+                last_synced_vol = cur_vol;
+                let v_str = format!("{cur_vol}%");
+                let _ = Command::new("pactl")
+                    .args(["set-sink-volume", &primary_hw_sink, &v_str])
+                    .status();
+            }
+            if cur_mute != last_synced_mute {
+                last_synced_mute = cur_mute;
+                let m_str = if cur_mute { "1" } else { "0" };
+                let _ = Command::new("pactl")
+                    .args(["set-sink-mute", &primary_hw_sink, m_str])
+                    .status();
+            }
         }
 
-        // Periodically ensure newly opened app streams are routed through `phoenix_revelation_sink`
-        // AND keep `phoenix_revelation_sink` at 100% unity gain so the 16-bit input pipe is never starved!
-        // Offloaded to a background thread so the real-time 384 kHz audio loop never blocks on `pactl`!
+        // Periodically ensure newly opened app streams are routed through `phoenix_revelation_sink`.
+        // Never overwrite `phoenix_revelation_sink` volume or mute state so the user's volume keys work naturally!
         if chunk_counter & 255 == 128 {
             thread::spawn(|| {
-                let _ = Command::new("pactl")
-                    .args(["set-sink-mute", PHOENIX_SINK_NAME, "0"])
-                    .status();
-                let _ = Command::new("pactl")
-                    .args(["set-sink-volume", PHOENIX_SINK_NAME, "65536"])
-                    .status();
                 move_all_sink_inputs_to(PHOENIX_SINK_NAME);
             });
         }

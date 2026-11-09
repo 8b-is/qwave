@@ -132,7 +132,10 @@ pub fn compile_full(
         if trimmed.starts_with("$$") {
             if trimmed.len() > 4 && trimmed.ends_with("$$") {
                 let inner = &trimmed[2..trimmed.len() - 2];
-                out.push(format!("<div class=\"math-display\">{}</div>", escape(inner)));
+                out.push(format!(
+                    "<div class=\"math-display\">{}</div>",
+                    escape(inner)
+                ));
                 i += 1;
                 continue;
             }
@@ -186,25 +189,29 @@ pub fn compile_full(
             let mut q: Vec<String> = Vec::new();
             while i < lines.len() && lines[i].trim().starts_with('>') {
                 let t = lines[i].trim();
-                let after = t.strip_prefix("> ").or_else(|| t.strip_prefix('>')).unwrap_or("");
+                let after = t
+                    .strip_prefix("> ")
+                    .or_else(|| t.strip_prefix('>'))
+                    .unwrap_or("");
                 q.push(after.to_string());
                 i += 1;
             }
             if let Some((alert_kind, alert_title, rest_md)) = parse_github_alert(&q) {
-                let inner_compiled = compile_full(&rest_md, MarkdownTrust::CompilerOutputOnly, base_dir).html;
+                let inner_compiled =
+                    compile_full(&rest_md, MarkdownTrust::CompilerOutputOnly, base_dir).html;
                 out.push(format!(
                     "<div class=\"md-alert md-alert-{alert_kind}\"><div class=\"md-alert-title\">{alert_title}</div><div class=\"md-alert-body\">{inner_compiled}</div></div>"
                 ));
             } else {
-                let inner_compiled = compile_full(&q.join("\n"), MarkdownTrust::CompilerOutputOnly, base_dir).html;
+                let inner_compiled =
+                    compile_full(&q.join("\n"), MarkdownTrust::CompilerOutputOnly, base_dir).html;
                 out.push(format!("<blockquote>{inner_compiled}</blockquote>"));
             }
             continue;
         }
 
         // Pipe table
-        if trimmed.contains('|') && i + 1 < lines.len() && is_table_separator(lines[i + 1].trim())
-        {
+        if trimmed.contains('|') && i + 1 < lines.len() && is_table_separator(lines[i + 1].trim()) {
             let headers = split_row(trimmed);
             let aligns = parse_table_alignments(lines[i + 1].trim());
             i += 2;
@@ -348,7 +355,8 @@ fn render_carousel(content: &str, id: usize, base_dir: Option<&str>) -> String {
     let mut slides_html = String::new();
     for (idx, slide_md) in slides.iter().enumerate() {
         let active = if idx == 0 { " active" } else { "" };
-        let compiled = compile_full(slide_md.trim(), MarkdownTrust::CompilerOutputOnly, base_dir).html;
+        let compiled =
+            compile_full(slide_md.trim(), MarkdownTrust::CompilerOutputOnly, base_dir).html;
         slides_html.push_str(&format!(
             "<div class=\"qwave-slide{active}\" data-slide-idx=\"{idx}\">{compiled}</div>"
         ));
@@ -434,7 +442,11 @@ fn render_media_dock(content: &str) -> String {
     let esc_title = escape(&title);
     let is_video = kind == "video";
     let icon = if is_video { "🎬" } else { "🎵" };
-    let label = if is_video { "SOVEREIGN VIDEO + PHOENIX STUDIO" } else { "SOVEREIGN AUDIO + PHOENIX 768kHz STUDIO" };
+    let label = if is_video {
+        "SOVEREIGN VIDEO + PHOENIX STUDIO"
+    } else {
+        "SOVEREIGN AUDIO + PHOENIX 768kHz STUDIO"
+    };
     let player_html = if is_video {
         format!(
             "<video class=\"qwave-media-player\" data-media-player data-orig-src=\"{esc_src}\" data-phoenix-src=\"{esc_phoenix}\" src=\"{esc_src}\" controls preload=\"metadata\" style=\"width:100%;max-height:540px;background:#05080f;display:block\"></video>"
@@ -823,7 +835,11 @@ fn safe_href_enriched(raw: &str) -> Option<(String, Option<String>, bool)> {
     if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with('#') || trimmed.starts_with('/') || trimmed.starts_with("./") || trimmed.starts_with("../") {
+    if trimmed.starts_with('#')
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+    {
         return Some((trimmed.to_string(), None, false));
     }
     if let Some(colon) = trimmed.find(':') {

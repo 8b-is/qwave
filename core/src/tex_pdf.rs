@@ -27,20 +27,28 @@ use crate::markdown::{CompiledMarkdown, MarkdownTrust, compile_full};
 /// Returns `true` if `ext` (case-insensitive, without leading dot) is a TeX/LaTeX/BibTeX file.
 pub fn is_tex_extension(ext: &str) -> bool {
     matches!(
-        ext.trim().trim_start_matches('.').to_ascii_lowercase().as_str(),
+        ext.trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
         "tex" | "ltx" | "latex" | "bib" | "sty" | "cls"
     )
 }
 
 /// Returns `true` if `ext` (case-insensitive, without leading dot) is a PDF file.
 pub fn is_pdf_extension(ext: &str) -> bool {
-    ext.trim().trim_start_matches('.').eq_ignore_ascii_case("pdf")
+    ext.trim()
+        .trim_start_matches('.')
+        .eq_ignore_ascii_case("pdf")
 }
 
 /// Returns `true` if `ext` (case-insensitive, without leading dot) is an Audio file.
 pub fn is_audio_extension(ext: &str) -> bool {
     matches!(
-        ext.trim().trim_start_matches('.').to_ascii_lowercase().as_str(),
+        ext.trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
         "wav" | "mp3" | "flac" | "ogg" | "m4a" | "aac" | "opus" | "8a"
     )
 }
@@ -48,7 +56,10 @@ pub fn is_audio_extension(ext: &str) -> bool {
 /// Returns `true` if `ext` (case-insensitive, without leading dot) is a Video file.
 pub fn is_video_extension(ext: &str) -> bool {
     matches!(
-        ext.trim().trim_start_matches('.').to_ascii_lowercase().as_str(),
+        ext.trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
         "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "ts" | "ogv"
     )
 }
@@ -97,7 +108,10 @@ pub fn compile_tex_to_markdown_with_mem8(tex_source: &str, mem8_anchors: &[Strin
     let trimmed_all = clean_nul.trim_start();
     if !trimmed_all.contains("\\begin{document}")
         && !trimmed_all.contains("\\section")
-        && (trimmed_all.starts_with('@') || trimmed_all.contains("\n@article{") || trimmed_all.contains("\n@book{") || trimmed_all.contains("\n@inproceedings{"))
+        && (trimmed_all.starts_with('@')
+            || trimmed_all.contains("\n@article{")
+            || trimmed_all.contains("\n@book{")
+            || trimmed_all.contains("\n@inproceedings{"))
     {
         return compile_bibtex_to_markdown(&clean_nul);
     }
@@ -157,8 +171,17 @@ pub fn compile_tex_to_markdown_with_mem8(tex_source: &str, mem8_anchors: &[Strin
 
     // 8b. Generate MEM|8 Personalized Summary & PhoeniX High-Res Distillation if document has multiple sections/paragraphs
     if converted_body.len() > 320 {
-        let summary_title = if clean_title.is_empty() { "LaTeX Document" } else { &clean_title };
-        let summary = summarize_markdown_with_mem8(summary_title, &clean_author, &converted_body, mem8_anchors);
+        let summary_title = if clean_title.is_empty() {
+            "LaTeX Document"
+        } else {
+            &clean_title
+        };
+        let summary = summarize_markdown_with_mem8(
+            summary_title,
+            &clean_author,
+            &converted_body,
+            mem8_anchors,
+        );
         out.push(format_summary_and_phoenix_markdown(&summary));
         out.push(String::new());
     }
@@ -438,12 +461,16 @@ fn extract_thebibliography(input: &str) -> (String, Vec<BibItem>) {
     } else {
         after_begin
     };
-    let (bib_block, rest_start) = if let Some(end_rel) = input[body_start..].find("\\end{thebibliography}") {
-        let end_idx = body_start + end_rel;
-        (&input[body_start..end_idx], end_idx + "\\end{thebibliography}".len())
-    } else {
-        (&input[body_start..], input.len())
-    };
+    let (bib_block, rest_start) =
+        if let Some(end_rel) = input[body_start..].find("\\end{thebibliography}") {
+            let end_idx = body_start + end_rel;
+            (
+                &input[body_start..end_idx],
+                end_idx + "\\end{thebibliography}".len(),
+            )
+        } else {
+            (&input[body_start..], input.len())
+        };
 
     let mut items = Vec::new();
     let mut cursor = 0usize;
@@ -511,10 +538,7 @@ fn clean_tex_metadata_str(raw: &str, bib_items: &[BibItem]) -> String {
         s = s.replace(noise, " ");
     }
     let inline_conv = convert_tex_inline(&s, bib_items);
-    inline_conv
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    inline_conv.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn convert_tex_body(body: &str, bib_items: &[BibItem]) -> String {
@@ -733,11 +757,15 @@ fn convert_math_environment(input: &str, env: &str) -> String {
         let inner_start = idx + open_tag.len();
         if let Some(close_rel) = input[inner_start..].find(&close_tag) {
             let inner_end = inner_start + close_rel;
-            let raw_math = strip_command_with_n_braces(input[inner_start..inner_end].trim(), "\\label", 1);
+            let raw_math =
+                strip_command_with_n_braces(input[inner_start..inner_end].trim(), "\\label", 1);
             let wrapped = if env.starts_with("align") || env.starts_with("eqnarray") {
                 format!("\\begin{{aligned}}\n{}\n\\end{{aligned}}", raw_math.trim())
             } else if env.starts_with("gather") || env.starts_with("multline") {
-                format!("\\begin{{gathered}}\n{}\n\\end{{gathered}}", raw_math.trim())
+                format!(
+                    "\\begin{{gathered}}\n{}\n\\end{{gathered}}",
+                    raw_math.trim()
+                )
             } else {
                 raw_math.trim().to_string()
             };
@@ -915,7 +943,8 @@ fn convert_section_commands(input: &str, bib_items: &[BibItem]) -> String {
             let mut cursor = idx + cmd.len();
             if !cmd.ends_with('*') {
                 let next_ch = current[cursor..].chars().next();
-                if next_ch == Some('*') || next_ch.map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+                if next_ch == Some('*') || next_ch.map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+                {
                     out.push_str(cmd);
                     search = cursor;
                     continue;
@@ -947,7 +976,8 @@ fn convert_section_commands(input: &str, bib_items: &[BibItem]) -> String {
             let cursor = idx + cmd.len();
             if !cmd.ends_with('*') {
                 let next_ch = current[cursor..].chars().next();
-                if next_ch == Some('*') || next_ch.map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+                if next_ch == Some('*') || next_ch.map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+                {
                     out.push_str(cmd);
                     search = cursor;
                     continue;
@@ -1105,7 +1135,10 @@ fn convert_tex_prose_segment(segment: &str, bib_items: &[BibItem]) -> String {
             ("\\texttt", "`", "`"),
         ] {
             if let Some(updated) = replace_1arg_cmd(&s, cmd, |inner| {
-                format!("{open_md}{}{close_md}", convert_tex_inline(inner, bib_items))
+                format!(
+                    "{open_md}{}{close_md}",
+                    convert_tex_inline(inner, bib_items)
+                )
             }) {
                 s = updated;
                 changed = true;
@@ -1443,10 +1476,7 @@ pub fn format_pdf_to_markdown_with_mem8(
     out.join("\n")
 }
 
-fn detect_pdf_frontmatter(
-    filename: &str,
-    extract: &PdfExtract,
-) -> (String, String, String, usize) {
+fn detect_pdf_frontmatter(filename: &str, extract: &PdfExtract) -> (String, String, String, usize) {
     let fallback_title = filename
         .strip_suffix(".pdf")
         .or_else(|| filename.strip_suffix(".PDF"))
@@ -1524,8 +1554,18 @@ fn detect_pdf_frontmatter(
 fn looks_like_date_line(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     for month in [
-        "january", "february", "march", "april", "may", "june", "july", "august", "september",
-        "october", "november", "december",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
     ] {
         if lower.contains(month) && s.len() <= 40 {
             return true;
@@ -1567,7 +1607,10 @@ fn reflow_pdf_page_text(raw_page: &str, page_num: usize, skip_first_n_lines: usi
             abs_buf.push(trimmed.to_string());
             // Abstract is typically 1 paragraph
             let quoted: Vec<String> = abs_buf.iter().map(|p| format!("> {p}")).collect();
-            blocks.push(format!("> [!NOTE]\n> **Abstract**\n>\n{}", quoted.join("\n>\n")));
+            blocks.push(format!(
+                "> [!NOTE]\n> **Abstract**\n>\n{}",
+                quoted.join("\n>\n")
+            ));
             abs_buf.clear();
             *in_abs = false;
         } else {
@@ -1581,14 +1624,24 @@ fn reflow_pdf_page_text(raw_page: &str, page_num: usize, skip_first_n_lines: usi
         let line = raw_lines[i].trim();
 
         if line.is_empty() {
-            flush_para(&mut current_para, &mut in_abstract, &mut abstract_buf, &mut out_blocks);
+            flush_para(
+                &mut current_para,
+                &mut in_abstract,
+                &mut abstract_buf,
+                &mut out_blocks,
+            );
             i += 1;
             continue;
         }
 
         // Detect standalone "Abstract"
         if line.eq_ignore_ascii_case("abstract") {
-            flush_para(&mut current_para, &mut in_abstract, &mut abstract_buf, &mut out_blocks);
+            flush_para(
+                &mut current_para,
+                &mut in_abstract,
+                &mut abstract_buf,
+                &mut out_blocks,
+            );
             in_abstract = true;
             i += 1;
             continue;
@@ -1599,7 +1652,12 @@ fn reflow_pdf_page_text(raw_page: &str, page_num: usize, skip_first_n_lines: usi
             line.to_ascii_lowercase().as_str(),
             "references" | "bibliography" | "acknowledgments" | "acknowledgements" | "appendix"
         ) {
-            flush_para(&mut current_para, &mut in_abstract, &mut abstract_buf, &mut out_blocks);
+            flush_para(
+                &mut current_para,
+                &mut in_abstract,
+                &mut abstract_buf,
+                &mut out_blocks,
+            );
             out_blocks.push(format!("## {line}"));
             i += 1;
             continue;
@@ -1699,7 +1757,12 @@ fn reflow_pdf_page_text(raw_page: &str, page_num: usize, skip_first_n_lines: usi
         i += 1;
     }
 
-    flush_para(&mut current_para, &mut in_abstract, &mut abstract_buf, &mut out_blocks);
+    flush_para(
+        &mut current_para,
+        &mut in_abstract,
+        &mut abstract_buf,
+        &mut out_blocks,
+    );
     out_blocks.join("\n\n")
 }
 
@@ -1792,9 +1855,13 @@ pub fn extract_pdf_text_pure_rust(pdf_bytes: &[u8]) -> PdfExtract {
         let dict_window = String::from_utf8_lossy(&pdf_bytes[hdr_start..stream_kw]);
 
         let mut data_start = stream_kw + 6;
-        if pdf_bytes.get(data_start) == Some(&b'\r') && pdf_bytes.get(data_start + 1) == Some(&b'\n') {
+        if pdf_bytes.get(data_start) == Some(&b'\r')
+            && pdf_bytes.get(data_start + 1) == Some(&b'\n')
+        {
             data_start += 2;
-        } else if pdf_bytes.get(data_start) == Some(&b'\n') || pdf_bytes.get(data_start) == Some(&b'\r') {
+        } else if pdf_bytes.get(data_start) == Some(&b'\n')
+            || pdf_bytes.get(data_start) == Some(&b'\r')
+        {
             data_start += 1;
         } else {
             pos = data_start;
@@ -2116,8 +2183,8 @@ fn inflate_raw_deflate(data: &[u8]) -> Option<Vec<u8>> {
         0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
     ];
     const DIST_BASE: [u16; 30] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025,
-        1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
     ];
     const DIST_EXTRA: [u8; 30] = [
         0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
@@ -2340,7 +2407,24 @@ fn clean_line_for_speech(line: &str) -> String {
     for c in s.chars() {
         if matches!(
             c,
-            '*' | '`' | '$' | '{' | '}' | '\\' | '📄' | '\u{270D}' | '\u{FE0F}' | '📅' | '📐' | '🔊' | '∎' | '⚡' | '🔥' | '🧠' | '🌊' | '🎬' | '🎵'
+            '*' | '`'
+                | '$'
+                | '{'
+                | '}'
+                | '\\'
+                | '📄'
+                | '\u{270D}'
+                | '\u{FE0F}'
+                | '📅'
+                | '📐'
+                | '🔊'
+                | '∎'
+                | '⚡'
+                | '🔥'
+                | '🧠'
+                | '🌊'
+                | '🎬'
+                | '🎵'
         ) {
             continue;
         }
@@ -2475,7 +2559,10 @@ pub fn summarize_markdown_with_mem8(
             }
 
             // Integer novelty & salience score (Q10 = 0..2048)
-            let sent_toks: Vec<String> = tokens(s_trim).into_iter().map(str::to_ascii_lowercase).collect();
+            let sent_toks: Vec<String> = tokens(s_trim)
+                .into_iter()
+                .map(str::to_ascii_lowercase)
+                .collect();
             if sent_toks.len() < 5 {
                 continue;
             }
@@ -2528,7 +2615,10 @@ pub fn summarize_markdown_with_mem8(
         if cand == &summary.executive_thesis {
             continue;
         }
-        let toks: Vec<String> = tokens(cand).into_iter().map(str::to_ascii_lowercase).collect();
+        let toks: Vec<String> = tokens(cand)
+            .into_iter()
+            .map(str::to_ascii_lowercase)
+            .collect();
         if max_token_overlap_q10(&toks, &claim_tokens) < 420 {
             claim_tokens.push(toks);
             summary.key_claims.push(cand.clone());
@@ -2698,7 +2788,9 @@ fn synthesize_mem8_personalized_lens(
                     .to_string(),
             );
         } else if (a_lower.contains("constellation") || a_lower.contains("medusa"))
-            && !bridges.iter().any(|b| b.contains("4-Node Sovereign Constellation"))
+            && !bridges
+                .iter()
+                .any(|b| b.contains("4-Node Sovereign Constellation"))
         {
             bridges.push(
                 "**Live MEM|8 Anchor (`4-Node Sovereign Constellation` @ 528 Hz)**: Distributed fault repair across `ADA`, `VAK`, `OMN`, and `SUN:TDECK` succeeds because each node shares verified state (`MemnetCapsule64`) instead of cascading blame."
@@ -2921,7 +3013,9 @@ pub fn format_media_to_markdown(
             rcpt.soul_authenticity.den
         ));
         out.push(String::new());
-        out.push("| Metric | Exact Rational (`p/q`) / Integer Value | Sovereign Meaning |".to_string());
+        out.push(
+            "| Metric | Exact Rational (`p/q`) / Integer Value | Sovereign Meaning |".to_string(),
+        );
         out.push("| :--- | :--- | :--- |".to_string());
         out.push(format!(
             "| **Virtual Oversampling Grid** | `{} Hz` (`16×` over `{} Hz`) | Sub-sample zero-crossing & cubic Hermite grid |",
@@ -3116,7 +3210,11 @@ Clifford, W.~K. (1877). The ethics of belief. \textit{Contemporary Review}.
             page_count: 1,
             pages: vec![page1.to_string()],
         };
-        let md = format_pdf_to_markdown("correction-reproduction.pdf", Some("/asset?path=/tmp/a.pdf"), &extract);
+        let md = format_pdf_to_markdown(
+            "correction-reproduction.pdf",
+            Some("/asset?path=/tmp/a.pdf"),
+            &extract,
+        );
         assert!(md.contains("# When Correction Becomes Reproduction: Recursive Blame and Repair"));
         assert!(md.contains("correction lowers prevalence."));
         assert!(md.contains("## 1. Introduction: Perpetrator-Centered Explanation"));
@@ -3146,7 +3244,11 @@ Clifford, W.~K. (1877). The ethics of belief. \textit{Contemporary Review}.
         assert_eq!(sum.total_sections, 2);
         assert!(sum.custodian_dropped_duplicates >= 1);
         assert!(sum.executive_thesis.contains("corrective institutions"));
-        assert!(sum.mem8_bridges.iter().any(|b| b.contains("Anicca") || b.contains("BLU G75")));
+        assert!(
+            sum.mem8_bridges
+                .iter()
+                .any(|b| b.contains("Anicca") || b.contains("BLU G75"))
+        );
         let md = format_summary_and_phoenix_markdown(&sum);
         assert!(md.contains("## 🧠 Executive Summary & MEM|8 Personalized Lens"));
         assert!(md.contains("## 🔥 PhoeniX'd High-Resolution Distillation"));

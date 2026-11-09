@@ -287,6 +287,26 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Some(pos) = args.iter().position(|a| a == "--clone-voice") {
+        let target = args
+            .get(pos + 1)
+            .map(String::as_str)
+            .unwrap_or("/home/hue/8b-is/hello.wav");
+        let name = args
+            .iter()
+            .position(|a| a == "--name" || a == "--voice" || a == "-V")
+            .and_then(|npos| args.get(npos + 1))
+            .map(String::as_str)
+            .unwrap_or("hue");
+        println!("{}", clone_voice_from_wav(target, name));
+        return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|a| a == "--voices" || a == "--list-voices") {
+        println!("{}", list_cloned_voices_json());
+        return ExitCode::SUCCESS;
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--listen") {
         ensure_ear_daemon_running();
         let arg = args.get(pos + 1).map(String::as_str).unwrap_or("inbox");
@@ -1654,12 +1674,28 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
     };
 
     let wav_path = format!("/tmp/qwave_tts_{}_{}.wav", std::process::id(), now_secs());
-    let profile = state.salience_profile.lock().unwrap().clone();
+    let cloned_opt = load_named_voice_profile(voice);
+    let profile = cloned_opt
+        .clone()
+        .unwrap_or_else(|| state.salience_profile.lock().unwrap().clone());
 
-    let kokoro_voice = match voice {
-        "lfm_aye" => "af_bella",
-        "lfm_omnimom" => "af_sky",
-        other => other,
+    let kokoro_voice: String = match voice {
+        "lfm_aye" | "aye" => "af_heart.6+af_bella.4".to_string(),
+        "lfm_omnimom" | "omnimom" => "af_sky.6+af_nicole.4".to_string(),
+        "alexandra" | "starlight" => "af_heart.5+bf_emma.5".to_string(),
+        "trisha" => "af_bella.6+af_nicole.4".to_string(),
+        other => {
+            if let Some(ref cp) = cloned_opt {
+                let f0_int = cp.f0_hz.num / (cp.f0_hz.den.max(1) as i32);
+                if f0_int < 165 {
+                    "am_michael.6+am_adam.4".to_string()
+                } else {
+                    "af_heart.6+af_bella.4".to_string()
+                }
+            } else {
+                other.to_string()
+            }
+        }
     };
 
     let kokoro_bin = if Path::new("/usr/local/bin/kokoro-speak").exists() {
@@ -1669,7 +1705,7 @@ fn synthesize_alexiai_tts(text: &str, voice: &str, state: &Arc<AppState>) -> Vec
     };
 
     if let Ok(status) = Command::new(kokoro_bin)
-        .args(["-V", kokoro_voice, "-o", &wav_path, "say", &spoken])
+        .args(["-V", &kokoro_voice, "-o", &wav_path, "say", &spoken])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -7329,6 +7365,172 @@ fn format_salience_profile_json(prof: &SpeakerSalienceProfile) -> String {
     )
 }
 
+fn voices_dir() -> PathBuf {
+    let dir = mem8_dir().join("voices");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn sanitize_persona_slug(name: &str) -> String {
+    let slug: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if slug.is_empty() {
+        "hue".to_string()
+    } else {
+        slug
+    }
+}
+
+fn load_named_voice_profile(voice: &str) -> Option<SpeakerSalienceProfile> {
+    let slug = sanitize_persona_slug(voice);
+    let path = voices_dir().join(format!("{slug}.m8sp"));
+    if let Ok(bytes) = fs::read(path) {
+        if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+            return Some(prof);
+        }
+    }
+    None
+}
+
+/// Zero-float Voice Cloning Engine (`qwave --clone-voice <wav_or_secs> [--name <persona>]`):
+/// Extracts the speaker's exact `p/q` fundamental frequency (`f0_hz`), 16-bin prosody contour,
+/// highest-salience glottal harmonic template (`best_grain_pcm`), and `qUltraKotoro` `QuantTern`
+/// affect code (`qt:`), saving the cloned `M8SP` voice profile to `~/.local/share/qwave/mem8/voices/<name>.m8sp`.
+fn clone_voice_from_wav(target: &str, persona_name: &str) -> String {
+    let slug = sanitize_persona_slug(persona_name);
+    let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
+    let mut temp_rec: Option<String> = None;
+
+    let wav_path = if Path::new(target).exists() {
+        target.to_string()
+    } else {
+        let secs: u64 = target.parse().unwrap_or(5).clamp(1, 30);
+        let rec_file = format!("/tmp/qwave_clone_{}_{}.wav", std::process::id(), now_secs());
+        let _ = Command::new("sh")
+            .env("XDG_RUNTIME_DIR", &xdg_runtime)
+            .args([
+                "-c",
+                &format!(
+                    "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{{print $2; exit}}'); \
+                     if [ -n \"$MIC_SRC\" ]; then pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; fi; \
+                     timeout {secs}s pw-record --rate=16000 --channels=1 --format=s16 '{rec_file}' >/dev/null 2>&1 || arecord -f S16_LE -r 16000 -c 1 -d {secs} '{rec_file}' >/dev/null 2>&1"
+                ),
+            ])
+            .status();
+        temp_rec = Some(rec_file.clone());
+        rec_file
+    };
+
+    let Ok(wav_bytes) = fs::read(&wav_path) else {
+        if let Some(t) = temp_rec {
+            let _ = fs::remove_file(t);
+        }
+        return format!(
+            "{{\"ok\":false,\"error\":\"could not read reference WAV: {}\"}}",
+            markdown_source_literal(&wav_path)
+        );
+    };
+
+    let Some((sr, pcm)) = decode_wav_i16(&wav_bytes) else {
+        if let Some(t) = temp_rec {
+            let _ = fs::remove_file(t);
+        }
+        return "{\"ok\":false,\"error\":\"invalid 16-bit PCM WAV header\"}".to_string();
+    };
+
+    let report = extract_salient_grains(&pcm, sr, 8, now_secs());
+    let mut prof = load_named_voice_profile(&slug).unwrap_or_else(|| {
+        let mut p = SpeakerSalienceProfile::default();
+        p.f0_hz = report.overall_f0_hz;
+        p
+    });
+    prof.absorb_report(&report);
+    if report.overall_f0_hz.num > 0 {
+        prof.f0_hz = report.overall_f0_hz;
+    }
+
+    let out_path = voices_dir().join(format!("{slug}.m8sp"));
+    let _ = fs::write(&out_path, prof.to_bytes());
+    if slug == "hue" || slug == "primary" {
+        save_salience_profile(&prof);
+    }
+
+    let qt_code = format!("qt:{:02x}", prof.vad_byte);
+    let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+    let base_blend = if f0_int < 165 {
+        "am_michael.6+am_adam.4"
+    } else {
+        "af_heart.6+af_bella.4"
+    };
+
+    if let Some(t) = temp_rec {
+        let _ = fs::remove_file(t);
+    }
+
+    let mut env_str = String::from("[");
+    for (i, &v) in prof.prosody_envelope_q15.iter().enumerate() {
+        if i > 0 {
+            env_str.push(',');
+        }
+        env_str.push_str(&v.to_string());
+    }
+    env_str.push(']');
+
+    format!(
+        "{{\"ok\":true,\"action\":\"clone_voice\",\"persona\":{},\"profile_path\":{},\"base_kokoro_blend\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"avg_salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"qt_code\":{},\"grains_learned\":{},\"best_grain_samples\":{},\"prosody_envelope_q15\":{env_str}}}",
+        markdown_source_literal(&slug),
+        markdown_source_literal(&out_path.to_string_lossy()),
+        markdown_source_literal(base_blend),
+        prof.f0_hz.num,
+        prof.f0_hz.den,
+        prof.avg_salience.num,
+        prof.avg_salience.den,
+        prof.vad_byte,
+        markdown_source_literal(&qt_code),
+        prof.grains_learned,
+        prof.best_grain_pcm.len()
+    )
+}
+
+fn list_cloned_voices_json() -> String {
+    let mut items = Vec::new();
+    if let Ok(entries) = fs::read_dir(voices_dir()) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("m8sp") {
+                if let Ok(bytes) = fs::read(&p) {
+                    if let Some(prof) = SpeakerSalienceProfile::from_bytes(&bytes) {
+                        let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("voice");
+                        let f0_int = prof.f0_hz.num / (prof.f0_hz.den.max(1) as i32);
+                        items.push(format!(
+                            "{{\"persona\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"grains_learned\":{},\"path\":{}}}",
+                            markdown_source_literal(name),
+                            prof.f0_hz.num,
+                            prof.f0_hz.den,
+                            prof.vad_byte,
+                            prof.grains_learned,
+                            markdown_source_literal(&p.to_string_lossy())
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    format!(
+        "{{\"ok\":true,\"builtin_blends\":[\"lfm_aye (af_heart.6+af_bella.4)\",\"lfm_omnimom (af_sky.6+af_nicole.4)\",\"alexandra (af_heart.5+bf_emma.5)\",\"trisha (af_bella.6+af_nicole.4)\"],\"cloned_voices\":[{}]}}",
+        items.join(",")
+    )
+}
+
 fn split_tts_sentences(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
@@ -7797,6 +7999,7 @@ fn handle_mcp_request(req: &str) -> Option<String> {
              {{\"name\":\"room_status\",\"description\":\"👥 Instant 0ms snapshot from the parallel always-on acoustic ear: shows whether Hue is addressing the AI or chatting with a friend next to him, active speakers in the room (hue, friend_1..4, ambient_noise), noise floor, Tokyo beacon location/time, and recent diarized utterances.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"limit\":{{\"type\":\"integer\",\"description\":\"Max recent utterances to return (default: 8)\",\"default\":8}}}}}}}},\
              {{\"name\":\"nomad_mesh\",\"description\":\"📡 Sovereign Nomad Mesh, Free-WiFi Captive-Portal Auto-Solver & Bluetooth Mesh (96B BNEP + 31B BLE Advertising): ranks open/free Wi-Fi networks, probes/auto-accepts captive portals, and builds zero-float Bluetooth mesh frames carrying MEM|8 WaveInt + WUPZ state.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"auto_connect\":{{\"type\":\"boolean\",\"description\":\"Attempt to auto-connect & accept captive portal if offline (default: false)\",\"default\":false}}}}}}}},\
              {{\"name\":\"salience\",\"description\":\"🌊 Inspect or train the user's persistent zero-float MEM|8 SpeakerSalienceProfile (exact p/q Rational F0 Hz, VadPq ternary affect byte, 16-bin prosody contour, and learned vocal grain count).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Optional WAV file path to fold into the MEM|8 speaker salience profile\"}}}}}}}},\
+             {{\"name\":\"clone_voice\",\"description\":\"🎙️✨ Zero-float Voice Cloning Engine: clone any speaker's voice from a reference WAV file (or live recording duration) into a persistent M8SP SpeakerSalienceProfile (`~/.local/share/qwave/mem8/voices/<name>.m8sp`) with qUltraKotoro `qt:` affect and 256-D Kokoro blend.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"wav_path\":{{\"type\":\"string\",\"description\":\"Path to reference WAV file or duration in seconds (default: /home/hue/8b-is/hello.wav)\"}},\"name\":{{\"type\":\"string\",\"description\":\"Persona name for the cloned voice (e.g. hue, aye, alexandra, trisha)\",\"default\":\"hue\"}}}}}}}},\
              {{\"name\":\"show_markdown\",\"description\":\"📖 Open any Markdown (.md), LaTeX/TeX (.tex/.ltx/.bib), or PDF (.pdf) document (or live Markdown/TeX snippet) inside the native Qwave Sovereign Studio window with KaTeX, Mermaid, Embedded PDF Split-View, 3D MEM|8 Wave canvas, Ghostwriter bridge, and built-in Read-Aloud paper narrator (pass speak='auto' to start reading aloud).\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"path\":{{\"type\":\"string\",\"description\":\"Path or file:// URI to the .md, .tex, or .pdf document\"}},\"markdown\":{{\"type\":\"string\",\"description\":\"Optional raw Markdown or LaTeX content to render and display\"}},\"style\":{{\"type\":\"string\",\"description\":\"Optional Qwave theme preset (dra-starlight, cyberpunk-neon, phoenix-lattice, emerald-matrix, parchment-zen, ocean)\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional narration to speak out loud as the document opens, or 'auto' to start continuous Read-Aloud paper narration\"}}}}}}}},\
              {{\"name\":\"surf\",\"description\":\"🏄 Surf with the user in Qwave! Opens a URL or Markdown path in the native Qwave browser window (or converts web content into Sovereign Markdown) with optional voice commentary.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"url\":{{\"type\":\"string\",\"description\":\"URL or file:// path to surf to\"}},\"mode\":{{\"type\":\"string\",\"description\":\"'window' (native Qwave window) or 'markdown' (convert to Sovereign Markdown)\",\"default\":\"window\"}},\"speak\":{{\"type\":\"string\",\"description\":\"Optional spoken narration while surfing\"}}}},\"required\":[\"url\"]}}}},\
              {{\"name\":\"ping_pong\",\"description\":\"🏓 Sovereign Acoustic Ping-Pong Transceiver & Self-Healer: self-heals PipeWire speaker/mic & ear-daemon, emits a 432/528/864 Hz Harmonic Triad Ping out of the speaker while recording 48 kHz stereo on Left/Right mics, and reports L/R SNR, Time-of-Flight, TDOA azimuth, RT60, and optional neural TTS->STT loopback.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"voice\":{{\"type\":\"boolean\",\"description\":\"Also run spoken TTS -> Air -> Mic -> STT roundtrip test (default: false)\",\"default\":false}}}}}}}},\
@@ -7873,6 +8076,14 @@ fn handle_mcp_request(req: &str) -> Option<String> {
                     let prof = load_salience_profile();
                     format_salience_profile_json(&prof)
                 }
+                "clone_voice" | "qwave_clone_voice" => {
+                    let wav_p = extract_json_str(args_slice, "wav_path")
+                        .unwrap_or_else(|| "/home/hue/8b-is/hello.wav".to_string());
+                    let name =
+                        extract_json_str(args_slice, "name").unwrap_or_else(|| "hue".to_string());
+                    clone_voice_from_wav(&wav_p, &name)
+                }
+                "voices" | "list_voices" => list_cloned_voices_json(),
                 "show_markdown" | "qwave_show_markdown" => {
                     let path_opt = extract_json_str(args_slice, "path");
                     let md_opt = extract_json_str(args_slice, "markdown");
@@ -8835,7 +9046,7 @@ fn run_parallel_ear_daemon() {
     let mut frame_stereo = [0i16; 5_760];
 
     loop {
-        // Ensure internal digital microphone (`Mic1__source`) is unmuted, selected, and at 90% gain
+        // Select internal digital microphone (`Mic1__source`) as default source without overriding user mute or gain!
         let _ = Command::new("sh")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
@@ -8843,8 +9054,6 @@ fn run_parallel_ear_daemon() {
                 "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{print $2; exit}'); \
                  if [ -n \"$MIC_SRC\" ]; then \
                    pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; \
-                   pactl set-source-mute \"$MIC_SRC\" 0 2>/dev/null || true; \
-                   pactl set-source-volume \"$MIC_SRC\" 90% 2>/dev/null || true; \
                  fi",
             ])
             .status();
@@ -8915,13 +9124,13 @@ fn run_parallel_ear_daemon() {
             let mean_abs = (sum_abs / 960) as u32;
             let avg_sal_q15 = (sum_sal / 960) as u16;
             let is_voiced = if pcm_ring.voiced_frames() == 0 {
-                // Vocal onset: require clear glottal periodicity above ambient bar music floor
-                (mean_abs >= (noise_ema_abs * 13 / 8).max(145) && avg_sal_q15 >= 680)
-                    || (mean_abs >= (noise_ema_abs * 5 / 2).max(340) && avg_sal_q15 >= 420)
+                // Vocal onset: require clear glottal periodicity above ambient fan / room floor
+                (mean_abs >= (noise_ema_abs * 2).max(240) && avg_sal_q15 >= 820)
+                    || (mean_abs >= (noise_ema_abs * 3).max(420) && avg_sal_q15 >= 560)
             } else {
-                // Sustain in noisy venues (Highball Bar): require BOTH energy above the ambient music floor
-                // AND glottal salience so background songs/crowd never hold an utterance open after speech ends!
-                mean_abs >= (noise_ema_abs * 11 / 8).max(120) && avg_sal_q15 >= 460
+                // Sustain in noisy venues: require BOTH energy above the ambient floor
+                // AND glottal salience so background noise never holds an utterance open after speech ends!
+                mean_abs >= (noise_ema_abs * 3 / 2).max(160) && avg_sal_q15 >= 540
             };
             if !is_voiced || mean_abs < noise_ema_abs {
                 noise_ema_abs = ((noise_ema_abs * 7) + mean_abs.max(45)) / 8;
@@ -8929,27 +9138,24 @@ fn run_parallel_ear_daemon() {
                 noise_ema_abs = ((noise_ema_abs * 31) + mean_abs.min(noise_ema_abs * 3 / 2)) / 32;
             }
 
-            // During TTS playback, perform <1ms zero-float 10cm/0° OTA stereo DMIC self-calibration
-            // directly in the capture loop and NEVER queue our own TTS audio into the neural STT worker!
-            // This guarantees `liquid-rust` is 100% free and zero-delay the instant Hue speaks!
-            if now <= read_tts_active_until() {
-                pcm_ring.push_frame(&frame_stereo, is_voiced);
-                if pcm_ring.should_dispatch() {
-                    let tts_stereo = pcm_ring.take_utterance();
-                    if tts_stereo.len() >= 192 {
-                        let (raw_tri, _) = triangulate_stereo_dmic_i16(&tts_stereo, None);
-                        if let Some(expected_text) = read_tts_expected_text() {
-                            let mut cal = load_self_calibration();
-                            let outcome = cal.observe_self_utterance(
-                                &expected_text,
-                                &expected_text,
-                                raw_tri.distance_cm,
-                                raw_tri.azimuth_deg,
-                            );
-                            save_self_calibration(&cal, Some(&outcome), now);
-                        }
+            // During TTS playback (+1s post-playback reverb guard), perform <1ms zero-float 10cm/0°
+            // OTA stereo DMIC self-calibration and ALWAYS reset `pcm_ring` so Aye's own TTS audio
+            // never leaks across the hangover boundary into user STT!
+            if now <= read_tts_active_until().saturating_add(1) {
+                if is_voiced {
+                    let (raw_tri, _) = triangulate_stereo_dmic_i16(&frame_stereo, None);
+                    if let Some(expected_text) = read_tts_expected_text() {
+                        let mut cal = load_self_calibration();
+                        let outcome = cal.observe_self_utterance(
+                            &expected_text,
+                            &expected_text,
+                            raw_tri.distance_cm,
+                            raw_tri.azimuth_deg,
+                        );
+                        save_self_calibration(&cal, Some(&outcome), now);
                     }
                 }
+                pcm_ring.reset_active();
                 continue;
             }
 
@@ -11186,15 +11392,14 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
     }
     let _ = fs::write(dir.join("tts_active_until.txt"), "0");
 
-    // 2. Ensure Speaker Sink (`HiFi__Speaker__sink`) & Stereo DMIC Source (`HiFi__Mic1__source`) are unmuted & optimal gain
+    // 2. Discover Speaker Sink (`HiFi__Speaker__sink`) & Stereo DMIC Source (`HiFi__Mic1__source`) without overriding user volume
     let hw_out = Command::new("sh")
         .env("XDG_RUNTIME_DIR", &xdg_runtime)
         .args([
             "-c",
             "SPK=$(pactl list sinks short 2>/dev/null | awk '/HiFi__Speaker__sink/{print $2; exit}'); \
              MIC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{print $2; exit}'); \
-             if [ -n \"$SPK\" ]; then pactl set-default-sink \"$SPK\" 2>/dev/null; pactl set-sink-mute \"$SPK\" 0 2>/dev/null; pactl set-sink-volume \"$SPK\" 85% 2>/dev/null; fi; \
-             if [ -n \"$MIC\" ]; then pactl set-default-source \"$MIC\" 2>/dev/null; pactl set-source-mute \"$MIC\" 0 2>/dev/null; pactl set-source-volume \"$MIC\" 90% 2>/dev/null; fi; \
+             if [ -n \"$MIC\" ]; then pactl set-default-source \"$MIC\" 2>/dev/null; fi; \
              printf '%s|%s' \"${SPK:-default}\" \"${MIC:-default}\"",
         ])
         .output()

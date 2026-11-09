@@ -73,7 +73,8 @@ pub fn classify_imu_orientation(
     let pitch_deg = ((ay_mg * 57) / abs_z.max(abs_x)).clamp(-90, 90);
     let roll_deg = ((ax_mg * 57) / abs_z.max(abs_y)).clamp(-90, 90);
 
-    let is_moving = gyro_dps > 18 || (ax_mg * ax_mg + ay_mg * ay_mg + az_mg * az_mg - 1_000_000).abs() > 350_000;
+    let is_moving = gyro_dps > 18
+        || (ax_mg * ax_mg + ay_mg * ay_mg + az_mg * az_mg - 1_000_000).abs() > 350_000;
 
     let pose = if is_moving {
         "in_hand_moving"
@@ -89,12 +90,36 @@ pub fn classify_imu_orientation(
         "tilted_ergonomic"
     };
 
-    let trit_v: i8 = if ax_mg > 180 { 1 } else if ax_mg < -180 { -1 } else { 0 };
-    let trit_a: i8 = if gyro_dps > 35 { 1 } else if gyro_dps < 8 { -1 } else { 0 };
-    let trit_d: i8 = if az_mg > 350 { 1 } else if az_mg < -350 { -1 } else { 0 };
+    let trit_v: i8 = if ax_mg > 180 {
+        1
+    } else if ax_mg < -180 {
+        -1
+    } else {
+        0
+    };
+    let trit_a: i8 = if gyro_dps > 35 {
+        1
+    } else if gyro_dps < 8 {
+        -1
+    } else {
+        0
+    };
+    let trit_d: i8 = if az_mg > 350 {
+        1
+    } else if az_mg < -350 {
+        -1
+    } else {
+        0
+    };
 
     let tb = |t: i8| -> u8 {
-        if t > 0 { 0b10 } else if t < 0 { 0b01 } else { 0b00 }
+        if t > 0 {
+            0b10
+        } else if t < 0 {
+            0b01
+        } else {
+            0b00
+        }
     };
     let qt_byte = (tb(trit_v) << 4) | (tb(trit_a) << 2) | tb(trit_d);
 
@@ -321,7 +346,8 @@ pub fn analyze_chirp_echogram_i16(
     let secondary_nlos_path_cm = direct_distance_cm.saturating_add(extra_wall2_cm);
 
     let reverb_energy = wall1_val.saturating_add(wall2_val).max(1);
-    let direct_to_reverb_q8 = (((peak_val.max(1) as u64) * 256) / (reverb_energy as u64)).clamp(32, 2048) as u16;
+    let direct_to_reverb_q8 =
+        (((peak_val.max(1) as u64) * 256) / (reverb_energy as u64)).clamp(32, 2048) as u16;
 
     // Sabine RT60 estimate from decay slope between peak_bin and wall2_bin
     let estimated_rt60_ms = ((secondary_nlos_echo_lag_us / 35).clamp(140, 850)) as u16;

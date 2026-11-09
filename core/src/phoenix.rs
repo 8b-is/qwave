@@ -658,7 +658,11 @@ pub fn catmull_rom_sample(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
 /// phase-continuous spline interpolation preserves slope across gap boundaries.
 pub fn restore_dropouts_catmull_rom(samples: &[f32], corrupted: &[bool]) -> Vec<f32> {
     let n = samples.len();
-    assert_eq!(n, corrupted.len(), "samples and corrupted mask must match length");
+    assert_eq!(
+        n,
+        corrupted.len(),
+        "samples and corrupted mask must match length"
+    );
     let mut out = samples.to_vec();
     let mut i = 0;
     while i < n {
@@ -691,7 +695,8 @@ pub fn restore_dropouts_catmull_rom(samples: &[f32], corrupted: &[bool]) -> Vec<
         let gap_len = gap_end - gap_start;
         for offset in 0..gap_len {
             let t = (offset + 1) as f32 / span;
-            out[gap_start + offset] = catmull_rom_sample(eff_p0, p1, p2, eff_p3, t).clamp(-1.0, 1.0);
+            out[gap_start + offset] =
+                catmull_rom_sample(eff_p0, p1, p2, eff_p3, t).clamp(-1.0, 1.0);
         }
     }
     out
@@ -916,8 +921,14 @@ mod tests {
             qw_phoenix_sound_free(engine);
         }
 
-        assert!(buckets.iter().any(|&b| b > 0), "full music buckets must be populated");
-        assert!(vocal.iter().any(|&v| v > 0), "vocal-only salience buckets must be populated for centered vocal");
+        assert!(
+            buckets.iter().any(|&b| b > 0),
+            "full music buckets must be populated"
+        );
+        assert!(
+            vocal.iter().any(|&v| v > 0),
+            "vocal-only salience buckets must be populated for centered vocal"
+        );
         assert!(dom_hz > 0, "dominant pitch must be non-zero");
         assert!(soul_q10 <= 1024, "soul score must stay in Q10 bounds");
     }

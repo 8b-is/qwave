@@ -250,8 +250,14 @@ pub const fn isqrt_u64(n: u64) -> u64 {
 pub const fn microdeg_delta_to_dm(d_lat_udeg: i32, d_lon_udeg: i32) -> (i64, i64, u64) {
     let north_dm = ((d_lat_udeg as i64) * 1113) / 1000;
     let east_dm = ((d_lon_udeg as i64) * 752) / 1000;
-    let dist_sq = (north_dm.unsigned_abs().saturating_mul(north_dm.unsigned_abs()))
-        .saturating_add(east_dm.unsigned_abs().saturating_mul(east_dm.unsigned_abs()));
+    let dist_sq = (north_dm
+        .unsigned_abs()
+        .saturating_mul(north_dm.unsigned_abs()))
+    .saturating_add(
+        east_dm
+            .unsigned_abs()
+            .saturating_mul(east_dm.unsigned_abs()),
+    );
     let dist_dm = isqrt_u64(dist_sq);
     (north_dm, east_dm, dist_dm)
 }
@@ -337,8 +343,7 @@ impl PackLinkRadar {
             Trit::Minus
         };
 
-        let (blue_anchor_dm, blue_geofence_trit) =
-            geofence.evaluate(blue_lat_udeg, blue_lon_udeg);
+        let (blue_anchor_dm, blue_geofence_trit) = geofence.evaluate(blue_lat_udeg, blue_lon_udeg);
         let (bella_anchor_dm, bella_geofence_trit) =
             geofence.evaluate(bella_lat_udeg, bella_lon_udeg);
 
@@ -404,7 +409,8 @@ impl AgyOmniBurst {
             let num = (73i32 * i32::from(cadence_hz_q8.max(64))) / 256;
             Rational::new(num.max(1), 100).unwrap_or(Rational::ONE)
         };
-        let phase = Rational::new(i32::from(self.wukong_transform_idx), 72).unwrap_or(Rational::ZERO);
+        let phase =
+            Rational::new(i32::from(self.wukong_transform_idx), 72).unwrap_or(Rational::ZERO);
         let emotional_valence = match self.state_trits[2] {
             Trit::Zero => Rational::new(1, 2).unwrap_or(Rational::ZERO),
             Trit::Plus => Rational::new(-1, 2).unwrap_or(Rational::ZERO),
@@ -621,13 +627,8 @@ mod tests {
     #[test]
     fn pack_radar_and_c_abi_exports_work_without_floats() {
         let zone = GeofenceZone::new(47_569_200, 18_404_800, 1_500, 3_000);
-        let reading = PackLinkRadar::evaluate(
-            47_569_250,
-            18_404_830,
-            47_569_150,
-            18_404_860,
-            &zone,
-        );
+        let reading =
+            PackLinkRadar::evaluate(47_569_250, 18_404_830, 47_569_150, 18_404_860, &zone);
         assert_eq!(reading.pack_cohesion_trit, Trit::Plus);
         assert_eq!(reading.blue_geofence_trit, Trit::Plus);
         assert_eq!(reading.bella_geofence_trit, Trit::Plus);

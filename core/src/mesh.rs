@@ -319,8 +319,7 @@ impl HonestPortalIdentity {
         }
         for extra in &self.extra_vouched_macs {
             let m = extra.trim().to_ascii_lowercase();
-            if m.len() == 17 && m.chars().filter(|&c| c == ':').count() == 5 && !macs.contains(&m)
-            {
+            if m.len() == 17 && m.chars().filter(|&c| c == ':').count() == 5 && !macs.contains(&m) {
                 macs.push(m);
             }
         }
@@ -492,7 +491,8 @@ pub fn parse_captive_portal_response_with_identity(
         let origin_host = extract_origin_host(base_host);
         let endpoint_url = resolve_portal_url(&origin_host, "/capi/welcome");
         let mut vouched_macs = identity.all_vouched_macs();
-        if let Some(url_mac) = extract_stamac_param(base_host).or_else(|| extract_stamac_param(body))
+        if let Some(url_mac) =
+            extract_stamac_param(base_host).or_else(|| extract_stamac_param(body))
         {
             let m = url_mac.to_ascii_lowercase();
             if !vouched_macs.contains(&m) {
@@ -600,7 +600,11 @@ fn extract_stamac_param(text: &str) -> Option<String> {
             let end = after
                 .find(['&', '"', '\'', ' ', '>', '\r', '\n'])
                 .unwrap_or(after.len());
-            let raw = after[..end].trim().replace("%3A", ":").replace("%3a", ":").replace('-', ":");
+            let raw = after[..end]
+                .trim()
+                .replace("%3A", ":")
+                .replace("%3a", ":")
+                .replace('-', ":");
             if raw.len() == 17 && raw.chars().filter(|&c| c == ':').count() == 5 {
                 return Some(raw.to_ascii_lowercase());
             }
@@ -635,8 +639,16 @@ fn url_encode_component(raw: &str) -> String {
                 out.push('%');
                 let hi = b >> 4;
                 let lo = b & 0x0F;
-                out.push(if hi < 10 { (b'0' + hi) as char } else { (b'A' + (hi - 10)) as char });
-                out.push(if lo < 10 { (b'0' + lo) as char } else { (b'A' + (lo - 10)) as char });
+                out.push(if hi < 10 {
+                    (b'0' + hi) as char
+                } else {
+                    (b'A' + (hi - 10)) as char
+                });
+                out.push(if lo < 10 {
+                    (b'0' + lo) as char
+                } else {
+                    (b'A' + (lo - 10)) as char
+                });
             }
         }
     }
@@ -676,8 +688,7 @@ fn extract_html_portal_form(
         if let Some(name) = extract_html_attr(inp_tag, "name") {
             let ftype = extract_html_attr(inp_tag, "type").unwrap_or_else(|| "text".to_string());
             let existing = extract_html_attr(inp_tag, "value");
-            let val =
-                synthesize_honest_field_value(&name, &ftype, existing.as_deref(), identity);
+            let val = synthesize_honest_field_value(&name, &ftype, existing.as_deref(), identity);
             inputs.push((name, val));
         }
         scan = &after_inp[close_idx + 1..];
@@ -715,7 +726,11 @@ fn extract_accept_anchor_href(html: &str) -> Option<String> {
 
 fn extract_js_location_redirect(html: &str) -> Option<String> {
     let low = html.to_ascii_lowercase();
-    for pat in ["location.href", "window.location.replace", "window.location"] {
+    for pat in [
+        "location.href",
+        "window.location.replace",
+        "window.location",
+    ] {
         if let Some(idx) = low.find(pat) {
             let after = &html[idx + pat.len()..];
             if let Some(eq_or_paren) = after.find(['=', '(']) {
@@ -925,7 +940,10 @@ impl PortalMemoryBook {
 
     /// Serialize the entire recipe book to deterministic TSV format.
     pub fn to_tsv(&self) -> String {
-        let mut out = format!("{PORTAL_MEMORY_MAGIC}\tforgotten={}\n", self.forgotten_count);
+        let mut out = format!(
+            "{PORTAL_MEMORY_MAGIC}\tforgotten={}\n",
+            self.forgotten_count
+        );
         for r in &self.recipes {
             out.push_str(&r.to_tsv_line());
             out.push('\n');
@@ -1082,12 +1100,7 @@ impl MemnetCapsule64 {
             rf_rssi_dbm: buf[15] as i8,
             rf_ap_count: u16::from_le_bytes([buf[16], buf[17]]),
             imu_motion_mg: i16::from_le_bytes([buf[18], buf[19]]),
-            peer_rssi_dbm: [
-                buf[20] as i8,
-                buf[21] as i8,
-                buf[22] as i8,
-                buf[23] as i8,
-            ],
+            peer_rssi_dbm: [buf[20] as i8, buf[21] as i8, buf[22] as i8, buf[23] as i8],
             top_bssid_fnv32: u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
             top_bssid_rssi_dbm: buf[28] as i8,
             portal_ok: buf[29],
@@ -1167,7 +1180,11 @@ impl S3TriadWifiCapsule {
         let p_end = raw_pass.iter().position(|&b| b == 0).unwrap_or(64).min(64);
         let pass = String::from_utf8_lossy(&raw_pass[..p_end]).to_string();
 
-        let ip_end = buf[8..28].iter().position(|&b| b == 0).unwrap_or(19).min(19);
+        let ip_end = buf[8..28]
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(19)
+            .min(19);
         let host_ip = String::from_utf8_lossy(&buf[8..8 + ip_end]).to_string();
 
         Some(Self {
@@ -1297,7 +1314,9 @@ impl InflightCabinArchitecture {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::WidebodyKong172 => "Widebody-Kong-172 (172.19.0.0/23 -> 172.16.128.1)",
-            Self::RegionalFortiGate10 => "Regional-FortiGate-10 (10.0.0.0/23 -> 10.0.0.1 / 192.168.20.12)",
+            Self::RegionalFortiGate10 => {
+                "Regional-FortiGate-10 (10.0.0.0/23 -> 10.0.0.1 / 192.168.20.12)"
+            }
             Self::GenericInflight => "Generic-Inflight-Cabin",
             Self::GroundNetwork => "Ground-Network",
         }
@@ -1352,10 +1371,15 @@ pub fn classify_inflight_link_pq(
         || ssid_low.contains("ana-wifi")
         || ssid_low.contains("jal-wifi");
 
-    let architecture = if client_ip.starts_with("172.19.") || gateway_ip == "172.19.0.1" || gateway_ip == "172.16.128.1" {
+    let architecture = if client_ip.starts_with("172.19.")
+        || gateway_ip == "172.19.0.1"
+        || gateway_ip == "172.16.128.1"
+    {
         InflightCabinArchitecture::WidebodyKong172
     } else if (is_inflight_ssid || resolv_has_delta_search)
-        && (client_ip.starts_with("10.0.0.") || client_ip.starts_with("10.0.1.") || gateway_ip == "10.0.0.1")
+        && (client_ip.starts_with("10.0.0.")
+            || client_ip.starts_with("10.0.1.")
+            || gateway_ip == "10.0.0.1")
     {
         InflightCabinArchitecture::RegionalFortiGate10
     } else if is_inflight_ssid || resolv_has_delta_search {
@@ -1365,28 +1389,26 @@ pub fn classify_inflight_link_pq(
     };
 
     let clamped_mtu = if mtu_bytes == 0 { 1500 } else { mtu_bytes };
-    let mtu_efficiency_pq = Rational::new(clamped_mtu as i32, 1500)
-        .unwrap_or(Rational::integer(1));
+    let mtu_efficiency_pq = Rational::new(clamped_mtu as i32, 1500).unwrap_or(Rational::integer(1));
     let tunnel_overhead_bytes = 1500u16.saturating_sub(clamped_mtu);
     let max_safe_tcp_mss_bytes = clamped_mtu.saturating_sub(40);
 
     let safe_cabin_us = cabin_dns_rtt_us.clamp(1, 10_000_000) as u32;
     let safe_sat_us = satellite_rtt_us.clamp(1, 10_000_000) as i32;
-    let satellite_to_cabin_rtt_pq = Rational::new(safe_sat_us, safe_cabin_us)
-        .unwrap_or(Rational::integer(1));
+    let satellite_to_cabin_rtt_pq =
+        Rational::new(safe_sat_us, safe_cabin_us).unwrap_or(Rational::integer(1));
 
     let safe_alt = altitude_ft.clamp(0, 100_000) as i32;
-    let altitude_cruise_pq = Rational::new(safe_alt, 40_000)
-        .unwrap_or(Rational::integer(0));
+    let altitude_cruise_pq = Rational::new(safe_alt, 40_000).unwrap_or(Rational::integer(0));
 
     let safe_gs = groundspeed_kts.clamp(0, 2_000) as i32;
-    let mach_estimate_pq = Rational::new(safe_gs, 573)
-        .unwrap_or(Rational::integer(0));
+    let mach_estimate_pq = Rational::new(safe_gs, 573).unwrap_or(Rational::integer(0));
 
     let needs_dns_search_heal = (is_delta_ssid
         || matches!(
             architecture,
-            InflightCabinArchitecture::WidebodyKong172 | InflightCabinArchitecture::RegionalFortiGate10
+            InflightCabinArchitecture::WidebodyKong172
+                | InflightCabinArchitecture::RegionalFortiGate10
         ))
         && !resolv_has_delta_search;
 
@@ -1401,7 +1423,8 @@ pub fn classify_inflight_link_pq(
         health += 128; // Split-DNS routing domain healthy
     }
     let pol_low = device_policy.to_ascii_lowercase();
-    if pol_low.contains("premium") || pol_low.contains("authenticated") || pol_low.contains("full") {
+    if pol_low.contains("premium") || pol_low.contains("authenticated") || pol_low.contains("full")
+    {
         health += 256; // Authenticated for full satellite internet (e.g. DalPedPremium)
     } else if pol_low.contains("messaging") || pol_low.contains("free") {
         health += 128; // Messaging tier active
@@ -1722,7 +1745,10 @@ DA\\:F8\\:50\\:6D\\:54\\:BF:GlobalWiFi_kdq:3:2422 MHz:92:WPA2
             "DalPedPremium",
             true,
         );
-        assert_eq!(dal120.architecture, InflightCabinArchitecture::WidebodyKong172);
+        assert_eq!(
+            dal120.architecture,
+            InflightCabinArchitecture::WidebodyKong172
+        );
         assert_eq!(dal120.mtu_efficiency_pq, Rational::new(23, 25).unwrap());
         assert_eq!(dal120.tunnel_overhead_bytes, 120);
         assert_eq!(dal120.max_safe_tcp_mss_bytes, 1340);

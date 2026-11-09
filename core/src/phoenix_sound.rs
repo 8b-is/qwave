@@ -170,7 +170,7 @@ impl PhoenixSoundPreset {
             punch_q10: 420,
             air_q10: 400,
             phi_432_bloom_q10: 320,
-            goonj_velvet_q10: 460,  // Lush Goonj Dark Velvet Noise acoustic hall
+            goonj_velvet_q10: 460, // Lush Goonj Dark Velvet Noise acoustic hall
             svara_formant_q10: 220,
             naad_sub_q10: 280,
             stereo_width_q10: 1460, // Wide concert-hall holographic stage
@@ -190,7 +190,7 @@ impl PhoenixSoundPreset {
             phi_432_bloom_q10: 300,
             goonj_velvet_q10: 160,
             svara_formant_q10: 240,
-            naad_sub_q10: 480,      // Maximum tactile <140Hz Naad sub-bass authority
+            naad_sub_q10: 480, // Maximum tactile <140Hz Naad sub-bass authority
             stereo_width_q10: 1360,
             pitch_relax_54_55: false,
         }
@@ -203,15 +203,15 @@ impl PhoenixSoundPreset {
     /// while allowing brief, velvety Passion crests on emotional vocal & harmonic peaks!
     pub const fn alexandra_sanctuary() -> Self {
         Self {
-            sparkle_q10: 220,       // Silky-smooth sub-sample highs without piercing upper-mid glare
-            warmth_q10: 360,        // Ultra-clean Class-A triode warmth (zero quadratic IMD overdrive)
-            drive_q10: 140,         // Gentle fundamental lower-mid cushion (zero harsh odd-order bite)
-            punch_q10: 200,         // Softened transient attack so drum/guitar spikes never irritate
-            air_q10: 240,           // Relaxed upper-octave shimmer that opens on brief Passion crests
+            sparkle_q10: 220, // Silky-smooth sub-sample highs without piercing upper-mid glare
+            warmth_q10: 360,  // Ultra-clean Class-A triode warmth (zero quadratic IMD overdrive)
+            drive_q10: 140,   // Gentle fundamental lower-mid cushion (zero harsh odd-order bite)
+            punch_q10: 200,   // Softened transient attack so drum/guitar spikes never irritate
+            air_q10: 240,     // Relaxed upper-octave shimmer that opens on brief Passion crests
             phi_432_bloom_q10: 360, // Pure linear 432Hz / φ (500/809) parasympathetic heart/sanctuary resonance
             goonj_velvet_q10: 380,  // Lush Goonj Ternary Dark Velvet enveloping room cocoon
             svara_formant_q10: 280, // Intimate vocal emotion without 2800..4500 Hz F3 ear-canal glare
-            naad_sub_q10: 280,      // Clean, enveloping <140Hz Naad sub-bass foundation with full headroom
+            naad_sub_q10: 280, // Clean, enveloping <140Hz Naad sub-bass foundation with full headroom
             stereo_width_q10: 1320, // Enveloping holographic sanctuary stage
             pitch_relax_54_55: false,
         }
@@ -232,13 +232,14 @@ impl PhoenixSoundPreset {
     /// Parse a preset slug (`sovereign`, `alexandra-sanctuary`, `sanctuary-432`, `vocal-clarity`, `goonj-velvet`, `naad-studio`).
     pub fn from_name(name: &str) -> Self {
         match name.trim().to_ascii_lowercase().as_str() {
-            "alexandra" | "alexandra-sanctuary" | "alexandra_sanctuary" | "warmth" | "anti-glare" => {
-                Self::alexandra_sanctuary()
-            }
+            "alexandra"
+            | "alexandra-sanctuary"
+            | "alexandra_sanctuary"
+            | "warmth"
+            | "anti-glare" => Self::alexandra_sanctuary(),
             "sanctuary" | "432" | "sanctuary-432" | "sanctuary_432" => Self::sanctuary_432(),
-            "vocal" | "clarity" | "vocal-clarity" | "svara" | "svara-vocal" | "singer" | "emotion" | "vocal-emotion" => {
-                Self::vocal_clarity()
-            }
+            "vocal" | "clarity" | "vocal-clarity" | "svara" | "svara-vocal" | "singer"
+            | "emotion" | "vocal-emotion" => Self::vocal_clarity(),
             "goonj" | "velvet" | "goonj-velvet" | "hall" => Self::goonj_velvet_hall(),
             "naad" | "studio" | "naad-studio" | "sub" => Self::naad_studio_sub(),
             _ => Self::sovereign_master(),
@@ -559,8 +560,10 @@ pub fn phoenix_transform_pcm_i16(
             dominant_freq_hz: Rational::integer(SOVEREIGN_ANCHOR_HZ as i32),
             shruti_interval_ratio: Rational::ONE,
             shruti_name: "Sa (Chhandovati)",
-            phi_lower_hz: Rational::new(SOVEREIGN_ANCHOR_HZ as i32 * 500, 809).unwrap_or(Rational::ONE),
-            phi_upper_hz: Rational::new(SOVEREIGN_ANCHOR_HZ as i32 * 809, 500).unwrap_or(Rational::ONE),
+            phi_lower_hz: Rational::new(SOVEREIGN_ANCHOR_HZ as i32 * 500, 809)
+                .unwrap_or(Rational::ONE),
+            phi_upper_hz: Rational::new(SOVEREIGN_ANCHOR_HZ as i32 * 809, 500)
+                .unwrap_or(Rational::ONE),
             period_jitter_ratio: Rational::ZERO,
             amplitude_jitter_ratio: Rational::ZERO,
             soul_authenticity: Rational::new(1, 2).unwrap_or(Rational::ONE),
@@ -572,7 +575,11 @@ pub fn phoenix_transform_pcm_i16(
             pcm_fnv1a_hash: 0xcbf29ce484222325,
             eight_a_bytes: 16,
         };
-        return (interleaved_pcm.to_vec(), build_8a_stream(&[], 0, rate, ch as u16), receipt);
+        return (
+            interleaved_pcm.to_vec(),
+            build_8a_stream(&[], 0, rate, ch as u16),
+            receipt,
+        );
     }
 
     // Separate channels for Stage-1 Catmull-Rom restoration
@@ -949,10 +956,7 @@ pub fn phoenix_transform_pcm_i16(
         let (final_l, final_r) = if ch == 2 {
             let mid = (dc_l + dc_r) >> 1;
             let side = ((dc_l - dc_r) * preset.stereo_width_q10) >> 11;
-            (
-                soft_limit_i16(mid + side),
-                soft_limit_i16(mid - side),
-            )
+            (soft_limit_i16(mid + side), soft_limit_i16(mid - side))
         } else {
             let m = soft_limit_i16(dc_l);
             (m, m)
@@ -988,7 +992,10 @@ pub fn phoenix_transform_pcm_i16(
     );
 
     let period_jitter_ratio = if period_accum_ticks > 0 {
-        safe_rational_u64(period_jitter_accum.min(period_accum_ticks), period_accum_ticks)
+        safe_rational_u64(
+            period_jitter_accum.min(period_accum_ticks),
+            period_accum_ticks,
+        )
     } else {
         Rational::ZERO
     };
@@ -1024,7 +1031,8 @@ pub fn phoenix_transform_pcm_i16(
 
     let harmonic_bloom_ratio = if input_energy_sum > 0 {
         // Reduce to clean rational in Q10 scale (`num / 1024`)
-        let bloom_q10 = ((output_energy_sum as u128 * 1024) / (input_energy_sum as u128)).clamp(1, 65536) as i32;
+        let bloom_q10 = ((output_energy_sum as u128 * 1024) / (input_energy_sum as u128))
+            .clamp(1, 65536) as i32;
         Rational::new(bloom_q10, 1024).unwrap_or(Rational::ONE)
     } else {
         Rational::ONE
@@ -1291,10 +1299,22 @@ impl PhoenixLiveProcessor {
             pending_new_f0: 0,
             pending_new_streak: 0,
             singer_slots: [
-                DiarizedSingerSlot { slot_id: 0, ..DiarizedSingerSlot::default() },
-                DiarizedSingerSlot { slot_id: 1, ..DiarizedSingerSlot::default() },
-                DiarizedSingerSlot { slot_id: 2, ..DiarizedSingerSlot::default() },
-                DiarizedSingerSlot { slot_id: 3, ..DiarizedSingerSlot::default() },
+                DiarizedSingerSlot {
+                    slot_id: 0,
+                    ..DiarizedSingerSlot::default()
+                },
+                DiarizedSingerSlot {
+                    slot_id: 1,
+                    ..DiarizedSingerSlot::default()
+                },
+                DiarizedSingerSlot {
+                    slot_id: 2,
+                    ..DiarizedSingerSlot::default()
+                },
+                DiarizedSingerSlot {
+                    slot_id: 3,
+                    ..DiarizedSingerSlot::default()
+                },
             ],
             automagic: true,
             feel_voice_q10: 1024,
@@ -1387,13 +1407,21 @@ impl PhoenixLiveProcessor {
         let sanct_r = ((w_sub * 520) + (w_phi_r * 760) + (w_sa_r * 820) + (w_ga_r * 460)) >> 10;
         let passion_voice = ((w_pa * 560) + (w_oct * 440) + (w_passion_silk * 280)) >> 10;
 
-        let out_l = (((sanct_l * breath_q10) >> 10) + ((passion_voice * passion_q10) >> 10)).clamp(-18_000, 18_000) as i16;
-        let out_r = (((sanct_r * breath_q10) >> 10) + ((passion_voice * passion_q10) >> 10)).clamp(-18_000, 18_000) as i16;
+        let out_l = (((sanct_l * breath_q10) >> 10) + ((passion_voice * passion_q10) >> 10))
+            .clamp(-18_000, 18_000) as i16;
+        let out_r = (((sanct_r * breath_q10) >> 10) + ((passion_voice * passion_q10) >> 10))
+            .clamp(-18_000, 18_000) as i16;
         (out_l, out_r)
     }
 
     /// Update the Auto-Magical self-tuning toggle and 3 simple human-feel macros (`0..=200` percent, where `100` = `1024` Q10).
-    pub fn set_feel_controls(&mut self, automagic: bool, voice_pct: u16, bass_pct: u16, space_pct: u16) {
+    pub fn set_feel_controls(
+        &mut self,
+        automagic: bool,
+        voice_pct: u16,
+        bass_pct: u16,
+        space_pct: u16,
+    ) {
         self.automagic = automagic;
         self.feel_voice_q10 = (((voice_pct.min(200) as i64) * 1024) / 100).clamp(0, 2048);
         self.feel_bass_q10 = (((bass_pct.min(200) as i64) * 1024) / 100).clamp(0, 2048);
@@ -1440,13 +1468,19 @@ impl PhoenixLiveProcessor {
 
             // Stage 1: Real-time Catmull-Rom brickwall clipping & dropout repair on `l1` / `r1`
             if (l1 as i64).abs() >= 32600
-                || (l1 == 0 && (l0 as i64).abs() > 2400 && (l2 as i64).abs() > 2400 && (l0 as i64) * (l2 as i64) > 0)
+                || (l1 == 0
+                    && (l0 as i64).abs() > 2400
+                    && (l2 as i64).abs() > 2400
+                    && (l0 as i64) * (l2 as i64) > 0)
             {
                 l1 = catmull_rom_midpoint_i16(l0, l0, l2, l3);
                 self.catmull_rom_restored_samples += 1;
             }
             if (r1 as i64).abs() >= 32600
-                || (r1 == 0 && (r0 as i64).abs() > 2400 && (r2 as i64).abs() > 2400 && (r0 as i64) * (r2 as i64) > 0)
+                || (r1 == 0
+                    && (r0 as i64).abs() > 2400
+                    && (r2 as i64).abs() > 2400
+                    && (r0 as i64) * (r2 as i64) > 0)
             {
                 r1 = catmull_rom_midpoint_i16(r0, r0, r2, r3);
                 self.catmull_rom_restored_samples += 1;
@@ -1485,7 +1519,8 @@ impl PhoenixLiveProcessor {
                             self.peak_accum >>= 1;
                             self.zc_intervals_count >>= 1;
                         }
-                        self.period_accum_ticks = self.period_accum_ticks.saturating_add(period_ticks);
+                        self.period_accum_ticks =
+                            self.period_accum_ticks.saturating_add(period_ticks);
                         if self.prev_period_ticks_768k > 0 {
                             let dp = period_ticks.abs_diff(self.prev_period_ticks_768k);
                             self.period_jitter_accum = self.period_jitter_accum.saturating_add(dp);
@@ -1494,7 +1529,8 @@ impl PhoenixLiveProcessor {
 
                         let da = self.current_peak_abs.abs_diff(self.prev_peak_abs);
                         self.amp_jitter_accum = self.amp_jitter_accum.saturating_add(da);
-                        self.peak_accum = self.peak_accum.saturating_add(self.current_peak_abs as u64);
+                        self.peak_accum =
+                            self.peak_accum.saturating_add(self.current_peak_abs as u64);
                         self.prev_peak_abs = self.current_peak_abs;
                         self.current_peak_abs = 0;
                         self.zc_intervals_count += 1;
@@ -1510,11 +1546,13 @@ impl PhoenixLiveProcessor {
 
             let svf_high_l = s_l - self.svf_low_l - ((self.svf_band_l * 640) >> 10);
             self.svf_band_l = (self.svf_band_l + ((svf_high_l * 180) >> 10)).clamp(-32767, 32767);
-            self.svf_low_l = (self.svf_low_l + ((self.svf_band_l * 180) >> 10)).clamp(-32767, 32767);
+            self.svf_low_l =
+                (self.svf_low_l + ((self.svf_band_l * 180) >> 10)).clamp(-32767, 32767);
 
             let svf_high_r = s_r - self.svf_low_r - ((self.svf_band_r * 640) >> 10);
             self.svf_band_r = (self.svf_band_r + ((svf_high_r * 180) >> 10)).clamp(-32767, 32767);
-            self.svf_low_r = (self.svf_low_r + ((self.svf_band_r * 180) >> 10)).clamp(-32767, 32767);
+            self.svf_low_r =
+                (self.svf_low_r + ((self.svf_band_r * 180) >> 10)).clamp(-32767, 32767);
 
             let dl1 = (l2 as i64) - s_l;
             let dl0 = s_l - (l0 as i64);
@@ -1618,7 +1656,8 @@ impl PhoenixLiveProcessor {
             let deep_bass_l = sub_140 + sub_harm + (self.svf_low_l >> 1);
             let deep_bass_r = sub_140 + sub_harm + (self.svf_low_r >> 1);
 
-            let jp_q10 = ((self.period_jitter_accum * 1024) / self.period_accum_ticks.max(1)).min(384) as i64;
+            let jp_q10 = ((self.period_jitter_accum * 1024) / self.period_accum_ticks.max(1))
+                .min(384) as i64;
             let ja_q10 = ((self.amp_jitter_accum * 512) / self.peak_accum.max(1)).min(256) as i64;
             let soul_expr_q10 = if state == AcousticState::HarmonicSinusoid {
                 1024 + jp_q10 + ja_q10
@@ -1664,7 +1703,8 @@ impl PhoenixLiveProcessor {
             // - Opens a brief (~2s) velvety Passion Crest window every ~8s when an emotional vocal/harmonic
             //   peak arrives (`vocal_confidence_q10 >= 260` or harmonic swell), so Passion is hit every now and then
             //   before melting smoothly back into Sanctuary & Warmth!
-            let warm_sanctuary_lvl = self.voc_sub_ema + (self.voc_f0_ema * 2) + (self.voc_f1_ema * 2) + 64;
+            let warm_sanctuary_lvl =
+                self.voc_sub_ema + (self.voc_f0_ema * 2) + (self.voc_f1_ema * 2) + 64;
             let hf_glare_abs = ((s_l - self.lowpass_l).abs() + (s_r - self.lowpass_r).abs()) >> 3;
             let drive_glare_lvl = self.voc_f2_ema + (self.voc_f3_ema * 3) + hf_glare_abs;
 
@@ -1672,7 +1712,8 @@ impl PhoenixLiveProcessor {
                 self.passion_cooldown_frames -= 1;
             }
             let passion_trigger = state == AcousticState::HarmonicSinusoid
-                && (self.vocal_confidence_q10 >= 260 || (self.voc_f2_ema + self.voc_f3_ema) > warm_sanctuary_lvl)
+                && (self.vocal_confidence_q10 >= 260
+                    || (self.voc_f2_ema + self.voc_f3_ema) > warm_sanctuary_lvl)
                 && self.env_slow_q10 >= 10_000;
             if self.passion_crest_frames > 0 {
                 self.passion_crest_frames += 1;
@@ -1687,28 +1728,33 @@ impl PhoenixLiveProcessor {
 
             if (f & 15) == 0 {
                 if drive_glare_lvl > warm_sanctuary_lvl && self.passion_crest_frames == 0 {
-                    let excess = (((drive_glare_lvl - warm_sanctuary_lvl) * 512) / warm_sanctuary_lvl.max(64))
-                        .clamp(0, 1024) as u32;
-                    self.drive_glare_fatigue_q10 = ((self.drive_glare_fatigue_q10 * 15 + excess) >> 4).min(1024);
+                    let excess = (((drive_glare_lvl - warm_sanctuary_lvl) * 512)
+                        / warm_sanctuary_lvl.max(64))
+                    .clamp(0, 1024) as u32;
+                    self.drive_glare_fatigue_q10 =
+                        ((self.drive_glare_fatigue_q10 * 15 + excess) >> 4).min(1024);
                 } else {
                     self.drive_glare_fatigue_q10 = (self.drive_glare_fatigue_q10 * 15) >> 4;
                 }
             }
 
-            let is_alexandra_preset = self.preset.warmth_q10 == 360 && self.preset.goonj_velvet_q10 == 380;
+            let is_alexandra_preset =
+                self.preset.warmth_q10 == 360 && self.preset.goonj_velvet_q10 == 380;
             // Continuous sample-accurate triangle envelope (`0..=240` Q10) over 96_000 frames (~2s) -> zero step clicks!
-            let passion_env_q10: i64 = if self.passion_crest_frames > 0 && self.passion_crest_frames < 96_000 {
-                let dist_from_mid = (self.passion_crest_frames as i64 - 48_000).abs();
-                ((48_000 - dist_from_mid) * 240) / 48_000
-            } else {
-                0
-            };
+            let passion_env_q10: i64 =
+                if self.passion_crest_frames > 0 && self.passion_crest_frames < 96_000 {
+                    let dist_from_mid = (self.passion_crest_frames as i64 - 48_000).abs();
+                    ((48_000 - dist_from_mid) * 240) / 48_000
+                } else {
+                    0
+                };
             let (deharsh_q10, sanctuary_boost_q10, passion_window_q10): (i64, i64, i64) =
                 if self.automagic || is_alexandra_preset {
                     let base_deharsh: i64 = if is_alexandra_preset { 220 } else { 100 };
                     let base_sanctuary: i64 = if is_alexandra_preset { 240 } else { 110 };
                     let fatigue = self.drive_glare_fatigue_q10 as i64;
-                    let dh = (base_deharsh + ((fatigue * 320) >> 10) - (passion_env_q10 >> 1)).clamp(0, 520);
+                    let dh = (base_deharsh + ((fatigue * 320) >> 10) - (passion_env_q10 >> 1))
+                        .clamp(0, 520);
                     let sb = (base_sanctuary + ((fatigue * 260) >> 10)).clamp(0, 440);
                     (dh, sb, passion_env_q10)
                 } else {
@@ -1788,7 +1834,8 @@ impl PhoenixLiveProcessor {
             let spline_arch_diff = spline_arch_mid - self.prev_spline_arch;
             self.prev_spline_arch = spline_arch_mid;
 
-            let spline_24_48k = ((spline_arch_l.abs() + spline_arch_r.abs()) * 3) + (even_harm_l.abs() + even_harm_r.abs());
+            let spline_24_48k = ((spline_arch_l.abs() + spline_arch_r.abs()) * 3)
+                + (even_harm_l.abs() + even_harm_r.abs());
             let babbage_l_c3 = -(l0 as i64) + 3 * (l1 as i64) - 3 * (l2 as i64) + (l3 as i64);
             let babbage_r_c3 = -(r0 as i64) + 3 * (r1 as i64) - 3 * (r2 as i64) + (r3 as i64);
             let babbage_48_96k = (babbage_l_c3 + babbage_r_c3) >> 1;
@@ -1797,17 +1844,17 @@ impl PhoenixLiveProcessor {
             let catmull_192_384k = (spline_arch_diff * 4) + (babbage_96_192k >> 1);
 
             let bands: [i64; 11] = [
-                self.dyad_ema[5] * 2,                      // Band 0:  20..140 Hz     (Naad Sub-Bass -> buckets 0..6)
+                self.dyad_ema[5] * 2, // Band 0:  20..140 Hz     (Naad Sub-Bass -> buckets 0..6)
                 (self.dyad_ema[4] - self.dyad_ema[5]) * 2, // Band 1:  140..350 Hz    (Vocal F0 / Chest -> buckets 6..13)
-                self.dyad_ema[3] - self.dyad_ema[4],       // Band 2:  350..800 Hz    (Warm Body / Lower F1 -> buckets 13..20)
-                self.dyad_ema[2] - self.dyad_ema[3],       // Band 3:  800..1800 Hz   (Svara F1/F2 Emotion -> buckets 20..28)
-                self.dyad_ema[1] - self.dyad_ema[2],       // Band 4:  1.8..4.2 kHz   (Singer F3 Presence -> buckets 28..35)
-                self.dyad_ema[0] - self.dyad_ema[1],       // Band 5:  4.2..10 kHz    (Consonant Brilliance -> buckets 35..41)
-                mid - self.dyad_ema[0],                    // Band 6:  10..24 kHz     (Studio Air -> buckets 41..46)
-                spline_24_48k,                             // Band 7:  24..48 kHz     (16x Catmull-Rom 2f -> buckets 46..51)
-                babbage_48_96k,                            // Band 8:  48..96 kHz     (384kHz Babbage 3f -> buckets 51..56)
-                babbage_96_192k,                           // Band 9:  96..192 kHz    (4th-Order Babbage Hyper-Jerk -> buckets 56..60)
-                catmull_192_384k,                          // Band 10: 192..384 kHz   (768kHz Nyquist Spline Slew -> buckets 60..64)
+                self.dyad_ema[3] - self.dyad_ema[4], // Band 2:  350..800 Hz    (Warm Body / Lower F1 -> buckets 13..20)
+                self.dyad_ema[2] - self.dyad_ema[3], // Band 3:  800..1800 Hz   (Svara F1/F2 Emotion -> buckets 20..28)
+                self.dyad_ema[1] - self.dyad_ema[2], // Band 4:  1.8..4.2 kHz   (Singer F3 Presence -> buckets 28..35)
+                self.dyad_ema[0] - self.dyad_ema[1], // Band 5:  4.2..10 kHz    (Consonant Brilliance -> buckets 35..41)
+                mid - self.dyad_ema[0], // Band 6:  10..24 kHz     (Studio Air -> buckets 41..46)
+                spline_24_48k, // Band 7:  24..48 kHz     (16x Catmull-Rom 2f -> buckets 46..51)
+                babbage_48_96k, // Band 8:  48..96 kHz     (384kHz Babbage 3f -> buckets 51..56)
+                babbage_96_192k, // Band 9:  96..192 kHz    (4th-Order Babbage Hyper-Jerk -> buckets 56..60)
+                catmull_192_384k, // Band 10: 192..384 kHz   (768kHz Nyquist Spline Slew -> buckets 60..64)
             ];
             const BAND_OFFSETS: [usize; 11] = [0, 6, 13, 20, 28, 35, 41, 46, 51, 56, 60];
             const BAND_SPANS: [usize; 11] = [6, 7, 7, 8, 7, 6, 5, 5, 5, 4, 4];
@@ -1842,7 +1889,10 @@ impl PhoenixLiveProcessor {
                         let pitch_coherent = self.voc_prev_period == 0 || dp * 4 <= period;
                         let center_dominant = (formant_mid * 2) > (formant_side * 3);
                         let p_q4 = period << 4;
-                        if pitch_coherent && center_dominant && state == AcousticState::HarmonicSinusoid {
+                        if pitch_coherent
+                            && center_dominant
+                            && state == AcousticState::HarmonicSinusoid
+                        {
                             self.voc_lock_streak = (self.voc_lock_streak + 1).min(64);
                             if self.voc_ema_period_q4 == 0 {
                                 self.voc_ema_period_q4 = p_q4;
@@ -1860,7 +1910,9 @@ impl PhoenixLiveProcessor {
                         self.voc_lock_streak = self.voc_lock_streak.saturating_sub(2);
                     }
                 }
-            } else if self.global_frame_idx.saturating_sub(self.voc_last_zc_frame) > max_voc_p && (f & 31) == 0 {
+            } else if self.global_frame_idx.saturating_sub(self.voc_last_zc_frame) > max_voc_p
+                && (f & 31) == 0
+            {
                 self.voc_lock_streak = self.voc_lock_streak.saturating_sub(1);
             }
             self.prev_voc_wave = voc_wave;
@@ -1882,9 +1934,13 @@ impl PhoenixLiveProcessor {
                 && vowel_energy > ((sub_energy * 3) >> 2)
                 && upper_vowel_articulation * 4 > self.voc_f0_ema.max(32)
             {
-                let streak_q8 = ((self.voc_lock_streak.saturating_sub(3) as i64) * 48).clamp(0, 256);
-                let center_lock = (((formant_mid - formant_side) * 256) / (formant_mid + formant_side + 64)).clamp(0, 256);
-                let formant_ratio = ((vowel_energy * 224) / (vowel_energy + sub_energy + 128)).clamp(0, 256);
+                let streak_q8 =
+                    ((self.voc_lock_streak.saturating_sub(3) as i64) * 48).clamp(0, 256);
+                let center_lock = (((formant_mid - formant_side) * 256)
+                    / (formant_mid + formant_side + 64))
+                    .clamp(0, 256);
+                let formant_ratio =
+                    ((vowel_energy * 224) / (vowel_energy + sub_energy + 128)).clamp(0, 256);
                 ((((center_lock * formant_ratio) >> 8) * streak_q8) >> 7).clamp(0, 256)
             } else {
                 0
@@ -1894,8 +1950,9 @@ impl PhoenixLiveProcessor {
             if (f & 15) == 0 {
                 let target_conf_q10 = (vocal_gate_q8 * 4).clamp(0, 1024) as u16;
                 if target_conf_q10 > self.vocal_confidence_q10 {
-                    self.vocal_confidence_q10 =
-                        ((self.vocal_confidence_q10 as u32 * 5 + target_conf_q10 as u32 * 3) >> 3) as u16;
+                    self.vocal_confidence_q10 = ((self.vocal_confidence_q10 as u32 * 5
+                        + target_conf_q10 as u32 * 3)
+                        >> 3) as u16;
                 } else {
                     self.vocal_confidence_q10 =
                         ((self.vocal_confidence_q10 as u32 * 13) >> 4) as u16;
@@ -1905,7 +1962,8 @@ impl PhoenixLiveProcessor {
                 }
                 let voc_decay_mul = if vocal_gate_q8 > 16 { 14u32 } else { 9u32 };
                 for b in 0..64 {
-                    self.marine_buckets_q10[b] = ((self.marine_buckets_q10[b] as u32 * 15) >> 4) as u16;
+                    self.marine_buckets_q10[b] =
+                        ((self.marine_buckets_q10[b] as u32 * 15) >> 4) as u16;
                     let vd = ((self.marine_vocal_q10[b] as u32 * voc_decay_mul) >> 4) as u16;
                     self.marine_vocal_q10[b] = if vd < 4 && vocal_gate_q8 == 0 { 0 } else { vd };
                 }
@@ -1913,9 +1971,13 @@ impl PhoenixLiveProcessor {
 
             // Update 4-Slot Real-Time Singer Diarizer every 32 frames (~0.66ms)
             if (f & 31) == 0 {
-                if self.vocal_confidence_q10 >= 140 && self.voc_lock_streak >= 4 && self.voc_ema_period_q4 > 0 {
-                    let f0_hz = (((self.sample_rate_hz as u64) << 4) / self.voc_ema_period_q4.max(1))
-                        .clamp(80, 960) as u16;
+                if self.vocal_confidence_q10 >= 140
+                    && self.voc_lock_streak >= 4
+                    && self.voc_ema_period_q4 > 0
+                {
+                    let f0_hz = (((self.sample_rate_hz as u64) << 4)
+                        / self.voc_ema_period_q4.max(1))
+                    .clamp(80, 960) as u16;
                     let fmt_q8 = (((self.voc_f2_ema + self.voc_f3_ema) << 8)
                         / (self.voc_f0_ema + self.voc_f1_ema + 32))
                         .clamp(32, 1024) as u16;
@@ -1928,7 +1990,8 @@ impl PhoenixLiveProcessor {
                     let voc_belt = self.voc_f3_ema * 2;
                     let voc_air = bands[5].abs() + bands[6].abs();
                     let tot_v = (voc_chest + voc_heart + voc_belt + voc_air).max(64);
-                    let raw_emo_x = (((voc_heart + self.voc_f1_ema - self.voc_f0_ema * 2) * 900) / tot_v)
+                    let raw_emo_x = (((voc_heart + self.voc_f1_ema - self.voc_f0_ema * 2) * 900)
+                        / tot_v)
                         .clamp(-940, 940) as i16;
                     let raw_emo_y = (((voc_chest - (voc_belt + voc_air)) * 900) / tot_v)
                         .clamp(-940, 940) as i16;
@@ -1944,13 +2007,15 @@ impl PhoenixLiveProcessor {
                         }
                         let slot_reg = DiarizedSingerSlot::register_band(slot.f0_centroid_hz);
                         let ref_f0 = slot.f0_centroid_hz.min(f0_hz).max(115) as i64;
-                        let f0_diff_scaled = ((f0_hz as i64 - slot.f0_centroid_hz as i64).abs() * 220) / ref_f0;
+                        let f0_diff_scaled =
+                            ((f0_hz as i64 - slot.f0_centroid_hz as i64).abs() * 220) / ref_f0;
                         let fmt_diff = (fmt_q8 as i64 - slot.formant_ratio_q8 as i64).abs() / 3;
-                        let reg_penalty = if slot_reg != cur_reg && f0_hz.abs_diff(slot.f0_centroid_hz) > 38 {
-                            48
-                        } else {
-                            0
-                        };
+                        let reg_penalty =
+                            if slot_reg != cur_reg && f0_hz.abs_diff(slot.f0_centroid_hz) > 38 {
+                                48
+                            } else {
+                                0
+                            };
                         let mut dist = f0_diff_scaled + fmt_diff + reg_penalty;
                         if self.active_singer_id == s as u8
                             && slot_reg == cur_reg
@@ -1993,12 +2058,16 @@ impl PhoenixLiveProcessor {
                                 // recycle the oldest duplicate-register slot so every vocal register gets a slot!
                                 let mut reg_counts = [0u8; 4];
                                 for s in 0..4 {
-                                    let r = DiarizedSingerSlot::register_band(self.singer_slots[s].f0_centroid_hz) as usize;
+                                    let r = DiarizedSingerSlot::register_band(
+                                        self.singer_slots[s].f0_centroid_hz,
+                                    ) as usize;
                                     reg_counts[r] = reg_counts[r].saturating_add(1);
                                 }
                                 let dup_victim = (0..4)
                                     .filter(|&s| {
-                                        let r = DiarizedSingerSlot::register_band(self.singer_slots[s].f0_centroid_hz) as usize;
+                                        let r = DiarizedSingerSlot::register_band(
+                                            self.singer_slots[s].f0_centroid_hz,
+                                        ) as usize;
                                         reg_counts[r] >= 2
                                     })
                                     .min_by_key(|&s| self.singer_slots[s].last_active_frame);
@@ -2022,7 +2091,9 @@ impl PhoenixLiveProcessor {
                         // Both lower-register chest/F0 (`voc_f0_ema`) and upper-register belt (`voc_f1_ema + voc_f2_ema + voc_f3_ema`)
                         // are simultaneously strong while both a low slot (`reg <= 1`) and high slot (`reg >= 2`) exist!
                         let chosen_reg = if self.singer_slots[chosen_idx].active {
-                            DiarizedSingerSlot::register_band(self.singer_slots[chosen_idx].f0_centroid_hz)
+                            DiarizedSingerSlot::register_band(
+                                self.singer_slots[chosen_idx].f0_centroid_hz,
+                            )
                         } else {
                             cur_reg
                         };
@@ -2035,7 +2106,9 @@ impl PhoenixLiveProcessor {
                                     if s == chosen_idx || !self.singer_slots[s].active {
                                         return false;
                                     }
-                                    let r = DiarizedSingerSlot::register_band(self.singer_slots[s].f0_centroid_hz);
+                                    let r = DiarizedSingerSlot::register_band(
+                                        self.singer_slots[s].f0_centroid_hz,
+                                    );
                                     (chosen_reg <= 1 && r >= 2) || (chosen_reg >= 2 && r <= 1)
                                 })
                                 .max_by_key(|&s| self.singer_slots[s].last_active_frame)
@@ -2056,17 +2129,23 @@ impl PhoenixLiveProcessor {
                                 } else {
                                     // Keep centroid anchored inside its vocal register
                                     if slot.f0_centroid_hz.abs_diff(f0_hz) <= 64
-                                        && DiarizedSingerSlot::register_band(slot.f0_centroid_hz) == cur_reg
+                                        && DiarizedSingerSlot::register_band(slot.f0_centroid_hz)
+                                            == cur_reg
                                     {
                                         slot.f0_centroid_hz =
-                                            ((slot.f0_centroid_hz as u32 * 15 + f0_hz as u32) >> 4) as u16;
+                                            ((slot.f0_centroid_hz as u32 * 15 + f0_hz as u32) >> 4)
+                                                as u16;
                                         slot.formant_ratio_q8 =
-                                            ((slot.formant_ratio_q8 as u32 * 15 + fmt_q8 as u32) >> 4) as u16;
+                                            ((slot.formant_ratio_q8 as u32 * 15 + fmt_q8 as u32)
+                                                >> 4)
+                                                as u16;
                                     }
                                     slot.emo_x_q10 =
-                                        ((slot.emo_x_q10 as i32 * 5 + raw_emo_x as i32 * 3) >> 3) as i16;
+                                        ((slot.emo_x_q10 as i32 * 5 + raw_emo_x as i32 * 3) >> 3)
+                                            as i16;
                                     slot.emo_y_q10 =
-                                        ((slot.emo_y_q10 as i32 * 5 + raw_emo_y as i32 * 3) >> 3) as i16;
+                                        ((slot.emo_y_q10 as i32 * 5 + raw_emo_y as i32 * 3) >> 3)
+                                            as i16;
                                 }
                                 slot.presence_q10 = self.vocal_confidence_q10;
                                 slot.frames_sung = slot.frames_sung.saturating_add(32);
@@ -2074,14 +2153,19 @@ impl PhoenixLiveProcessor {
                             } else if Some(s) == harmony_partner_opt {
                                 // Duet Harmony Partner: light up simultaneous harmony voice!
                                 let slot = &mut self.singer_slots[s];
-                                let harm_pres = ((self.vocal_confidence_q10 as u32 * 7) >> 3).max(380) as u16;
+                                let harm_pres =
+                                    ((self.vocal_confidence_q10 as u32 * 7) >> 3).max(380) as u16;
                                 slot.presence_q10 = slot.presence_q10.max(harm_pres);
-                                slot.emo_x_q10 =
-                                    ((slot.emo_x_q10 as i32 * 7 + (-raw_emo_x as i32 / 2 + raw_emo_x as i32)) >> 3)
-                                        .clamp(-940, 940) as i16;
-                                slot.emo_y_q10 =
-                                    ((slot.emo_y_q10 as i32 * 6 + (raw_emo_y as i32 - 80) * 2) >> 3)
-                                        .clamp(-940, 940) as i16;
+                                slot.emo_x_q10 = ((slot.emo_x_q10 as i32 * 7
+                                    + (-raw_emo_x as i32 / 2 + raw_emo_x as i32))
+                                    >> 3)
+                                    .clamp(-940, 940)
+                                    as i16;
+                                slot.emo_y_q10 = ((slot.emo_y_q10 as i32 * 6
+                                    + (raw_emo_y as i32 - 80) * 2)
+                                    >> 3)
+                                    .clamp(-940, 940)
+                                    as i16;
                                 slot.frames_sung = slot.frames_sung.saturating_add(16);
                             } else {
                                 self.singer_slots[s].presence_q10 =
@@ -2130,8 +2214,9 @@ impl PhoenixLiveProcessor {
                 if level_q10 > self.marine_buckets_q10[bucket] {
                     self.marine_buckets_q10[bucket] = level_q10;
                 } else {
-                    self.marine_buckets_q10[bucket] =
-                        ((self.marine_buckets_q10[bucket] as u32 * 7 + level_q10 as u32) >> 3) as u16;
+                    self.marine_buckets_q10[bucket] = ((self.marine_buckets_q10[bucket] as u32 * 7
+                        + level_q10 as u32)
+                        >> 3) as u16;
                 }
                 // Critical-band cochlear neighbor spread (`3/4` and `1/2` into adjacent sub-buckets)
                 let n1_q10 = (level_q10 * 3) >> 2;
@@ -2140,7 +2225,10 @@ impl PhoenixLiveProcessor {
                     self.marine_buckets_q10[bucket - 1] =
                         ((self.marine_buckets_q10[bucket - 1] as u32 + n1_q10 as u32) >> 1) as u16;
                 }
-                if sub_idx + 1 < (span as usize) && bucket + 1 < 64 && n1_q10 > self.marine_buckets_q10[bucket + 1] {
+                if sub_idx + 1 < (span as usize)
+                    && bucket + 1 < 64
+                    && n1_q10 > self.marine_buckets_q10[bucket + 1]
+                {
                     self.marine_buckets_q10[bucket + 1] =
                         ((self.marine_buckets_q10[bucket + 1] as u32 + n1_q10 as u32) >> 1) as u16;
                 }
@@ -2148,7 +2236,10 @@ impl PhoenixLiveProcessor {
                     self.marine_buckets_q10[bucket - 2] =
                         ((self.marine_buckets_q10[bucket - 2] as u32 + n2_q10 as u32) >> 1) as u16;
                 }
-                if sub_idx + 2 < (span as usize) && bucket + 2 < 64 && n2_q10 > self.marine_buckets_q10[bucket + 2] {
+                if sub_idx + 2 < (span as usize)
+                    && bucket + 2 < 64
+                    && n2_q10 > self.marine_buckets_q10[bucket + 2]
+                {
                     self.marine_buckets_q10[bucket + 2] =
                         ((self.marine_buckets_q10[bucket + 2] as u32 + n2_q10 as u32) >> 1) as u16;
                 }
@@ -2169,11 +2260,16 @@ impl PhoenixLiveProcessor {
                     let vn_q10 = (voc_q10 * 3) >> 2;
                     if sub_idx > 0 && bucket > 0 && vn_q10 > self.marine_vocal_q10[bucket - 1] {
                         self.marine_vocal_q10[bucket - 1] =
-                            ((self.marine_vocal_q10[bucket - 1] as u32 + vn_q10 as u32) >> 1) as u16;
+                            ((self.marine_vocal_q10[bucket - 1] as u32 + vn_q10 as u32) >> 1)
+                                as u16;
                     }
-                    if sub_idx + 1 < (span as usize) && bucket + 1 < 64 && vn_q10 > self.marine_vocal_q10[bucket + 1] {
+                    if sub_idx + 1 < (span as usize)
+                        && bucket + 1 < 64
+                        && vn_q10 > self.marine_vocal_q10[bucket + 1]
+                    {
                         self.marine_vocal_q10[bucket + 1] =
-                            ((self.marine_vocal_q10[bucket + 1] as u32 + vn_q10 as u32) >> 1) as u16;
+                            ((self.marine_vocal_q10[bucket + 1] as u32 + vn_q10 as u32) >> 1)
+                                as u16;
                     }
                 }
             }
@@ -2288,7 +2384,8 @@ impl PhoenixLiveProcessor {
             Rational::integer(SOVEREIGN_ANCHOR_HZ as i32)
         };
         let (shruti_ratio, shruti_name) = nearest_taal_shruti_pq(dominant_freq_hz);
-        let jp_permille = ((self.period_jitter_accum * 1024) / self.period_accum_ticks.max(1)).min(512);
+        let jp_permille =
+            ((self.period_jitter_accum * 1024) / self.period_accum_ticks.max(1)).min(512);
         let ja_permille = ((self.amp_jitter_accum * 1024) / self.peak_accum.max(1)).min(512);
         let soul_num = (640 + jp_permille + (ja_permille >> 1)).clamp(512, 1020) as i32;
         let soul_auth = Rational::new(soul_num, 1024).unwrap_or(Rational::ONE);
@@ -2360,7 +2457,12 @@ pub fn fnv1a_pcm_i16(pcm: &[i16]) -> u64 {
 /// - `4..6`: Interlace (`u16` LE: `bit 0` = stereo, `bits 1..7` = rate / 1000, `bits 8..15` = 16x oversample)
 /// - `6..14`: 64-bit FNV-1a Checksum (`u64` LE)
 /// - `14..16`: Sovereign Harmonic Anchor (`432` u16 LE)
-pub fn build_8a_stream(opcodes: &[u8], checksum: u64, sample_rate_hz: u32, channels: u16) -> Vec<u8> {
+pub fn build_8a_stream(
+    opcodes: &[u8],
+    checksum: u64,
+    sample_rate_hz: u32,
+    channels: u16,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(16 + opcodes.len());
     out.extend_from_slice(&EIGHT_A_MAGIC);
     let stereo_bit = u16::from(channels >= 2);
@@ -2477,55 +2579,58 @@ pub fn phoenix_transform_audio_file(
     let raw_bytes = std::fs::read(input_path)
         .map_err(|e| format!("Failed to read {}: {e}", input_path.display()))?;
 
-    let (pcm_in, sample_rate, channels) = if raw_bytes.len() >= 12
-        && &raw_bytes[0..4] == b"RIFF"
-        && &raw_bytes[8..12] == b"WAVE"
-    {
-        decode_wav_i16(&raw_bytes)?
-    } else {
-        // Decode MP3/FLAC/OGG/AAC to 48 kHz 16-bit stereo PCM via ffmpeg pipe
-        let mut child = Command::new("ffmpeg")
-            .args([
-                "-v",
-                "error",
-                "-i",
-                &input_path.to_string_lossy(),
-                "-f",
-                "s16le",
-                "-acodec",
-                "pcm_s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn ffmpeg decoder for {}: {e}", input_path.display()))?;
+    let (pcm_in, sample_rate, channels) =
+        if raw_bytes.len() >= 12 && &raw_bytes[0..4] == b"RIFF" && &raw_bytes[8..12] == b"WAVE" {
+            decode_wav_i16(&raw_bytes)?
+        } else {
+            // Decode MP3/FLAC/OGG/AAC to 48 kHz 16-bit stereo PCM via ffmpeg pipe
+            let mut child = Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-i",
+                    &input_path.to_string_lossy(),
+                    "-f",
+                    "s16le",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| {
+                    format!(
+                        "Failed to spawn ffmpeg decoder for {}: {e}",
+                        input_path.display()
+                    )
+                })?;
 
-        let mut raw_pcm = Vec::new();
-        if let Some(mut out) = child.stdout.take() {
-            out.read_to_end(&mut raw_pcm)
-                .map_err(|e| format!("Failed reading decoded PCM stream: {e}"))?;
-        }
-        let status = child
-            .wait()
-            .map_err(|e| format!("ffmpeg wait failed: {e}"))?;
-        if !status.success() || raw_pcm.is_empty() {
-            return Err(format!(
-                "ffmpeg failed to decode {} into PCM",
-                input_path.display()
-            ));
-        }
-        let mut samples = Vec::with_capacity(raw_pcm.len() / 2);
-        for chunk in raw_pcm.chunks_exact(2) {
-            samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
-        }
-        (samples, 48000, 2)
-    };
+            let mut raw_pcm = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                out.read_to_end(&mut raw_pcm)
+                    .map_err(|e| format!("Failed reading decoded PCM stream: {e}"))?;
+            }
+            let status = child
+                .wait()
+                .map_err(|e| format!("ffmpeg wait failed: {e}"))?;
+            if !status.success() || raw_pcm.is_empty() {
+                return Err(format!(
+                    "ffmpeg failed to decode {} into PCM",
+                    input_path.display()
+                ));
+            }
+            let mut samples = Vec::with_capacity(raw_pcm.len() / 2);
+            for chunk in raw_pcm.chunks_exact(2) {
+                samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            (samples, 48000, 2)
+        };
 
     let (pcm_out, eight_a_bytes, receipt) =
         phoenix_transform_pcm_i16(&pcm_in, sample_rate, channels, preset);
@@ -2566,7 +2671,10 @@ mod tests {
         degraded[105] = 32700;
 
         let (restored, count) = restore_channel_catmull_rom_i16(&degraded);
-        assert!(count >= 3, "must detect and restore both dropout and clipped plateau");
+        assert!(
+            count >= 3,
+            "must detect and restore both dropout and clipped plateau"
+        );
         let err_degraded = (degraded[40] as i64 - clean[40] as i64).abs();
         let err_restored = (restored[40] as i64 - clean[40] as i64).abs();
         assert!(
@@ -2590,8 +2698,7 @@ mod tests {
         }
 
         let preset = PhoenixSoundPreset::sovereign_master();
-        let (out_pcm, eight_a, receipt) =
-            phoenix_transform_pcm_i16(&stereo_pcm, 48000, 2, &preset);
+        let (out_pcm, eight_a, receipt) = phoenix_transform_pcm_i16(&stereo_pcm, 48000, 2, &preset);
 
         assert_eq!(out_pcm.len(), stereo_pcm.len());
         assert_eq!(&eight_a[0..4], &EIGHT_A_MAGIC);
@@ -2672,7 +2779,10 @@ mod tests {
         for s in 0..8u8 {
             let babbage_val = y.clamp(-2_147_483_647, 2_147_483_647) as i32;
             let direct_val = catmull_rom_s32_16x(p0, p1, p2, p3, s * 2);
-            assert_eq!(babbage_val, direct_val, "Babbage forward diff must equal direct cubic at sub-step {s}");
+            assert_eq!(
+                babbage_val, direct_val,
+                "Babbage forward diff must equal direct cubic at sub-step {s}"
+            );
             y += d1;
             d1 += d2;
             d2 += d3;
@@ -2716,7 +2826,10 @@ mod tests {
             "Centered human baritone with vowel formants must open the 5-Lock Svara Vocal Gate (got {})",
             proc.vocal_confidence_q10
         );
-        assert_eq!(proc.active_singer_id, 0, "First singer must be diarized into Slot 0 (V1)");
+        assert_eq!(
+            proc.active_singer_id, 0,
+            "First singer must be diarized into Slot 0 (V1)"
+        );
         assert!(proc.singer_slots[0].active);
 
         // 3. Singer 2: Centered Soprano (~340 Hz, period = 141 samples at 48 kHz) with high F2/F3 formants

@@ -206,7 +206,11 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 
 /// Compute RFC 5869 HKDF-SHA256 (Extract + Expand to 32 bytes).
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> [u8; 32] {
-    let effective_salt = if salt.is_empty() { &[0u8; 32][..] } else { salt };
+    let effective_salt = if salt.is_empty() {
+        &[0u8; 32][..]
+    } else {
+        salt
+    };
     let prk = hmac_sha256(effective_salt, ikm);
     let mut expand_input = Vec::with_capacity(info.len() + 1);
     expand_input.extend_from_slice(info);
@@ -455,7 +459,11 @@ pub fn build_record_signature_challenge(
 /// plaintext domain names never appear in the on-disk vault file.
 pub fn blind_domain_tag(index_sig: &[u8], vault_salt: &[u8; 32], domain: &str) -> [u8; 32] {
     let norm = canonicalize_domain(domain);
-    let index_key = hkdf_sha256(vault_salt, index_sig, b"qwave.sovereign.vault.domain-index.v1");
+    let index_key = hkdf_sha256(
+        vault_salt,
+        index_sig,
+        b"qwave.sovereign.vault.domain-index.v1",
+    );
     hmac_sha256(&index_key, norm.as_bytes())
 }
 
@@ -588,14 +596,20 @@ impl SealedVaultRecord {
     ) -> Result<Self, VaultError> {
         let norm_domain = canonicalize_domain(&cred.domain);
         if norm_domain.is_empty() || cred.password.is_empty() {
-            return Err(VaultError::InvalidInput("domain and password must not be empty"));
+            return Err(VaultError::InvalidInput(
+                "domain and password must not be empty",
+            ));
         }
 
         let blinded_domain = blind_domain_tag(index_sig, vault_salt, &norm_domain);
 
         // Mint a 79-byte MEM|8 WaveInt provenance frame bound to the user's vocal f0_pq & timestamp
         let essence_digest = sha256(
-            format!("qwave-vault:{}:{}:{}", norm_domain, cred.username, cred.created_ts).as_bytes(),
+            format!(
+                "qwave-vault:{}:{}:{}",
+                norm_domain, cred.username, cred.created_ts
+            )
+            .as_bytes(),
         );
         let wave_id = u64::from_le_bytes([
             essence_digest[0],
@@ -642,13 +656,8 @@ impl SealedVaultRecord {
             cred.username.as_bytes(),
         );
 
-        let (enc_key, mac_key) = derive_record_keys(
-            &norm_domain,
-            &cred.username,
-            &record_salt,
-            sig,
-            &wave_frame,
-        );
+        let (enc_key, mac_key) =
+            derive_record_keys(&norm_domain, &cred.username, &record_salt, sig, &wave_frame);
 
         let mut aad = Vec::with_capacity(32 + 79 + norm_domain.len());
         aad.extend_from_slice(&blinded_domain);
@@ -671,11 +680,7 @@ impl SealedVaultRecord {
     }
 
     /// Unseal the username for a matched domain using the user's Ed25519 index signature.
-    pub fn unseal_username(
-        &self,
-        index_sig: &[u8],
-        domain: &str,
-    ) -> Result<String, VaultError> {
+    pub fn unseal_username(&self, index_sig: &[u8], domain: &str) -> Result<String, VaultError> {
         let norm_domain = canonicalize_domain(domain);
         let user_enc_key = hkdf_sha256(
             &self.record_salt,
@@ -811,12 +816,8 @@ fn decode_plaintext_payload(bytes: &[u8]) -> Result<PlaintextCredential, VaultEr
         if pos + 4 > bytes.len() {
             return Err(VaultError::MalformedVaultRecord);
         }
-        let len = u32::from_be_bytes([
-            bytes[pos],
-            bytes[pos + 1],
-            bytes[pos + 2],
-            bytes[pos + 3],
-        ]) as usize;
+        let len = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+            as usize;
         pos += 4;
         if pos + len > bytes.len() {
             return Err(VaultError::MalformedVaultRecord);
@@ -914,12 +915,14 @@ mod tests {
         for (i, b) in key.iter_mut().enumerate() {
             *b = i as u8;
         }
-        let nonce: [u8; 12] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00];
+        let nonce: [u8; 12] = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00,
+        ];
         let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
         let ciphertext = chacha20_xor(&key, &nonce, 1, plaintext);
         let expected_first_16 = [
-            0x6e, 0x2e, 0x35, 0x9a, 0x25, 0x68, 0xf9, 0x80,
-            0x41, 0xba, 0x07, 0x28, 0xdd, 0x0d, 0x69, 0x81,
+            0x6e, 0x2e, 0x35, 0x9a, 0x25, 0x68, 0xf9, 0x80, 0x41, 0xba, 0x07, 0x28, 0xdd, 0x0d,
+            0x69, 0x81,
         ];
         assert_eq!(&ciphertext[..16], &expected_first_16);
         let roundtrip = chacha20_xor(&key, &nonce, 1, &ciphertext);
@@ -948,15 +951,9 @@ mod tests {
             sign_count: 1,
         };
 
-        let record = SealedVaultRecord::seal(
-            &cred,
-            index_sig,
-            &vault_salt,
-            record_salt,
-            nonce,
-            &sig,
-        )
-        .expect("seal succeeds");
+        let record =
+            SealedVaultRecord::seal(&cred, index_sig, &vault_salt, record_salt, nonce, &sig)
+                .expect("seal succeeds");
 
         // Serialized record line never contains plaintext domain, username, or password
         let line = record.to_line();

@@ -264,13 +264,7 @@ fn end_to_end_agy_omni_k9_collar_waveint_and_c_abi() {
     assert_eq!(abi_sep, radar.separation_dm);
 
     let t = b_burst.state_trits;
-    let abi_tryte = qw_agy_omni_pack_tryte(
-        t[0].raw(),
-        t[1].raw(),
-        t[2].raw(),
-        t[3].raw(),
-        t[4].raw(),
-    );
+    let abi_tryte =
+        qw_agy_omni_pack_tryte(t[0].raw(), t[1].raw(), t[2].raw(), t[3].raw(), t[4].raw());
     assert_eq!(abi_tryte, b_burst.state_tryte.0);
 }
-

@@ -44,9 +44,9 @@
 //! **100% Pure Integer Math (Zero Floats)**: All similarity scores, cadence
 //! vectors, and authenticity metrics operate in `Q10` (`0..1024`) integer space.
 
-use core::ffi::{CStr, c_char};
 use crate::badge::SphereWitness;
 use crate::vault::{hmac_sha256, sha256};
+use core::ffi::{CStr, c_char};
 
 /// Domain separation prefix for `i1.is` Soul Signatures and Provenance Deeds.
 pub const I1_SOUL_DOMAIN: &[u8] = b"i1.is|qwave|soul-signature|v1";
@@ -97,7 +97,10 @@ impl IngestMode {
 
     /// True if this mode permits local on-device AI summarization (`MEM|8` Cognitive).
     pub const fn allows_local_ai(self) -> bool {
-        matches!(self, Self::Mine | Self::SummarizeFromBrowsing | Self::LocalAiOnly)
+        matches!(
+            self,
+            Self::Mine | Self::SummarizeFromBrowsing | Self::LocalAiOnly
+        )
     }
 }
 
@@ -338,7 +341,8 @@ impl FieldPolicyTable {
             .policy(PersonalField::RedditHandle)
             .allows_ai_ingestion(interactive_approved)
         {
-            let (scrubbed, c) = redact_prefixed_handle(&out, "u/", PersonalField::RedditHandle.redact_token());
+            let (scrubbed, c) =
+                redact_prefixed_handle(&out, "u/", PersonalField::RedditHandle.redact_token());
             out = scrubbed;
             redactions = redactions.saturating_add(c);
         }
@@ -347,7 +351,10 @@ impl FieldPolicyTable {
     }
 
     /// Collect the public attribution fields that are permitted for `i1.is` credit.
-    pub fn permitted_attribution_pairs(&self, interactive_approved: bool) -> Vec<(&'static str, String)> {
+    pub fn permitted_attribution_pairs(
+        &self,
+        interactive_approved: bool,
+    ) -> Vec<(&'static str, String)> {
         let mut pairs = Vec::new();
         for field in PersonalField::ALL {
             if self.policy(field).allows_ai_ingestion(interactive_approved) {
@@ -413,7 +420,9 @@ fn redact_phone_tokens(input: &str) -> (String, u32) {
     let mut count = 0u32;
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i].is_ascii_digit() || (bytes[i] == b'+' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()) {
+        if bytes[i].is_ascii_digit()
+            || (bytes[i] == b'+' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
+        {
             let mut j = i;
             let mut digits = 0u32;
             let mut seps = 0u32;
@@ -422,7 +431,13 @@ fn redact_phone_tokens(input: &str) -> (String, u32) {
                 if b.is_ascii_digit() {
                     digits += 1;
                     j += 1;
-                } else if b == b'-' || b == b' ' || b == b'.' || b == b'(' || b == b')' || (b == b'+' && j == i) {
+                } else if b == b'-'
+                    || b == b' '
+                    || b == b'.'
+                    || b == b'('
+                    || b == b')'
+                    || (b == b'+' && j == i)
+                {
                     seps += 1;
                     j += 1;
                 } else {
@@ -645,18 +660,39 @@ pub fn compute_cadence_vector_q10(text: &str) -> [u16; 16] {
         }
 
         let lower = clean.to_ascii_lowercase();
-        if matches!(lower.as_str(), "i" | "we" | "my" | "our" | "us" | "me" | "mine") {
+        if matches!(
+            lower.as_str(),
+            "i" | "we" | "my" | "our" | "us" | "me" | "mine"
+        ) {
             first_person += 1;
         }
         if matches!(
             lower.as_str(),
-            "love" | "warmth" | "sanctuary" | "soul" | "heart" | "feel" | "soothing" | "care" | "credit" | "trust"
+            "love"
+                | "warmth"
+                | "sanctuary"
+                | "soul"
+                | "heart"
+                | "feel"
+                | "soothing"
+                | "care"
+                | "credit"
+                | "trust"
         ) {
             warmth_words += 1;
         }
         if matches!(
             lower.as_str(),
-            "engine" | "server" | "servers" | "database" | "signature" | "ai" | "train" | "data" | "kernel" | "wave"
+            "engine"
+                | "server"
+                | "servers"
+                | "database"
+                | "signature"
+                | "ai"
+                | "train"
+                | "data"
+                | "kernel"
+                | "wave"
         ) {
             tech_words += 1;
         }
@@ -697,7 +733,9 @@ pub fn compute_cadence_vector_q10(text: &str) -> [u16; 16] {
 
     // Punctuation & structural cadence counts
     let double_dots = text.matches("..").count() as u32;
-    let dashes = text.matches("--").count() as u32 + text.matches('—').count() as u32 + text.matches(" - ").count() as u32;
+    let dashes = text.matches("--").count() as u32
+        + text.matches('—').count() as u32
+        + text.matches(" - ").count() as u32;
     let questions = bytes.iter().filter(|&&b| b == b'?').count() as u32;
     let exclamations = bytes.iter().filter(|&&b| b == b'!').count() as u32;
     let parens = bytes.iter().filter(|&&b| b == b'(' || b == b')').count() as u32;
@@ -796,7 +834,8 @@ pub fn compute_shingle_simhash_256(text: &str) -> [u64; 4] {
 /// personal voice, punctuation character (`..`, parens, questions), and lexical diversity.
 pub fn compute_organic_authenticity_q10(cadence: &[u16; 16]) -> u16 {
     let burstiness = cadence[1] as u32;
-    let personal_punct = (cadence[2] as u32 + cadence[3] as u32 + cadence[4] as u32 + cadence[6] as u32).min(1024);
+    let personal_punct =
+        (cadence[2] as u32 + cadence[3] as u32 + cadence[4] as u32 + cadence[6] as u32).min(1024);
     let lexical_ttr = cadence[9] as u32;
     let voice = (cadence[11] as u32 + cadence[12] as u32).min(1024);
     ((burstiness * 3 + personal_punct * 2 + lexical_ttr * 3 + voice * 2) / 10).min(1024) as u16
@@ -961,7 +1000,8 @@ impl I1IngestDeed {
         };
 
         // Evaluate the 5-stage SpherePOP witness `<(? admit ~ transform ! verify @ attribute > commit)>`
-        let admitted = !canonical_url.trim().is_empty() && mode.allows_i1_egress(original_author_revoked);
+        let admitted =
+            !canonical_url.trim().is_empty() && mode.allows_i1_egress(original_author_revoked);
         let transformed = !scrubbed_content.is_empty();
         let verified = soul.soul_tag != 0 && !content_sha256_hex.is_empty();
         let attributed = !original_author_id.trim().is_empty() || matches!(mode, IngestMode::Mine);
@@ -1061,7 +1101,11 @@ pub unsafe extern "C" fn qw_i1_evaluate_deed(
     };
 
     let soul = SoulSignature::mint(
-        if cid.is_empty() { "sovereign@8b.is" } else { cid },
+        if cid.is_empty() {
+            "sovereign@8b.is"
+        } else {
+            cid
+        },
         sec.as_bytes(),
         txt,
     );
