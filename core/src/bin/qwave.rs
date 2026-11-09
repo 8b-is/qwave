@@ -54,8 +54,7 @@ use qwave_core::tex_pdf::{
     MediaExtract, PdfExtract, compile_tex_to_markdown, compile_tex_to_markdown_with_mem8,
     extract_pdf_text_pure_rust, extract_spoken_narration, extract_spoken_narration_mode,
     format_media_to_markdown, format_pdf_to_markdown, format_pdf_to_markdown_with_mem8,
-    is_audio_extension, is_media_extension, is_pdf_extension, is_tex_extension,
-    is_video_extension,
+    is_audio_extension, is_media_extension, is_pdf_extension, is_tex_extension, is_video_extension,
 };
 use qwave_core::triad::{
     analyze_chirp_echogram_i16, atmospheric_absorption_db_per_100m_q8, classify_imu_orientation,
@@ -133,21 +132,24 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--agy-omni" || a == "--k9" || a == "--babilon-k9") {
+    if args
+        .iter()
+        .any(|a| a == "--agy-omni" || a == "--k9" || a == "--babilon-k9")
+    {
         println!("{}", run_agy_omni_k9_bridge());
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--speedtest" || a == "--i1-speedtest") {
+    if args
+        .iter()
+        .any(|a| a == "--speedtest" || a == "--i1-speedtest")
+    {
         println!("{}", run_i1_speedtest());
         return ExitCode::SUCCESS;
     }
 
     if args.iter().any(|a| {
-        a == "--nomad"
-            || a == "--nomad-connect"
-            || a == "--portal-heal"
-            || a == "--captive-portal"
+        a == "--nomad" || a == "--nomad-connect" || a == "--portal-heal" || a == "--captive-portal"
     }) {
         let auto_connect = args
             .iter()
@@ -170,7 +172,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--ping-pong" || a == "--ping-pong-voice") {
+    if args
+        .iter()
+        .any(|a| a == "--ping-pong" || a == "--ping-pong-voice")
+    {
         let do_voice = args.iter().any(|a| a == "--ping-pong-voice");
         println!("{}", run_acoustic_ping_pong(do_voice));
         return ExitCode::SUCCESS;
@@ -210,7 +215,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--ear-inbox" || a == "--room-status") {
+    if args
+        .iter()
+        .any(|a| a == "--ear-inbox" || a == "--room-status")
+    {
         ensure_ear_daemon_running();
         println!("{}", read_ear_inbox_json(10));
         return ExitCode::SUCCESS;
@@ -241,8 +249,14 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if let Some(pos) = args.iter().position(|a| a == "--speak" || a == "--speak-worker") {
-        let is_worker = args.get(pos).map(|s| s == "--speak-worker").unwrap_or(false);
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "--speak" || a == "--speak-worker")
+    {
+        let is_worker = args
+            .get(pos)
+            .map(|s| s == "--speak-worker")
+            .unwrap_or(false);
         if !is_worker {
             ensure_ear_daemon_running();
         }
@@ -345,9 +359,14 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if let Some(pos) = args.iter().position(|a| a == "--summarize" || a == "--summary") {
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "--summarize" || a == "--summary")
+    {
         let Some(target) = args.get(pos + 1) else {
-            eprintln!("usage: qwave --summarize <file.pdf | file.tex | file.mp4 | file.mp3 | file.md>");
+            eprintln!(
+                "usage: qwave --summarize <file.pdf | file.tex | file.mp4 | file.mp3 | file.md>"
+            );
             return ExitCode::from(2);
         };
         let (path, _) = resolve_input_target(target);
@@ -362,7 +381,8 @@ fn main() -> ExitCode {
         } else {
             raw_or_md
         };
-        let summary_slice = if let Some(end_idx) = source_md.find("## 📖 Full Sovereign Document") {
+        let summary_slice = if let Some(end_idx) = source_md.find("## 📖 Full Sovereign Document")
+        {
             &source_md[..end_idx]
         } else {
             &source_md
@@ -373,7 +393,9 @@ fn main() -> ExitCode {
 
     if let Some(pos) = args.iter().position(|a| a == "--phoenix") {
         let Some(target) = args.get(pos + 1) else {
-            eprintln!("usage: qwave --phoenix <file.wav | file.mp3 | file.mp4 | file.pdf | file.tex> [-o output]");
+            eprintln!(
+                "usage: qwave --phoenix <file.wav | file.mp3 | file.mp4 | file.pdf | file.tex> [-o output]"
+            );
             return ExitCode::from(2);
         };
         let out_opt = args
@@ -463,7 +485,10 @@ fn main() -> ExitCode {
         };
         let (path, _) = resolve_input_target(target);
         let (title, source, compiled) = load_and_compile(&path);
-        println!("{}", render_full_page(&path, &title, &source, &compiled, None, true));
+        println!(
+            "{}",
+            render_full_page(&path, &title, &source, &compiled, None, true)
+        );
         return ExitCode::SUCCESS;
     }
 
@@ -564,7 +589,8 @@ fn print_usage() {
 
 fn resolve_input_target(raw: &str) -> (PathBuf, Option<String>) {
     let trimmed = raw.trim();
-    let (without_scheme, is_file_uri) = if let Some(rest) = trimmed.strip_prefix("file://localhost") {
+    let (without_scheme, is_file_uri) = if let Some(rest) = trimmed.strip_prefix("file://localhost")
+    {
         (rest, true)
     } else if let Some(rest) = trimmed.strip_prefix("file://") {
         (rest, true)
@@ -575,7 +601,10 @@ fn resolve_input_target(raw: &str) -> (PathBuf, Option<String>) {
     };
 
     let (path_part, anchor) = match without_scheme.find('#') {
-        Some(idx) => (&without_scheme[..idx], Some(without_scheme[idx + 1..].to_string())),
+        Some(idx) => (
+            &without_scheme[..idx],
+            Some(without_scheme[idx + 1..].to_string()),
+        ),
         None => (without_scheme, None),
     };
 
@@ -628,7 +657,10 @@ fn launch_native_window(url: &str) -> bool {
     if is_qwave_qt_running() {
         let nav_dir = PathBuf::from("/home/hue/.local/share/qwave");
         let _ = fs::create_dir_all(&nav_dir);
-        let _ = fs::write(nav_dir.join("nav_command.url"), format!("{}\n{}", now_secs(), url));
+        let _ = fs::write(
+            nav_dir.join("nav_command.url"),
+            format!("{}\n{}", now_secs(), url),
+        );
         let _ = Command::new("hyprctl")
             .args(["dispatch", "focuswindow", "class:qwave"])
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
@@ -665,8 +697,13 @@ fn launch_native_window(url: &str) -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        for bin in ["chromium", "google-chrome-stable", "google-chrome", "brave-browser", "msedge"]
-        {
+        for bin in [
+            "chromium",
+            "google-chrome-stable",
+            "google-chrome",
+            "brave-browser",
+            "msedge",
+        ] {
             if Command::new("which")
                 .arg(bin)
                 .stdout(Stdio::null())
@@ -798,7 +835,12 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             ("GET", "/api/vault/verify") => run_vault_verify_cli(),
             _ => "{\"ok\":false,\"error\":\"unknown vault route\"}".to_string(),
         };
-        return send_response(&mut stream, "200 OK", "application/json", resp_json.as_bytes());
+        return send_response(
+            &mut stream,
+            "200 OK",
+            "application/json",
+            resp_json.as_bytes(),
+        );
     }
 
     match (method, route) {
@@ -818,7 +860,12 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
                 line_highlight.as_deref(),
                 false,
             );
-            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+            send_response(
+                &mut stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            )
         }
         ("GET", "/api/render") => {
             let path = get_query_param(query, "path")
@@ -874,11 +921,17 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("POST", "/api/style") => {
             let req_str = String::from_utf8_lossy(&body);
-            let preset = extract_json_str(&req_str, "preset").unwrap_or_else(|| "ocean".to_string());
+            let preset =
+                extract_json_str(&req_str, "preset").unwrap_or_else(|| "ocean".to_string());
             let prompt = extract_json_str(&req_str, "prompt").unwrap_or_default();
             let style_json = build_qwave_style_json(&preset, &prompt);
             save_style_json(&style_json);
-            send_response(&mut stream, "200 OK", "application/json", style_json.as_bytes())
+            send_response(
+                &mut stream,
+                "200 OK",
+                "application/json",
+                style_json.as_bytes(),
+            )
         }
         ("POST", "/api/alexiai/stt") => {
             let json = handle_alexiai_stt(&body, &state);
@@ -919,9 +972,11 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("GET", "/api/alexiai/tts") => {
-            let text = get_query_param(query, "text").unwrap_or_else(|| "Alexiai online.".to_string());
+            let text =
+                get_query_param(query, "text").unwrap_or_else(|| "Alexiai online.".to_string());
             let voice = get_query_param(query, "voice").unwrap_or_else(|| "af_heart".to_string());
-            let use_phoenix = get_query_param(query, "phoenix").unwrap_or_else(|| "1".to_string()) != "0";
+            let use_phoenix =
+                get_query_param(query, "phoenix").unwrap_or_else(|| "1".to_string()) != "0";
             let mut wav_bytes = synthesize_alexiai_tts(&text, &voice, &state);
             if use_phoenix && wav_bytes.len() > 44 {
                 if let Ok((enhanced, _rcpt)) = qwave_core::phoenix_sound::phoenix_enhance_wav_bytes(
@@ -935,23 +990,44 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("GET", "/api/phoenix/audio") => {
             let Some(asset_path) = get_query_param(query, "path") else {
-                return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
+                return send_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"missing path",
+                );
             };
-            let preset_name = get_query_param(query, "preset").unwrap_or_else(|| "master".to_string());
+            let preset_name =
+                get_query_param(query, "preset").unwrap_or_else(|| "master".to_string());
             let p = PathBuf::from(&asset_path);
             match render_phoenix_audio_stream(&p, &preset_name) {
                 Ok(wav_bytes) => send_response(&mut stream, "200 OK", "audio/wav", &wav_bytes),
-                Err(e) => send_response(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes()),
+                Err(e) => send_response(
+                    &mut stream,
+                    "500 Internal Server Error",
+                    "text/plain",
+                    e.as_bytes(),
+                ),
             }
         }
         ("GET", "/api/phoenix/video") => {
             let Some(asset_path) = get_query_param(query, "path") else {
-                return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
+                return send_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"missing path",
+                );
             };
             let p = PathBuf::from(&asset_path);
             match render_phoenix_video_stream(&p) {
                 Ok(mp4_bytes) => send_response(&mut stream, "200 OK", "video/mp4", &mp4_bytes),
-                Err(e) => send_response(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes()),
+                Err(e) => send_response(
+                    &mut stream,
+                    "500 Internal Server Error",
+                    "text/plain",
+                    e.as_bytes(),
+                ),
             }
         }
         ("POST", "/api/alexiai/chat") => {
@@ -966,16 +1042,31 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
         }
         ("GET", "/start") | ("HEAD", "/start") => {
             let html = render_start_slate_html();
-            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+            send_response(
+                &mut stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            )
         }
         ("GET", "/timeline") | ("HEAD", "/timeline") => {
             let range = get_query_param(query, "range").unwrap_or_default();
             let html = render_timeline_slate_html(&range);
-            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+            send_response(
+                &mut stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            )
         }
         ("GET", "/flight") | ("GET", "/delta") | ("HEAD", "/flight") | ("HEAD", "/delta") => {
             let html = render_flight_globe_html();
-            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+            send_response(
+                &mut stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            )
         }
         ("GET", "/api/flight/live") => {
             let json = build_flight_live_json();
@@ -1055,9 +1146,12 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             state.active_sse.fetch_sub(1, Ordering::Relaxed);
             Ok(())
         }
-        ("GET", "/runtime/katex.min.css") => {
-            send_response(&mut stream, "200 OK", "text/css; charset=utf-8", KATEX_CSS.as_bytes())
-        }
+        ("GET", "/runtime/katex.min.css") => send_response(
+            &mut stream,
+            "200 OK",
+            "text/css; charset=utf-8",
+            KATEX_CSS.as_bytes(),
+        ),
         ("GET", "/runtime/katex.min.js") => send_response(
             &mut stream,
             "200 OK",
@@ -1070,9 +1164,12 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             "application/javascript; charset=utf-8",
             MERMAID_JS.as_bytes(),
         ),
-        ("GET", "/runtime/favicon.svg") | ("GET", "/favicon.ico") => {
-            send_response(&mut stream, "200 OK", "image/svg+xml", FAVICON_SVG.as_bytes())
-        }
+        ("GET", "/runtime/favicon.svg") | ("GET", "/favicon.ico") => send_response(
+            &mut stream,
+            "200 OK",
+            "image/svg+xml",
+            FAVICON_SVG.as_bytes(),
+        ),
         ("GET", "/runtime/fonts/KaTeX_Main-Bold.woff2") => {
             send_response(&mut stream, "200 OK", "font/woff2", FONT_MAIN_BOLD)
         }
@@ -1100,11 +1197,21 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
                     return send_response(&mut stream, "200 OK", "audio/mpeg", &bytes);
                 }
             }
-            send_response(&mut stream, "404 Not Found", "text/plain", b"Tokyo theme not found")
+            send_response(
+                &mut stream,
+                "404 Not Found",
+                "text/plain",
+                b"Tokyo theme not found",
+            )
         }
         ("GET", "/asset") => {
             let Some(asset_path) = get_query_param(query, "path") else {
-                return send_response(&mut stream, "400 Bad Request", "text/plain", b"missing path");
+                return send_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"missing path",
+                );
             };
             let p = PathBuf::from(&asset_path);
             let Ok(bytes) = fs::read(&p) else {
@@ -1140,15 +1247,20 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
                 );
             };
             match fs::write(&target_path, content.as_bytes()) {
-                Ok(()) => send_response(
-                    &mut stream,
-                    "200 OK",
-                    "application/json",
-                    b"{\"ok\":true}",
-                ),
+                Ok(()) => {
+                    send_response(&mut stream, "200 OK", "application/json", b"{\"ok\":true}")
+                }
                 Err(e) => {
-                    let msg = format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e.to_string()));
-                    send_response(&mut stream, "500 Internal Server Error", "application/json", msg.as_bytes())
+                    let msg = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        markdown_source_literal(&e.to_string())
+                    );
+                    send_response(
+                        &mut stream,
+                        "500 Internal Server Error",
+                        "application/json",
+                        msg.as_bytes(),
+                    )
                 }
             }
         }
@@ -1156,16 +1268,24 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
             let req_str = String::from_utf8_lossy(&body);
             let text = extract_json_str(&req_str, "text").unwrap_or_default();
             let scope = extract_json_str(&req_str, "scope").unwrap_or_else(|| "page".to_string());
-            let path_str = extract_json_str(&req_str, "path")
-                .unwrap_or_else(|| state.current_file.lock().unwrap().to_string_lossy().to_string());
+            let path_str = extract_json_str(&req_str, "path").unwrap_or_else(|| {
+                state
+                    .current_file
+                    .lock()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            });
             let json = crystallize_mem8_wave(&path_str, &scope, &text);
             send_response(&mut stream, "200 OK", "application/json", json.as_bytes())
         }
         ("POST", "/api/hud-dialog") => {
             let req_str = String::from_utf8_lossy(&body);
-            let cmd = extract_json_str(&req_str, "cmd").unwrap_or_else(|| "control-center".to_string());
+            let cmd =
+                extract_json_str(&req_str, "cmd").unwrap_or_else(|| "control-center".to_string());
             let allowed = match cmd.as_str() {
-                "wifi-menu" | "bt-menu" | "audio-menu" | "power-menu" | "control-center" | "ai-menu" | "vault-menu" | "phoenix-menu" => cmd.as_str(),
+                "wifi-menu" | "bt-menu" | "audio-menu" | "power-menu" | "control-center"
+                | "ai-menu" | "vault-menu" | "phoenix-menu" => cmd.as_str(),
                 _ => "control-center",
             };
             let _ = Command::new("/home/hue/.local/bin/qwave-hypr-hud")
@@ -1180,16 +1300,17 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
     }
 }
 
-/// Transcribe 16kHz PCM WAV recorded in Qwave using pure-Rust `liquid-rust` (`LFM2.5-Audio` +
-/// Phoenix Speaker Recognition + `MEM|8` wave bridge) with fallback to `kokoro-speak stt`,
+/// Transcribe 16kHz PCM WAV recorded in Qwave using Sovereign `qUltraKotoro` (`ggml-large-v3-turbo-q5_0`
+/// + `QuantTern` `qt:` emotional ternary code + `liquid-rust` `LFM2.5-Audio` + Phoenix Speaker Recognition),
 /// AND extract Top-K Highest-Salience Vocal Grains into `MEM|8` via zero-float `qwave_core::salience`.
 fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     if wav_bytes.len() < 64 {
         return "{\"ok\":false,\"error\":\"audio buffer too short\"}".to_string();
     }
 
-    // 0. Zero-Float Integer Marine Salience & MEM|8 Vocal Grain Imprinting
+    // 0. Zero-Float Integer Marine Salience, qUltraKotoro QuantTern qt: tag & MEM|8 Vocal Grain Imprinting
     let mut salience_json = "null".to_string();
+    let mut kotoro_qt = "qt:55".to_string();
     if let Some((sr, pcm_samples)) = decode_wav_i16(wav_bytes) {
         let now = now_secs();
         let report = extract_salient_grains(&pcm_samples, sr, 3, now);
@@ -1203,6 +1324,7 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
         let sal_num = report.overall_salience_pq.num;
         let sal_den = report.overall_salience_pq.den;
         let vad_b = report.overall_vad_byte;
+        kotoro_qt = format!("qt:{vad_b:02x}");
         let top_count = report.top_grains.len();
 
         // Persist the 79-byte WaveInt frames of the highest-salience vocal grains into MEM|8 bounded ring buffers
@@ -1219,11 +1341,12 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
                     hex.push_str(&format!("{b:02x}"));
                 }
                 json_lines.push(format!(
-                    "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"frame_hex\":\"{hex}\"}}",
+                    "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"kotoro_qt\":\"qt:{:02x}\",\"frame_hex\":\"{hex}\"}}",
                     g.f0_hz.num,
                     g.f0_hz.den,
                     g.salience_pq.num,
                     g.salience_pq.den,
+                    g.vad_byte,
                     g.vad_byte
                 ));
             }
@@ -1232,19 +1355,22 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
         }
 
         salience_json = format!(
-            "{{\"f0_hz\":{f0_int},\"f0_pq\":\"{f0_num}/{f0_den}\",\"salience_pq\":\"{sal_num}/{sal_den}\",\"vad_byte\":\"0x{vad_b:02x}\",\"grains_extracted\":{top_count},\"total_grains_learned\":{total_learned}}}"
+            "{{\"f0_hz\":{f0_int},\"f0_pq\":\"{f0_num}/{f0_den}\",\"salience_pq\":\"{sal_num}/{sal_den}\",\"vad_byte\":\"0x{vad_b:02x}\",\"kotoro_qt\":\"{kotoro_qt}\",\"grains_extracted\":{top_count},\"total_grains_learned\":{total_learned}}}"
         );
     }
 
     let wav_path = format!("/tmp/qwave_mic_{}.wav", std::process::id());
     if let Err(e) = fs::write(&wav_path, wav_bytes) {
-        return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e.to_string()));
+        return format!(
+            "{{\"ok\":false,\"error\":{}}}",
+            markdown_source_literal(&e.to_string())
+        );
     }
 
     if let Some((cleaned, backend)) = transcribe_wav_fast_offline(&wav_path) {
         let _ = fs::remove_file(&wav_path);
         return format!(
-            "{{\"ok\":true,\"text\":{},\"backend\":{},\"salience\":{salience_json}}}",
+            "{{\"ok\":true,\"text\":{},\"backend\":{},\"kotoro_qt\":\"{kotoro_qt}\",\"salience\":{salience_json}}}",
             markdown_source_literal(&cleaned),
             markdown_source_literal(backend)
         );
@@ -1254,34 +1380,62 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
 }
 
-/// Fast, Zero-Float Sovereign offline speech-to-text transcription powered by Marine Salience +
-/// Hot Loopback ASR (`127.0.0.1:8785` `whisper-server` + `127.0.0.1:8786` `liquid-rust`).
+/// Fast, Zero-Float Sovereign offline speech-to-text transcription powered by `qUltraKotoro`
+/// (Marine Salience + QuantTern `qt:` + Hot Loopback `:8785` `ggml-large-v3-turbo-q5_0` +
+/// `kotorocli` + `:8786` `liquid-rust`).
 ///
 /// Order of preference:
 /// 1. Marine Salience boundary trimmer (`trim_salient_speech_pcm_i16`) strips leading/trailing silence.
-/// 2. Hot loopback `whisper-server` (`POST http://127.0.0.1:8785/inference`, `0 ms` model load,
-///    domain vocabulary prompt, temperature fallback enabled, `--suppress-nst`, `-ac 384`).
-/// 3. Hot loopback `liquid-rust serve` daemon (`POST http://127.0.0.1:8786/v1/audio/wav`).
-/// 4. Local `/usr/bin/whisper-cli` with temperature fallback enabled (no `-nf` loop bug!), `-sns`,
-///    `-mc 0`, `-ml 96`, and Sovereign vocabulary prompt.
-/// 5. Every output is filtered through `sanitize_and_dedup_stt_transcript` + `contextualize_room_transcript`.
+/// 2. Hot loopback `qultrakotoro` (`POST http://127.0.0.1:8785/inference`, `0 ms` model load,
+///    `ggml-large-v3-turbo-q5_0.bin`, domain vocabulary prompt, `--suppress-nst`, `-ac 384`).
+/// 3. Native Pure-Rust `kotorocli transcribe <wav> --json` (`qUltraKotoro` CLI engine).
+/// 4. Hot loopback `liquid-rust serve` daemon (`POST http://127.0.0.1:8786/v1/audio/wav`).
+/// 5. Local `/usr/bin/whisper-cli` with `ggml-large-v3-turbo-q5_0.bin` (fallback `ggml-base.en.bin`).
+/// 6. Every output is filtered through `sanitize_and_dedup_stt_transcript` + `contextualize_room_transcript`.
 fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)> {
-    const SOVEREIGN_VOCAB_PROMPT: &str =
-        "Hey Aye, Qwave, Hyprland, Alexiai, Alexandra, Aurora, Sovereign, MEM8, 8b-is, Waybar, WUPZ.";
+    const SOVEREIGN_VOCAB_PROMPT: &str = "Hey Aye, Qwave, qUltraKotoro, Hyprland, Alexiai, Alexandra, Aurora, Sovereign, MEM8, 8b-is, Waybar, WUPZ.";
 
-    // 0. Pre-trim leading and trailing non-salient silence in pure integer DSP so the encoder
-    //    only processes the active voiced region (+120ms pre-roll / +160ms post-roll).
+    // 0. Pre-trim leading and trailing non-salient silence in pure integer DSP AND normalize to 16kHz
+    //    so hot loopback `qultrakotoro:8785` processes any sample rate (16k/24k/44.1k/48k) in ~200ms!
     let mut trimmed_wav_bytes: Option<Vec<u8>> = None;
     if let Ok(raw_bytes) = fs::read(wav_path) {
         if let Some((sr, pcm)) = decode_wav_i16(&raw_bytes) {
-            let trimmed_pcm = trim_salient_speech_pcm_i16(&pcm, sr);
-            if trimmed_pcm.len() >= 1600 && trimmed_pcm.len() < pcm.len() {
-                let enc = encode_wav_i16(sr, &trimmed_pcm);
-                let _ = fs::write(wav_path, &enc);
-                trimmed_wav_bytes = Some(enc);
+            let active_pcm = if pcm.len() > (sr as usize * 3) {
+                let trimmed_pcm = trim_salient_speech_pcm_i16(&pcm, sr);
+                if trimmed_pcm.len() >= (sr as usize) && trimmed_pcm.len() < pcm.len() {
+                    trimmed_pcm
+                } else {
+                    pcm
+                }
             } else {
-                trimmed_wav_bytes = Some(raw_bytes);
+                pcm
+            };
+            let pcm_16k = if sr == 16_000 {
+                active_pcm
+            } else {
+                let out_len = ((active_pcm.len() as u64) * 16_000 / (sr as u64)).max(1) as usize;
+                let last_idx = active_pcm.len().saturating_sub(1);
+                let mut resampled = Vec::with_capacity(out_len);
+                for i in 0..out_len {
+                    let num = (i as u64) * (sr as u64);
+                    let idx = (num / 16_000) as usize;
+                    let rem = (num % 16_000) as i64;
+                    if idx >= last_idx {
+                        resampled.push(active_pcm[last_idx]);
+                    } else {
+                        let s0 = active_pcm[idx] as i64;
+                        let s1 = active_pcm[idx + 1] as i64;
+                        let interp = s0 + ((s1 - s0) * rem) / 16_000;
+                        resampled.push(interp.clamp(-32768, 32767) as i16);
+                    }
+                }
+                resampled
+            };
+            let enc = encode_wav_i16(16_000, &pcm_16k);
+            if wav_path.starts_with("/tmp/") {
+                let _ = fs::write(wav_path, &enc);
             }
+            trimmed_wav_bytes = Some(enc);
         } else {
             trimmed_wav_bytes = Some(raw_bytes);
         }
@@ -1289,8 +1443,7 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
 
     let finalize_tx = |raw: &str, backend: &'static str| -> Option<(String, &'static str)> {
         let deduped = sanitize_and_dedup_stt_transcript(raw)?;
-        let repaired =
-            contextualize_room_transcript(&deduped, &[], 2800, None).unwrap_or(deduped);
+        let repaired = contextualize_room_transcript(&deduped, &[], 2800, None).unwrap_or(deduped);
         if repaired.trim().is_empty() {
             None
         } else {
@@ -1298,15 +1451,17 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     };
 
-    // 1. Hot loopback `whisper-server` on 127.0.0.1:8785 (`0 ms` model load, ~280..450ms total)
+    // 1. Hot loopback `qultrakotoro` on 127.0.0.1:8785 (`0 ms` model load, `ggml-large-v3-turbo-q5_0`)
     if let Some(ref wav_bytes) = trimmed_wav_bytes {
         let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8785).into();
-        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(60)) {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(1800)));
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(80)) {
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(6500)));
             let boundary = "----QwaveSovereignBoundary8bIs";
             let part_fmt = format!(
                 "--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n\
+                 --{boundary}\r\nContent-Disposition: form-data; name=\"temperature\"\r\n\r\n0.0\r\n\
+                 --{boundary}\r\nContent-Disposition: form-data; name=\"temperature_inc\"\r\n\r\n0.0\r\n\
                  --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
             );
             let part_end = format!("\r\n--{boundary}--\r\n");
@@ -1323,10 +1478,12 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                 if stream.read_to_string(&mut resp).is_ok() {
                     if let Some((_, body)) = resp.split_once("\r\n\r\n") {
                         if let Some(tx) = extract_json_str(body, "text") {
-                            return finalize_tx(
+                            if let Some(res) = finalize_tx(
                                 &tx,
-                                "whisper-server:8785 (Hot RAM + Marine Salience + Dedup)",
-                            );
+                                "qultrakotoro:8785 (Hot ggml-large-v3-turbo-q5_0 + QuantTern + Marine Salience)",
+                            ) {
+                                return Some(res);
+                            }
                         }
                     }
                 }
@@ -1334,7 +1491,32 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    // 2. Hot loopback `liquid-rust serve` on 127.0.0.1:8786
+    // 2. Native Pure-Rust `kotorocli transcribe <wav_path> --json`
+    for kotoro_bin in ["/home/hue/.local/bin/kotorocli", "/usr/local/bin/kotorocli"] {
+        if Path::new(kotoro_bin).exists() {
+            if let Ok(out) = Command::new(kotoro_bin)
+                .args(["transcribe", wav_path, "--json"])
+                .output()
+            {
+                if out.status.success() {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Some(tx) = extract_json_str(&stdout, "text") {
+                        if !tx.trim().is_empty() {
+                            if let Some(res) = finalize_tx(
+                                &tx,
+                                "qultrakotoro-cli (kotorocli + QuantTern + Marine Salience)",
+                            ) {
+                                return Some(res);
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    // 3. Hot loopback `liquid-rust serve` on 127.0.0.1:8786
     if let Some(ref wav_bytes) = trimmed_wav_bytes {
         let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8786).into();
         if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(60)) {
@@ -1349,10 +1531,12 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                 if stream.read_to_string(&mut resp).is_ok() {
                     if let Some((_, body)) = resp.split_once("\r\n\r\n") {
                         if let Some(tx) = extract_json_str(body, "text") {
-                            return finalize_tx(
+                            if let Some(res) = finalize_tx(
                                 &tx,
-                                "liquid-rust:8786 (Pure Rust LFM2.5 + Marine Salience)",
-                            );
+                                "qultrakotoro+liquid-rust:8786 (Pure Rust LFM2.5 + QuantTern)",
+                            ) {
+                                return Some(res);
+                            }
                         }
                     }
                 }
@@ -1360,10 +1544,15 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    // 3. Local `/usr/bin/whisper-cli` fallback (`ggml-base.en.bin`) WITH temperature fallback
-    //    (no `-nf`!), `--suppress-nst` (`-sns`), `--max-context 0` (`-mc 0`), `--max-len 96` (`-ml 96`),
+    // 4. Local `/usr/bin/whisper-cli` fallback (`ggml-large-v3-turbo-q5_0.bin` -> `ggml-base.en.bin`)
+    //    WITH temperature fallback, `--suppress-nst` (`-sns`), `--max-context 0` (`-mc 0`), `--max-len 96` (`-ml 96`),
     //    and Sovereign vocabulary prompt so repetition loops never occur!
-    let whisper_model = "/home/hue/.local/share/qwave/models/ggml-base.en.bin";
+    let whisper_model =
+        if Path::new("/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin").exists() {
+            "/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin"
+        } else {
+            "/home/hue/.local/share/qwave/models/ggml-base.en.bin"
+        };
     if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
         let wav_len = fs::metadata(wav_path).map(|m| m.len()).unwrap_or(64_000);
         // 16kHz 16-bit mono = 32,000 bytes/sec; 1 Whisper mel-ctx unit = 20ms (640 bytes)
@@ -1412,15 +1601,21 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                return finalize_tx(&joined, "whisper-cli (local + Marine Salience + Dedup)");
+                return finalize_tx(
+                    &joined,
+                    "qultrakotoro-local (ggml-large-v3-turbo-q5_0 + Marine Salience)",
+                );
             }
         }
     }
 
-    // 4. Fallback to `kokoro-speak stt` ONLY if a verified `.stt.json` sidecar exists
+    // 5. Fallback to `kokoro-speak stt` ONLY if a verified `.stt.json` sidecar exists
     let sidecar = format!("{wav_path}.stt.json");
     if Path::new(&sidecar).exists() {
-        for k_bin in ["/home/hue/.local/bin/kokoro-speak", "/usr/local/bin/kokoro-speak"] {
+        for k_bin in [
+            "/home/hue/.local/bin/kokoro-speak",
+            "/usr/local/bin/kokoro-speak",
+        ] {
             if Path::new(k_bin).exists() {
                 if let Ok(out) = Command::new(k_bin)
                     .args(["stt", wav_path, "--lang", "en"])
@@ -1520,7 +1715,11 @@ fn generate_humayian_music_suite() -> Vec<u8> {
     let t3 = "/home/hue/8b-is/8b-is/music/georgia-drew-the-bow.mp3";
     let t4 = "/home/hue/8b-is/8b-is/music/so-simply-alive-klickaud.mp3";
 
-    if Path::new(t1).exists() && Path::new(t2).exists() && Path::new(t3).exists() && Path::new(t4).exists() {
+    if Path::new(t1).exists()
+        && Path::new(t2).exists()
+        && Path::new(t3).exists()
+        && Path::new(t4).exists()
+    {
         let filter = format!(
             "[0:a]atrim=start={s1}:duration=24,asetpts=PTS-STARTPTS[a0];\
              [1:a]atrim=start={s2}:duration=24,asetpts=PTS-STARTPTS[a1];\
@@ -1567,7 +1766,11 @@ fn generate_humayian_music_suite() -> Vec<u8> {
 
 /// Locate the Smart Tree (`st`) binary on this workstation.
 fn find_smart_tree_bin() -> &'static str {
-    for cand in ["/home/hue/.local/bin/st", "/usr/local/bin/st", "/usr/bin/st"] {
+    for cand in [
+        "/home/hue/.local/bin/st",
+        "/usr/local/bin/st",
+        "/usr/bin/st",
+    ] {
         if Path::new(cand).exists() {
             return cand;
         }
@@ -1740,7 +1943,10 @@ fn query_smart_tree_file_outline(path: &Path) -> Vec<(String, String, String, u3
 }
 
 /// Search Smart Tree CrabCC symbols (`st symbol --path <root> sym <query>`) across the repository.
-fn query_smart_tree_symbol_search(root: &Path, symbol_query: &str) -> Vec<(String, String, u32, String)> {
+fn query_smart_tree_symbol_search(
+    root: &Path,
+    symbol_query: &str,
+) -> Vec<(String, String, u32, String)> {
     let mut hits = Vec::<(String, String, u32, String)>::new();
     if symbol_query.trim().len() < 2 {
         return hits;
@@ -1786,10 +1992,47 @@ fn query_smart_tree_symbol_search(root: &Path, symbol_query: &str) -> Vec<(Strin
 /// Extract candidate identifier/keyword tokens from a conversational message for Smart Tree lookup.
 fn extract_smart_tree_tokens(user_msg: &str) -> (String, Vec<String>) {
     let stop_words = [
-        "what", "where", "when", "which", "who", "whom", "whose", "why", "how", "does", "show",
-        "tell", "about", "from", "with", "into", "this", "that", "there", "here", "have", "make",
-        "smart", "tree", "qwave", "please", "could", "would", "find", "search", "explain", "open",
-        "file", "code", "repo", "directory", "folder", "page", "the", "and", "for",
+        "what",
+        "where",
+        "when",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "why",
+        "how",
+        "does",
+        "show",
+        "tell",
+        "about",
+        "from",
+        "with",
+        "into",
+        "this",
+        "that",
+        "there",
+        "here",
+        "have",
+        "make",
+        "smart",
+        "tree",
+        "qwave",
+        "please",
+        "could",
+        "would",
+        "find",
+        "search",
+        "explain",
+        "open",
+        "file",
+        "code",
+        "repo",
+        "directory",
+        "folder",
+        "page",
+        "the",
+        "and",
+        "for",
     ];
     let mut kw_list = Vec::<String>::new();
     let mut sym_candidates = Vec::<String>::new();
@@ -1875,9 +2118,7 @@ fn build_smart_tree_chat_context(path: &Path, user_msg: &str) -> (String, String
     for tok in sym_tokens.iter().take(3) {
         for (file, name, line_no, sig) in query_smart_tree_symbol_search(&root, tok) {
             let first_line = sig.lines().next().unwrap_or("").trim();
-            sym_lines.push(format!(
-                "`{name}` in `{file}:{line_no}` — `{first_line}`"
-            ));
+            sym_lines.push(format!("`{name}` in `{file}:{line_no}` — `{first_line}`"));
             if sym_lines.len() >= 5 {
                 break;
             }
@@ -2000,7 +2241,9 @@ fn format_directory_with_smart_tree(dir: &Path) -> String {
         let seal = extract_json_str(&gjson, "wupz_seal_32b").unwrap_or_default();
         md.push_str("## 🦀 CrabCC Zero-Float Symbol Graph (`pq_kernel`)\n\n");
         md.push_str("| Metric | Exact `p/q` / WUPZ Value |\n|---|---|\n");
-        md.push_str(&format!("| **Spectral Complexity (`p/q`)** | `{spec_pq}` |\n"));
+        md.push_str(&format!(
+            "| **Spectral Complexity (`p/q`)** | `{spec_pq}` |\n"
+        ));
         md.push_str(&format!("| **Symbols per File (`p/q`)** | `{sym_pq}` |\n"));
         md.push_str(&format!("| **Edges per Symbol (`p/q`)** | `{edge_pq}` |\n"));
         md.push_str(&format!("| **WUPZ XOR Fold** | `{wupz}` |\n"));
@@ -2123,7 +2366,11 @@ fn probe_delta_inflight_context() -> (bool, Option<String>) {
             let low = line.to_ascii_lowercase();
             if low.contains("deltawifi") || low.contains("delta.com") {
                 on_delta_wifi = true;
-                active_ssid = line.split(':').next().unwrap_or("DeltaWiFi.com").to_string();
+                active_ssid = line
+                    .split(':')
+                    .next()
+                    .unwrap_or("DeltaWiFi.com")
+                    .to_string();
                 break;
             }
         }
@@ -2233,7 +2480,8 @@ fn probe_delta_inflight_context() -> (bool, Option<String>) {
         token.parse::<i64>().ok()
     };
 
-    let flight_no = extract_json_str(&raw, "flightNumber").unwrap_or_else(|| "Delta Flight".to_string());
+    let flight_no =
+        extract_json_str(&raw, "flightNumber").unwrap_or_else(|| "Delta Flight".to_string());
     let origin = extract_json_str(&raw, "origin").unwrap_or_else(|| "Origin".to_string());
     let dest = extract_json_str(&raw, "destination").unwrap_or_else(|| "Dest".to_string());
     let tail = extract_json_str(&raw, "vehicleId").unwrap_or_else(|| "Aircraft".to_string());
@@ -2263,8 +2511,10 @@ fn probe_delta_inflight_context() -> (bool, Option<String>) {
         "In-Flight".to_string()
     };
 
-    let device_policy = extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "Connected".to_string());
-    let wan_available = svc_raw.contains("\"connectivity\":true") || svc_raw.contains("\"serviceName\":\"WAN\",\"serviceState\":\"Available\"");
+    let device_policy =
+        extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "Connected".to_string());
+    let wan_available = svc_raw.contains("\"connectivity\":true")
+        || svc_raw.contains("\"serviceName\":\"WAN\",\"serviceState\":\"Available\"");
 
     let pq = qwave_core::mesh::classify_inflight_link_pq(
         &active_ssid,
@@ -2387,7 +2637,9 @@ fn nearest_corridor_landmark(lat_mdeg: i64, lon_mdeg: i64) -> &'static str {
         let dlat = lat_mdeg - l_lat;
         // Scale longitude by ~3/4 (cos 41 deg ≈ 755/1000) in integer math
         let dlon = ((lon_mdeg - l_lon) * 755) / 1_000;
-        let d2 = dlat.saturating_mul(dlat).saturating_add(dlon.saturating_mul(dlon));
+        let d2 = dlat
+            .saturating_mul(dlat)
+            .saturating_add(dlon.saturating_mul(dlon));
         if d2 < best_d2 {
             best_d2 = d2;
             best_name = name;
@@ -2491,7 +2743,8 @@ fn build_flight_live_json() -> String {
     let temp_c = extract_num("airTemperature").unwrap_or(-21);
     let temp_f = (temp_c * 9) / 5 + 32;
     let door_state = extract_json_str(&raw, "doorState").unwrap_or_else(|| "Closed".to_string());
-    let wheel_weight = extract_json_str(&raw, "wheelWeightState").unwrap_or_else(|| "Off".to_string());
+    let wheel_weight =
+        extract_json_str(&raw, "wheelWeightState").unwrap_or_else(|| "Off".to_string());
     let phase = extract_json_str(&raw, "flightPhase").unwrap_or_else(|| {
         if wheel_weight == "Off" {
             "Airborne".to_string()
@@ -2519,7 +2772,8 @@ fn build_flight_live_json() -> String {
         .ok()
         .and_then(|s| s.trim().parse::<u16>().ok())
         .unwrap_or(1380);
-    let device_policy = extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "DalPedPremium".to_string());
+    let device_policy =
+        extract_json_str(&dev_raw, "devicePolicy").unwrap_or_else(|| "DalPedPremium".to_string());
     let wan_available = svc_raw.is_empty()
         || svc_raw.contains("\"connectivity\":true")
         || svc_raw.contains("\"serviceName\":\"WAN\",\"serviceState\":\"Available\"");
@@ -3467,7 +3721,10 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
     if asks_delta_airlines {
         let target = if lower.contains("www.delta.com") {
             "https://www.delta.com/"
-        } else if lower.contains("wifi.delta.com") || lower.contains("portal") || lower.contains("login") {
+        } else if lower.contains("wifi.delta.com")
+            || lower.contains("portal")
+            || lower.contains("login")
+        {
             "https://wifi.delta.com/"
         } else if on_delta_wifi
             || lower.contains("flight")
@@ -3486,19 +3743,30 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         nav_url = Some("https://g8t.is/g8t/github".to_string());
     } else if (lower.contains("github") || lower.contains("gh")) && lower.contains("key") {
         nav_url = Some("https://github.com/settings/keys".to_string());
-    } else if (lower.contains("github") || lower.contains("gh")) && (lower.contains("login") || lower.contains("device")) {
+    } else if (lower.contains("github") || lower.contains("gh"))
+        && (lower.contains("login") || lower.contains("device"))
+    {
         nav_url = Some("https://github.com/login/device".to_string());
     } else if lower.contains("a6000") && (lower.contains("go ") || lower.contains("open")) {
         nav_url = Some("https://cheet.is/a6000".to_string());
-    } else if lower.contains("g8t") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
+    } else if lower.contains("g8t")
+        && (lower.contains("go ") || lower.contains("open") || lower.contains("take"))
+    {
         nav_url = Some("https://g8t.is".to_string());
-    } else if lower.contains("8b.is") && (lower.contains("go ") || lower.contains("open") || lower.contains("take")) {
+    } else if lower.contains("8b.is")
+        && (lower.contains("go ") || lower.contains("open") || lower.contains("take"))
+    {
         nav_url = Some("https://8b.is".to_string());
-    } else if (lower.contains("open smart tree") || lower.contains("smart tree atlas") || lower.contains("explore repo"))
+    } else if (lower.contains("open smart tree")
+        || lower.contains("smart tree atlas")
+        || lower.contains("explore repo"))
         && !path.is_dir()
     {
         let root = find_project_root(path);
-        nav_url = Some(format!("/view?path={}", url_encode(&root.to_string_lossy())));
+        nav_url = Some(format!(
+            "/view?path={}",
+            url_encode(&root.to_string_lossy())
+        ));
     }
 
     if lower.contains("humayian mix")
@@ -3506,10 +3774,14 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         || lower.contains("make music")
         || lower.contains("remix")
         || lower.contains("mix our songs")
-        || (lower.contains("play") && (lower.contains("mix") || lower.contains("music") || lower.contains("something")))
+        || (lower.contains("play")
+            && (lower.contains("mix") || lower.contains("music") || lower.contains("something")))
     {
         music_action = Some("humayian-mix");
-    } else if lower.contains("tokyo song") || lower.contains("next stop") || lower.contains("hamamatsucho") {
+    } else if lower.contains("tokyo song")
+        || lower.contains("next stop")
+        || lower.contains("hamamatsucho")
+    {
         music_action = Some("tokyo-song");
     }
 
@@ -3581,7 +3853,12 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
         doc_excerpt
     );
 
-    let nicknames = ["Captain Hue", "Hue-man", "my Humayian friend", "Shinkansen Hue"];
+    let nicknames = [
+        "Captain Hue",
+        "Hue-man",
+        "my Humayian friend",
+        "Shinkansen Hue",
+    ];
     let nick = nicknames[(now_secs() as usize) % nicknames.len()];
 
     // If user typed "delta" / asked for Delta Air Lines or flight telemetry, answer immediately with live onboard context!
@@ -3632,10 +3909,14 @@ fn handle_alexiai_chat(path: &Path, user_msg: &str, current_md: &str) -> String 
     let mut clean_reply = llm_raw.clone();
 
     if let Some((before, inner, after)) = extract_tag_block(&clean_reply, "qwave-append") {
-        clean_reply = format!("{} {}", before.trim(), after.trim()).trim().to_string();
+        clean_reply = format!("{} {}", before.trim(), after.trim())
+            .trim()
+            .to_string();
         updated_md = Some(format!("{}\n\n{}\n", current_md.trim_end(), inner.trim()));
     } else if let Some((before, inner, after)) = extract_tag_block(&clean_reply, "qwave-replace") {
-        clean_reply = format!("{} {}", before.trim(), after.trim()).trim().to_string();
+        clean_reply = format!("{} {}", before.trim(), after.trim())
+            .trim()
+            .to_string();
         updated_md = Some(inner.trim().to_string());
     }
 
@@ -3702,7 +3983,8 @@ fn call_loopback_ollama(system_prompt: &str, user_msg: &str) -> Option<String> {
         let Ok(sock_addr) = addr.parse() else {
             continue;
         };
-        let Ok(mut stream) = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(600)) else {
+        let Ok(mut stream) = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(600))
+        else {
             continue;
         };
         let _ = stream.set_read_timeout(Some(Duration::from_secs(timeout_s)));
@@ -3751,87 +4033,98 @@ fn call_loopback_ollama(system_prompt: &str, user_msg: &str) -> Option<String> {
 
 fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
     let p_lower = prompt.to_ascii_lowercase();
-    let (name, bg, glass_bg, border, accent, accent2, text_col, font_family, mut scale, mut max_w, mut shader_pause) =
-        match preset {
-            "dra-starlight" => (
-                "👑 Dra Starlight & Rose-Gold Studio",
-                "#0f0616",
-                "rgba(24, 10, 34, 0.84)",
-                "rgba(255, 158, 219, 0.35)",
-                "#ff9edb",
-                "#ffd6a5",
-                "#fdf0f8",
-                "ui-sans-serif, system-ui, sans-serif",
-                "1.06",
-                "980px",
-                false,
-            ),
-            "phoenix-lattice" => (
-                "🔥 Tokyo Phoenix Lattice",
-                "#110504",
-                "rgba(26, 9, 7, 0.86)",
-                "rgba(255, 123, 57, 0.38)",
-                "#ff7b39",
-                "#ffd166",
-                "#fff3eb",
-                "ui-sans-serif, system-ui, sans-serif",
-                "1.05",
-                "1080px",
-                false,
-            ),
-            "emerald-matrix" => (
-                "💎 Sovereign Emerald Matrix",
-                "#020f09",
-                "rgba(4, 22, 14, 0.85)",
-                "rgba(0, 255, 159, 0.34)",
-                "#00ff9f",
-                "#7ef9ff",
-                "#e4fff3",
-                "ui-monospace, 'JetBrains Mono', 'Fira Code', monospace",
-                "1.02",
-                "1120px",
-                false,
-            ),
-            "parchment-zen" => (
-                "📜 Warm Parchment Zen Reader",
-                "#18130d",
-                "rgba(34, 27, 19, 0.92)",
-                "rgba(235, 203, 139, 0.30)",
-                "#ebcb8b",
-                "#d08770",
-                "#f5ebd6",
-                "Georgia, 'Iowan Old Style', 'Palatino Linotype', serif",
-                "1.12",
-                "820px",
-                true,
-            ),
-            "cyberpunk-neon" => (
-                "⚡ Cyberpunk Neon Wave",
-                "#060212",
-                "rgba(12, 4, 28, 0.84)",
-                "rgba(0, 245, 212, 0.42)",
-                "#00f5d4",
-                "#f15bb5",
-                "#f0f8ff",
-                "ui-sans-serif, system-ui, sans-serif",
-                "1.05",
-                "1160px",
-                false,
-            ),
-            _ => (
-                "🌊 Qwave Deep Ocean (Default)",
-                "#02080d",
-                "rgba(5, 11, 19, 0.64)",
-                "rgba(158, 240, 240, 0.18)",
-                "#6ef7f7",
-                "#a8ffcf",
-                "#e8f7f7",
-                "ui-sans-serif, system-ui, sans-serif",
-                "1.04",
-                "960px",
-                false,
-            ),
-        };
+    let (
+        name,
+        bg,
+        glass_bg,
+        border,
+        accent,
+        accent2,
+        text_col,
+        font_family,
+        mut scale,
+        mut max_w,
+        mut shader_pause,
+    ) = match preset {
+        "dra-starlight" => (
+            "👑 Dra Starlight & Rose-Gold Studio",
+            "#0f0616",
+            "rgba(24, 10, 34, 0.84)",
+            "rgba(255, 158, 219, 0.35)",
+            "#ff9edb",
+            "#ffd6a5",
+            "#fdf0f8",
+            "ui-sans-serif, system-ui, sans-serif",
+            "1.06",
+            "980px",
+            false,
+        ),
+        "phoenix-lattice" => (
+            "🔥 Tokyo Phoenix Lattice",
+            "#110504",
+            "rgba(26, 9, 7, 0.86)",
+            "rgba(255, 123, 57, 0.38)",
+            "#ff7b39",
+            "#ffd166",
+            "#fff3eb",
+            "ui-sans-serif, system-ui, sans-serif",
+            "1.05",
+            "1080px",
+            false,
+        ),
+        "emerald-matrix" => (
+            "💎 Sovereign Emerald Matrix",
+            "#020f09",
+            "rgba(4, 22, 14, 0.85)",
+            "rgba(0, 255, 159, 0.34)",
+            "#00ff9f",
+            "#7ef9ff",
+            "#e4fff3",
+            "ui-monospace, 'JetBrains Mono', 'Fira Code', monospace",
+            "1.02",
+            "1120px",
+            false,
+        ),
+        "parchment-zen" => (
+            "📜 Warm Parchment Zen Reader",
+            "#18130d",
+            "rgba(34, 27, 19, 0.92)",
+            "rgba(235, 203, 139, 0.30)",
+            "#ebcb8b",
+            "#d08770",
+            "#f5ebd6",
+            "Georgia, 'Iowan Old Style', 'Palatino Linotype', serif",
+            "1.12",
+            "820px",
+            true,
+        ),
+        "cyberpunk-neon" => (
+            "⚡ Cyberpunk Neon Wave",
+            "#060212",
+            "rgba(12, 4, 28, 0.84)",
+            "rgba(0, 245, 212, 0.42)",
+            "#00f5d4",
+            "#f15bb5",
+            "#f0f8ff",
+            "ui-sans-serif, system-ui, sans-serif",
+            "1.05",
+            "1160px",
+            false,
+        ),
+        _ => (
+            "🌊 Qwave Deep Ocean (Default)",
+            "#02080d",
+            "rgba(5, 11, 19, 0.64)",
+            "rgba(158, 240, 240, 0.18)",
+            "#6ef7f7",
+            "#a8ffcf",
+            "#e8f7f7",
+            "ui-sans-serif, system-ui, sans-serif",
+            "1.04",
+            "960px",
+            false,
+        ),
+    };
 
     if p_lower.contains("bigger") || p_lower.contains("large") {
         scale = "1.18";
@@ -3843,7 +4136,10 @@ fn build_qwave_style_json(preset: &str, prompt: &str) -> String {
     }
     if p_lower.contains("pause") || p_lower.contains("still") || p_lower.contains("static") {
         shader_pause = true;
-    } else if p_lower.contains("animate") || p_lower.contains("motion") || p_lower.contains("live wave") {
+    } else if p_lower.contains("animate")
+        || p_lower.contains("motion")
+        || p_lower.contains("live wave")
+    {
         shader_pause = false;
     }
 
@@ -3875,8 +4171,7 @@ fn save_style_json(json: &str) {
 }
 
 fn load_saved_style_json() -> String {
-    fs::read_to_string(style_file_path())
-        .unwrap_or_else(|_| build_qwave_style_json("ocean", ""))
+    fs::read_to_string(style_file_path()).unwrap_or_else(|_| build_qwave_style_json("ocean", ""))
 }
 
 fn load_mem8_user_anchors() -> Vec<String> {
@@ -3888,8 +4183,8 @@ fn load_mem8_user_anchors() -> Vec<String> {
     ] {
         if let Ok(raw) = fs::read_to_string(&cand) {
             for line in raw.lines().rev().take(12) {
-                if let Some(d) = extract_json_str(line, "data")
-                    .or_else(|| extract_json_str(line, "preview"))
+                if let Some(d) =
+                    extract_json_str(line, "data").or_else(|| extract_json_str(line, "preview"))
                 {
                     if !d.trim().is_empty() && !anchors.contains(&d) {
                         anchors.push(d);
@@ -3902,9 +4197,7 @@ fn load_mem8_user_anchors() -> Vec<String> {
 }
 
 fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
-    let base_dir = path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    let base_dir = path.parent().map(|p| p.to_string_lossy().to_string());
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -3975,9 +4268,8 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
         return (title, markdown_input, compiled);
     }
 
-    let raw = fs::read_to_string(path).unwrap_or_else(|e| {
-        format!("# Could not open `{}`\n\nError: `{e}`", path.display())
-    });
+    let raw = fs::read_to_string(path)
+        .unwrap_or_else(|e| format!("# Could not open `{}`\n\nError: `{e}`", path.display()));
 
     if is_tex_extension(&ext) {
         let markdown_input = compile_tex_to_markdown_with_mem8(&raw, &mem8_anchors);
@@ -3994,7 +4286,10 @@ fn load_and_compile(path: &Path) -> (String, String, CompiledMarkdown) {
         return (title, raw, compiled);
     }
 
-    let is_markdown = matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkd" | "txt" | "");
+    let is_markdown = matches!(
+        ext.as_str(),
+        "md" | "markdown" | "mdown" | "mkd" | "txt" | ""
+    );
     let markdown_input = if is_markdown {
         raw.clone()
     } else {
@@ -4377,12 +4672,8 @@ fn render_phoenix_audio_stream(path: &Path, preset_name: &str) -> Result<Vec<u8>
     let cache_dir = PathBuf::from("/tmp/qwave-phoenix-cache");
     let _ = fs::create_dir_all(&cache_dir);
     let mtime = file_mtime_ms(path);
-    let hash = qwave_core::phoenix::content_hash(&format!(
-        "{}:{}:{}",
-        path.display(),
-        mtime,
-        preset_name
-    ));
+    let hash =
+        qwave_core::phoenix::content_hash(&format!("{}:{}:{}", path.display(), mtime, preset_name));
     let cached_wav = cache_dir.join(format!("phoenix_{hash:016x}.wav"));
     let cached_8a = cache_dir.join(format!("phoenix_{hash:016x}.8a"));
     if let Ok(bytes) = fs::read(&cached_wav) {
@@ -4536,7 +4827,10 @@ fn resolve_spoken_input_or_file(raw_arg: &str, page_opt: Option<usize>) -> Strin
         if !summary_spoken.trim().is_empty() {
             return summary_spoken.chars().take(3600).collect();
         }
-        return extract_spoken_narration(&md, false).chars().take(3600).collect();
+        return extract_spoken_narration(&md, false)
+            .chars()
+            .take(3600)
+            .collect();
     }
 
     if is_media_extension(&ext) {
@@ -7209,7 +7503,11 @@ fn listen_and_learn(target: &str) -> String {
         target.to_string()
     } else {
         let secs: u64 = target.parse().unwrap_or(5).clamp(1, 30);
-        let rec_file = format!("/tmp/qwave_listen_{}_{}.wav", std::process::id(), now_secs());
+        let rec_file = format!(
+            "/tmp/qwave_listen_{}_{}.wav",
+            std::process::id(),
+            now_secs()
+        );
         let _ = Command::new("sh")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
@@ -7278,7 +7576,10 @@ fn show_markdown_in_qwave(
     let mut auto_read_doc = false;
     if let Some(ref spoken) = speak_opt {
         let s = spoken.trim();
-        if s.eq_ignore_ascii_case("auto") || s.eq_ignore_ascii_case("read") || s.eq_ignore_ascii_case("listen") {
+        if s.eq_ignore_ascii_case("auto")
+            || s.eq_ignore_ascii_case("read")
+            || s.eq_ignore_ascii_case("listen")
+        {
             auto_read_doc = true;
         } else if !s.is_empty() {
             let _ = speak_out_loud(s, "af_heart", true, false);
@@ -7398,28 +7699,26 @@ fn run_mcp_server() {
         }
 
         // Support both Content-Length framed MCP and newline-delimited JSON-RPC 2.0
-        let (payload, use_content_length) = if trimmed
-            .to_ascii_lowercase()
-            .starts_with("content-length:")
-        {
-            let len: usize = trimmed
-                .split_once(':')
-                .and_then(|(_, v)| v.trim().parse().ok())
-                .unwrap_or(0);
-            loop {
-                let mut hdr = String::new();
-                if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+        let (payload, use_content_length) =
+            if trimmed.to_ascii_lowercase().starts_with("content-length:") {
+                let len: usize = trimmed
+                    .split_once(':')
+                    .and_then(|(_, v)| v.trim().parse().ok())
+                    .unwrap_or(0);
+                loop {
+                    let mut hdr = String::new();
+                    if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut buf = vec![0u8; len];
+                if reader.read_exact(&mut buf).is_err() {
                     break;
                 }
-            }
-            let mut buf = vec![0u8; len];
-            if reader.read_exact(&mut buf).is_err() {
-                break;
-            }
-            (String::from_utf8_lossy(&buf).into_owned(), true)
-        } else {
-            (trimmed.to_string(), false)
-        };
+                (String::from_utf8_lossy(&buf).into_owned(), true)
+            } else {
+                (trimmed.to_string(), false)
+            };
 
         if let Some(resp) = handle_mcp_request(&payload) {
             if use_content_length {
@@ -7486,9 +7785,11 @@ fn handle_mcp_request(req: &str) -> Option<String> {
 
     match method.as_str() {
         "initialize" => Some(format!(
-            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"qwave\",\"version\":\"0.4.1\"}}}}}}"
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"qwave\",\"version\":\"0.4.2\"}}}}}}"
         )),
-        "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}")),
+        "ping" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}"
+        )),
         "tools/list" => Some(format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[\
              {{\"name\":\"speak\",\"description\":\"🔊 Speak out loud to the user immediately through the default/Bluetooth speaker using Kokoro/LFM2.5 neural voice + zero-float MEM|8 SpeakerSalienceProfile integer prosody & harmonic modulation.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"text\":{{\"type\":\"string\",\"description\":\"Text to speak out loud to the user\"}},\"voice\":{{\"type\":\"string\",\"description\":\"Voice persona (af_heart, af_sky, af_bella, af_nicole, bf_emma, am_adam, am_michael, lfm_aye, lfm_omnimom)\",\"default\":\"af_heart\"}},\"salience_modulate\":{{\"type\":\"boolean\",\"description\":\"Modulate speech with user's learned MEM|8 vocal salience profile (default: true)\",\"default\":true}},\"wait\":{{\"type\":\"boolean\",\"description\":\"Wait for audio playback to finish before returning (default: false)\",\"default\":false}}}},\"required\":[\"text\"]}}}},\
@@ -7630,28 +7931,26 @@ fn run_mem8_mcp_server() {
         if trimmed.is_empty() {
             continue;
         }
-        let (payload, use_content_length) = if trimmed
-            .to_ascii_lowercase()
-            .starts_with("content-length:")
-        {
-            let len: usize = trimmed
-                .split_once(':')
-                .and_then(|(_, v)| v.trim().parse().ok())
-                .unwrap_or(0);
-            loop {
-                let mut hdr = String::new();
-                if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+        let (payload, use_content_length) =
+            if trimmed.to_ascii_lowercase().starts_with("content-length:") {
+                let len: usize = trimmed
+                    .split_once(':')
+                    .and_then(|(_, v)| v.trim().parse().ok())
+                    .unwrap_or(0);
+                loop {
+                    let mut hdr = String::new();
+                    if reader.read_line(&mut hdr).unwrap_or(0) == 0 || hdr.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut buf = vec![0u8; len];
+                if reader.read_exact(&mut buf).is_err() {
                     break;
                 }
-            }
-            let mut buf = vec![0u8; len];
-            if reader.read_exact(&mut buf).is_err() {
-                break;
-            }
-            (String::from_utf8_lossy(&buf).into_owned(), true)
-        } else {
-            (trimmed.to_string(), false)
-        };
+                (String::from_utf8_lossy(&buf).into_owned(), true)
+            } else {
+                (trimmed.to_string(), false)
+            };
 
         if let Some(resp) = handle_mem8_mcp_request(&payload) {
             if use_content_length {
@@ -7676,7 +7975,9 @@ fn handle_mem8_mcp_request(req: &str) -> Option<String> {
         "initialize" => Some(format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"mem8\",\"version\":\"1.0.0\"}}}}}}"
         )),
-        "ping" => Some(format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}")),
+        "ping" => Some(format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{}}}}"
+        )),
         "tools/list" => Some(format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[\
              {{\"name\":\"store_wave\",\"description\":\"🌊 Store a persistent MEM|8 WaveInt memory with temporal perspective (diary/witness/breakthrough), harmonic frequency (432/528/864 Hz), and 32-byte WUPZ ABI v1 witness seal.\",\"inputSchema\":{{\"type\":\"object\",\"properties\":{{\"data\":{{\"type\":\"string\",\"description\":\"Memory content to store in MEM|8\"}},\"perspective\":{{\"type\":\"string\",\"description\":\"Temporal perspective (diary, witness, breakthrough, architecture)\",\"default\":\"witness\"}},\"tags\":{{\"type\":\"string\",\"description\":\"Comma-separated keywords or tags\"}},\"frequency_hz\":{{\"type\":\"integer\",\"description\":\"Harmonic carrier frequency in Hz (default: 432)\",\"default\":432}}}},\"required\":[\"data\"]}}}},\
@@ -7728,7 +8029,11 @@ fn mem8_tool_store_wave(args_slice: &str) -> String {
     let home = env::var("HOME").unwrap_or_else(|_| "/home/hue".to_string());
     let dot_mem8 = PathBuf::from(home).join(".mem8");
     let _ = fs::create_dir_all(&dot_mem8);
-    append_jsonl_ring_file(&dot_mem8.join("anchors.jsonl"), std::slice::from_ref(&entry), 256);
+    append_jsonl_ring_file(
+        &dot_mem8.join("anchors.jsonl"),
+        std::slice::from_ref(&entry),
+        256,
+    );
     format!(
         "{{\"ok\":true,\"stored_in\":\"~/.local/share/qwave/mem8/waves.jsonl + ~/.mem8/anchors.jsonl\",\"ts\":{ts},\"frequency_hz\":{freq_hz},\"wupz_xor_fold\":\"0x{fold:016x}\"}}"
     )
@@ -7781,7 +8086,9 @@ fn mem8_tool_recall_waves(args_slice: &str) -> String {
 
 fn mem8_tool_wave_grid() -> String {
     let dir = mem8_dir();
-    let waves_bytes = fs::metadata(dir.join("waves.bin")).map(|m| m.len()).unwrap_or(0);
+    let waves_bytes = fs::metadata(dir.join("waves.bin"))
+        .map(|m| m.len())
+        .unwrap_or(0);
     let salience_bytes = fs::metadata(dir.join("speech_salience_waves.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
@@ -8033,7 +8340,8 @@ fn read_tts_active_until() -> u64 {
                         .unwrap_or(false);
                     if is_fresh {
                         let until = now_secs().saturating_add(3);
-                        let _ = fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
+                        let _ =
+                            fs::write(mem8_dir().join("tts_active_until.txt"), until.to_string());
                         return until;
                     } else {
                         let _ = fs::remove_file(entry.path());
@@ -8093,7 +8401,10 @@ fn ensure_ear_daemon_running() {
                 }
                 // Stalled `parec` pipe: terminate the hung daemon & its children so we respawn cleanly
                 let _ = Command::new("sh")
-                    .args(["-c", &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")])
+                    .args([
+                        "-c",
+                        &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null"),
+                    ])
                     .status();
             }
         }
@@ -8233,8 +8544,7 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
     type BeaconTuple = (String, String, String, usize, u64, u32);
     static BEACON_CACHE: std::sync::OnceLock<Mutex<(u64, BeaconTuple)>> =
         std::sync::OnceLock::new();
-    static REFRESHING: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
+    static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
     let default_tuple = || -> BeaconTuple {
         let sys_tz = fs::read_link("/etc/localtime")
@@ -8273,9 +8583,7 @@ fn passive_tokyo_beacon_sense() -> (String, String, String, usize, u64, u32) {
         let (ts, ref val) = *guard;
         let out = val.clone();
         drop(guard);
-        if (ts == 0 || now.saturating_sub(ts) >= 180)
-            && !REFRESHING.swap(true, Ordering::SeqCst)
-        {
+        if (ts == 0 || now.saturating_sub(ts) >= 180) && !REFRESHING.swap(true, Ordering::SeqCst) {
             thread::spawn(move || {
                 let fresh = compute_tokyo_beacon_sense_bg();
                 if let Some(c) = BEACON_CACHE.get() {
@@ -8353,9 +8661,11 @@ fn compute_tokyo_beacon_sense_bg() -> (String, String, String, usize, u64, u32) 
         } else if has_sony_swan {
             "Tokyo · Sony R&D / Shinagawa-Osaki-Minato Campus (356258000/10000000 N, 1397385000/10000000 E · JP)".to_string()
         } else if has_shinjuku {
-            "Tokyo · Shinjuku Gyoen Sanctuary (356852000/10000000 N, 1397100000/10000000 E · JP)".to_string()
+            "Tokyo · Shinjuku Gyoen Sanctuary (356852000/10000000 N, 1397100000/10000000 E · JP)"
+                .to_string()
         } else {
-            "Tokyo · Ota-ku / Kamata-Omori Base (355617000/10000000 N, 1397210000/10000000 E · JP)".to_string()
+            "Tokyo · Ota-ku / Kamata-Omori Base (355617000/10000000 N, 1397210000/10000000 E · JP)"
+                .to_string()
         };
         return (country, tz, loc_area, ap_count, max_tsf_us, rf_permille);
     }
@@ -8367,10 +8677,17 @@ fn compute_tokyo_beacon_sense_bg() -> (String, String, String, usize, u64, u32) 
         .filter(|z| !z.is_empty())
         .unwrap_or_else(|| "America/New_York".to_string());
 
-    let state_raw = fs::read_to_string(mem8_dir().join("area_timezone_state.json")).unwrap_or_default();
+    let state_raw =
+        fs::read_to_string(mem8_dir().join("area_timezone_state.json")).unwrap_or_default();
     let country = extract_json_str(&state_raw, "country")
         .or_else(|| env::var("WIGLE_COUNTRY").ok())
-        .unwrap_or_else(|| if sys_tz == "Asia/Tokyo" { "JP".to_string() } else { "US".to_string() });
+        .unwrap_or_else(|| {
+            if sys_tz == "Asia/Tokyo" {
+                "JP".to_string()
+            } else {
+                "US".to_string()
+            }
+        });
     let loc_area = extract_json_str(&state_raw, "location")
         .or_else(|| env::var("QWAVE_LOCATION").ok())
         .unwrap_or_else(|| format!("Sovereign Area ({sys_tz} · {country})"));
@@ -8397,7 +8714,10 @@ fn run_parallel_ear_daemon() {
                 // If we were started by systemd (`INVOCATION_ID` set), replace any orphan manual process
                 if env::var_os("INVOCATION_ID").is_some() {
                     let _ = Command::new("sh")
-                        .args(["-c", &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")])
+                        .args([
+                            "-c",
+                            &format!("pkill -9 -P {pid} 2>/dev/null; kill -9 {pid} 2>/dev/null"),
+                        ])
                         .status();
                 } else {
                     return;
@@ -8463,23 +8783,25 @@ fn run_parallel_ear_daemon() {
         let spatial_clone = Arc::clone(&spatial_map);
         let inbox_ring_clone = Arc::clone(&inbox_ring);
         let dir_clone = dir.clone();
-        thread::spawn(move || loop {
-            let (captured_stereo, now) = {
-                let (lock, cvar) = &*q_clone;
-                let mut q = lock.lock().unwrap();
-                while q.is_empty() {
-                    q = cvar.wait(q).unwrap();
-                }
-                q.pop_oldest().unwrap()
-            };
-            process_parallel_ear_utterance(
-                &captured_stereo,
-                now,
-                &tracker_clone,
-                &spatial_clone,
-                &inbox_ring_clone,
-                &dir_clone,
-            );
+        thread::spawn(move || {
+            loop {
+                let (captured_stereo, now) = {
+                    let (lock, cvar) = &*q_clone;
+                    let mut q = lock.lock().unwrap();
+                    while q.is_empty() {
+                        q = cvar.wait(q).unwrap();
+                    }
+                    q.pop_oldest().unwrap()
+                };
+                process_parallel_ear_utterance(
+                    &captured_stereo,
+                    now,
+                    &tracker_clone,
+                    &spatial_clone,
+                    &inbox_ring_clone,
+                    &dir_clone,
+                );
+            }
         });
     }
 
@@ -8683,8 +9005,7 @@ fn process_parallel_ear_utterance(
         }
     } else if pre_check.top_grains.len() < 2
         || pre_check.top_grains[0].salience_q15 < 1650
-        || pre_check.salient_frame_ratio_pq.num * 4
-            < (pre_check.salient_frame_ratio_pq.den as i32)
+        || pre_check.salient_frame_ratio_pq.num * 4 < (pre_check.salient_frame_ratio_pq.den as i32)
         || pre_check.overall_vad_byte < 0x16
     {
         return;
@@ -9044,7 +9365,8 @@ fn compress_thought_tokens(text: &str, keep_full_intent: bool) -> String {
         if matches!(
             low_bare,
             "uh" | "um" | "umm" | "uhh" | "er" | "like" | "basically" | "actually" | "literally"
-        ) || (!keep_full_intent && matches!(low_bare, "yeah" | "mean" | "well" | "just" | "really"))
+        ) || (!keep_full_intent
+            && matches!(low_bare, "yeah" | "mean" | "well" | "just" | "really"))
         {
             continue;
         }
@@ -9176,7 +9498,8 @@ fn run_hook_pre_invocation() -> String {
             let cap = extract_json_str(trimmed, "capsule").unwrap_or_else(|| {
                 let ctx = extract_json_str(trimmed, "context").unwrap_or_default();
                 let f0 = extract_json_u64(trimmed, "f0_hz").unwrap_or(156) as i32;
-                let sim = extract_json_u64(trimmed, "primary_similarity_q15").unwrap_or(28000) as u16;
+                let sim =
+                    extract_json_u64(trimmed, "primary_similarity_q15").unwrap_or(28000) as u16;
                 build_alexiai_thought_capsule(&speaker, &ctx, should_resp, sim, f0, 0x62, &text)
             });
             capsules.push(cap);
@@ -9193,7 +9516,10 @@ fn run_hook_pre_invocation() -> String {
     } else {
         capsules
     };
-    let msg = format!("🧠 [ALEXIAI Compressed Room Thoughts]: {}", tail.join(" · "));
+    let msg = format!(
+        "🧠 [ALEXIAI Compressed Room Thoughts]: {}",
+        tail.join(" · ")
+    );
     format!(
         "{{\"injectSteps\":[{{\"ephemeralMessage\":{}}}]}}",
         markdown_source_literal(&msg)
@@ -9360,7 +9686,11 @@ fn run_qwave_alexiai_bench() -> String {
     let pcm_1s: Vec<i16> = (0..16_000usize)
         .map(|i| {
             let p = (i % 103) as i32;
-            let tri = if p < 51 { (p - 25) * 580 } else { (77 - p) * 580 };
+            let tri = if p < 51 {
+                (p - 25) * 580
+            } else {
+                (77 - p) * 580
+            };
             tri.clamp(-20_000, 20_000) as i16
         })
         .collect();
@@ -9391,7 +9721,12 @@ fn run_qwave_alexiai_bench() -> String {
     let mut tracker = RoomAcousticTracker::default();
     let t2 = Instant::now();
     for i in 0..50u64 {
-        let _ = tracker.classify_and_learn(&pcm_1s, sr, 1700000000 + i, Some("Hey Gemini let us benchmark this"));
+        let _ = tracker.classify_and_learn(
+            &pcm_1s,
+            sr,
+            1700000000 + i,
+            Some("Hey Gemini let us benchmark this"),
+        );
     }
     let diarize_1s_us = t2.elapsed().as_nanos() / 50 / 1_000;
     let diarize_rt_factor = 1_000_000u128 / diarize_1s_us.max(1);
@@ -9469,7 +9804,8 @@ fn run_qwave_alexiai_bench() -> String {
     let raw_event = r#"{"ts":1792726498,"speaker":"hue","context":"addressing_agent","should_agent_respond":true,"primary_similarity_q15":31605,"on_axis_ratio_q15":24850,"f0_hz":173,"f0_pq":"4604000/26489","vad_byte":"0x66","text":"Um yeah like basically Hey Gemini let us offload the cognitive token work to Alexiai so you get compressed thoughts"}"#;
     let sample_tx = "Um yeah like basically Hey Gemini let us offload the cognitive token work to Alexiai so you get compressed thoughts";
     let t4 = Instant::now();
-    let capsule = build_alexiai_thought_capsule("hue", "addressing_agent", true, 31605, 173, 0x66, sample_tx);
+    let capsule =
+        build_alexiai_thought_capsule("hue", "addressing_agent", true, 31605, 173, 0x66, sample_tx);
     let alexiai_fold_us = t4.elapsed().as_nanos() / 1_000;
     let raw_bytes = raw_event.len();
     let cap_bytes = capsule.len();
@@ -9555,7 +9891,10 @@ fn read_wlan0_state_ssid_mac_lease() -> (String, String, String, u32, Vec<String
         .to_ascii_lowercase();
 
     let mut lease_s: u32 = 1800;
-    if let Ok(ip_out) = Command::new("ip").args(["addr", "show", "dev", "wlan0"]).output() {
+    if let Ok(ip_out) = Command::new("ip")
+        .args(["addr", "show", "dev", "wlan0"])
+        .output()
+    {
         let txt = String::from_utf8_lossy(&ip_out.stdout);
         if let Some(idx) = txt.find("valid_lft ") {
             let after = &txt[idx + "valid_lft ".len()..];
@@ -9784,7 +10123,11 @@ fn run_nomad_mesh(auto_connect_free: bool) -> String {
     };
     let bytes96 = mesh_frame.to_bytes_96();
     let adv31 = mesh_frame.to_ble_adv_31(prof.vad_byte, "TOKYO!");
-    let hex96: String = bytes96.iter().take(24).map(|b| format!("{b:02x}")).collect();
+    let hex96: String = bytes96
+        .iter()
+        .take(24)
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let hex31: String = adv31.iter().map(|b| format!("{b:02x}")).collect();
 
     // Broadcast 64-byte MemnetCapsule64 on UDP :8888 to ESP32 Constellation
@@ -10016,7 +10359,11 @@ fn probe_and_traverse_captive_portal(
         }
         return format!(
             "internet_open (HTTP 204 verified on {} · lease {}s · Anicca recipe active)",
-            if cur_ssid.is_empty() { "uplink" } else { &cur_ssid },
+            if cur_ssid.is_empty() {
+                "uplink"
+            } else {
+                &cur_ssid
+            },
             lease_s
         );
     }
@@ -10110,7 +10457,10 @@ fn probe_and_traverse_captive_portal(
 
     if current_resp.is_empty() {
         // Fallback: probe default gateway HTTP directly (like FLUG-OS `WiFi.gatewayIP()`)
-        if let Ok(route_out) = Command::new("ip").args(["route", "show", "default"]).output() {
+        if let Ok(route_out) = Command::new("ip")
+            .args(["route", "show", "default"])
+            .output()
+        {
             let rtxt = String::from_utf8_lossy(&route_out.stdout);
             for w in rtxt.split_whitespace().collect::<Vec<_>>().windows(2) {
                 if w[0] == "via" {
@@ -10310,7 +10660,8 @@ fn run_hotspot_bluetooth_love(start_ap: bool) -> String {
         hotspot_status = if ok {
             "hotspot_active (SSID: 8b-is-Mesh-Love)".to_string()
         } else {
-            "single_radio_sta_mode (using ARP MAC vouching + Bluetooth/UDP:8888 mesh love)".to_string()
+            "single_radio_sta_mode (using ARP MAC vouching + Bluetooth/UDP:8888 mesh love)"
+                .to_string()
         };
     }
 
@@ -10327,14 +10678,8 @@ fn run_hotspot_bluetooth_love(start_ap: bool) -> String {
     );
 
     // 4. Broadcast 64-byte MemnetCapsule64 over UDP :8888 and sync attached ESP32 boards
-    let (memnet64_hex, esp32_events) = broadcast_and_sync_esp32_memnet(
-        &active_ssid,
-        true,
-        154,
-        92,
-        8,
-        true,
-    );
+    let (memnet64_hex, esp32_events) =
+        broadcast_and_sync_esp32_memnet(&active_ssid, true, 154, 92, 8, true);
 
     let mut vouched: Vec<String> = CONSTELLATION_FLOCK_MACS
         .iter()
@@ -10386,9 +10731,7 @@ fn build_marine_sense_json(state: &Arc<AppState>) -> String {
         let (ts, ref val) = *guard;
         let cur = val.clone();
         drop(guard);
-        if (ts == 0 || now.saturating_sub(ts) >= 60)
-            && !NOMAD_BUSY.swap(true, Ordering::SeqCst)
-        {
+        if (ts == 0 || now.saturating_sub(ts) >= 60) && !NOMAD_BUSY.swap(true, Ordering::SeqCst) {
             thread::spawn(move || {
                 let fresh = run_nomad_mesh(false);
                 if let Some(c) = NOMAD_CACHE.get() {
@@ -10408,9 +10751,7 @@ fn build_marine_sense_json(state: &Arc<AppState>) -> String {
         let (ts, ref val) = *guard;
         let cur = val.clone();
         drop(guard);
-        if (ts == 0 || now.saturating_sub(ts) >= 30)
-            && !TRIAD_BUSY.swap(true, Ordering::SeqCst)
-        {
+        if (ts == 0 || now.saturating_sub(ts) >= 30) && !TRIAD_BUSY.swap(true, Ordering::SeqCst) {
             thread::spawn(move || {
                 let fresh = run_esp32_triad_probe(false);
                 if let Some(c) = TRIAD_CACHE.get() {
@@ -10536,7 +10877,9 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
 
     if !port.is_empty() {
         let _ = Command::new("stty")
-            .args(["-F", &port, "115200", "raw", "-echo", "min", "0", "time", "1"])
+            .args([
+                "-F", &port, "115200", "raw", "-echo", "min", "0", "time", "1",
+            ])
             .output();
 
         if let Ok(mut f) = fs::OpenOptions::new().read(true).write(true).open(&port) {
@@ -10600,19 +10943,30 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
         analyze_chirp_echogram_i16(&[], temp_deci_c, humidity_pct)
     };
 
-    let node = extract_json_str(&board_json, "medusa_node").unwrap_or_else(|| "ADA:MEDUSA".to_string());
+    let node =
+        extract_json_str(&board_json, "medusa_node").unwrap_or_else(|| "ADA:MEDUSA".to_string());
     let vertex = extract_json_str(&board_json, "vertex").unwrap_or_else(|| "*".to_string());
-    let archetype = extract_json_str(&board_json, "archetype").unwrap_or_else(|| "ROOT-ALEXANDRA".to_string());
-    let board = extract_json_str(&board_json, "board").unwrap_or_else(|| "ESP32-S3-Touch-AMOLED-1.8".to_string());
-    let version = extract_json_str(&board_json, "version").unwrap_or_else(|| "v1.6.1+pranayama-dream-baba-engine".to_string());
-    let mac = extract_json_str(&board_json, "mac").unwrap_or_else(|| "80:b5:4e:db:3b:c4".to_string());
+    let archetype =
+        extract_json_str(&board_json, "archetype").unwrap_or_else(|| "ROOT-ALEXANDRA".to_string());
+    let board = extract_json_str(&board_json, "board")
+        .unwrap_or_else(|| "ESP32-S3-Touch-AMOLED-1.8".to_string());
+    let version = extract_json_str(&board_json, "version")
+        .unwrap_or_else(|| "v1.6.1+pranayama-dream-baba-engine".to_string());
+    let mac =
+        extract_json_str(&board_json, "mac").unwrap_or_else(|| "80:b5:4e:db:3b:c4".to_string());
     let lcd = extract_json_str(&board_json, "lcd").unwrap_or_else(|| "368x448".to_string());
     let lcd_driver = extract_json_str(&board_json, "lcd_driver").unwrap_or_else(|| {
-        if lcd == "410x502" { "CO5300".to_string() } else { "SH8601".to_string() }
+        if lcd == "410x502" {
+            "CO5300".to_string()
+        } else {
+            "SH8601".to_string()
+        }
     });
     let ssid = extract_json_str(&board_json, "ssid").unwrap_or_else(|| "DaikinAP37939".to_string());
-    let wupz_fold = extract_json_str(&board_json, "wupz_fold").unwrap_or_else(|| "0xe0787507d170fc31".to_string());
-    let kompress_b158 = extract_json_str(&board_json, "kompress_b158").unwrap_or_else(|| "5f2c8935849348b8d4d5f0a05a".to_string());
+    let wupz_fold = extract_json_str(&board_json, "wupz_fold")
+        .unwrap_or_else(|| "0xe0787507d170fc31".to_string());
+    let kompress_b158 = extract_json_str(&board_json, "kompress_b158")
+        .unwrap_or_else(|| "5f2c8935849348b8d4d5f0a05a".to_string());
 
     let batt_mv = extract_json_num_str(&board_json, "batt_mv")
         .and_then(|s| s.parse::<u16>().ok())
@@ -10650,9 +11004,12 @@ fn run_esp32_triad_probe(do_chirp: bool) -> String {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let riva = compute_riva_dyad_state(now_ms);
-    let prana_phase = extract_json_str(&prana_json, "phase").unwrap_or_else(|| riva.breath_phase.to_string());
-    let dream_state = extract_json_str(&prana_json, "dream_state").unwrap_or_else(|| riva.dream_state.to_string());
-    let engine_8b_is = extract_json_str(&prana_json, "engine_8b_is").unwrap_or_else(|| riva.engine_8b_is.to_string());
+    let prana_phase =
+        extract_json_str(&prana_json, "phase").unwrap_or_else(|| riva.breath_phase.to_string());
+    let dream_state = extract_json_str(&prana_json, "dream_state")
+        .unwrap_or_else(|| riva.dream_state.to_string());
+    let engine_8b_is = extract_json_str(&prana_json, "engine_8b_is")
+        .unwrap_or_else(|| riva.engine_8b_is.to_string());
     let sibling_port = if Path::new("/dev/ttyACM1").exists() {
         "/dev/ttyACM1 (online)"
     } else if Path::new("/sys/bus/usb/devices/usb3/3-0:1.0/usb3-port1/state").exists() {
@@ -11015,7 +11372,12 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
             .spawn()
             .ok();
         thread::sleep(Duration::from_millis(100));
-        let _ = speak_out_loud("Ping four three two, sovereign stereo ears online.", "af_heart", true, true);
+        let _ = speak_out_loud(
+            "Ping four three two, sovereign stereo ears online.",
+            "af_heart",
+            true,
+            true,
+        );
         if let Some(mut vc) = v_child {
             let _ = vc.wait();
         }
@@ -11057,7 +11419,8 @@ fn run_acoustic_ping_pong(do_voice: bool) -> String {
         .unwrap_or(0);
     let ear_hb_age_s = now_secs().saturating_sub(ear_hb);
 
-    let pong_received = peak_l > 800 && peak_r > 800 && snr_ratio_l_x10 >= 18 && snr_ratio_r_x10 >= 18;
+    let pong_received =
+        peak_l > 800 && peak_r > 800 && snr_ratio_l_x10 >= 18 && snr_ratio_r_x10 >= 18;
 
     format!(
         "{{\n\
@@ -11124,7 +11487,16 @@ fn run_i1_speedtest() -> String {
 
     // 1. Scan visible Wi-Fi Access Points (SSIDs, BSSIDs, channels, signal, security)
     let wifi_raw = Command::new("nmcli")
-        .args(["-t", "-f", "IN-USE,BSSID,SSID,CHAN,RATE,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "no"])
+        .args([
+            "-t",
+            "-f",
+            "IN-USE,BSSID,SSID,CHAN,RATE,SIGNAL,SECURITY",
+            "dev",
+            "wifi",
+            "list",
+            "--rescan",
+            "no",
+        ])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -11147,7 +11519,11 @@ fn run_i1_speedtest() -> String {
         if parts.len() >= 7 {
             let in_use = parts[0] == "*";
             let bssid = parts[1].replace('-', ":");
-            let ssid = if parts[2].is_empty() { "<hidden>" } else { parts[2] };
+            let ssid = if parts[2].is_empty() {
+                "<hidden>"
+            } else {
+                parts[2]
+            };
             let chan = parts[3].parse::<u64>().unwrap_or(0);
             let rate = parts[4];
             let sig = parts[5].parse::<u64>().unwrap_or(0);
@@ -11182,7 +11558,12 @@ fn run_i1_speedtest() -> String {
                     let bssid = cols[1];
                     let rssi = cols[2].parse::<i64>().unwrap_or(-70);
                     let sig = ((rssi + 100).clamp(0, 100)) as u64;
-                    let chan = cols[3].split(',').next().unwrap_or("0").parse::<u64>().unwrap_or(0);
+                    let chan = cols[3]
+                        .split(',')
+                        .next()
+                        .unwrap_or("0")
+                        .parse::<u64>()
+                        .unwrap_or(0);
                     signal_sum += sig;
                     ap_count += 1;
                     wifi_entries.push(format!(
@@ -11296,10 +11677,34 @@ fn run_i1_speedtest() -> String {
 
     // 4. Test all 4 global nsX.i1.is nameservers (upload telemetry to /c + download 1 MiB from /k/1mb.m8)
     let servers = [
-        ("ns1·i1·is", "2.31.35.192", "2·31·35·192", "EU-Falkenstein-DE", 1u32),
-        ("ns2·i1·is", "5.161.188.178", "5·161·188·178", "US-East-Ashburn-VA", 2u32),
-        ("ns3·i1·is", "5.78.220.57", "5·78·220·57", "US-West-Hillsboro-OR", 3u32),
-        ("ns4·i1·is", "5.223.89.144", "5·223·89·144", "APAC-Singapore-SG", 4u32),
+        (
+            "ns1·i1·is",
+            "2.31.35.192",
+            "2·31·35·192",
+            "EU-Falkenstein-DE",
+            1u32,
+        ),
+        (
+            "ns2·i1·is",
+            "5.161.188.178",
+            "5·161·188·178",
+            "US-East-Ashburn-VA",
+            2u32,
+        ),
+        (
+            "ns3·i1·is",
+            "5.78.220.57",
+            "5·78·220·57",
+            "US-West-Hillsboro-OR",
+            3u32,
+        ),
+        (
+            "ns4·i1·is",
+            "5.223.89.144",
+            "5·223·89·144",
+            "APAC-Singapore-SG",
+            4u32,
+        ),
     ];
 
     let mut results_json: Vec<String> = Vec::new();
@@ -11412,7 +11817,8 @@ fn run_i1_speedtest() -> String {
                         computed_xor ^= word;
                         idx += 8;
                     }
-                    wupz_verified = (trailer_node_id == expected_id) && (computed_xor == expected_xor);
+                    wupz_verified =
+                        (trailer_node_id == expected_id) && (computed_xor == expected_xor);
                     wupz_xor_hex = format!("0x{:016x}", computed_xor);
                 }
             }
@@ -11501,7 +11907,11 @@ fn run_i1_speedtest() -> String {
         rf_entropy_permille,
         upload_bytes,
         markdown_source_literal(&fastest_node),
-        if fastest_dl_ms == u64::MAX { 0 } else { fastest_dl_ms },
+        if fastest_dl_ms == u64::MAX {
+            0
+        } else {
+            fastest_dl_ms
+        },
         fastest_kib_s,
         results_json.join(",\n")
     )
@@ -11553,7 +11963,8 @@ fn read_urandom_bytes(out: &mut [u8]) -> bool {
             return true;
         }
     }
-    let seed = sha256(format!("qwave-fallback-rng:{}:{}", now_secs(), std::process::id()).as_bytes());
+    let seed =
+        sha256(format!("qwave-fallback-rng:{}:{}", now_secs(), std::process::id()).as_bytes());
     for (i, b) in out.iter_mut().enumerate() {
         *b = seed[i % 32] ^ ((i as u8).wrapping_mul(37));
     }
@@ -11796,19 +12207,13 @@ fn run_vault_status_cli(domain: &str) -> String {
     let (vault_salt, records) = match load_or_init_vault_store() {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let (index_sig, signer_fp) = match compute_vault_index_signature(&vault_salt) {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
 
@@ -11860,19 +12265,13 @@ fn run_vault_seal_cli(domain: &str, username: &str, password: &str, phrase: &str
     let (vault_salt, mut records) = match load_or_init_vault_store() {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
 
@@ -11886,10 +12285,7 @@ fn run_vault_seal_cli(domain: &str, username: &str, password: &str, phrase: &str
         match sign_and_verify_with_user_ed25519(&challenge) {
             Ok(v) => v,
             Err(e) => {
-                return format!(
-                    "{{\"ok\":false,\"error\":{}}}",
-                    markdown_source_literal(&e)
-                );
+                return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
             }
         };
 
@@ -11908,22 +12304,17 @@ fn run_vault_seal_cli(domain: &str, username: &str, password: &str, phrase: &str
         sign_count: 1,
     };
 
-    let new_rec = match SealedVaultRecord::seal(
-        &cred,
-        &index_sig,
-        &vault_salt,
-        record_salt,
-        nonce,
-        &sig_mat,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e.to_string())
-            );
-        }
-    };
+    let new_rec =
+        match SealedVaultRecord::seal(&cred, &index_sig, &vault_salt, record_salt, nonce, &sig_mat)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    markdown_source_literal(&e.to_string())
+                );
+            }
+        };
 
     // Replace existing record for the same (blinded_domain, username) if present
     let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
@@ -11944,10 +12335,7 @@ fn run_vault_seal_cli(domain: &str, username: &str, password: &str, phrase: &str
     }
 
     if let Err(e) = save_vault_store(&vault_salt, &records) {
-        return format!(
-            "{{\"ok\":false,\"error\":{}}}",
-            markdown_source_literal(&e)
-        );
+        return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
     }
 
     format!(
@@ -11970,19 +12358,13 @@ fn run_vault_unseal_cli(domain: &str, requested_user: &str, phrase: &str) -> Str
     let (vault_salt, records) = match load_or_init_vault_store() {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
 
@@ -12005,10 +12387,7 @@ fn run_vault_unseal_cli(domain: &str, requested_user: &str, phrase: &str) -> Str
             match sign_and_verify_with_user_ed25519(&challenge) {
                 Ok(v) => v,
                 Err(e) => {
-                    return format!(
-                        "{{\"ok\":false,\"error\":{}}}",
-                        markdown_source_literal(&e)
-                    );
+                    return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
                 }
             };
 
@@ -12048,19 +12427,13 @@ fn run_vault_remove_cli(domain: &str, username: &str) -> String {
     let (vault_salt, mut records) = match load_or_init_vault_store() {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let (index_sig, _) = match compute_vault_index_signature(&vault_salt) {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let target_tag = blind_domain_tag(&index_sig, &vault_salt, &norm_domain);
@@ -12091,19 +12464,13 @@ fn run_vault_verify_cli() -> String {
     let (vault_salt, records) = match load_or_init_vault_store() {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let (_, signer_fp) = match compute_vault_index_signature(&vault_salt) {
         Ok(v) => v,
         Err(e) => {
-            return format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                markdown_source_literal(&e)
-            );
+            return format!("{{\"ok\":false,\"error\":{}}}", markdown_source_literal(&e));
         }
     };
     let mut valid_waves = 0usize;
@@ -12177,7 +12544,9 @@ fn run_phoenix_music_revelation(args: &[String]) -> String {
     audio_files.sort();
 
     let mut out = String::new();
-    out.push_str("🐦‍🔥 [QWAVE × PHOENIX SOUND REVELATION ENGINE · 768 kHz 16× CATMULL-ROM + S+N+T + .8a∞]\n");
+    out.push_str(
+        "🐦‍🔥 [QWAVE × PHOENIX SOUND REVELATION ENGINE · 768 kHz 16× CATMULL-ROM + S+N+T + .8a∞]\n",
+    );
     out.push_str(&format!(
         "  ├─ Mode              : {} (Sparkle={}/1024, Warmth={}/1024, Drive={}/1024, Punch={}/1024, Air={}/1024, φ-432={}/1024, Stereo={}/1024)\n",
         if is_432 { "Sanctuary 432 Hz (54/55 Rational Pitch Relaxation)" } else { "Sovereign Master (48 kHz -> 768 kHz 16x Oversampled)" },
@@ -12189,17 +12558,11 @@ fn run_phoenix_music_revelation(args: &[String]) -> String {
         preset.phi_432_bloom_q10,
         preset.stereo_width_q10
     ));
-    out.push_str(&format!(
-        "  ├─ Output Sanctuary  : {}\n",
-        out_dir.display()
-    ));
+    out.push_str(&format!("  ├─ Output Sanctuary  : {}\n", out_dir.display()));
 
     let mut first_wav: Option<PathBuf> = None;
     for path in &audio_files {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("track");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("track");
         let wav_out = out_dir.join(format!("{stem}.phoenix.wav"));
         let eight_a_out = out_dir.join(format!("{stem}.8a"));
         match phoenix_transform_audio_file(path, Some(&wav_out), Some(&eight_a_out), &preset) {
@@ -12249,10 +12612,11 @@ fn run_phoenix_music_revelation(args: &[String]) -> String {
         }
     }
 
-    if do_play
-        && let Some(wav) = first_wav
-    {
-        out.push_str(&format!("  └─ 🔊 Playing PhoeniX'd track: {}\n", wav.display()));
+    if do_play && let Some(wav) = first_wav {
+        out.push_str(&format!(
+            "  └─ 🔊 Playing PhoeniX'd track: {}\n",
+            wav.display()
+        ));
         let _ = Command::new("pw-play")
             .arg(&wav)
             .stdin(Stdio::null())
@@ -12467,11 +12831,13 @@ fn render_timeline_slate_html(range: &str) -> String {
     };
 
     let rows_html = if filtered.is_empty() {
-        "<p class=\"empty\">The slate is clear. Browse with Remember Everything, or pin a page.</p>".to_string()
+        "<p class=\"empty\">The slate is clear. Browse with Remember Everything, or pin a page.</p>"
+            .to_string()
     } else {
         let mut s = String::from("<section class=\"day\"><h2>Recent Cognitive Waves</h2>");
         for (_ts, title, preview, path_or_url) in &filtered {
-            let href = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+            let href = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://")
+            {
                 path_or_url.clone()
             } else if path_or_url.starts_with('/') {
                 format!("/view?path={}", url_encode(path_or_url))
@@ -12567,14 +12933,3 @@ fn render_timeline_slate_html(range: &str) -> String {
 </html>"#
     )
 }
-
-
-
-
-
-
-
-
-
-
-

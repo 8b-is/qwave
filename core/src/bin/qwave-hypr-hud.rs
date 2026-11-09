@@ -575,7 +575,9 @@ fn probe_http_loopback(port: u16, path: &str, timeout_ms: u64) -> Trit {
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(timeout_ms)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(timeout_ms)));
-    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: qwave-hypr-hud\r\nAccept: */*\r\nConnection: close\r\n\r\n");
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: qwave-hypr-hud\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+    );
     if stream.write_all(req.as_bytes()).is_err() {
         return Trit::Zero;
     }
@@ -1150,7 +1152,7 @@ pub fn render_status_tui_frame(snap: &HudSnapshot) -> String {
     out.push_str(&format!(
         "  • {c_amber}SUPER+O{c_rst}               : AI Command & Model Switcher (A6000 :11436 / Local :11434 / Aye :8787)\n\
          \x20 • {c_amber}SUPER+X{c_rst}               : AI Clipboard Explain/Refactor (wl-paste -> alexiai :8787 -> wl-copy)\n\
-         \x20 • {c_amber}SUPER+Space{c_rst} / {c_amber}SUPER+V{c_rst} : Voice-Type (qwave --listen 5 -> whisper-server:8785 -> wl-copy + wtype)\n\
+         \x20 • {c_amber}SUPER+Space{c_rst} / {c_amber}SUPER+V{c_rst} : Voice-Type (qwave --listen 5 -> qultrakotoro:8785 -> wl-copy + wtype)\n\
          \x20 • {c_amber}SUPER+A{c_rst}               : Ask Aye    (qwave --listen 5 -> alexiai :8787 -> qwave --speak)\n\
          \x20 • {c_amber}SUPER+grave{c_rst} / {c_amber}SUPER+Z{c_rst} : Self-Healing Scratchpads (special:term Dropdown / special:qwave Radar)\n\
          \x20 • {c_amber}SUPER+U{c_rst}               : Sovereign Vault (Ed25519 + MEM|8 Personal-Signature Password Unseal)\n\
@@ -1229,8 +1231,7 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
         }
     };
 
-    let (hue_f0, hue_az, hue_dist, hue_sal, hue_g, hue_st) =
-        find_speaker_stats("hue", 154, 20, 0);
+    let (hue_f0, hue_az, hue_dist, hue_sal, hue_g, hue_st) = find_speaker_stats("hue", 154, 20, 0);
     let (alex_f0, alex_az, alex_dist, alex_sal, alex_g, alex_st) =
         find_speaker_stats("alex", 196, 22, 4);
     let (trisha_f0, trisha_az, trisha_dist, trisha_sal, trisha_g, trisha_st) =
@@ -1244,15 +1245,24 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     let pete_az_sign = if pete_az >= 0 { "+" } else { "" };
 
     // Read Closed-Loop OTA Self-Calibration state (`~/.local/share/qwave/self_calibration.json`)
-    let cal_raw = fs::read_to_string(qwave_base_dir().join("self_calibration.json")).unwrap_or_default();
-    let cal_utts = extract_json_i64(&cal_raw, "total_self_utterances").unwrap_or(0).max(0) as u64;
+    let cal_raw =
+        fs::read_to_string(qwave_base_dir().join("self_calibration.json")).unwrap_or_default();
+    let cal_utts = extract_json_i64(&cal_raw, "total_self_utterances")
+        .unwrap_or(0)
+        .max(0) as u64;
     let cal_pq = extract_json_str(&cal_raw, "word_match_pq").unwrap_or_else(|| "1/1".to_string());
     let cal_cum_pq =
         extract_json_str(&cal_raw, "cumulative_word_match_pq").unwrap_or_else(|| "1/1".to_string());
-    let cal_scale_q10 = extract_json_i64(&cal_raw, "distance_scale_q10").unwrap_or(1024).clamp(512, 2048);
+    let cal_scale_q10 = extract_json_i64(&cal_raw, "distance_scale_q10")
+        .unwrap_or(1024)
+        .clamp(512, 2048);
     let cal_az_off = extract_json_i64(&cal_raw, "azimuth_offset_deg").unwrap_or(0);
-    let cal_preroll = extract_json_i64(&cal_raw, "preroll_bonus_frames").unwrap_or(0).max(0);
-    let cal_hangover = extract_json_i64(&cal_raw, "hangover_bonus_frames").unwrap_or(0).max(0);
+    let cal_preroll = extract_json_i64(&cal_raw, "preroll_bonus_frames")
+        .unwrap_or(0)
+        .max(0);
+    let cal_hangover = extract_json_i64(&cal_raw, "hangover_bonus_frames")
+        .unwrap_or(0)
+        .max(0);
     let cal_corr = extract_json_str(&cal_raw, "learned_corrections_flat")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "sleep->speak;bottom cousin->bottom button".to_string());
@@ -1393,10 +1403,22 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     md.push_str("    RING[\"💾 64 KB C64 StereoPcmRingBuffer (160 frames / 480ms Pre-Roll)\\nTwo-Stage Hysteresis VAD + MarineIntDetector\"]\n");
     md.push_str("    AYE[\"🧠 ALEXIAI :8787 + LIQUID-RUST :8786\\nGAIA-MLX-QUANT p/q Ternary Fold + Closed-Loop SelfCalibrationEngine\"]\n");
     md.push_str("    SPK -->|\"10 cm OTA Self-Calibration\"| DMIC\n");
-    md.push_str(&format!("    HUE -->|\"{} cm Near-Field\"| DMIC\n", hue_dist));
-    md.push_str(&format!("    ALEX -->|\"{} cm Room DOA\"| DMIC\n", alex_dist));
-    md.push_str(&format!("    TRISHA -->|\"{} cm Room DOA\"| DMIC\n", trisha_dist));
-    md.push_str(&format!("    PETE -->|\"{} cm Room DOA\"| DMIC\n", pete_dist));
+    md.push_str(&format!(
+        "    HUE -->|\"{} cm Near-Field\"| DMIC\n",
+        hue_dist
+    ));
+    md.push_str(&format!(
+        "    ALEX -->|\"{} cm Room DOA\"| DMIC\n",
+        alex_dist
+    ));
+    md.push_str(&format!(
+        "    TRISHA -->|\"{} cm Room DOA\"| DMIC\n",
+        trisha_dist
+    ));
+    md.push_str(&format!(
+        "    PETE -->|\"{} cm Room DOA\"| DMIC\n",
+        pete_dist
+    ));
     md.push_str("    DMIC --> RING --> AYE\n");
     md.push_str("```\n\n");
 
@@ -1407,7 +1429,7 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     md.push_str("| **`SUPER + D`** / **`SUPER + B`** | Graphical Qwave Studio HUD | `qwave-hypr-hud markdown-hud` (Live 2D Polar Sonar + WebGL `WaveScene` + SSE Reload) |\n");
     md.push_str("| **`SUPER + O`** / **`SUPER + N`** | Sovereign AI Command & Model Switcher | `qwave-hypr-hud ai-menu` (A6000 `:11436` / Local `:11434` / Aye `:8787` / Fleet) |\n");
     md.push_str("| **`SUPER + X`** | Clipboard -> AI Explain & Refactor | `qwave-hypr-hud ai-clip` (`wl-paste` -> `alexiai :8787` -> `wl-copy` + speech) |\n");
-    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `whisper-server :8785` / `liquid-rust :8786` -> `wl-copy` + `wtype` |\n");
+    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `qultrakotoro :8785` / `kotorocli` -> `wl-copy` + `wtype` |\n");
     md.push_str("| **`SUPER + A`** | Ask Aye | `qwave --listen 5` -> `alexiai :8787` -> `qwave --speak` |\n");
     md.push_str("| **`SUPER + grave`** / **`SUPER + Z`** / **`SUPER + Shift + G`** | Self-Healing Qwave Scratchpads | `qwave-hypr-hud scratchpad term|qwave|btop` (`special:term`, `special:qwave`, `special:btop`) |\n");
     md.push_str("| **`SUPER + U`** | Sovereign Personal-Signature Vault | `qwave-hypr-hud vault-menu` (Ed25519 + `MEM|8` `79B` Wave Unseal & Auto-Type) |\n");
@@ -1549,10 +1571,7 @@ pub fn run_markdown_hud(args: &[String]) -> String {
     }
 
     let qwave_bin = find_qwave_bin();
-    let hud_url = format!(
-        "http://127.0.0.1:42123/view?path={}",
-        path_str
-    );
+    let hud_url = format!("http://127.0.0.1:42123/view?path={}", path_str);
     if is_cmdline_running("qwave-qt") {
         let nav_dir = PathBuf::from("/home/hue/.local/share/qwave");
         let _ = fs::create_dir_all(&nav_dir);
@@ -1560,7 +1579,10 @@ pub fn run_markdown_hud(args: &[String]) -> String {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let _ = fs::write(nav_dir.join("nav_command.url"), format!("{}\n{}", ts, hud_url));
+        let _ = fs::write(
+            nav_dir.join("nav_command.url"),
+            format!("{}\n{}", ts, hud_url),
+        );
         let _ = Command::new("hyprctl")
             .args(["dispatch", "focuswindow", "class:qwave"])
             .env("XDG_RUNTIME_DIR", "/run/user/1000")
@@ -1595,7 +1617,6 @@ pub fn run_markdown_hud(args: &[String]) -> String {
         json_escape(&path_str)
     )
 }
-
 
 fn find_qwave_bin() -> &'static str {
     if Path::new("/home/hue/.local/bin/qwave").exists() {
@@ -1872,7 +1893,9 @@ pub fn run_agy_resume(args: &[String]) -> String {
         );
     }
 
-    println!("\x1b[1;36m=== 8b.is SOVEREIGN AGY STUDIO · ALL PERMISSIONS ENABLED · ZERO SANDBOX · RESUMED ===\x1b[0m");
+    println!(
+        "\x1b[1;36m=== 8b.is SOVEREIGN AGY STUDIO · ALL PERMISSIONS ENABLED · ZERO SANDBOX · RESUMED ===\x1b[0m"
+    );
     let _ = io::stdout().flush();
 
     if Path::new(workdir).exists() {
@@ -2156,7 +2179,11 @@ pub fn run_portal_heal(args: &[String]) -> String {
     if internet_ok {
         let msg = format!(
             "Captive portal unlocked on {} (Anicca recipe saved + ESP32 mesh synced)",
-            if clean_ssid.is_empty() { "wlan0" } else { &clean_ssid }
+            if clean_ssid.is_empty() {
+                "wlan0"
+            } else {
+                &clean_ssid
+            }
         );
         send_desktop_notification("8b:is Captive Portal Healed [+]", &msg);
         speak_async("Captive portal unlocked and mesh synced");
@@ -2317,7 +2344,10 @@ pub fn run_wifi_heal(args: &[String]) -> String {
     let clean_ssid = sanitize_no_float(&active_ssid);
 
     if reconnected && !clean_ssid.is_empty() {
-        let msg = format!("Auto-reconnected Wi-Fi to {} with MTU 1380 ({})", clean_ssid, tz);
+        let msg = format!(
+            "Auto-reconnected Wi-Fi to {} with MTU 1380 ({})",
+            clean_ssid, tz
+        );
         send_desktop_notification("8b:is Wi-Fi Auto-Healer [+]", &msg);
         speak_async(&msg);
     } else if portal_healed && !clean_ssid.is_empty() {
@@ -2453,9 +2483,7 @@ fn extract_flat_json_field(json: &str, key: &str) -> String {
         }
         out.trim().to_string()
     } else {
-        let end = rest
-            .find([',', '}', '\n', '\r'])
-            .unwrap_or(rest.len());
+        let end = rest.find([',', '}', '\n', '\r']).unwrap_or(rest.len());
         rest[..end].trim().to_string()
     }
 }
@@ -2492,9 +2520,17 @@ pub fn probe_area_geolocation() -> Option<AreaTimezoneInfo> {
                 let lon_e7 = parse_coord_to_e7_int(lon_s);
                 return Some(AreaTimezoneInfo {
                     timezone: tz,
-                    city: if city.is_empty() { "Local".to_string() } else { city },
+                    city: if city.is_empty() {
+                        "Local".to_string()
+                    } else {
+                        city
+                    },
                     region,
-                    country: if country.is_empty() { "US".to_string() } else { country },
+                    country: if country.is_empty() {
+                        "US".to_string()
+                    } else {
+                        country
+                    },
                     lat_pq: format!("{}/10000000", lat_e7),
                     lon_pq: format!("{}/10000000", lon_e7),
                 });
@@ -2520,9 +2556,17 @@ pub fn probe_area_geolocation() -> Option<AreaTimezoneInfo> {
                 let lon_e7 = parse_coord_to_e7_int(&lon_s);
                 return Some(AreaTimezoneInfo {
                     timezone: tz,
-                    city: if city.is_empty() { "Local".to_string() } else { city },
+                    city: if city.is_empty() {
+                        "Local".to_string()
+                    } else {
+                        city
+                    },
                     region,
-                    country: if country.is_empty() { "US".to_string() } else { country },
+                    country: if country.is_empty() {
+                        "US".to_string()
+                    } else {
+                        country
+                    },
                     lat_pq: format!("{}/10000000", lat_e7),
                     lon_pq: format!("{}/10000000", lon_e7),
                 });
@@ -2548,9 +2592,17 @@ pub fn probe_area_geolocation() -> Option<AreaTimezoneInfo> {
                 let lon_e7 = parse_coord_to_e7_int(&lon_s);
                 return Some(AreaTimezoneInfo {
                     timezone: tz,
-                    city: if city.is_empty() { "Local".to_string() } else { city },
+                    city: if city.is_empty() {
+                        "Local".to_string()
+                    } else {
+                        city
+                    },
                     region,
-                    country: if country.is_empty() { "US".to_string() } else { country },
+                    country: if country.is_empty() {
+                        "US".to_string()
+                    } else {
+                        country
+                    },
                     lat_pq: format!("{}/10000000", lat_e7),
                     lon_pq: format!("{}/10000000", lon_e7),
                 });
@@ -2771,8 +2823,8 @@ pub fn run_tz_sync(args: &[String]) -> String {
         format!(
             "{{\"ok\":true,\"action\":\"tz-sync\",\"timezone\":\"{}\",\"city\":\"{}\",\"region\":\"{}\",\"country\":\"{}\",\"lat_pq\":\"{}\",\"lon_pq\":\"{}\",\"changed\":{},\"trit\":\"+\"}}",
             json_escape(&info.timezone),
-            json_escape(& sanitize_no_float(&info.city)),
-            json_escape(& sanitize_no_float(&info.region)),
+            json_escape(&sanitize_no_float(&info.city)),
+            json_escape(&sanitize_no_float(&info.region)),
             json_escape(&info.country),
             json_escape(&info.lat_pq),
             json_escape(&info.lon_pq),
@@ -2926,7 +2978,14 @@ fn probe_wlan0_ip_and_gw() -> (String, String) {
     let mut ip = String::new();
     let mut gw = String::new();
     if let Ok(out) = Command::new("nmcli")
-        .args(["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY", "device", "show", "wlan0"])
+        .args([
+            "-t",
+            "-f",
+            "IP4.ADDRESS,IP4.GATEWAY",
+            "device",
+            "show",
+            "wlan0",
+        ])
         .output()
     {
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -2975,7 +3034,11 @@ fn connect_enterprise_wifi_prompt(ssid: &str) -> bool {
     let Some(eap_pick) = prompt_dmenu("802:1X EAP Method > ", &eap_choices, false) else {
         return false;
     };
-    let eap = if eap_pick.starts_with("TTLS") { "ttls" } else { "peap" };
+    let eap = if eap_pick.starts_with("TTLS") {
+        "ttls"
+    } else {
+        "peap"
+    };
 
     let phase2 = if eap == "peap" {
         "mschapv2"
@@ -3000,7 +3063,14 @@ fn connect_enterprise_wifi_prompt(ssid: &str) -> bool {
         }
     };
 
-    let Some(identity) = prompt_dmenu(&format!("802:1X Username / Identity for {} > ", sanitize_no_float(ssid)), &[], false) else {
+    let Some(identity) = prompt_dmenu(
+        &format!(
+            "802:1X Username / Identity for {} > ",
+            sanitize_no_float(ssid)
+        ),
+        &[],
+        false,
+    ) else {
         return false;
     };
     let id_trim = identity.trim();
@@ -3008,7 +3078,11 @@ fn connect_enterprise_wifi_prompt(ssid: &str) -> bool {
         return false;
     }
 
-    let Some(password) = prompt_dmenu(&format!("802:1X Password for {} > ", sanitize_no_float(ssid)), &[], true) else {
+    let Some(password) = prompt_dmenu(
+        &format!("802:1X Password for {} > ", sanitize_no_float(ssid)),
+        &[],
+        true,
+    ) else {
         return false;
     };
     let pass_trim = password.trim();
@@ -3099,8 +3173,16 @@ pub fn run_wifi_menu(args: &[String]) -> String {
 
     // 1. Noctalia Current Connection Header Card
     if !active_ssid.is_empty() && w_state == "connected" {
-        let ip_tag = if ip.is_empty() { String::new() } else { format!(" · IP {}", ip) };
-        let gw_tag = if gw.is_empty() { String::new() } else { format!(" · GW {}", gw) };
+        let ip_tag = if ip.is_empty() {
+            String::new()
+        } else {
+            format!(" · IP {}", ip)
+        };
+        let gw_tag = if gw.is_empty() {
+            String::new()
+        } else {
+            format!(" · GW {}", gw)
+        };
         menu_lines.push(format!(
             "◈ [ACTIVE] {}{}{} · MTU 1380",
             sanitize_no_float(&active_ssid),
@@ -3108,7 +3190,10 @@ pub fn run_wifi_menu(args: &[String]) -> String {
             gw_tag
         ));
     } else {
-        menu_lines.push(format!("◈ [STATUS] Wi-Fi {} — Select a network below", sanitize_no_float(&w_state)));
+        menu_lines.push(format!(
+            "◈ [STATUS] Wi-Fi {} — Select a network below",
+            sanitize_no_float(&w_state)
+        ));
     }
 
     // 2. VPN Connections Section (if any configured)
@@ -3168,7 +3253,9 @@ pub fn run_wifi_menu(args: &[String]) -> String {
             .filter(|l| l.starts_with("[*]") || l.starts_with("[ ]"))
             .cloned()
             .collect();
-        if let Some(net_choice) = prompt_dmenu("Select 802:1X Enterprise SSID > ", &net_lines, false) {
+        if let Some(net_choice) =
+            prompt_dmenu("Select 802:1X Enterprise SSID > ", &net_lines, false)
+        {
             if let Some(ssid) = extract_ssid_from_menu_choice(&net_choice, &entries) {
                 let ok = connect_enterprise_wifi_prompt(&ssid);
                 let clean_ssid = sanitize_no_float(&ssid);
@@ -3198,7 +3285,11 @@ pub fn run_wifi_menu(args: &[String]) -> String {
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_else(|_| "enabled".to_string());
-        let next_state = if radio_state == "enabled" { "off" } else { "on" };
+        let next_state = if radio_state == "enabled" {
+            "off"
+        } else {
+            "on"
+        };
         let _ = Command::new("nmcli")
             .args(["radio", "wifi", next_state])
             .status();
@@ -3262,7 +3353,10 @@ pub fn run_wifi_menu(args: &[String]) -> String {
                 let ok = connect_wifi_with_password_prompt(&ssid, sec, true);
                 let clean_ssid = sanitize_no_float(&ssid);
                 if ok {
-                    let msg = format!("Connected to {} with updated password and MTU 1380", clean_ssid);
+                    let msg = format!(
+                        "Connected to {} with updated password and MTU 1380",
+                        clean_ssid
+                    );
                     send_desktop_notification("8b:is Wi-Fi Connected [+]", &msg);
                     speak_async(&msg);
                     return format!(
@@ -3367,7 +3461,9 @@ pub fn run_bt_menu(args: &[String]) -> String {
                     .unwrap_or_default();
                 let is_conn = info_out.contains("Connected: yes");
                 let is_paired = info_out.contains("Paired: yes");
-                let icon = if info_out.contains("audio-headset") || info_out.contains("audio-headphones") {
+                let icon = if info_out.contains("audio-headset")
+                    || info_out.contains("audio-headphones")
+                {
                     "🎧"
                 } else if info_out.contains("audio-card") || info_out.contains("Speaker") {
                     "🔊"
@@ -3395,7 +3491,10 @@ pub fn run_bt_menu(args: &[String]) -> String {
 
                 let clean_name = sanitize_no_float(name.trim());
                 if is_conn {
-                    connected_rows.push(format!("[CONNECTED] {} {} ({}{})", icon, clean_name, mac, bat_tag));
+                    connected_rows.push(format!(
+                        "[CONNECTED] {} {} ({}{})",
+                        icon, clean_name, mac, bat_tag
+                    ));
                 } else if is_paired {
                     paired_rows.push(format!("[PAIRED] {} {} ({})", icon, clean_name, mac));
                 } else {
@@ -3420,18 +3519,28 @@ pub fn run_bt_menu(args: &[String]) -> String {
     lines.push("[CC] Back to Qwave Control Center".to_string());
 
     let Some(choice) = prompt_dmenu("🫐 Bluetooth > ", &lines, false) else {
-        return "{\"ok\":true,\"action\":\"bt-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        return "{\"ok\":true,\"action\":\"bt-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
     };
 
     if choice.starts_with("◈ [ADAPTER]") {
         let next = if powered { "off" } else { "on" };
         let _ = Command::new("bluetoothctl").args(["power", next]).status();
-        send_desktop_notification("🫐 Bluetooth Power [+]", &format!("Bluetooth adapter switched {}", next));
-        return format!("{{\"ok\":true,\"action\":\"bt-menu\",\"power\":\"{}\",\"trit\":\"+\"}}", next);
+        send_desktop_notification(
+            "🫐 Bluetooth Power [+]",
+            &format!("Bluetooth adapter switched {}", next),
+        );
+        return format!(
+            "{{\"ok\":true,\"action\":\"bt-menu\",\"power\":\"{}\",\"trit\":\"+\"}}",
+            next
+        );
     }
 
     if choice.starts_with("[SCAN]") {
-        send_desktop_notification("🫐 Bluetooth Scanning [+]", "Running 6-second BlueZ discovery...");
+        send_desktop_notification(
+            "🫐 Bluetooth Scanning [+]",
+            "Running 6-second BlueZ discovery...",
+        );
         let _ = Command::new("bluetoothctl")
             .args(["--timeout", "6", "scan", "on"])
             .status();
@@ -3440,9 +3549,17 @@ pub fn run_bt_menu(args: &[String]) -> String {
 
     if choice.starts_with("[DISC-MODE]") {
         let next = if discoverable { "off" } else { "on" };
-        let _ = Command::new("bluetoothctl").args(["discoverable", next]).status();
-        send_desktop_notification("🫐 Bluetooth Discoverable [+]", &format!("Discoverable set {}", next));
-        return format!("{{\"ok\":true,\"action\":\"bt-menu\",\"discoverable\":\"{}\",\"trit\":\"+\"}}", next);
+        let _ = Command::new("bluetoothctl")
+            .args(["discoverable", next])
+            .status();
+        send_desktop_notification(
+            "🫐 Bluetooth Discoverable [+]",
+            &format!("Discoverable set {}", next),
+        );
+        return format!(
+            "{{\"ok\":true,\"action\":\"bt-menu\",\"discoverable\":\"{}\",\"trit\":\"+\"}}",
+            next
+        );
     }
 
     if choice.starts_with("[LOVE]") {
@@ -3455,7 +3572,11 @@ pub fn run_bt_menu(args: &[String]) -> String {
 
     // Extract MAC address inside parentheses `(<MAC>...)`
     if let Some((_, paren)) = choice.rsplit_once('(') {
-        let mac = paren.split_whitespace().next().unwrap_or("").trim_end_matches(')');
+        let mac = paren
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(')');
         if mac.len() >= 17 {
             let dev_actions = vec![
                 "[CONNECT] Connect to Device".to_string(),
@@ -3463,23 +3584,41 @@ pub fn run_bt_menu(args: &[String]) -> String {
                 "[PAIR] Pair & Trust Device".to_string(),
                 "[REMOVE] Forget / Remove Device".to_string(),
             ];
-            if let Some(act) = prompt_dmenu(&format!("🫐 Device {} > ", mac), &dev_actions, false) {
+            if let Some(act) = prompt_dmenu(&format!("🫐 Device {} > ", mac), &dev_actions, false)
+            {
                 if act.starts_with("[CONNECT]") {
                     let _ = Command::new("bluetoothctl").args(["connect", mac]).status();
-                    send_desktop_notification("🫐 Bluetooth Connected [+]", &format!("Connected {}", mac));
+                    send_desktop_notification(
+                        "🫐 Bluetooth Connected [+]",
+                        &format!("Connected {}", mac),
+                    );
                 } else if act.starts_with("[DISCONNECT]") {
-                    let _ = Command::new("bluetoothctl").args(["disconnect", mac]).status();
-                    send_desktop_notification("🫐 Bluetooth Disconnected [0]", &format!("Disconnected {}", mac));
+                    let _ = Command::new("bluetoothctl")
+                        .args(["disconnect", mac])
+                        .status();
+                    send_desktop_notification(
+                        "🫐 Bluetooth Disconnected [0]",
+                        &format!("Disconnected {}", mac),
+                    );
                 } else if act.starts_with("[PAIR]") {
                     let _ = Command::new("bluetoothctl").args(["pair", mac]).status();
                     let _ = Command::new("bluetoothctl").args(["trust", mac]).status();
                     let _ = Command::new("bluetoothctl").args(["connect", mac]).status();
-                    send_desktop_notification("🫐 Bluetooth Paired & Trusted [+]", &format!("Paired {}", mac));
+                    send_desktop_notification(
+                        "🫐 Bluetooth Paired & Trusted [+]",
+                        &format!("Paired {}", mac),
+                    );
                 } else if act.starts_with("[REMOVE]") {
                     let _ = Command::new("bluetoothctl").args(["remove", mac]).status();
-                    send_desktop_notification("🫐 Bluetooth Device Removed [0]", &format!("Removed {}", mac));
+                    send_desktop_notification(
+                        "🫐 Bluetooth Device Removed [0]",
+                        &format!("Removed {}", mac),
+                    );
                 }
-                return format!("{{\"ok\":true,\"action\":\"bt-menu\",\"device\":\"{}\",\"trit\":\"+\"}}", mac);
+                return format!(
+                    "{{\"ok\":true,\"action\":\"bt-menu\",\"device\":\"{}\",\"trit\":\"+\"}}",
+                    mac
+                );
             }
         }
     }
@@ -3549,11 +3688,7 @@ pub fn run_audio_menu(args: &[String]) -> String {
             let after_star = trimmed.trim_start_matches('*').trim();
             if let Some((id_str, rest)) = after_star.split_once('.') {
                 if let Ok(id_num) = id_str.trim().parse::<u32>() {
-                    let label_part = rest
-                        .split("[vol:")
-                        .next()
-                        .unwrap_or(rest)
-                        .trim();
+                    let label_part = rest.split("[vol:").next().unwrap_or(rest).trim();
                     let clean_label = sanitize_no_float(label_part);
                     if section == "sinks" {
                         let mark = if is_default { "[SINK *]" } else { "[SINK  ]" };
@@ -3586,7 +3721,8 @@ pub fn run_audio_menu(args: &[String]) -> String {
     lines.push("[CC]       Back to Qwave Control Center".to_string());
 
     let Some(choice) = prompt_dmenu("🔊 Audio & PipeWire > ", &lines, false) else {
-        return "{\"ok\":true,\"action\":\"audio-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        return "{\"ok\":true,\"action\":\"audio-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
     };
 
     if choice.starts_with("◈ [OUTPUT]") {
@@ -3599,9 +3735,7 @@ pub fn run_audio_menu(args: &[String]) -> String {
     if choice.starts_with("[SINK ") || choice.starts_with("[MIC ") {
         if let Some((_, after_hash)) = choice.split_once('#') {
             if let Some(id_tok) = after_hash.split_whitespace().next() {
-                let _ = Command::new("wpctl")
-                    .args(["set-default", id_tok])
-                    .status();
+                let _ = Command::new("wpctl").args(["set-default", id_tok]).status();
                 send_desktop_notification(
                     "🔊 PipeWire Default Device Switched [+]",
                     &format!("Switched active audio node to #{}", id_tok),
@@ -3632,7 +3766,8 @@ pub fn run_audio_menu(args: &[String]) -> String {
         let _ = Command::new("wpctl")
             .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
             .status();
-        return "{\"ok\":true,\"action\":\"audio-menu\",\"subaction\":\"mic-mute\",\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"audio-menu\",\"subaction\":\"mic-mute\",\"trit\":\"+\"}"
+            .to_string();
     }
 
     if choice.starts_with("[PHOENIX]") {
@@ -3702,7 +3837,11 @@ pub fn run_power_menu(args: &[String]) -> String {
         ("balanced", "⚖️", "Adaptive Workstation Balance"),
         ("power-saver", "🍃", "Extended Battery Endurance"),
     ] {
-        let mark = if cur_profile == prof { "[PROFILE *]" } else { "[PROFILE  ]" };
+        let mark = if cur_profile == prof {
+            "[PROFILE *]"
+        } else {
+            "[PROFILE  ]"
+        };
         lines.push(format!("{} {} {} — {}", mark, icon, prof, desc));
     }
 
@@ -3717,7 +3856,8 @@ pub fn run_power_menu(args: &[String]) -> String {
     lines.push("[CC]     Back to Qwave Control Center".to_string());
 
     let Some(choice) = prompt_dmenu("⚡ Power & Battery > ", &lines, false) else {
-        return "{\"ok\":true,\"action\":\"power-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}".to_string();
+        return "{\"ok\":true,\"action\":\"power-menu\",\"status\":\"cancelled\",\"trit\":\"0\"}"
+            .to_string();
     };
 
     for prof in ["performance", "balanced", "power-saver"] {
@@ -3742,7 +3882,10 @@ pub fn run_power_menu(args: &[String]) -> String {
         let _ = Command::new("sh")
             .args([
                 "-c",
-                &format!("echo {} | sudo -n tee {} >/dev/null 2>&1", next_limit, thresh_path),
+                &format!(
+                    "echo {} | sudo -n tee {} >/dev/null 2>&1",
+                    next_limit, thresh_path
+                ),
             ])
             .status();
         send_desktop_notification(
@@ -3757,19 +3900,23 @@ pub fn run_power_menu(args: &[String]) -> String {
 
     if choice.starts_with("[LOCK]") {
         let _ = hyprctl_exec_cmd("hyprlock");
-        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"lock\",\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"lock\",\"trit\":\"+\"}"
+            .to_string();
     }
     if choice.starts_with("[SLEEP]") {
         let _ = Command::new("systemctl").arg("suspend").status();
-        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"suspend\",\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"suspend\",\"trit\":\"+\"}"
+            .to_string();
     }
     if choice.starts_with("[REBOOT]") {
         let _ = Command::new("systemctl").arg("reboot").status();
-        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"reboot\",\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"reboot\",\"trit\":\"+\"}"
+            .to_string();
     }
     if choice.starts_with("[OFF]") {
         let _ = Command::new("systemctl").arg("poweroff").status();
-        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"poweroff\",\"trit\":\"+\"}".to_string();
+        return "{\"ok\":true,\"action\":\"power-menu\",\"subaction\":\"poweroff\",\"trit\":\"+\"}"
+            .to_string();
     }
     if choice.starts_with("[CC]") {
         return run_control_center(&[]);
@@ -3793,7 +3940,10 @@ pub fn run_control_center(args: &[String]) -> String {
     };
 
     let lines = vec![
-        format!("🌐 [NETWORK]   Wi-Fi, VPN, 802:1X & Captive Portal ({})", ssid_label),
+        format!(
+            "🌐 [NETWORK]   Wi-Fi, VPN, 802:1X & Captive Portal ({})",
+            ssid_label
+        ),
         "🫐 [BLUETOOTH] Bluetooth Devices, Pairing & Mesh Love".to_string(),
         "🔊 [AUDIO]     PipeWire Sinks, Microphones & Volume Mixer".to_string(),
         "⚡ [POWER]     Battery Status, 80% Limit & Power Profiles".to_string(),
@@ -3970,7 +4120,8 @@ pub fn run_tokyo_song(args: &[String]) -> String {
         let _ = Command::new("killall").arg("ffplay").status();
         let _ = fs::remove_file("/tmp/qwave_music_state.txt");
         send_desktop_notification("Qwave Humayian Audio [0]", "Paused desktop music");
-        return "{\"ok\":true,\"action\":\"tokyo-song\",\"playing\":false,\"trit\":\"0\"}".to_string();
+        return "{\"ok\":true,\"action\":\"tokyo-song\",\"playing\":false,\"trit\":\"0\"}"
+            .to_string();
     }
     let mp3 = "/home/hue/.local/share/qwave/music/next-stop-tomorrow.mp3";
     let _ = fs::write("/tmp/qwave_music_state.txt", "tokyo");
@@ -4075,9 +4226,17 @@ pub fn render_waybar_vault_json() -> String {
          Ed25519 Personal Signature Key: {}\n\
          L-Click: Unseal / Seal Password (fuzzel/wofi + auto-type + 12s clipboard wipe)\n\
          R-Click: Open Sovereign Vault in Qwave Browser",
-        if has_key { "Active [+] (~/.ssh/id_ed25519)" } else { "Missing [-]" }
+        if has_key {
+            "Active [+] (~/.ssh/id_ed25519)"
+        } else {
+            "Missing [-]"
+        }
     );
-    let cls = if has_key { "vault-ready" } else { "vault-locked" };
+    let cls = if has_key {
+        "vault-ready"
+    } else {
+        "vault-locked"
+    };
     format!(
         "{{\"text\":\"{}\",\"tooltip\":\"{}\",\"class\":\"{}\"}}",
         json_escape(&text),
@@ -4144,7 +4303,11 @@ fn ensure_smoke_wallpapers() -> PathBuf {
         let header = format!("P6\n{w} {h}\n255\n");
         out.extend_from_slice(header.as_bytes());
         let time_shift = (phase as i32) * 190;
-        let voice_boost = if phase == 0 { 0i32 } else { 80 + (phase as i32) * 35 };
+        let voice_boost = if phase == 0 {
+            0i32
+        } else {
+            80 + (phase as i32) * 35
+        };
 
         for y in 0..h {
             for x in 0..w {
@@ -4317,7 +4480,11 @@ fn find_hud_ed25519_keypair() -> Option<(PathBuf, PathBuf, String)> {
 }
 
 fn resolve_qwave_bin() -> String {
-    for cand in ["/home/hue/.local/bin/qwave", "/usr/local/bin/qwave", "qwave"] {
+    for cand in [
+        "/home/hue/.local/bin/qwave",
+        "/usr/local/bin/qwave",
+        "qwave",
+    ] {
         if Path::new(cand).exists() {
             return cand.to_string();
         }
@@ -4379,7 +4546,8 @@ pub fn run_vault_menu(args: &[String]) -> String {
         send_desktop_notification("🛡️ Sovereign Vault Verified [+]", &msg);
         speak_async("Sovereign password vault verified with your personal signature");
         return if out.is_empty() {
-            "{\"ok\":true,\"action\":\"vault-menu\",\"subaction\":\"verify\",\"trit\":\"+\"}".to_string()
+            "{\"ok\":true,\"action\":\"vault-menu\",\"subaction\":\"verify\",\"trit\":\"+\"}"
+                .to_string()
         } else {
             sanitize_no_float(&out)
         };
@@ -4406,8 +4574,12 @@ pub fn run_vault_menu(args: &[String]) -> String {
         if password.is_empty() {
             return "{\"ok\":false,\"action\":\"vault-menu\",\"error\":\"empty password\",\"trit\":\"-\"}".to_string();
         }
-        let phrase = prompt_dmenu("Optional Personal Signature Phrase (Enter for none) > ", &[], true)
-            .unwrap_or_default();
+        let phrase = prompt_dmenu(
+            "Optional Personal Signature Phrase (Enter for none) > ",
+            &[],
+            true,
+        )
+        .unwrap_or_default();
 
         let qwave_bin = resolve_qwave_bin();
         let out = Command::new(&qwave_bin)
@@ -4462,9 +4634,7 @@ pub fn run_vault_menu(args: &[String]) -> String {
             .unwrap_or_default();
 
         if out.contains("\"requires_phrase\":true") && !out.contains("\"ok\":true") {
-            if let Some(phrase) =
-                prompt_dmenu("Personal Signature Phrase Required > ", &[], true)
-            {
+            if let Some(phrase) = prompt_dmenu("Personal Signature Phrase Required > ", &[], true) {
                 out = Command::new(&qwave_bin)
                     .args(["vault", "unseal", &norm_domain, "", phrase.trim()])
                     .output()
@@ -4525,10 +4695,7 @@ pub fn run_vault_menu(args: &[String]) -> String {
 
         let err = extract_json_str(&out, "error")
             .unwrap_or_else(|| "no sealed credential for domain".to_string());
-        send_desktop_notification(
-            "Sovereign Vault Notice [0]",
-            &sanitize_no_float(&err),
-        );
+        send_desktop_notification("Sovereign Vault Notice [0]", &sanitize_no_float(&err));
         return format!(
             "{{\"ok\":false,\"action\":\"vault-menu\",\"origin\":\"{}\",\"error\":\"{}\",\"trit\":\"0\"}}",
             json_escape(&norm_domain),
@@ -4564,19 +4731,38 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
     let _ = fs::write(&stamp_path, latest.ts.to_string());
 
     let low = latest.text.to_ascii_lowercase();
-    if low.contains("workspace one") || low.contains("workspace 1") || low.contains("go to studio") {
+    if low.contains("workspace one") || low.contains("workspace 1") || low.contains("go to studio")
+    {
         hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 1 })");
-        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 1: AI-STUDIO");
-    } else if low.contains("workspace two") || low.contains("workspace 2") || low.contains("go to constellation") {
+        send_desktop_notification(
+            "🎙️ Hyprland Voice [+]",
+            "Switched to Workspace 1: AI-STUDIO",
+        );
+    } else if low.contains("workspace two")
+        || low.contains("workspace 2")
+        || low.contains("go to constellation")
+    {
         hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 2 })");
-        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 2: CONSTELLATION");
-    } else if low.contains("workspace three") || low.contains("workspace 3") || low.contains("go to lab") {
+        send_desktop_notification(
+            "🎙️ Hyprland Voice [+]",
+            "Switched to Workspace 2: CONSTELLATION",
+        );
+    } else if low.contains("workspace three")
+        || low.contains("workspace 3")
+        || low.contains("go to lab")
+    {
         hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 3 })");
-        send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 3: QWAVE-LAB");
+        send_desktop_notification(
+            "🎙️ Hyprland Voice [+]",
+            "Switched to Workspace 3: QWAVE-LAB",
+        );
     } else if low.contains("workspace four") || low.contains("workspace 4") {
         hyprctl_dispatch_lua("hl.dsp.focus({ workspace = 4 })");
         send_desktop_notification("🎙️ Hyprland Voice [+]", "Switched to Workspace 4: DRA-DOCS");
-    } else if low.contains("open vault") || low.contains("password vault") || low.contains("unseal password") {
+    } else if low.contains("open vault")
+        || low.contains("password vault")
+        || low.contains("unseal password")
+    {
         if let Ok(exe) = env::current_exe() {
             let _ = Command::new(exe)
                 .arg("vault-menu")
@@ -4585,11 +4771,23 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
                 .stderr(Stdio::null())
                 .spawn();
         }
-    } else if low.contains("captive portal") || low.contains("free wifi") || low.contains("free wi-fi") || low.contains("heal portal") {
+    } else if low.contains("captive portal")
+        || low.contains("free wifi")
+        || low.contains("free wi-fi")
+        || low.contains("heal portal")
+    {
         let _ = run_portal_heal(&[]);
-    } else if low.contains("mesh love") || low.contains("bluetooth love") || low.contains("hotspot love") || low.contains("share wifi") {
+    } else if low.contains("mesh love")
+        || low.contains("bluetooth love")
+        || low.contains("hotspot love")
+        || low.contains("share wifi")
+    {
         let _ = run_wifi_love(&[]);
-    } else if low.contains("wifi menu") || low.contains("wi-fi menu") || low.contains("open wifi") || low.contains("open wi-fi") {
+    } else if low.contains("wifi menu")
+        || low.contains("wi-fi menu")
+        || low.contains("open wifi")
+        || low.contains("open wi-fi")
+    {
         if let Ok(exe) = env::current_exe() {
             let _ = Command::new(exe)
                 .arg("wifi-menu")
@@ -4611,7 +4809,8 @@ fn process_desktop_voice_command(snap: &HudSnapshot) {
         hyprctl_dispatch_lua("hl.dsp.window.fullscreen()");
     } else if low.contains("toggle floating") || low.contains("float window") {
         hyprctl_dispatch_lua("hl.dsp.window.float({ action = \"toggle\" })");
-    } else if low.contains("ai menu") || low.contains("model menu") || low.contains("switch model") {
+    } else if low.contains("ai menu") || low.contains("model menu") || low.contains("switch model")
+    {
         if let Ok(exe) = env::current_exe() {
             let _ = Command::new(exe)
                 .arg("ai-menu")
@@ -4681,7 +4880,9 @@ fn http_get_loopback_body(port: u16, path: &str, timeout_ms: u64) -> Option<Stri
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms)).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_millis(timeout_ms)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(timeout_ms)));
-    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: qwave-hypr-hud\r\nAccept: */*\r\nConnection: close\r\n\r\n");
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: qwave-hypr-hud\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+    );
     stream.write_all(req.as_bytes()).ok()?;
     let mut buf = Vec::with_capacity(4096);
     let _ = stream.read_to_end(&mut buf);
@@ -4918,10 +5119,26 @@ pub fn collect_ai_compute_snapshot() -> AiComputeSnapshot {
             let ram_used_mib = parts[8].parse::<i32>().unwrap_or(9200);
             let ram_total_mib = parts[9].parse::<i32>().unwrap_or(30720).max(1);
             let syms: Vec<char> = parts[10].chars().collect();
-            let a6k_bridge_trit = syms.first().copied().map(parse_trit_char).unwrap_or(Trit::Plus);
-            let ollama_local_trit = syms.get(1).copied().map(parse_trit_char).unwrap_or(Trit::Plus);
-            let npu_trit = syms.get(2).copied().map(parse_trit_char).unwrap_or(Trit::Plus);
-            let arc_trit = syms.get(3).copied().map(parse_trit_char).unwrap_or(Trit::Plus);
+            let a6k_bridge_trit = syms
+                .first()
+                .copied()
+                .map(parse_trit_char)
+                .unwrap_or(Trit::Plus);
+            let ollama_local_trit = syms
+                .get(1)
+                .copied()
+                .map(parse_trit_char)
+                .unwrap_or(Trit::Plus);
+            let npu_trit = syms
+                .get(2)
+                .copied()
+                .map(parse_trit_char)
+                .unwrap_or(Trit::Plus);
+            let arc_trit = syms
+                .get(3)
+                .copied()
+                .map(parse_trit_char)
+                .unwrap_or(Trit::Plus);
             return AiComputeSnapshot {
                 hot_model,
                 a6000_models_count,
@@ -4934,8 +5151,7 @@ pub fn collect_ai_compute_snapshot() -> AiComputeSnapshot {
                     .unwrap_or(Rational::ZERO),
                 ram_used_mib,
                 ram_total_mib,
-                ram_pq: Rational::new(ram_used_mib, ram_total_mib as u32)
-                    .unwrap_or(Rational::ONE),
+                ram_pq: Rational::new(ram_used_mib, ram_total_mib as u32).unwrap_or(Rational::ONE),
                 a6k_bridge_trit,
                 ollama_local_trit,
                 npu_trit,
@@ -5202,14 +5418,28 @@ pub fn format_ai_menu_entries(
         trit_symbol(ai.npu_trit),
     ));
     lines.push("[CLIP -> EXPLAIN] Explain Wayland Clipboard via Loopback Aye (:8787)".to_string());
-    lines.push("[CLIP -> RUST FIX] Refactor / Review Clipboard Code (Zero-Float 8b:is Rust)".to_string());
+    lines.push(
+        "[CLIP -> RUST FIX] Refactor / Review Clipboard Code (Zero-Float 8b:is Rust)".to_string(),
+    );
     lines.push("[VOICE -> ASK AYE] Speak Voice Prompt to Loopback Aye (:8787 -> TTS)".to_string());
-    lines.push("[STUDIO -> AGY] Launch / Focus Sovereign AGY Studio (All Perms, Resumed)".to_string());
-    lines.push("[RADAR -> TUI] Toggle Live 500ms AI & Acoustic Radar Scratchpad (SUPER+Z)".to_string());
-    lines.push("[BTOP -> GPU/CPU] Toggle Live Hardware Monitor Scratchpad (SUPER+SHIFT+G)".to_string());
-    lines.push("[TERM -> DROP] Toggle Instant Dropdown Terminal Scratchpad (SUPER+grave)".to_string());
-    lines.push("[A6000 -> FLEET] Inspect RTX 6000 Ada (49140 MiB) & Fleet (a6000-ctl status)".to_string());
-    lines.push("[BRIDGE -> HEAL] Restart & Verify cheet-bridge SSH Tunnel (:11436 / :18787)".to_string());
+    lines.push(
+        "[STUDIO -> AGY] Launch / Focus Sovereign AGY Studio (All Perms, Resumed)".to_string(),
+    );
+    lines.push(
+        "[RADAR -> TUI] Toggle Live 500ms AI & Acoustic Radar Scratchpad (SUPER+Z)".to_string(),
+    );
+    lines.push(
+        "[BTOP -> GPU/CPU] Toggle Live Hardware Monitor Scratchpad (SUPER+SHIFT+G)".to_string(),
+    );
+    lines.push(
+        "[TERM -> DROP] Toggle Instant Dropdown Terminal Scratchpad (SUPER+grave)".to_string(),
+    );
+    lines.push(
+        "[A6000 -> FLEET] Inspect RTX 6000 Ada (49140 MiB) & Fleet (a6000-ctl status)".to_string(),
+    );
+    lines.push(
+        "[BRIDGE -> HEAL] Restart & Verify cheet-bridge SSH Tunnel (:11436 / :18787)".to_string(),
+    );
 
     for m in a6k_models {
         lines.push(format!(
@@ -5234,7 +5464,10 @@ pub fn run_ai_menu(args: &[String]) -> String {
     if dry_run {
         let sample_menu = format_ai_menu_entries(
             &ai,
-            &["gemma4:26b".to_string(), "aye-deepseek-pqm:latest".to_string()],
+            &[
+                "gemma4:26b".to_string(),
+                "aye-deepseek-pqm:latest".to_string(),
+            ],
             &["gemma:latest".to_string()],
         );
         return format!(
@@ -5343,7 +5576,10 @@ pub fn run_ai_menu(args: &[String]) -> String {
         ));
         send_desktop_notification(
             "🧠 A6000 Model Warmed in VRAM [+]",
-            &format!("Pinned {} on RTX 6000 Ada (127:0:0:1:11436)", sanitize_no_float(model)),
+            &format!(
+                "Pinned {} on RTX 6000 Ada (127:0:0:1:11436)",
+                sanitize_no_float(model)
+            ),
         );
         return format!(
             "{{\"ok\":true,\"action\":\"ai-menu\",\"subaction\":\"warm-a6000\",\"model\":\"{}\",\"trit\":\"+\"}}",
@@ -5361,7 +5597,10 @@ pub fn run_ai_menu(args: &[String]) -> String {
         ));
         send_desktop_notification(
             "🧠 Local Model Warmed in RTX 4070 VRAM [+]",
-            &format!("Pinned {} on Local Ollama (127:0:0:1:11434)", sanitize_no_float(model)),
+            &format!(
+                "Pinned {} on Local Ollama (127:0:0:1:11434)",
+                sanitize_no_float(model)
+            ),
         );
         return format!(
             "{{\"ok\":true,\"action\":\"ai-menu\",\"subaction\":\"warm-local\",\"model\":\"{}\",\"trit\":\"+\"}}",
@@ -5500,7 +5739,9 @@ pub fn discover_max_rate_for_sink(hw_sink: &str) -> u32 {
                 }
                 for tok in rest.split(|c: char| c == ',' || c.is_whitespace()) {
                     if let Ok(r) = tok.trim().parse::<u32>() {
-                        if (r == 384_000 || r == 192_000 || r == 96_000 || r == 48_000) && r > best_rate {
+                        if (r == 384_000 || r == 192_000 || r == 96_000 || r == 48_000)
+                            && r > best_rate
+                        {
                             best_rate = r;
                         }
                     }
@@ -5586,7 +5827,11 @@ fn probe_usb_hardware_rate_and_bits() -> (u32, u8) {
 /// Apply PipeWire runtime clock metadata (`pw-metadata -n settings`) so the USB HiFi DAC locks
 /// natively to `target_rate` (`192000` or `384000` Hz) with an 8192-sample quantum ceiling.
 fn configure_pipewire_hires_clock(target_rate: u32) {
-    let rate = if target_rate >= 352_800 { 384_000 } else { 192_000 };
+    let rate = if target_rate >= 352_800 {
+        384_000
+    } else {
+        192_000
+    };
     let rate_str = rate.to_string();
     let _ = Command::new("pw-metadata")
         .args([
@@ -5623,7 +5868,10 @@ fn configure_pipewire_hires_clock(target_rate: u32) {
 
 /// Discover physical hardware audio sinks from `pactl list short sinks` (excluding `phoenix_revelation_sink`).
 fn discover_hardware_sinks() -> Vec<String> {
-    let Ok(out) = Command::new("pactl").args(["list", "short", "sinks"]).output() else {
+    let Ok(out) = Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .output()
+    else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -5668,13 +5916,21 @@ fn select_primary_hardware_sink() -> String {
             return cur;
         }
     }
-    for pref in ["TX-384Khz", "Line1__sink", "Scarlett_18i20_4th_Gen", "Speaker__sink"] {
+    for pref in [
+        "TX-384Khz",
+        "Line1__sink",
+        "Scarlett_18i20_4th_Gen",
+        "Speaker__sink",
+    ] {
         if let Some(found) = sinks.iter().find(|s| s.contains(pref)) {
             let _ = fs::write(PHOENIX_HW_SINK_FILE, found);
             return found.clone();
         }
     }
-    let fallback = sinks.first().cloned().unwrap_or_else(|| "@DEFAULT_AUDIO_SINK@".to_string());
+    let fallback = sinks
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "@DEFAULT_AUDIO_SINK@".to_string());
     let _ = fs::write(PHOENIX_HW_SINK_FILE, &fallback);
     fallback
 }
@@ -5742,7 +5998,9 @@ pub fn render_waybar_phoenix_json() -> String {
 
     let (text, cls) = if running {
         (
-            format!("🔥 PHX [{badge_preset}│{hw_khz}kHz {hw_bits}b│{short_shruti} {shruti_ratio_str}{multi_tag}│+]"),
+            format!(
+                "🔥 PHX [{badge_preset}│{hw_khz}kHz {hw_bits}b│{short_shruti} {shruti_ratio_str}{multi_tag}│+]"
+            ),
             "phoenix-active",
         )
     } else {
@@ -5761,10 +6019,18 @@ pub fn render_waybar_phoenix_json() -> String {
          Harmonic S Frames: {} · Dirac T Transients: {} · Goonj Ternary DVN Taps: 16\n\
          L-Click: Cycle Preset (Sovereign / Goonj-Velvet / Naad-Studio / Sanctuary-432 / Svara-Vocal)\n\
          R-Click: Open PhoeniX Studio Menu │ M-Click: Toggle System-Wide PhoeniX On/Off",
-        if running { "LIVE ON EVERYTHING [+]" } else { "BYPASSED [0]" },
+        if running {
+            "LIVE ON EVERYTHING [+]"
+        } else {
+            "BYPASSED [0]"
+        },
         preset_slug,
         hw_sink_short,
-        if multisink { " + Scarlett 18i20 Multi-Sink" } else { "" },
+        if multisink {
+            " + Scarlett 18i20 Multi-Sink"
+        } else {
+            ""
+        },
         hw_rate_hz,
         hw_bits,
         upsample_mult,
@@ -5787,7 +6053,10 @@ pub fn render_waybar_phoenix_json() -> String {
 
 /// Move all client playback `sink-inputs` (except our own hardware output bridge) onto `target_sink`.
 fn move_all_sink_inputs_to(target_sink: &str) {
-    let Ok(out) = Command::new("pactl").args(["list", "short", "sink-inputs"]).output() else {
+    let Ok(out) = Command::new("pactl")
+        .args(["list", "short", "sink-inputs"])
+        .output()
+    else {
         return;
     };
     // Also inspect `pactl list sink-inputs` so we never move our own `PhoeniX_Hardware_Out` pacat stream
@@ -5868,7 +6137,8 @@ fn start_phoenix_daemon_bg() {
     if is_phoenix_daemon_running() {
         return;
     }
-    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/home/hue/.local/bin/qwave-hypr-hud"));
+    let exe =
+        env::current_exe().unwrap_or_else(|_| PathBuf::from("/home/hue/.local/bin/qwave-hypr-hud"));
     let _ = Command::new("setsid")
         .args(["--fork", &exe.to_string_lossy(), "phoenix-daemon"])
         .stdin(Stdio::null())
@@ -6034,7 +6304,9 @@ pub fn run_phoenix_menu(args: &[String]) -> String {
         }
         send_desktop_notification(
             "🔥 PhoeniX Beast Least-Cost Hi-Res Lock [+]",
-            &format!("Mode: {mode_str} -> {resolved_rate} Hz · 24-bit S24_3LE (Babbage Forward-Diff S32LE)"),
+            &format!(
+                "Mode: {mode_str} -> {resolved_rate} Hz · 24-bit S24_3LE (Babbage Forward-Diff S32LE)"
+            ),
         );
         return format!(
             "{{\"ok\":true,\"action\":\"phoenix-menu\",\"rate_mode\":\"{mode_str}\",\"hw_rate_hz\":{resolved_rate},\"trit\":\"+\"}}"
@@ -6060,7 +6332,13 @@ pub fn run_phoenix_menu(args: &[String]) -> String {
             !multisink
         );
     }
-    for slug in ["sovereign", "goonj-velvet", "naad-studio", "sanctuary-432", "vocal-clarity"] {
+    for slug in [
+        "sovereign",
+        "goonj-velvet",
+        "naad-studio",
+        "sanctuary-432",
+        "vocal-clarity",
+    ] {
         if choice.contains(slug) {
             return run_phoenix_preset(&[slug.to_string()]);
         }
@@ -6071,7 +6349,9 @@ pub fn run_phoenix_menu(args: &[String]) -> String {
 /// Run the real-time PipeWire streaming PhoeniX Sound Revelation Daemon (`qwave-hypr-hud phoenix-daemon`).
 pub fn run_phoenix_daemon(args: &[String]) {
     if args.iter().any(|a| a == "--dry-run") {
-        println!("{{\"ok\":true,\"action\":\"phoenix-daemon\",\"mode\":\"dry-run\",\"trit\":\"+\"}}");
+        println!(
+            "{{\"ok\":true,\"action\":\"phoenix-daemon\",\"mode\":\"dry-run\",\"trit\":\"+\"}}"
+        );
         return;
     }
 
@@ -6188,7 +6468,12 @@ pub fn run_phoenix_daemon(args: &[String]) {
         let all_hw = discover_hardware_sinks();
         all_hw
             .into_iter()
-            .find(|s| s != &primary_hw_sink && (s.contains("Line1__sink") || s.contains("Speaker__sink") || s.contains("TX-384Khz")))
+            .find(|s| {
+                s != &primary_hw_sink
+                    && (s.contains("Line1__sink")
+                        || s.contains("Speaker__sink")
+                        || s.contains("TX-384Khz"))
+            })
             .and_then(|sec_sink| {
                 Command::new("pacat")
                     .args([
@@ -6213,7 +6498,8 @@ pub fn run_phoenix_daemon(args: &[String]) {
     move_all_sink_inputs_to(PHOENIX_SINK_NAME);
 
     let initial_slug = read_active_phoenix_preset_slug();
-    let mut processor = PhoenixLiveProcessor::new(48_000, PhoenixSoundPreset::from_name(&initial_slug));
+    let mut processor =
+        PhoenixLiveProcessor::new(48_000, PhoenixSoundPreset::from_name(&initial_slug));
     let (init_auto, init_v, init_b, init_s) = read_phoenix_feel_controls();
     processor.set_feel_controls(init_auto, init_v, init_b, init_s);
     processor.alexandra_reset_active = read_alexandra_reset_active();
@@ -6290,7 +6576,8 @@ pub fn run_phoenix_daemon(args: &[String]) {
 
         // Transform through 768kHz Catmull-Rom + S+N+T + 432Hz/phi + Goonj/Svara/Naad at 48 kHz (1x cost)
         // AND upsample 8x (384 kHz) / 4x (192 kHz) into 32-bit signed integer (`s32le`) via Babbage 3-Addition Forward Differencing!
-        let written_s32 = processor.process_stereo_upsample_s32le(&mut pcm_buf, upsample_factor, &mut s32_buf);
+        let written_s32 =
+            processor.process_stereo_upsample_s32le(&mut pcm_buf, upsample_factor, &mut s32_buf);
         for (i, &sample32) in s32_buf[..written_s32].iter().enumerate() {
             let b = sample32.to_le_bytes();
             let base = i * 4;
@@ -6461,7 +6748,8 @@ fn ensure_oxicast_daemon_running() {
     if is_oxicast_daemon_running() {
         return;
     }
-    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("/home/hue/.local/bin/qwave-hypr-hud"));
+    let exe =
+        env::current_exe().unwrap_or_else(|_| PathBuf::from("/home/hue/.local/bin/qwave-hypr-hud"));
     if let Ok(child) = Command::new(exe)
         .arg("oxicast-daemon")
         .stdin(Stdio::null())
@@ -6709,7 +6997,8 @@ pub fn run_oxicast_cast(args: &[String]) -> String {
             path_or_md.clone()
         }
     } else {
-        fs::read_to_string("/tmp/qwave_graphical_hud.md").unwrap_or_else(|_| default_oxicast_markdown())
+        fs::read_to_string("/tmp/qwave_graphical_hud.md")
+            .unwrap_or_else(|_| default_oxicast_markdown())
     };
 
     let sanitized_md = sanitize_no_float(&md_raw);
@@ -6947,7 +7236,11 @@ fn handle_oxicast_http_client(mut stream: TcpStream) {
         }
         let lower = line.to_ascii_lowercase();
         if let Some(rest) = lower.strip_prefix("content-length:") {
-            content_len = rest.trim().parse::<usize>().unwrap_or(0).min(C64_RING_BYTES);
+            content_len = rest
+                .trim()
+                .parse::<usize>()
+                .unwrap_or(0)
+                .min(C64_RING_BYTES);
         }
     }
 
@@ -7080,7 +7373,9 @@ fn handle_oxicast_http_client(mut stream: TcpStream) {
 /// Run the Sovereign OxiCast × PhoeniX Sanctuary HTTP/Visualizer/Audio server (`qwave-hypr-hud oxicast-daemon`).
 pub fn run_oxicast_daemon(args: &[String]) {
     if args.iter().any(|a| a == "--dry-run") {
-        println!("{{\"ok\":true,\"action\":\"oxicast-daemon\",\"mode\":\"dry-run\",\"port\":8432,\"trit\":\"+\"}}");
+        println!(
+            "{{\"ok\":true,\"action\":\"oxicast-daemon\",\"mode\":\"dry-run\",\"port\":8432,\"trit\":\"+\"}}"
+        );
         return;
     }
     let my_pid = std::process::id();
@@ -10078,7 +10373,9 @@ mod tests {
         let wl = run_wifi_love(&["--dry-run".to_string()]);
         let vm = run_vault_menu(&["--dry-run".to_string()]);
         let ap = run_a6000_pulse(&["--dry-run".to_string()]);
-        for out in [&vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &ph, &wl, &vm, &ap] {
+        for out in [
+            &vt, &aa, &te, &bs, &ar, &mh, &wm, &wt, &wh, &ph, &wl, &vm, &ap,
+        ] {
             assert!(out.contains("\"ok\":true"));
             assert_zero_float_literals(out);
         }
@@ -10127,7 +10424,10 @@ mod tests {
 
         let raw_tags = "{\"models\":[{\"name\":\"qwen3.8:27b\"},{\"name\":\"gemma4:26b\"}]}";
         let models = extract_ollama_model_names(raw_tags);
-        assert_eq!(models, vec!["qwen3:8:27b".to_string(), "gemma4:26b".to_string()]);
+        assert_eq!(
+            models,
+            vec!["qwen3:8:27b".to_string(), "gemma4:26b".to_string()]
+        );
         for m in &models {
             assert_zero_float_literals(m);
         }

@@ -72,10 +72,10 @@ targets:
         CFBundleName: Qwave
         CFBundleDisplayName: Qwave
         QWAVE_CHANNEL: $(QWAVE_CHANNEL)
-        CFBundleShortVersionString: "2.0.7"
+        CFBundleShortVersionString: "2.0.8"
         # major*10000 + minor*100 + patch — Sparkle compares this value, and
         # CI enforces the mapping against the release tag.
-        CFBundleVersion: "20007"
+        CFBundleVersion: "20008"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
@@ -192,8 +192,8 @@ targets:
       properties:
         CFBundleName: CredentialProvider
         CFBundleDisplayName: Qwave Passwords
-        CFBundleShortVersionString: "2.0.7"
-        CFBundleVersion: "20007"
+        CFBundleShortVersionString: "2.0.8"
+        CFBundleVersion: "20008"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
@@ -241,8 +241,8 @@ targets:
       properties:
         CFBundleName: PhoenixAudioExtension
         CFBundleDisplayName: PhoeniX Svara & Marine-Sense AUv3
-        CFBundleShortVersionString: "2.0.7"
-        CFBundleVersion: "20007"
+        CFBundleShortVersionString: "2.0.8"
+        CFBundleVersion: "20008"
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.AudioUnit-UI
@@ -255,7 +255,7 @@ targets:
                 manufacturer: 8bIS
                 subtype: phx8
                 type: aufx
-                version: 20007
+                version: 20008
                 sandboxSafe: true
                 tags:
                   - Effects
@@ -301,8 +301,8 @@ targets:
       properties:
         CFBundleName: PhoenixAudioIOSExtension
         CFBundleDisplayName: PhoeniX Svara & Marine-Sense AUv3
-        CFBundleShortVersionString: "2.0.7"
-        CFBundleVersion: "20007"
+        CFBundleShortVersionString: "2.0.8"
+        CFBundleVersion: "20008"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.AudioUnit-UI
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PhoenixAudioUnitViewController
@@ -314,7 +314,7 @@ targets:
                 manufacturer: 8bIS
                 subtype: phx8
                 type: aufx
-                version: 20007
+                version: 20008
                 sandboxSafe: true
                 tags:
                   - Effects
@@ -362,8 +362,8 @@ targets:
     info:
       path: Resources/QwaveIOS/Info.plist
       properties:
-        CFBundleShortVersionString: "2.0.7"
-        CFBundleVersion: "20007"
+        CFBundleShortVersionString: "2.0.8"
+        CFBundleVersion: "20008"
         LSRequiresIPhoneOS: true
         # Required for Apple-managed default-browser eligibility. The managed
         # entitlement is enabled separately after Apple approves the request.

@@ -4,7 +4,15 @@ All notable changes to Qwave will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [2.0.8] — 2026-11-09
+
 ### Added
+- **qUltraKotoro Zero-Float STT Pipeline (`qwave-core v0.4.2`)**:
+  - Upgraded `qwave --listen`, `qwave --ear-daemon`, and `qwave-hypr-hud` STT cascade to `qUltraKotoro` (`qultrakotoro:8785` -> `kotorocli transcribe --json` -> `qultrakotoro+liquid-rust:8786` -> `qultrakotoro-local`).
+  - Emits exact `p/q` `QuantTern` emotional ternary code (`kotoro_qt`, e.g. `qt:dA`) into STT JSON responses and `speech_salience_waves.jsonl`.
+  - Fixed `whisper-server` HTTP half-close disconnect and eliminated 5x temperature fallback latency via `-nf` + `temperature=0.0`, achieving `~0.66s` warm STT response.
 - **P1 membership & `sphered` witness spine (`core/src/badge.rs`).** Implements
   the 5-stage SpherePOP witness (`<(? admit ~ transform ! verify @ attribute > commit)>`)
   enforcing `#Commit = #ValidWitness` (`8b-is/sphered`) and the in-app channel
