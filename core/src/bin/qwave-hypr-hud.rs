@@ -6504,6 +6504,9 @@ pub fn run_phoenix_daemon(args: &[String]) {
             "--rate=48000",
             "--channels=2",
             "--latency-msec=20",
+            "--client-name=PhoeniX_Input",
+            "--property=node.dont-reconnect=true",
+            "--property=node.dont-fallback=true",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -6522,6 +6525,8 @@ pub fn run_phoenix_daemon(args: &[String]) {
             "--channels=2",
             "--latency-msec=25",
             "--client-name=PhoeniX_Hardware_Out",
+            "--property=node.dont-reconnect=true",
+            "--property=node.dont-fallback=true",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -6555,6 +6560,8 @@ pub fn run_phoenix_daemon(args: &[String]) {
                         "--channels=2",
                         "--latency-msec=30",
                         "--client-name=PhoeniX_Hardware_Out",
+                        "--property=node.dont-reconnect=true",
+                        "--property=node.dont-fallback=true",
                     ])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::null())
@@ -6591,8 +6598,42 @@ pub fn run_phoenix_daemon(args: &[String]) {
     let mut s32_buf = vec![0i32; 2048 * upsample_factor];
     let mut s32_byte_buf = vec![0u8; 2048 * upsample_factor * 4];
     let mut chunk_counter: u64 = 0;
-    let mut last_synced_vol: i32 = safe_init_vol;
-    let mut last_synced_mute: bool = hw_muted;
+    // System control commands must never block the PCM reader/writer. A single
+    // worker and one pending tick bound both work and memory if pactl is slow.
+    let (control_tx, control_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let control_sink = primary_hw_sink.clone();
+    thread::spawn(move || {
+        let mut last_synced_vol = safe_init_vol;
+        let mut last_synced_mute = hw_muted;
+        let mut ticks = 0u64;
+        while control_rx.recv().is_ok() {
+            let (cur_vol, cur_mute) = read_sink_volume_and_mute(PHOENIX_SINK_NAME);
+            if cur_vol != last_synced_vol {
+                let result = Command::new("pactl")
+                    .args(["set-sink-volume", &control_sink, &format!("{cur_vol}%")])
+                    .status();
+                if result.is_ok_and(|status| status.success()) {
+                    last_synced_vol = cur_vol;
+                }
+            }
+            if cur_mute != last_synced_mute {
+                let result = Command::new("pactl")
+                    .args([
+                        "set-sink-mute",
+                        &control_sink,
+                        if cur_mute { "1" } else { "0" },
+                    ])
+                    .status();
+                if result.is_ok_and(|status| status.success()) {
+                    last_synced_mute = cur_mute;
+                }
+            }
+            if ticks & 15 == 8 {
+                move_all_sink_inputs_to(PHOENIX_SINK_NAME);
+            }
+            ticks = ticks.wrapping_add(1);
+        }
+    });
 
     // Non-blocking `.8a` (`8a∞`) 16-byte UDP telemetry broadcaster on port 8432 for ESP32-WROOM & OxiCast nodes
     let udp_8a = UdpSocket::bind("0.0.0.0:0").ok();
@@ -6632,29 +6673,7 @@ pub fn run_phoenix_daemon(args: &[String]) {
             processor.set_feel_controls(f_auto, f_v, f_b, f_s);
             processor.alexandra_reset_active = read_alexandra_reset_active();
 
-            let (cur_vol, cur_mute) = read_sink_volume_and_mute(PHOENIX_SINK_NAME);
-            if cur_vol != last_synced_vol {
-                last_synced_vol = cur_vol;
-                let v_str = format!("{cur_vol}%");
-                let _ = Command::new("pactl")
-                    .args(["set-sink-volume", &primary_hw_sink, &v_str])
-                    .status();
-            }
-            if cur_mute != last_synced_mute {
-                last_synced_mute = cur_mute;
-                let m_str = if cur_mute { "1" } else { "0" };
-                let _ = Command::new("pactl")
-                    .args(["set-sink-mute", &primary_hw_sink, m_str])
-                    .status();
-            }
-        }
-
-        // Periodically ensure newly opened app streams are routed through `phoenix_revelation_sink`.
-        // Never overwrite `phoenix_revelation_sink` volume or mute state so the user's volume keys work naturally!
-        if chunk_counter & 255 == 128 {
-            thread::spawn(|| {
-                move_all_sink_inputs_to(PHOENIX_SINK_NAME);
-            });
+            let _ = control_tx.try_send(());
         }
 
         // Transform through 768kHz Catmull-Rom + S+N+T + 432Hz/phi + Goonj/Svara/Naad at 48 kHz (1x cost)
