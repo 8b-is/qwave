@@ -6421,6 +6421,37 @@ fn read_sink_volume_and_mute(sink_name: &str) -> (i32, bool) {
     (vol_pct, is_muted)
 }
 
+// One pending 1024-frame block (64/3 ms at 48 kHz). Capture must keep
+// draining parec even when DSP or either playback device falls behind. Replace
+// stale pending audio rather than backpressuring capture into seconds of delay.
+#[derive(Default)]
+struct PhoenixCapture {
+    state: std::sync::Mutex<(Option<[u8; 4096]>, bool)>,
+    ready: std::sync::Condvar,
+}
+
+impl PhoenixCapture {
+    fn read_from(&self, mut input: impl Read) {
+        let mut block = [0u8; 4096];
+        while input.read_exact(&mut block).is_ok() {
+            let mut state = self.state.lock().unwrap();
+            state.0 = Some(block);
+            self.ready.notify_one();
+        }
+        // A partial final block is not a complete stereo processing block.
+        self.state.lock().unwrap().1 = true;
+        self.ready.notify_one();
+    }
+
+    fn next(&self) -> Option<[u8; 4096]> {
+        let mut state = self.state.lock().unwrap();
+        while state.0.is_none() && !state.1 {
+            state = self.ready.wait(state).unwrap();
+        }
+        state.0.take()
+    }
+}
+
 /// Run the real-time PipeWire streaming PhoeniX Sound Revelation Daemon (`qwave-hypr-hud phoenix-daemon`).
 pub fn run_phoenix_daemon(args: &[String]) {
     if args.iter().any(|a| a == "--dry-run") {
@@ -6583,7 +6614,7 @@ pub fn run_phoenix_daemon(args: &[String]) {
     processor.set_feel_controls(init_auto, init_v, init_b, init_s);
     processor.alexandra_reset_active = read_alexandra_reset_active();
 
-    let Some(mut rec_out) = rec_child.stdout.take() else {
+    let Some(rec_out) = rec_child.stdout.take() else {
         return;
     };
     let Some(mut play_in) = play_primary.stdin.take() else {
@@ -6593,7 +6624,9 @@ pub fn run_phoenix_daemon(args: &[String]) {
 
     // 1024 stereo frames = 2048 i16 samples = 4096 bytes (~21.3ms @ 48kHz)
     // At 8x (384 kHz): 2048 * 8 = 16384 i32 samples = 65536 bytes (Exact C64 64KB Block per write!)
-    let mut byte_buf = [0u8; 4096];
+    let capture = std::sync::Arc::new(PhoenixCapture::default());
+    let capture_worker = std::sync::Arc::clone(&capture);
+    let capture_thread = thread::spawn(move || capture_worker.read_from(rec_out));
     let mut pcm_buf = [0i16; 2048];
     let mut s32_buf = vec![0i32; 2048 * upsample_factor];
     let mut s32_byte_buf = vec![0u8; 2048 * upsample_factor * 4];
@@ -6642,22 +6675,7 @@ pub fn run_phoenix_daemon(args: &[String]) {
         let _ = sock.set_broadcast(true);
     }
 
-    loop {
-        // Read exact 4096-byte stereo block
-        let mut read_pos = 0usize;
-        while read_pos < byte_buf.len() {
-            match rec_out.read(&mut byte_buf[read_pos..]) {
-                Ok(0) | Err(_) => {
-                    read_pos = 0;
-                    break;
-                }
-                Ok(n) => read_pos += n,
-            }
-        }
-        if read_pos == 0 {
-            break;
-        }
-
+    while let Some(mut byte_buf) = capture.next() {
         for (i, pair) in byte_buf.chunks_exact(2).enumerate() {
             pcm_buf[i] = i16::from_le_bytes([pair[0], pair[1]]);
         }
@@ -6822,9 +6840,13 @@ pub fn run_phoenix_daemon(args: &[String]) {
     }
 
     let _ = rec_child.kill();
+    let _ = rec_child.wait();
+    let _ = capture_thread.join();
     let _ = play_primary.kill();
+    let _ = play_primary.wait();
     if let Some(mut sec) = play_secondary {
         let _ = sec.kill();
+        let _ = sec.wait();
     }
 }
 
@@ -10307,6 +10329,68 @@ requestAnimationFrame(drawFrame);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phoenix_capture_keeps_latest_block_when_playback_stalls() {
+        let capture = PhoenixCapture::default();
+        // Drain more than the PulseAudio default 4 MiB capture buffer while
+        // playback consumes nothing. Only the newest complete block survives.
+        let input = (0..2048).flat_map(|i| [i as u8; 4096]);
+        struct Bytes<I>(I);
+        impl<I: Iterator<Item = u8>> Read for Bytes<I> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                let mut n = 0;
+                for dst in out {
+                    let Some(byte) = self.0.next() else { break };
+                    *dst = byte;
+                    n += 1;
+                }
+                Ok(n)
+            }
+        }
+        capture.read_from(Bytes(input));
+        assert_eq!(capture.next(), Some([255; 4096]));
+        assert_eq!(capture.next(), None);
+    }
+
+    #[test]
+    fn phoenix_capture_handles_short_reads_interrupts_and_partial_eof() {
+        struct Fragmented {
+            remaining: usize,
+            interrupted: bool,
+        }
+        impl Read for Fragmented {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                let n = out.len().min(7).min(self.remaining);
+                out[..n].fill(42);
+                self.remaining -= n;
+                Ok(n)
+            }
+        }
+        let capture = PhoenixCapture::default();
+        capture.read_from(Fragmented {
+            remaining: 4096 + 13,
+            interrupted: false,
+        });
+        assert_eq!(capture.next(), Some([42; 4096]));
+        assert_eq!(capture.next(), None);
+    }
+
+    #[test]
+    fn phoenix_capture_wakes_consumer_on_data_and_eof() {
+        let capture = std::sync::Arc::new(PhoenixCapture::default());
+        let consumer = std::sync::Arc::clone(&capture);
+        let worker = thread::spawn(move || (consumer.next(), consumer.next()));
+        capture.read_from(&[17u8; 4096][..]);
+        assert_eq!(worker.join().unwrap(), (Some([17; 4096]), None));
+        let empty = PhoenixCapture::default();
+        empty.read_from(io::empty());
+        assert_eq!(empty.next(), None);
+    }
 
     fn assert_zero_float_literals(text: &str) {
         let bytes = text.as_bytes();

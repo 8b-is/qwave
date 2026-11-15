@@ -17,3 +17,39 @@ Corrected the live route, built and installed the updated daemon, and restarted 
 Validation: eight HUD unit tests and five Phoenix sound tests passed; release build, formatting and diff checks passed. Listening confirmation remains with the user. The existing automatic hardware rate selection chose 384000 Hz on restart.
 
 Local rollback binary: `/home/hue/.local/state/qwave/backups/qwave-hypr-hud.before-audio-delay-fix-20261114`. Installed binary: `/home/hue/.local/bin/qwave-hypr-hud`. Stop Phoenix before replacing the executable, then start it again using `phoenix-toggle stop` and `phoenix-toggle start`.
+
+## Bounded capture backlog — 2026-11-15
+
+The capture pipe is now drained by a dedicated reader. A mutex/condition-variable
+mailbox retains one complete 4096-byte stereo block (1024 frames, exactly 64/3 ms
+at 48000 Hz). When DSP or playback falls behind, new capture replaces the pending
+block. This prevents playback backpressure from stopping capture reads and
+accumulating stale audio upstream. The reader, mailbox, and consumer each hold
+at most one input block; no per-block thread or growing queue is created.
+Interrupted and short reads are assembled into complete blocks; partial final
+blocks are discarded, and EOF wakes the consumer. Normal loop termination kills
+and reaps the audio children and joins the capture worker.
+
+Overload can therefore produce skipped audio instead of an increasingly delayed
+replay. This is not clock-drift resampling or a guarantee of total device latency:
+external PipeWire buffers and blocking playback writes still exist, and a stalled
+secondary device can still interrupt primary playback. The pending application
+capture backlog remains bounded in that case.
+
+Receipt: Codex, shared family context version 1, based on local routing fix
+`847fea6` and upstream main `1fe6ba2`. `git pull --ff-only origin main` reported
+already up to date. Preserved the existing routing fix for publication alongside
+this change, as requested. Recalled the previous repair from this document;
+no MEM8 recall/write interface was available, so this document is the handoff.
+
+Validation: 11 HUD tests and 98 Rust library tests passed, including a synthetic
+8 MiB capture with no consumer, short/interrupted reads, partial EOF, and consumer
+wake-up. Release build, source formatting, and diff whitespace checks passed.
+Installed the release binary at `/home/hue/.local/bin/qwave-hypr-hud`, retaining
+rollback at `/home/hue/.local/state/qwave/backups/qwave-hypr-hud.before-buffer-fix-20261115`.
+Restarted only Phoenix and its own children, preserving the separate monitor
+recorder. The running executable's SHA-256 matches the release artifact.
+Live smoke check: capture source 199 at s16le/48000 Hz and playback sink 251 at
+s32le/384000 Hz. Four RSS samples over 30 seconds: daemon 3592–3600 KiB,
+recorder 5672 KiB, playback 5712 KiB. This short check is not a long-run memory
+or end-to-end audio-latency measurement; listening confirmation remains open.
