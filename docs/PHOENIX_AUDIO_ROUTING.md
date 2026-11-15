@@ -53,3 +53,18 @@ Live smoke check: capture source 199 at s16le/48000 Hz and playback sink 251 at
 s32le/384000 Hz. Four RSS samples over 30 seconds: daemon 3592–3600 KiB,
 recorder 5672 KiB, playback 5712 KiB. This short check is not a long-run memory
 or end-to-end audio-latency measurement; listening confirmation remains open.
+
+### Follow-up: audible playback failed after deployment
+
+The user reported no sound after the above deployment. Phoenix was alive, its
+telemetry contained nonzero input, Spotify was routed to virtual sink 199, and
+Phoenix output targeted USB sink 251. Both sinks were unmuted at 45%; the desktop
+default had changed to HDMI. These observations did not establish audible output.
+
+Stopped only Phoenix and its two child processes, set USB as the desktop default,
+and moved Spotify directly to USB. The user confirmed: "Sound now". Leave Phoenix
+bypassed for reliable listening. The bounded capture change remains on main and
+installed, but its live audio result is NOT validated. The silence's precise cause
+remains unresolved; investigate processing/output and the two successive volume
+stages before re-enabling Phoenix. Do not treat the earlier short RSS/routing
+smoke test as proof of working audio.
