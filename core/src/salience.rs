@@ -2559,6 +2559,466 @@ pub fn contextualize_room_transcript(
     Some(repaired)
 }
 
+/// Safely reduce a `(num, den)` `u64` pair into a checked `Rational` (`i32 / u32`)
+/// without overflow or truncation by shifting both right together when needed.
+#[inline]
+fn rational_from_u64(num: u64, den: u64) -> Rational {
+    if den == 0 {
+        return Rational::ZERO;
+    }
+    let mut n = num;
+    let mut d = den;
+    while n > (i32::MAX as u64) || d > (u32::MAX as u64) {
+        n >>= 1;
+        d = (d >> 1).max(1);
+    }
+    Rational::new(n as i32, d as u32).unwrap_or(Rational::ZERO)
+}
+
+/// Exact `p/q` comparison `r >= num / den` via 64-bit integer cross-multiplication.
+#[inline]
+pub fn rational_ge(r: Rational, num: i32, den: u32) -> bool {
+    if den == 0 || r.den == 0 {
+        return false;
+    }
+    (r.num as i64) * (den as i64) >= (num as i64) * (r.den as i64)
+}
+
+/// Zero-float `p/q` acoustic classification produced by [`detect_speech_pq`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PqAcousticClass {
+    /// Quiet room / sub-threshold signal.
+    Silence,
+    /// Unpitched fan hum, hiss, crowd rumble, or stochastic broadband noise.
+    AmbientNoise,
+    /// Brief click, bump, or keyboard transient (`< 60 ms` voiced).
+    PercussiveTransient,
+    /// Sustained steady harmonic tone or flat background music (`>= 1200 ms`, low syllabic modulation).
+    MusicOrTone,
+    /// Active human voiced speech with glottal `F0` lock, Svara vowel formants, and syllabic modulation.
+    VoicedSpeech,
+}
+
+impl PqAcousticClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Silence => "silence",
+            Self::AmbientNoise => "ambient_noise",
+            Self::PercussiveTransient => "percussive_transient",
+            Self::MusicOrTone => "music_or_tone",
+            Self::VoicedSpeech => "voiced_speech",
+        }
+    }
+}
+
+/// Complete zero-float `p/q` acoustic speech & vocal-tract detection report.
+///
+/// Replaces heavyweight continuous `whisper-server` polling with deterministic `O(N)`
+/// integer + reduced `Rational` (`p/q`) DSP combining:
+/// 1. [`MarineIntDetector`] glottal period stability & Top-K `MEM|8` `WaveInt` grains.
+/// 2. Exact `p/q` harmonic ratio lock (`1/1, 2/1, 3/2, 4/3, 5/3, 8/5, 89/55`, `1/16` tolerance).
+/// 3. 6-stage pure shift-only Svara dyadic wavelet formant energy ratio (`F1+F2+F3 / total`).
+/// 4. Exact `p/q` Zero-Crossing Rate (`crossings / (N - 1)`).
+/// 5. 20 ms syllabic envelope modulation depth & speaking cadence (`syllables / sec` as `p/q`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PqSpeechDetection {
+    pub class: PqAcousticClass,
+    pub is_speech: bool,
+    pub is_direct_call: bool,
+    /// Exact signal duration in seconds (`samples / sample_rate`).
+    pub duration_pq: Rational,
+    /// Exact glottal fundamental frequency `F0` in Hz.
+    pub f0_hz_pq: Rational,
+    /// Exact Marine vocal salience ratio (`salience_q15 / 32767`).
+    pub salience_pq: Rational,
+    /// Exact voiced frame duty ratio (`voiced_frames / total_frames` over 20 ms windows).
+    pub voiced_ratio_pq: Rational,
+    /// Exact Zero-Crossing Rate (`crossings / (N - 1)`).
+    pub zcr_pq: Rational,
+    /// Exact fraction of glottal periods matching harmonic `p/q` ratios within `1/16`.
+    pub harmonic_lock_pq: Rational,
+    /// Exact Svara vowel formant ratio `(F1 + F2 + F3) / (sub + F0 + F1 + F2 + F3)`.
+    pub formant_ratio_pq: Rational,
+    /// Exact syllabic envelope modulation depth `(peak_frame - min_frame) / peak_frame`.
+    pub modulation_depth_pq: Rational,
+    /// Exact peak-frame to 20th-percentile floor energy ratio (`peak / floor`).
+    pub snr_pq: Rational,
+    /// Integer count of distinct voiced syllable nuclei (`>= 80 ms` spacing).
+    pub syllable_count: u16,
+    /// Exact speaking cadence in syllables/sec (`syllables * sample_rate / samples`).
+    pub syllable_rate_pq: Rational,
+    /// Zero-float `QuantTern` VAD emotional byte (`qt:xx`).
+    pub vad_byte: u8,
+    /// Underlying Top-K salient vocal grains and `MEM|8` 79-byte `WaveInt` frames.
+    pub salience_report: UtteranceSalienceReport,
+}
+
+impl PqSpeechDetection {
+    /// Format an honest, zero-float `p/q` acoustic summary (no decimal floats, no hallucinated words).
+    pub fn format_acoustic_summary(&self, speaker: &str) -> String {
+        let f0_int = self.f0_hz_pq.num / (self.f0_hz_pq.den.max(1) as i32);
+        if self.is_speech {
+            let call_tag = if self.is_direct_call { "call" } else { "vocal" };
+            format!(
+                "[p/q {call_tag}: {speaker} {f0_int}Hz · {} syl ({}/{} syl/s) · sal {}/{} · lock {}/{} · qt:{:02x}]",
+                self.syllable_count,
+                self.syllable_rate_pq.num,
+                self.syllable_rate_pq.den,
+                self.salience_pq.num,
+                self.salience_pq.den,
+                self.harmonic_lock_pq.num,
+                self.harmonic_lock_pq.den,
+                self.vad_byte,
+            )
+        } else {
+            format!(
+                "[p/q {}: {speaker} {f0_int}Hz · sal {}/{} · zcr {}/{} · qt:{:02x}]",
+                self.class.as_str(),
+                self.salience_pq.num,
+                self.salience_pq.den,
+                self.zcr_pq.num,
+                self.zcr_pq.den,
+                self.vad_byte,
+            )
+        }
+    }
+}
+
+/// Analyze mono `i16` PCM audio in `O(N)` using `100%` integer + reduced `p/q` rational math
+/// (zero floats, bounded memory, zero external servers).
+pub fn detect_speech_pq(samples: &[i16], sample_rate: u32, now_epoch: u64) -> PqSpeechDetection {
+    let sr = sample_rate.max(8_000);
+    let salience_report = extract_salient_grains(samples, sr, 3, now_epoch);
+
+    if samples.is_empty() {
+        return PqSpeechDetection {
+            class: PqAcousticClass::Silence,
+            is_speech: false,
+            is_direct_call: false,
+            duration_pq: Rational::ZERO,
+            f0_hz_pq: salience_report.overall_f0_hz,
+            salience_pq: Rational::ZERO,
+            voiced_ratio_pq: Rational::ZERO,
+            zcr_pq: Rational::ZERO,
+            harmonic_lock_pq: Rational::ZERO,
+            formant_ratio_pq: Rational::ZERO,
+            modulation_depth_pq: Rational::ZERO,
+            snr_pq: Rational::ZERO,
+            syllable_count: 0,
+            syllable_rate_pq: Rational::ZERO,
+            vad_byte: 0x55,
+            salience_report,
+        };
+    }
+
+    let duration_pq = rational_from_u64(samples.len() as u64, sr as u64);
+    let frame_len = ((sr as usize) / 50).max(160); // 20 ms frame
+    let num_frames = (samples.len() / frame_len).max(1);
+
+    let mut crossings: u64 = 0;
+    let mut prev_non_neg = samples[0] >= 0;
+
+    // 6-stage pure shift-only Svara dyadic wavelet ladder (zero multiplies, zero overflow)
+    let mut dyad = [0i64; 6];
+    let mut sub_e: u64 = 0;
+    let mut f0_e: u64 = 0;
+    let mut f1_e: u64 = 0;
+    let mut f2_e: u64 = 0;
+    let mut f3_e: u64 = 0;
+
+    // Zero-alloc 16-entry glottal period history on the band-passed glottal wave (`dyad[2] - dyad[4]`)
+    // for exact p/q harmonic ratio lock without high-frequency peak-aliasing artifacts.
+    const HARMONIC_RATIOS: [(u64, u64); 7] =
+        [(1, 1), (2, 1), (3, 2), (4, 3), (5, 3), (8, 5), (89, 55)];
+    let min_period = ((sr / 380).max(4)) as u64;
+    let max_period = ((sr / 55) as u64).max(min_period + 1);
+    let mut period_ring = [0u64; 16];
+    let mut period_cursor: usize = 0;
+    let mut period_filled: usize = 0;
+    let mut prev_voc_wave: i64 = 0;
+    let mut last_zc_idx: Option<usize> = None;
+    let mut total_glottal_cycles: u64 = 0;
+    let mut harmonic_locked_cycles: u64 = 0;
+
+    let mut det = MarineIntDetector::new(sr, DEFAULT_CLIP_THRESHOLD_Q15);
+    let mut frame_abs = Vec::with_capacity(num_frames);
+    let mut frame_voiced = Vec::with_capacity(num_frames);
+    let mut voiced_frames: u64 = 0;
+    let mut peak_frame_abs: u32 = 0;
+    let mut min_frame_abs: u32 = u32::MAX;
+
+    let mut cur_frame_abs_sum: u64 = 0;
+    let mut cur_frame_sal_sum: u64 = 0;
+    let mut cur_frame_count: usize = 0;
+
+    for (idx, &s) in samples.iter().enumerate() {
+        let cur = s as i32;
+        let cur_non_neg = s >= 0;
+        if idx > 0 && cur_non_neg != prev_non_neg {
+            crossings += 1;
+        }
+        prev_non_neg = cur_non_neg;
+
+        // Svara dyadic wavelet band decomposition
+        let x = cur as i64;
+        dyad[0] += (x - dyad[0]) >> 1;
+        dyad[1] += (dyad[0] - dyad[1]) >> 2;
+        dyad[2] += (dyad[1] - dyad[2]) >> 3;
+        dyad[3] += (dyad[2] - dyad[3]) >> 4;
+        dyad[4] += (dyad[3] - dyad[4]) >> 5;
+        dyad[5] += (dyad[4] - dyad[5]) >> 6;
+
+        let voc_wave = dyad[2] - dyad[4];
+        sub_e += dyad[4].unsigned_abs();
+        f0_e += voc_wave.unsigned_abs();
+        f1_e += (dyad[1] - dyad[2]).unsigned_abs();
+        f2_e += (dyad[0] - dyad[1]).unsigned_abs();
+        f3_e += (x - dyad[0]).unsigned_abs();
+
+        // Glottal rising zero-crossing tracker on `voc_wave` (80..320 Hz band) + exact p/q harmonic lock
+        if prev_voc_wave <= 0 && voc_wave > 24 {
+            if let Some(prev_zc) = last_zc_idx {
+                let period = (idx - prev_zc) as u64;
+                if period >= min_period {
+                    last_zc_idx = Some(idx);
+                    if period <= max_period {
+                        total_glottal_cycles += 1;
+                        let mut matched = false;
+                        for &h in period_ring.iter().take(period_filled) {
+                            if h == 0 {
+                                continue;
+                            }
+                            let (hi, lo) = if period >= h {
+                                (period, h)
+                            } else {
+                                (h, period)
+                            };
+                            for &(rn, rd) in &HARMONIC_RATIOS {
+                                // Tolerance 1/16 via integer cross-multiplication
+                                if (hi * rd).abs_diff(lo * rn) * 16 <= lo * rd {
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                            if matched {
+                                break;
+                            }
+                        }
+                        if matched {
+                            harmonic_locked_cycles += 1;
+                        }
+                        period_ring[period_cursor] = period;
+                        period_cursor = (period_cursor + 1) & 15;
+                        if period_filled < 16 {
+                            period_filled += 1;
+                        }
+                    }
+                }
+            } else {
+                last_zc_idx = Some(idx);
+            }
+        }
+        prev_voc_wave = voc_wave;
+
+        // Per-20ms frame energy + Marine salience accumulation
+        cur_frame_abs_sum += cur.unsigned_abs() as u64;
+        cur_frame_sal_sum += det.process_sample_i16(s, idx) as u64;
+        cur_frame_count += 1;
+
+        if cur_frame_count >= frame_len || idx + 1 == samples.len() {
+            let denom = cur_frame_count.max(1) as u64;
+            let f_abs = (cur_frame_abs_sum / denom) as u32;
+            let f_sal = (cur_frame_sal_sum / denom) as u16;
+            let f_v = f_abs >= 120 && f_sal >= 320;
+            if f_v {
+                voiced_frames += 1;
+            }
+            if f_abs > peak_frame_abs {
+                peak_frame_abs = f_abs;
+            }
+            if f_abs < min_frame_abs {
+                min_frame_abs = f_abs;
+            }
+            frame_abs.push(f_abs);
+            frame_voiced.push(f_v);
+            cur_frame_abs_sum = 0;
+            cur_frame_sal_sum = 0;
+            cur_frame_count = 0;
+        }
+    }
+
+    if min_frame_abs == u32::MAX {
+        min_frame_abs = 0;
+    }
+
+    let total_frames = frame_abs.len().max(1) as u64;
+    let voiced_ratio_pq = rational_from_u64(voiced_frames, total_frames);
+    let zcr_pq = if samples.len() > 1 {
+        rational_from_u64(crossings, (samples.len() - 1) as u64)
+    } else {
+        Rational::ZERO
+    };
+    let harmonic_lock_pq = if total_glottal_cycles == 0 {
+        Rational::ZERO
+    } else {
+        rational_from_u64(harmonic_locked_cycles, total_glottal_cycles)
+    };
+    let formant_num = f1_e.saturating_add(f2_e).saturating_add(f3_e);
+    let formant_den = sub_e
+        .saturating_add(f0_e)
+        .saturating_add(formant_num)
+        .max(1);
+    let formant_ratio_pq = if peak_frame_abs < 90 {
+        Rational::ZERO
+    } else {
+        rational_from_u64(formant_num, formant_den)
+    };
+    let modulation_depth_pq = if peak_frame_abs == 0 {
+        Rational::ZERO
+    } else {
+        rational_from_u64(
+            peak_frame_abs.saturating_sub(min_frame_abs) as u64,
+            peak_frame_abs as u64,
+        )
+    };
+
+    // 20th-percentile frame floor for robust integer SNR (peak / floor)
+    let mut sorted_abs = frame_abs.clone();
+    sorted_abs.sort_unstable();
+    let floor_abs = sorted_abs
+        .get(sorted_abs.len() / 5)
+        .copied()
+        .unwrap_or(1)
+        .max(1);
+    let snr_pq = rational_from_u64(peak_frame_abs as u64, floor_abs as u64);
+
+    // Hysteresis syllable nucleus counter (>= 80 ms / 4 frames minimum syllable spacing)
+    let syl_on_thr = (peak_frame_abs / 3).max(140);
+    let syl_off_thr = (peak_frame_abs / 5).max(80);
+    let mut syllable_count: u16 = 0;
+    let mut in_syllable = false;
+    let mut frames_since_syl: u32 = 4;
+    for (f_abs, f_v) in frame_abs.iter().copied().zip(frame_voiced.iter().copied()) {
+        frames_since_syl = frames_since_syl.saturating_add(1);
+        if !in_syllable && f_v && f_abs >= syl_on_thr && frames_since_syl >= 4 {
+            syllable_count = syllable_count.saturating_add(1);
+            in_syllable = true;
+            frames_since_syl = 0;
+        } else if in_syllable && (!f_v || f_abs <= syl_off_thr) {
+            in_syllable = false;
+        }
+    }
+    if syllable_count == 0 && voiced_frames >= 3 {
+        syllable_count = 1;
+    }
+    let syllable_rate_pq = if syllable_count == 0 {
+        Rational::ZERO
+    } else {
+        rational_from_u64((syllable_count as u64) * (sr as u64), samples.len() as u64)
+    };
+
+    let top_sal_q15 = salience_report
+        .top_grains
+        .first()
+        .map(|g| g.salience_q15)
+        .unwrap_or(0);
+    let f0_hz_pq = salience_report.overall_f0_hz;
+    let f0_int = f0_hz_pq.num / (f0_hz_pq.den.max(1) as i32);
+    let duration_ms = salience_report.duration_ms;
+
+    // Exact p/q acoustic classification (zero floats)
+    // Reject unvoiced broadband noise/hiss: high ZCR (>= 1/3) OR HF energy dominating vocal band
+    let vocal_core_e = f0_e.saturating_add(f1_e).saturating_add(f2_e);
+    let is_broadband_hiss = rational_ge(zcr_pq, 1, 3) || f3_e > vocal_core_e.saturating_mul(2);
+    let active_energy_frames = frame_abs.iter().filter(|&&a| a >= 140).count();
+    let class = if peak_frame_abs < 90 {
+        PqAcousticClass::Silence
+    } else if voiced_frames < 3 {
+        if active_energy_frames <= 3 {
+            PqAcousticClass::PercussiveTransient
+        } else {
+            PqAcousticClass::AmbientNoise
+        }
+    } else if salience_report.top_grains.is_empty()
+        || top_sal_q15 < 512
+        || !(60..=400).contains(&f0_int)
+        || is_broadband_hiss
+        || sub_e > (f0_e.saturating_add(formant_num)).saturating_mul(2)
+        || !rational_ge(harmonic_lock_pq, 1, 4)
+    {
+        PqAcousticClass::AmbientNoise
+    } else if duration_ms >= 1_200
+        && rational_ge(harmonic_lock_pq, 1, 2)
+        && !rational_ge(modulation_depth_pq, 1, 5)
+        && syllable_count <= 1
+        && rational_ge(voiced_ratio_pq, 9, 10)
+    {
+        PqAcousticClass::MusicOrTone
+    } else {
+        PqAcousticClass::VoicedSpeech
+    };
+
+    let is_speech = class == PqAcousticClass::VoicedSpeech;
+    let is_direct_call = is_speech
+        && top_sal_q15 >= 1_400
+        && (1..=3).contains(&syllable_count)
+        && duration_ms <= 2_400;
+
+    PqSpeechDetection {
+        class,
+        is_speech,
+        is_direct_call,
+        duration_pq,
+        f0_hz_pq,
+        salience_pq: salience_report.overall_salience_pq,
+        voiced_ratio_pq,
+        zcr_pq,
+        harmonic_lock_pq,
+        formant_ratio_pq,
+        modulation_depth_pq,
+        snr_pq,
+        syllable_count,
+        syllable_rate_pq,
+        vad_byte: salience_report.overall_vad_byte,
+        salience_report,
+    }
+}
+
+/// Select a real physical PipeWire/PulseAudio microphone capture source from
+/// `pactl list sources short` output, strictly excluding `.monitor` speaker loopback sinks.
+///
+/// Priority:
+/// 1. `alsa_input.*Mic1__source` (laptop stereo DMIC array)
+/// 2. Any `alsa_input.*` hardware microphone
+/// 3. Any `bluez_input.*` Bluetooth microphone
+/// 4. Any other non-monitor capture source
+pub fn select_non_monitor_capture_source(pactl_sources_short: &str) -> Option<String> {
+    let mut best: Option<(u8, String)> = None;
+    for line in pactl_sources_short.lines() {
+        let mut cols = line.split_whitespace();
+        let _idx = cols.next();
+        let Some(name) = cols.next() else {
+            continue;
+        };
+        if name.is_empty() || name.ends_with(".monitor") || name.contains(".monitor") {
+            continue;
+        }
+        let rank = if name.starts_with("alsa_input.") && name.contains("Mic1__source") {
+            0u8
+        } else if name.starts_with("alsa_input.") {
+            1u8
+        } else if name.starts_with("bluez_input.") {
+            2u8
+        } else {
+            3u8
+        };
+        if best.as_ref().map(|(r, _)| rank < *r).unwrap_or(true) {
+            best = Some((rank, name.to_string()));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3057,5 +3517,119 @@ mod tests {
         let trimmed = trim_salient_speech_pcm_i16(&padded_pcm, 16_000);
         assert!(trimmed.len() < padded_pcm.len());
         assert!(trimmed.len() >= 8_000);
+    }
+
+    #[test]
+    fn pq_speech_detector_classifies_speech_silence_transient_noise_and_steady_tone_without_floats()
+    {
+        let sr = 16_000u32;
+
+        // 1. Silence -> Silence
+        let silence = vec![8i16; 8_000];
+        let det_sil = detect_speech_pq(&silence, sr, 1_700_000_000);
+        assert_eq!(det_sil.class, PqAcousticClass::Silence);
+        assert!(!det_sil.is_speech);
+        assert_eq!(det_sil.syllable_count, 0);
+
+        // 2. Short 20ms percussive click inside 400ms quiet window -> PercussiveTransient
+        let mut click = vec![10i16; 6_400];
+        for sample in click.iter_mut().skip(1_000).take(200) {
+            *sample = 14_000;
+        }
+        let det_click = detect_speech_pq(&click, sr, 1_700_000_001);
+        assert!(!det_click.is_speech);
+        assert_eq!(det_click.class, PqAcousticClass::PercussiveTransient);
+
+        // 2b. Sustained broadband noise (integer LCG white noise, 500ms) -> AmbientNoise
+        let mut lcg: u64 = 0x5EED_8B15_2026_1123;
+        let noise: Vec<i16> = (0..8_000)
+            .map(|_| {
+                lcg = lcg
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((lcg >> 48) as i16) / 6
+            })
+            .collect();
+        let det_noise = detect_speech_pq(&noise, sr, 1_700_000_001);
+        assert!(!det_noise.is_speech);
+        assert_eq!(det_noise.class, PqAcousticClass::AmbientNoise);
+
+        // 3. Steady 1.6s unmodulated pure 200Hz tone (music/drone) -> MusicOrTone
+        let steady_tone: Vec<i16> = (0..25_600usize)
+            .map(|i| {
+                let p = (i % 80) as i32; // 200 Hz
+                let tri = if p < 40 {
+                    (p - 20) * 600
+                } else {
+                    (60 - p) * 600
+                };
+                tri.clamp(-14_000, 14_000) as i16
+            })
+            .collect();
+        let det_tone = detect_speech_pq(&steady_tone, sr, 1_700_000_002);
+        assert_eq!(det_tone.class, PqAcousticClass::MusicOrTone);
+        assert!(!det_tone.is_speech);
+        assert!(rational_ge(det_tone.harmonic_lock_pq, 1, 2));
+
+        // 4. Two-syllable human speech ("Hey Aye": two 220ms voiced syllables at ~155 Hz + vowel formant ripple separated by 120ms gap)
+        let mut speech = Vec::with_capacity(14_400);
+        speech.extend(std::iter::repeat_n(12i16, 1_600)); // 100ms pre-roll
+        for _syl in 0..2 {
+            for i in 0..3_520usize {
+                let p0 = (i % 103) as i32; // ~155 Hz glottal F0
+                let glot = if p0 < 51 {
+                    (p0 - 25) * 480
+                } else {
+                    (77 - p0) * 480
+                };
+                let p1 = (i % 24) as i32; // ~666 Hz F1 vowel formant
+                let f1 = if p1 < 12 {
+                    (p1 - 6) * 420
+                } else {
+                    (18 - p1) * 420
+                };
+                speech.push((glot + f1).clamp(-22_000, 22_000) as i16);
+            }
+            speech.extend(std::iter::repeat_n(18i16, 2_240)); // 140ms inter-syllable pause
+        }
+        let det_speech = detect_speech_pq(&speech, sr, 1_700_000_003);
+        assert_eq!(det_speech.class, PqAcousticClass::VoicedSpeech);
+        assert!(det_speech.is_speech);
+        assert!(det_speech.is_direct_call);
+        assert_eq!(det_speech.syllable_count, 2);
+        assert!(det_speech.syllable_rate_pq.num > 0);
+        assert!(rational_ge(det_speech.harmonic_lock_pq, 1, 2));
+        assert!(rational_ge(det_speech.modulation_depth_pq, 1, 2));
+        let summary = det_speech.format_acoustic_summary("hue");
+        assert!(summary.starts_with("[p/q call: hue "));
+        assert!(!summary.contains('.'));
+    }
+
+    #[test]
+    fn non_monitor_capture_source_selector_rejects_speaker_monitors() {
+        let monitors_only = "\
+66\talsa_output.usb-TX-384Khz.analog-stereo.monitor\tPipeWire\ts24le 2ch 384000Hz\tRUNNING
+2727\tphoenix_revelation_sink.monitor\tPipeWire\tfloat32le 2ch 48000Hz\tRUNNING
+";
+        assert_eq!(select_non_monitor_capture_source(monitors_only), None);
+
+        let mixed = "\
+66\talsa_output.usb-TX-384Khz.analog-stereo.monitor\tPipeWire\ts24le 2ch 384000Hz\tRUNNING
+88\tbluez_input.AA_BB_CC.0\tPipeWire\ts16le 1ch 16000Hz\tIDLE
+91\talsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source\tPipeWire\ts16le 2ch 48000Hz\tRUNNING
+";
+        assert_eq!(
+            select_non_monitor_capture_source(mixed).as_deref(),
+            Some("alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source")
+        );
+
+        let bt_only = "\
+66\talsa_output.usb-TX-384Khz.analog-stereo.monitor\tPipeWire\ts24le 2ch 384000Hz\tRUNNING
+88\tbluez_input.AA_BB_CC.0\tPipeWire\ts16le 1ch 16000Hz\tIDLE
+";
+        assert_eq!(
+            select_non_monitor_capture_source(bt_only).as_deref(),
+            Some("bluez_input.AA_BB_CC.0")
+        );
     }
 }

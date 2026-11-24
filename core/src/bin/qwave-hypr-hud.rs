@@ -680,16 +680,11 @@ fn refresh_stack_trits_sync() -> (Trit, Trit, Trit, Trit, Trit) {
     let (ear, lqd, aye, esp, a6k) = thread::scope(|s| {
         let h_ear = s.spawn(probe_ear_service);
         let h_lqd = s.spawn(|| {
-            let t8786 = probe_http_loopback(8786, "/health", 150);
-            if t8786 == Trit::Plus {
+            let t18786 = probe_http_loopback(18786, "/health", 150);
+            if t18786 == Trit::Plus {
                 return Trit::Plus;
             }
-            let addr8785 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8785);
-            if TcpStream::connect_timeout(&addr8785, Duration::from_millis(120)).is_ok() {
-                Trit::Plus
-            } else {
-                t8786
-            }
+            probe_http_loopback(8786, "/health", 150)
         });
         let h_aye = s.spawn(|| {
             let t = probe_http_loopback(8787, "/", 250);
@@ -1152,7 +1147,7 @@ pub fn render_status_tui_frame(snap: &HudSnapshot) -> String {
     out.push_str(&format!(
         "  • {c_amber}SUPER+O{c_rst}               : AI Command & Model Switcher (A6000 :11436 / Local :11434 / Aye :8787)\n\
          \x20 • {c_amber}SUPER+X{c_rst}               : AI Clipboard Explain/Refactor (wl-paste -> alexiai :8787 -> wl-copy)\n\
-         \x20 • {c_amber}SUPER+Space{c_rst} / {c_amber}SUPER+V{c_rst} : Voice-Type (qwave --listen 5 -> qultrakotoro:8785 -> wl-copy + wtype)\n\
+         \x20 • {c_amber}SUPER+Space{c_rst} / {c_amber}SUPER+V{c_rst} : Voice-Type (qwave --listen 5 -> p/q Marine-Svara + liquid-rust -> wl-copy + wtype)\n\
          \x20 • {c_amber}SUPER+A{c_rst}               : Ask Aye    (qwave --listen 5 -> alexiai :8787 -> qwave --speak)\n\
          \x20 • {c_amber}SUPER+grave{c_rst} / {c_amber}SUPER+Z{c_rst} : Self-Healing Scratchpads (special:term Dropdown / special:qwave Radar)\n\
          \x20 • {c_amber}SUPER+U{c_rst}               : Sovereign Vault (Ed25519 + MEM|8 Personal-Signature Password Unseal)\n\
@@ -1429,7 +1424,7 @@ pub fn render_graphical_markdown_hud(snap: &HudSnapshot) -> String {
     md.push_str("| **`SUPER + D`** / **`SUPER + B`** | Graphical Qwave Studio HUD | `qwave-hypr-hud markdown-hud` (Live 2D Polar Sonar + WebGL `WaveScene` + SSE Reload) |\n");
     md.push_str("| **`SUPER + O`** / **`SUPER + N`** | Sovereign AI Command & Model Switcher | `qwave-hypr-hud ai-menu` (A6000 `:11436` / Local `:11434` / Aye `:8787` / Fleet) |\n");
     md.push_str("| **`SUPER + X`** | Clipboard -> AI Explain & Refactor | `qwave-hypr-hud ai-clip` (`wl-paste` -> `alexiai :8787` -> `wl-copy` + speech) |\n");
-    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `qultrakotoro :8785` / `kotorocli` -> `wl-copy` + `wtype` |\n");
+    md.push_str("| **`SUPER + Space`** / **`SUPER + V`** | Voice-Type | `qwave --listen 5` -> `p/q Marine-Svara` + `liquid-rust :18786/:8786` -> `wl-copy` + `wtype` |\n");
     md.push_str("| **`SUPER + A`** | Ask Aye | `qwave --listen 5` -> `alexiai :8787` -> `qwave --speak` |\n");
     md.push_str("| **`SUPER + grave`** / **`SUPER + Z`** / **`SUPER + Shift + G`** | Self-Healing Qwave Scratchpads | `qwave-hypr-hud scratchpad term|qwave|btop` (`special:term`, `special:qwave`, `special:btop`) |\n");
     md.push_str("| **`SUPER + U`** | Sovereign Personal-Signature Vault | `qwave-hypr-hud vault-menu` (Ed25519 + `MEM|8` `79B` Wave Unseal & Auto-Type) |\n");
@@ -4051,12 +4046,11 @@ pub fn run_boot_session(args: &[String]) -> String {
             .stderr(Stdio::null())
             .status();
 
-        // 2. Ensure qwave-whisper.service, liquid-rust.service, qwave-ear.service, and qwave-wifi-heal.timer are active
+        // 2. Ensure liquid-rust.service, qwave-ear.service (pure p/q detection, no whisper-server), and qwave-wifi-heal.timer are active
         let _ = Command::new("systemctl")
             .args([
                 "--user",
                 "start",
-                "qwave-whisper.service",
                 "liquid-rust.service",
                 "qwave-ear.service",
                 "qwave-wifi-heal.timer",
