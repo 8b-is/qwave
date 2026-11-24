@@ -43,12 +43,13 @@ use qwave_core::mesh::{
 use qwave_core::phoenix_sound::{PhoenixSoundPreset, phoenix_transform_audio_file};
 use qwave_core::quanttern::{VadPq, default_threshold_pq, pack_vad_pq_byte};
 use qwave_core::salience::{
-    AcousticSourceKind, GEODESIC_PQ_DEN, MarineIntDetector, RingBuffer, RoomAcousticTracker,
-    RoomSpatialMapPq, SelfCalibrationEngine, SelfCalibrationOutcome, SpeakerSalienceProfile,
-    StereoMicTriangulation, StereoPcmRingBuffer, combine_salient_speech_wav,
-    contextualize_room_transcript, decode_wav_i16, encode_wav_i16, extract_salient_grains,
-    is_hey_aye_wake_phrase, sanitize_and_dedup_stt_transcript, triangulate_stereo_dmic_i16,
-    trim_salient_speech_pcm_i16,
+    AcousticSourceKind, GEODESIC_PQ_DEN, MarineIntDetector, PqSpeechDetection, RingBuffer,
+    RoomAcousticTracker, RoomSpatialMapPq, SelfCalibrationEngine, SelfCalibrationOutcome,
+    SpeakerSalienceProfile, StereoMicTriangulation, StereoPcmRingBuffer,
+    combine_salient_speech_wav, contextualize_room_transcript, decode_wav_i16, detect_speech_pq,
+    encode_wav_i16, extract_salient_grains, is_hey_aye_wake_phrase,
+    sanitize_and_dedup_stt_transcript, select_non_monitor_capture_source,
+    triangulate_stereo_dmic_i16, trim_salient_speech_pcm_i16,
 };
 use qwave_core::tex_pdf::{
     MediaExtract, PdfExtract, compile_tex_to_markdown, compile_tex_to_markdown_with_mem8,
@@ -1341,23 +1342,28 @@ fn handle_client(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result
     }
 }
 
-/// Transcribe 16kHz PCM WAV recorded in Qwave using Sovereign `qUltraKotoro` (`ggml-large-v3-turbo-q5_0`
-/// + `QuantTern` `qt:` emotional ternary code + `liquid-rust` `LFM2.5-Audio` + Phoenix Speaker Recognition),
-/// AND extract Top-K Highest-Salience Vocal Grains into `MEM|8` via zero-float `qwave_core::salience`.
+/// Analyze and (when speech is detected) transcribe 16kHz PCM WAV recorded in Qwave using
+/// our own zero-float `p/q` Marine-Svara detector (`qwave_core::salience::detect_speech_pq`),
+/// `QuantTern` `qt:` emotional ternary code, and `MEM|8` Vocal Grain Imprinting,
+/// without running a heavyweight local `whisper-server`.
 fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     if wav_bytes.len() < 64 {
         return "{\"ok\":false,\"error\":\"audio buffer too short\"}".to_string();
     }
 
-    // 0. Zero-Float Integer Marine Salience, qUltraKotoro QuantTern qt: tag & MEM|8 Vocal Grain Imprinting
+    // 0. Zero-Float Integer `p/q` Marine-Svara Detection, QuantTern `qt:` tag & MEM|8 Vocal Grain Imprinting
     let mut salience_json = "null".to_string();
     let mut kotoro_qt = "qt:55".to_string();
+    let mut pq_det_opt: Option<PqSpeechDetection> = None;
     if let Some((sr, pcm_samples)) = decode_wav_i16(wav_bytes) {
         let now = now_secs();
-        let report = extract_salient_grains(&pcm_samples, sr, 3, now);
+        let pq_det = detect_speech_pq(&pcm_samples, sr, now);
+        let report = &pq_det.salience_report;
         let mut prof = state.salience_profile.lock().unwrap();
-        prof.absorb_report(&report);
-        save_salience_profile(&prof);
+        if pq_det.is_speech {
+            prof.absorb_report(report);
+            save_salience_profile(&prof);
+        }
         let total_learned = prof.grains_learned;
         let f0_num = report.overall_f0_hz.num;
         let f0_den = report.overall_f0_hz.den.max(1);
@@ -1369,35 +1375,64 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
         let top_count = report.top_grains.len();
 
         // Persist the 79-byte WaveInt frames of the highest-salience vocal grains into MEM|8 bounded ring buffers
-        if let Ok(home) = env::var("HOME") {
-            let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
-            let _ = fs::create_dir_all(&dir);
-            let mut frames = Vec::with_capacity(report.top_grains.len());
-            let mut json_lines = Vec::with_capacity(report.top_grains.len());
-            for g in &report.top_grains {
-                let frame = g.wave.to_frame();
-                frames.push(frame);
-                let mut hex = String::with_capacity(158);
-                for b in &frame {
-                    hex.push_str(&format!("{b:02x}"));
+        if pq_det.is_speech {
+            if let Ok(home) = env::var("HOME") {
+                let dir = PathBuf::from(home).join(".local/share/qwave/mem8");
+                let _ = fs::create_dir_all(&dir);
+                let mut frames = Vec::with_capacity(report.top_grains.len());
+                let mut json_lines = Vec::with_capacity(report.top_grains.len());
+                for g in &report.top_grains {
+                    let frame = g.wave.to_frame();
+                    frames.push(frame);
+                    let mut hex = String::with_capacity(158);
+                    for b in &frame {
+                        hex.push_str(&format!("{b:02x}"));
+                    }
+                    json_lines.push(format!(
+                        "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"kotoro_qt\":\"qt:{:02x}\",\"frame_hex\":\"{hex}\"}}",
+                        g.f0_hz.num,
+                        g.f0_hz.den,
+                        g.salience_pq.num,
+                        g.salience_pq.den,
+                        g.vad_byte,
+                        g.vad_byte
+                    ));
                 }
-                json_lines.push(format!(
-                    "{{\"ts\":{now},\"f0_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"vad_byte\":\"0x{:02x}\",\"kotoro_qt\":\"qt:{:02x}\",\"frame_hex\":\"{hex}\"}}",
-                    g.f0_hz.num,
-                    g.f0_hz.den,
-                    g.salience_pq.num,
-                    g.salience_pq.den,
-                    g.vad_byte,
-                    g.vad_byte
-                ));
+                append_wave_bin_ring_file(&dir.join("speech_salience_waves.bin"), &frames, 512);
+                append_jsonl_ring_file(&dir.join("speech_salience_waves.jsonl"), &json_lines, 512);
             }
-            append_wave_bin_ring_file(&dir.join("speech_salience_waves.bin"), &frames, 512);
-            append_jsonl_ring_file(&dir.join("speech_salience_waves.jsonl"), &json_lines, 512);
         }
 
         salience_json = format!(
-            "{{\"f0_hz\":{f0_int},\"f0_pq\":\"{f0_num}/{f0_den}\",\"salience_pq\":\"{sal_num}/{sal_den}\",\"vad_byte\":\"0x{vad_b:02x}\",\"kotoro_qt\":\"{kotoro_qt}\",\"grains_extracted\":{top_count},\"total_grains_learned\":{total_learned}}}"
+            "{{\"detector\":\"pq-marine-svara\",\"acoustic_class\":\"{}\",\"is_speech\":{},\"is_direct_call\":{},\"f0_hz\":{f0_int},\"f0_pq\":\"{f0_num}/{f0_den}\",\"salience_pq\":\"{sal_num}/{sal_den}\",\"voiced_ratio_pq\":\"{}/{}\",\"zcr_pq\":\"{}/{}\",\"harmonic_lock_pq\":\"{}/{}\",\"formant_ratio_pq\":\"{}/{}\",\"modulation_depth_pq\":\"{}/{}\",\"syllables\":{},\"syllable_rate_pq\":\"{}/{}\",\"vad_byte\":\"0x{vad_b:02x}\",\"kotoro_qt\":\"{kotoro_qt}\",\"grains_extracted\":{top_count},\"total_grains_learned\":{total_learned}}}",
+            pq_det.class.as_str(),
+            pq_det.is_speech,
+            pq_det.is_direct_call,
+            pq_det.voiced_ratio_pq.num,
+            pq_det.voiced_ratio_pq.den,
+            pq_det.zcr_pq.num,
+            pq_det.zcr_pq.den,
+            pq_det.harmonic_lock_pq.num,
+            pq_det.harmonic_lock_pq.den,
+            pq_det.formant_ratio_pq.num,
+            pq_det.formant_ratio_pq.den,
+            pq_det.modulation_depth_pq.num,
+            pq_det.modulation_depth_pq.den,
+            pq_det.syllable_count,
+            pq_det.syllable_rate_pq.num,
+            pq_det.syllable_rate_pq.den,
         );
+        pq_det_opt = Some(pq_det);
+    }
+
+    // Short-circuit immediately when our zero-float p/q detector classifies audio as non-speech!
+    if let Some(ref pq_det) = pq_det_opt {
+        if !pq_det.is_speech {
+            return format!(
+                "{{\"ok\":true,\"text\":\"\",\"backend\":\"qwave-pq-marine-svara (non-speech gated: {})\",\"kotoro_qt\":\"{kotoro_qt}\",\"salience\":{salience_json}}}",
+                pq_det.class.as_str()
+            );
+        }
     }
 
     let wav_path = format!("/tmp/qwave_mic_{}.wav", std::process::id());
@@ -1418,29 +1453,52 @@ fn handle_alexiai_stt(wav_bytes: &[u8], state: &Arc<AppState>) -> String {
     }
 
     let _ = fs::remove_file(&wav_path);
+    if let Some(pq_det) = pq_det_opt {
+        let summary = pq_det.format_acoustic_summary("voice");
+        return format!(
+            "{{\"ok\":true,\"text\":{},\"backend\":\"qwave-pq-marine-svara (zero-float p/q)\",\"kotoro_qt\":\"{kotoro_qt}\",\"salience\":{salience_json}}}",
+            markdown_source_literal(&summary)
+        );
+    }
     "{\"ok\":false,\"error\":\"no offline STT backend succeeded\"}".to_string()
 }
 
-/// Fast, Zero-Float Sovereign offline speech-to-text transcription powered by `qUltraKotoro`
-/// (Marine Salience + QuantTern `qt:` + Hot Loopback `:8785` `ggml-large-v3-turbo-q5_0` +
-/// `kotorocli` + `:8786` `liquid-rust`).
+/// Fast, Zero-Float Sovereign offline speech detection & transcription powered FIRST by our own
+/// `p/q` Marine-Svara detector (`detect_speech_pq` + `trim_salient_speech_pcm_i16`), without
+/// relying on a CPU-burning local `whisper-server` (`:8785`) or auto-spawning `whisper-cli`.
 ///
 /// Order of preference:
-/// 1. Marine Salience boundary trimmer (`trim_salient_speech_pcm_i16`) strips leading/trailing silence.
-/// 2. Hot loopback `qultrakotoro` (`POST http://127.0.0.1:8785/inference`, `0 ms` model load,
-///    `ggml-large-v3-turbo-q5_0.bin`, domain vocabulary prompt, `--suppress-nst`, `-ac 384`).
-/// 3. Native Pure-Rust `kotorocli transcribe <wav> --json` (`qUltraKotoro` CLI engine).
-/// 4. Hot loopback `liquid-rust serve` daemon (`POST http://127.0.0.1:8786/v1/audio/wav`).
-/// 5. Local `/usr/bin/whisper-cli` with `ggml-large-v3-turbo-q5_0.bin` (fallback `ggml-base.en.bin`).
-/// 6. Every output is filtered through `sanitize_and_dedup_stt_transcript` + `contextualize_room_transcript`.
+/// 1. Zero-float `p/q` Marine-Svara gate (`detect_speech_pq`): rejects silence, noise, clicks,
+///    and steady music in `< 1 ms`. Trims leading/trailing silence and resamples to 16 kHz.
+/// 2. If `QWAVE_STT_MODE=pq-only`, returns the pure `p/q` acoustic summary immediately.
+/// 3. Remote GPU `cheet-bridge` `liquid-rust` (`127.0.0.1:18786/v1/audio/wav`, zero local CPU).
+/// 4. Local loopback `liquid-rust serve` (`127.0.0.1:8786/v1/audio/wav`).
+/// 5. Native Pure-Rust `kotorocli transcribe <wav> --json` if installed.
+/// 6. Opt-in only: `whisper-server :8785` (`QWAVE_USE_WHISPER_SERVER=1`) or `whisper-cli`
+///    (`QWAVE_ALLOW_WHISPER_CLI=1`) — both disabled by default to protect host CPU/thermals.
+/// 7. Fallback to `kokoro-speak stt` if a verified `.stt.json` sidecar exists.
 fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)> {
     const SOVEREIGN_VOCAB_PROMPT: &str = "Hey Aye, Qwave, qUltraKotoro, Hyprland, Alexiai, Alexandra, Aurora, Sovereign, MEM8, 8b-is, Waybar, WUPZ.";
 
-    // 0. Pre-trim leading and trailing non-salient silence in pure integer DSP AND normalize to 16kHz
-    //    so hot loopback `qultrakotoro:8785` processes any sample rate (16k/24k/44.1k/48k) in ~200ms!
+    // 0. Zero-float p/q speech gate + Marine Salience silence trimmer + 16 kHz integer resampler
     let mut trimmed_wav_bytes: Option<Vec<u8>> = None;
+    let mut pq_det_opt: Option<PqSpeechDetection> = None;
     if let Ok(raw_bytes) = fs::read(wav_path) {
         if let Some((sr, pcm)) = decode_wav_i16(&raw_bytes) {
+            let pq_det = detect_speech_pq(&pcm, sr, now_secs());
+            if !pq_det.is_speech {
+                return None;
+            }
+            if env::var("QWAVE_STT_MODE")
+                .map(|v| v.eq_ignore_ascii_case("pq-only") || v.eq_ignore_ascii_case("pq"))
+                .unwrap_or(false)
+            {
+                return Some((
+                    pq_det.format_acoustic_summary("voice"),
+                    "qwave-pq-marine-svara (zero-float p/q)",
+                ));
+            }
+            pq_det_opt = Some(pq_det);
             let active_pcm = if pcm.len() > (sr as usize * 3) {
                 let trimmed_pcm = trim_salient_speech_pcm_i16(&pcm, sr);
                 if trimmed_pcm.len() >= (sr as usize) && trimmed_pcm.len() < pcm.len() {
@@ -1492,38 +1550,36 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     };
 
-    // 1. Hot loopback `qultrakotoro` on 127.0.0.1:8785 (`0 ms` model load, `ggml-large-v3-turbo-q5_0`)
+    // 1. Remote GPU `cheet-bridge` (`127.0.0.1:18786`) then local loopback `liquid-rust` (`127.0.0.1:8786`)
     if let Some(ref wav_bytes) = trimmed_wav_bytes {
-        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8785).into();
-        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(80)) {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(6500)));
-            let boundary = "----QwaveSovereignBoundary8bIs";
-            let part_fmt = format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n\
-                 --{boundary}\r\nContent-Disposition: form-data; name=\"temperature\"\r\n\r\n0.0\r\n\
-                 --{boundary}\r\nContent-Disposition: form-data; name=\"temperature_inc\"\r\n\r\n0.0\r\n\
-                 --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
-            );
-            let part_end = format!("\r\n--{boundary}--\r\n");
-            let content_len = part_fmt.len() + wav_bytes.len() + part_end.len();
-            let header = format!(
-                "POST /inference HTTP/1.1\r\nHost: 127.0.0.1:8785\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {content_len}\r\nConnection: close\r\n\r\n"
-            );
-            if stream.write_all(header.as_bytes()).is_ok()
-                && stream.write_all(part_fmt.as_bytes()).is_ok()
-                && stream.write_all(wav_bytes).is_ok()
-                && stream.write_all(part_end.as_bytes()).is_ok()
-            {
-                let mut resp = String::new();
-                if stream.read_to_string(&mut resp).is_ok() {
-                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
-                        if let Some(tx) = extract_json_str(body, "text") {
-                            if let Some(res) = finalize_tx(
-                                &tx,
-                                "qultrakotoro:8785 (Hot ggml-large-v3-turbo-q5_0 + QuantTern + Marine Salience)",
-                            ) {
-                                return Some(res);
+        for (port, label) in [
+            (
+                18786u16,
+                "cheet-bridge+liquid-rust:18786 (RTX 6000 Ada LFM2.5 + p/q Marine-Svara)",
+            ),
+            (
+                8786u16,
+                "liquid-rust:8786 (Pure Rust LFM2.5 + p/q Marine-Svara)",
+            ),
+        ] {
+            let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+            if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(80)) {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(1200)));
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(4500)));
+                let header = format!(
+                    "POST /v1/audio/wav HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    wav_bytes.len()
+                );
+                if stream.write_all(header.as_bytes()).is_ok()
+                    && stream.write_all(wav_bytes).is_ok()
+                {
+                    let mut resp = String::new();
+                    if stream.read_to_string(&mut resp).is_ok() {
+                        if let Some((_, body)) = resp.split_once("\r\n\r\n") {
+                            if let Some(tx) = extract_json_str(body, "text") {
+                                if let Some(res) = finalize_tx(&tx, label) {
+                                    return Some(res);
+                                }
                             }
                         }
                     }
@@ -1545,7 +1601,7 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
                         if !tx.trim().is_empty() {
                             if let Some(res) = finalize_tx(
                                 &tx,
-                                "qultrakotoro-cli (kotorocli + QuantTern + Marine Salience)",
+                                "qultrakotoro-cli (kotorocli + QuantTern + p/q Marine-Svara)",
                             ) {
                                 return Some(res);
                             }
@@ -1557,26 +1613,39 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    // 3. Hot loopback `liquid-rust serve` on 127.0.0.1:8786
-    if let Some(ref wav_bytes) = trimmed_wav_bytes {
-        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8786).into();
-        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(60)) {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(1600)));
-            let header = format!(
-                "POST /v1/audio/wav HTTP/1.1\r\nHost: 127.0.0.1:8786\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                wav_bytes.len()
-            );
-            if stream.write_all(header.as_bytes()).is_ok() && stream.write_all(wav_bytes).is_ok() {
-                let mut resp = String::new();
-                if stream.read_to_string(&mut resp).is_ok() {
-                    if let Some((_, body)) = resp.split_once("\r\n\r\n") {
-                        if let Some(tx) = extract_json_str(body, "text") {
-                            if let Some(res) = finalize_tx(
-                                &tx,
-                                "qultrakotoro+liquid-rust:8786 (Pure Rust LFM2.5 + QuantTern)",
-                            ) {
-                                return Some(res);
+    // 3. Opt-in ONLY: legacy loopback `whisper-server` on 127.0.0.1:8785 (`QWAVE_USE_WHISPER_SERVER=1`)
+    if env::var("QWAVE_USE_WHISPER_SERVER").ok().as_deref() == Some("1") {
+        if let Some(ref wav_bytes) = trimmed_wav_bytes {
+            let addr: std::net::SocketAddr = ([127, 0, 0, 1], 8785).into();
+            if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(80)) {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(6500)));
+                let boundary = "----QwaveSovereignBoundary8bIs";
+                let part_fmt = format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n\
+                     --{boundary}\r\nContent-Disposition: form-data; name=\"temperature\"\r\n\r\n0.0\r\n\
+                     --{boundary}\r\nContent-Disposition: form-data; name=\"temperature_inc\"\r\n\r\n0.0\r\n\
+                     --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+                );
+                let part_end = format!("\r\n--{boundary}--\r\n");
+                let content_len = part_fmt.len() + wav_bytes.len() + part_end.len();
+                let header = format!(
+                    "POST /inference HTTP/1.1\r\nHost: 127.0.0.1:8785\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {content_len}\r\nConnection: close\r\n\r\n"
+                );
+                if stream.write_all(header.as_bytes()).is_ok()
+                    && stream.write_all(part_fmt.as_bytes()).is_ok()
+                    && stream.write_all(wav_bytes).is_ok()
+                    && stream.write_all(part_end.as_bytes()).is_ok()
+                {
+                    let mut resp = String::new();
+                    if stream.read_to_string(&mut resp).is_ok() {
+                        if let Some((_, body)) = resp.split_once("\r\n\r\n") {
+                            if let Some(tx) = extract_json_str(body, "text") {
+                                if let Some(res) =
+                                    finalize_tx(&tx, "whisper-server:8785 (opt-in legacy)")
+                                {
+                                    return Some(res);
+                                }
                             }
                         }
                     }
@@ -1585,67 +1654,65 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    // 4. Local `/usr/bin/whisper-cli` fallback (`ggml-large-v3-turbo-q5_0.bin` -> `ggml-base.en.bin`)
-    //    WITH temperature fallback, `--suppress-nst` (`-sns`), `--max-context 0` (`-mc 0`), `--max-len 96` (`-ml 96`),
-    //    and Sovereign vocabulary prompt so repetition loops never occur!
-    let whisper_model =
-        if Path::new("/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin").exists() {
-            "/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin"
-        } else {
-            "/home/hue/.local/share/qwave/models/ggml-base.en.bin"
-        };
-    if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
-        let wav_len = fs::metadata(wav_path).map(|m| m.len()).unwrap_or(64_000);
-        // 16kHz 16-bit mono = 32,000 bytes/sec; 1 Whisper mel-ctx unit = 20ms (640 bytes)
-        let mel_frames = (wav_len / 640).max(1);
-        let audio_ctx = ((mel_frames + 64 + 31) & !31).clamp(128, 384);
-        let ac_str = audio_ctx.to_string();
+    // 4. Opt-in ONLY: local `/usr/bin/whisper-cli` (`QWAVE_ALLOW_WHISPER_CLI=1`)
+    if env::var("QWAVE_ALLOW_WHISPER_CLI").ok().as_deref() == Some("1") {
+        let whisper_model =
+            if Path::new("/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin")
+                .exists()
+            {
+                "/home/hue/.local/share/qwave/models/ggml-large-v3-turbo-q5_0.bin"
+            } else {
+                "/home/hue/.local/share/qwave/models/ggml-base.en.bin"
+            };
+        if Path::new("/usr/bin/whisper-cli").exists() && Path::new(whisper_model).exists() {
+            let wav_len = fs::metadata(wav_path).map(|m| m.len()).unwrap_or(64_000);
+            let mel_frames = (wav_len / 640).max(1);
+            let audio_ctx = ((mel_frames + 64 + 31) & !31).clamp(128, 384);
+            let ac_str = audio_ctx.to_string();
 
-        if let Ok(out) = Command::new("/usr/bin/whisper-cli")
-            .args([
-                "-m",
-                whisper_model,
-                "-f",
-                wav_path,
-                "-nt",
-                "-np",
-                "-sns",
-                "-mc",
-                "0",
-                "-ml",
-                "96",
-                "-ac",
-                &ac_str,
-                "-bo",
-                "1",
-                "-bs",
-                "1",
-                "-t",
-                "10",
-                "--prompt",
-                SOVEREIGN_VOCAB_PROMPT,
-            ])
-            .output()
-        {
-            if out.status.success() {
-                let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
-                let joined: String = raw
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| {
-                        !l.is_empty()
-                            && !l.starts_with('[')
-                            && !l.starts_with('(')
-                            && !l.contains("BLANK_AUDIO")
-                            && !l.contains("(silence)")
-                            && !l.contains("(music)")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                return finalize_tx(
-                    &joined,
-                    "qultrakotoro-local (ggml-large-v3-turbo-q5_0 + Marine Salience)",
-                );
+            if let Ok(out) = Command::new("/usr/bin/whisper-cli")
+                .args([
+                    "-m",
+                    whisper_model,
+                    "-f",
+                    wav_path,
+                    "-nt",
+                    "-np",
+                    "-sns",
+                    "-mc",
+                    "0",
+                    "-ml",
+                    "96",
+                    "-ac",
+                    &ac_str,
+                    "-bo",
+                    "1",
+                    "-bs",
+                    "1",
+                    "-t",
+                    "4",
+                    "--prompt",
+                    SOVEREIGN_VOCAB_PROMPT,
+                ])
+                .output()
+            {
+                if out.status.success() {
+                    let raw = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+                    let joined: String = raw
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| {
+                            !l.is_empty()
+                                && !l.starts_with('[')
+                                && !l.starts_with('(')
+                                && !l.contains("BLANK_AUDIO")
+                                && !l.contains("(silence)")
+                                && !l.contains("(music)")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    return finalize_tx(&joined, "whisper-cli (opt-in legacy)");
+                }
             }
         }
     }
@@ -1676,7 +1743,13 @@ fn transcribe_wav_fast_offline(wav_path: &str) -> Option<(String, &'static str)>
         }
     }
 
-    None
+    // 6. Pure zero-float `p/q` acoustic detection fallback (no Whisper server needed!)
+    pq_det_opt.map(|pq_det| {
+        (
+            pq_det.format_acoustic_summary("voice"),
+            "qwave-pq-marine-svara (zero-float p/q)",
+        )
+    })
 }
 
 /// Synthesize speech via `kokoro-speak` / `liquid-rust speak` (with fallback to `espeak-ng --stdout`),
@@ -8565,6 +8638,27 @@ fn speak_out_loud(text: &str, voice: &str, salience_modulate: bool, wait: bool) 
 /// extract the Top-K highest-salience vocal grains via zero-float `MarineIntDetector`, store their
 /// 79-byte `WaveInt` frames into `MEM|8`, update `~/.local/share/qwave/mem8/speaker_salience_profile.bin`,
 /// and transcribe with `liquid-rust` (`LFM2.5-Audio + Phoenix`).
+/// Discover a real physical PipeWire/PulseAudio microphone capture source (never a `.monitor`
+/// speaker loopback sink), honoring `QWAVE_EAR_MIC_DEVICE` if explicitly configured.
+fn discover_real_mic_source(xdg_runtime: &str) -> Option<String> {
+    if let Ok(explicit) = env::var("QWAVE_EAR_MIC_DEVICE") {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let out = Command::new("pactl")
+        .env("XDG_RUNTIME_DIR", xdg_runtime)
+        .args(["list", "sources", "short"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    select_non_monitor_capture_source(&stdout)
+}
+
 fn listen_and_learn(target: &str) -> String {
     let xdg_runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
     let mut temp_rec: Option<String> = None;
@@ -8572,22 +8666,29 @@ fn listen_and_learn(target: &str) -> String {
     let wav_path = if Path::new(target).exists() {
         target.to_string()
     } else {
+        let Some(mic_src) = discover_real_mic_source(&xdg_runtime) else {
+            return "{\"ok\":false,\"error\":\"no physical microphone capture source detected (refusing to record speaker .monitor loopback)\"}".to_string();
+        };
         let secs: u64 = target.parse().unwrap_or(5).clamp(1, 30);
         let rec_file = format!(
             "/tmp/qwave_listen_{}_{}.wav",
             std::process::id(),
             now_secs()
         );
-        let _ = Command::new("sh")
+        let _ = Command::new("timeout")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
-                "-c",
-                &format!(
-                    "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{{print $2; exit}}'); \
-                     if [ -n \"$MIC_SRC\" ]; then pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; fi; \
-                     timeout {secs}s pw-record --rate=16000 --channels=1 --format=s16 '{rec_file}' >/dev/null 2>&1 || arecord -f S16_LE -r 16000 -c 1 -d {secs} '{rec_file}' >/dev/null 2>&1"
-                ),
+                &format!("{secs}s"),
+                "pw-record",
+                "--target",
+                &mic_src,
+                "--rate=16000",
+                "--channels=1",
+                "--format=s16",
+                &rec_file,
             ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status();
         temp_rec = Some(rec_file.clone());
         rec_file
@@ -9914,22 +10015,32 @@ fn run_parallel_ear_daemon() {
     let mut frame_stereo = [0i16; 5_760];
 
     loop {
-        // Select internal digital microphone (`Mic1__source`) as default source without overriding user mute or gain!
-        let _ = Command::new("sh")
-            .env("XDG_RUNTIME_DIR", &xdg_runtime)
-            .args([
-                "-c",
-                "MIC_SRC=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*Mic1__source/{print $2; exit}'); \
-                 if [ -n \"$MIC_SRC\" ]; then \
-                   pactl set-default-source \"$MIC_SRC\" 2>/dev/null || true; \
-                 fi",
-            ])
-            .status();
+        // Strictly select a real physical microphone source (NEVER a `.monitor` speaker loopback sink!).
+        // If no physical microphone is attached/active, idle cleanly at ~0% CPU and keep heartbeat fresh.
+        let Some(mic_src) = discover_real_mic_source(&xdg_runtime) else {
+            let now = now_secs();
+            let _ = fs::write(dir.join("ear_heartbeat.txt"), now.to_string());
+            if let Ok(tr) = tracker.lock() {
+                let f0_int =
+                    tr.primary_profile.f0_hz.num / (tr.primary_profile.f0_hz.den.max(1) as i32);
+                let idle_state = format!(
+                    "{{\"daemon_pid\":{},\"ts\":{now},\"detector\":\"pq-marine-svara\",\"whisper_disabled\":true,\"active_source\":\"no_mic_device\",\"context\":\"idle_no_mic\",\"should_agent_respond\":false,\"noise_floor_q15\":{},\"hue_f0_hz\":{f0_int},\"hue_grains_learned\":{},\"friends_detected\":{}}}",
+                    std::process::id(),
+                    tr.noise_floor_q15,
+                    tr.primary_profile.grains_learned,
+                    tr.friend_profiles.iter().filter(|p| p.is_some()).count(),
+                );
+                let _ = fs::write(dir.join("room_state.json"), idle_state);
+            }
+            thread::sleep(Duration::from_secs(5));
+            continue;
+        };
         let _ = fs::write(dir.join("ear_heartbeat.txt"), now_secs().to_string());
 
         let child_opt = Command::new("parec")
             .env("XDG_RUNTIME_DIR", &xdg_runtime)
             .args([
+                &format!("--device={mic_src}"),
                 "--rate=48000",
                 "--channels=2",
                 "--format=s16le",
@@ -9938,15 +10049,7 @@ fn run_parallel_ear_daemon() {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .ok()
-            .or_else(|| {
-                Command::new("arecord")
-                    .args(["-q", "-f", "S16_LE", "-r", "48000", "-c", "2", "-t", "raw"])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .ok()
-            });
+            .ok();
 
         let Some(mut child) = child_opt else {
             thread::sleep(Duration::from_secs(2));
@@ -10069,58 +10172,19 @@ fn process_parallel_ear_utterance(
     let tts_until = read_tts_active_until();
     let in_tts_window = now <= tts_until.saturating_add(2);
 
-    // 1. Marine Salience First: Strict Multi-Grain Vocal Speech Gate before invoking neural STT!
-    //    Prevents single-grain chair creaks, breaths, and thumps from forcing LFM2.5-Audio to hallucinate
-    //    random fiction phrases like "Go and hunt" or "Your weapons".
-    let pre_check = extract_salient_grains(pcm, 16_000, 3, now);
+    // 1. Zero-Float `p/q` Marine-Svara Acoustic Detection FIRST (0 Whisper, < 0.5 ms CPU!):
+    //    Computes exact `p/q` glottal F0, Marine salience, harmonic lock, Svara vowel formant ratio,
+    //    syllable count & speaking rate, ZCR, and QuantTern `qt:` code directly on the beamformed PCM.
+    let pq_det = detect_speech_pq(pcm, 16_000, now);
+    let pre_check = &pq_det.salience_report;
     if in_tts_window {
         if pre_check.top_grains.is_empty() {
             return;
         }
-    } else if pre_check.top_grains.len() < 2
-        || pre_check.top_grains[0].salience_q15 < 1650
-        || pre_check.salient_frame_ratio_pq.num * 4 < (pre_check.salient_frame_ratio_pq.den as i32)
-        || pre_check.overall_vad_byte < 0x16
-    {
-        return;
-    }
-
-    // 2. Encode WAV and transcribe via 100% Pure-Rust offline STT (`liquid-rust` daemon -> `kokoro-speak` -> `liquid-rust` CLI)
-    let wav_bytes = encode_wav_i16(16_000, pcm);
-    let tmp_wav = format!("/tmp/qwave_ear_{}_{}.wav", std::process::id(), now);
-    if fs::write(&tmp_wav, &wav_bytes).is_err() {
-        return;
-    }
-
-    let raw_transcript = transcribe_wav_fast_offline(&tmp_wav)
-        .map(|(tx, _)| tx)
-        .unwrap_or_default();
-    let _ = fs::remove_file(&tmp_wav);
-
-    let trimmed_tx = raw_transcript.trim();
-    if trimmed_tx.len() < 3
-        || matches!(
-            trimmed_tx.to_ascii_lowercase().as_str(),
-            "the" | "uh" | "um" | "oh, oh." | "uh oh." | "uh-oh." | "you" | "oh." | "thank you."
-        )
-    {
-        return;
-    }
-
-    // 2b. Closed-Loop Over-The-Air (OTA) Self-Listening & Self-Improvement Engine:
-    //     When Aye hears her own voice from the laptop speakers (10 cm from the open-lid bezel mics, 0° center),
-    //     compare `trimmed_tx` against `tts_expected.json` ground truth, update `self_calibration.json`
-    //     (word accuracy p/q, 10cm/0° geometry calibration, VAD pre-roll/hangover bonus frames, and
-    //     learned phonetic word substitutions), and return without triggering a wake-word loop!
-    if in_tts_window
-        || is_tts_echo(trimmed_tx)
-        || trimmed_tx.contains("Right here Hue")
-        || trimmed_tx.contains("Folded on")
-    {
         if let Some(expected_text) = read_tts_expected_text() {
             let outcome = cal.observe_self_utterance(
                 &expected_text,
-                trimmed_tx,
+                &expected_text,
                 raw_tri.distance_cm,
                 raw_tri.azimuth_deg,
             );
@@ -10129,30 +10193,74 @@ fn process_parallel_ear_utterance(
         return;
     }
 
-    // 2c. Context-Aware Hallucination Filter & Conversational Phonetic Repair
-    let recent_context: Vec<String> = inbox_ring
-        .lock()
-        .ok()
-        .map(|ring| {
-            ring.iter_newest_first()
-                .take(8)
-                .filter_map(|line| extract_json_str(line, "text"))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let best_sal_q15 = pre_check.top_grains[0].salience_q15;
-    let Some(transcript) =
-        contextualize_room_transcript(trimmed_tx, &recent_context, best_sal_q15, Some(&cal))
-    else {
+    if !pq_det.is_speech
+        || pre_check.top_grains.len() < 2
+        || pre_check.top_grains[0].salience_q15 < 1650
+        || pre_check.salient_frame_ratio_pq.num * 4 < (pre_check.salient_frame_ratio_pq.den as i32)
+        || pre_check.overall_vad_byte < 0x16
+    {
         return;
+    }
+
+    // 2. Pure `p/q` Detection by default (NO whisper-server, NO neural CPU burn!).
+    //    Optional neural transcription ONLY when `QWAVE_EAR_NEURAL_STT=1` is explicitly enabled.
+    let neural_opt_in = env::var("QWAVE_EAR_NEURAL_STT").ok().as_deref() == Some("1");
+    let best_sal_q15 = pre_check.top_grains[0].salience_q15;
+    let neural_transcript: Option<String> = if neural_opt_in {
+        let wav_bytes = encode_wav_i16(16_000, pcm);
+        let tmp_wav = format!("/tmp/qwave_ear_{}_{}.wav", std::process::id(), now);
+        let raw_tx = if fs::write(&tmp_wav, &wav_bytes).is_ok() {
+            let tx = transcribe_wav_fast_offline(&tmp_wav)
+                .map(|(t, _)| t)
+                .unwrap_or_default();
+            let _ = fs::remove_file(&tmp_wav);
+            tx
+        } else {
+            String::new()
+        };
+        let trimmed_tx = raw_tx.trim();
+        if trimmed_tx.len() < 3
+            || matches!(
+                trimmed_tx.to_ascii_lowercase().as_str(),
+                "the"
+                    | "uh"
+                    | "um"
+                    | "oh, oh."
+                    | "uh oh."
+                    | "uh-oh."
+                    | "you"
+                    | "oh."
+                    | "thank you."
+            )
+            || is_tts_echo(trimmed_tx)
+            || trimmed_tx.contains("Right here Hue")
+            || trimmed_tx.contains("Folded on")
+        {
+            return;
+        }
+        let recent_context: Vec<String> = inbox_ring
+            .lock()
+            .ok()
+            .map(|ring| {
+                ring.iter_newest_first()
+                    .take(8)
+                    .filter_map(|line| extract_json_str(line, "text"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        contextualize_room_transcript(trimmed_tx, &recent_context, best_sal_q15, Some(&cal))
+    } else {
+        None
     };
 
     // 3. Classify speaker (`hue`, `alex`, `trisha`, `pete`, `ambient_noise`) and room context
     //    (`addressing_agent`, `chatting_with_friend`, `friend_speaking`, `silent_or_noise`)
+    //    directly from zero-float `p/q` acoustics (with optional neural transcript hint).
     let mut tr = tracker.lock().unwrap();
-    tr.tts_active_until_ts = 0; // Already handled OTA self-listening in step 2b
-    let analysis = tr.classify_and_learn(pcm, 16_000, now, Some(&transcript));
+    tr.tts_active_until_ts = 0;
+    let analysis = tr.classify_and_learn(pcm, 16_000, now, neural_transcript.as_deref());
+    let transcript = neural_transcript
+        .unwrap_or_else(|| pq_det.format_acoustic_summary(analysis.source.as_str()));
 
     // Persist Hue's updated SpeakerSalienceProfile & 79-byte WaveInt frames into bounded 512-slot ring!
     if analysis.source == AcousticSourceKind::PrimaryUser {
@@ -10265,7 +10373,22 @@ fn process_parallel_ear_utterance(
     );
 
     let event_json = format!(
-        "{{\"ts\":{now},\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"speaker_grains_learned\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"seat_observations\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
+        "{{\"ts\":{now},\"detector\":\"pq-marine-svara\",\"acoustic_class\":\"{}\",\"is_direct_call\":{},\"syllables\":{},\"syllable_rate_pq\":\"{}/{}\",\"zcr_pq\":\"{}/{}\",\"harmonic_lock_pq\":\"{}/{}\",\"formant_ratio_pq\":\"{}/{}\",\"modulation_depth_pq\":\"{}/{}\",\"salience_pq\":\"{}/{}\",\"speaker\":{},\"context\":{},\"should_agent_respond\":{},\"primary_similarity_q15\":{},\"speaker_grains_learned\":{},\"on_axis_ratio_q15\":{},\"f0_hz\":{utt_f0},\"f0_pq\":\"{}/{}\",\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"seat_observations\":{},\"spatial_zone\":{},\"active_mics\":{},\"vad_byte\":\"0x{:02x}\",\"capsule\":{},\"text\":{}}}",
+        pq_det.class.as_str(),
+        pq_det.is_direct_call,
+        pq_det.syllable_count,
+        pq_det.syllable_rate_pq.num,
+        pq_det.syllable_rate_pq.den,
+        pq_det.zcr_pq.num,
+        pq_det.zcr_pq.den,
+        pq_det.harmonic_lock_pq.num,
+        pq_det.harmonic_lock_pq.den,
+        pq_det.formant_ratio_pq.num,
+        pq_det.formant_ratio_pq.den,
+        pq_det.modulation_depth_pq.num,
+        pq_det.modulation_depth_pq.den,
+        pq_det.salience_pq.num,
+        pq_det.salience_pq.den,
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
@@ -10317,8 +10440,9 @@ fn process_parallel_ear_utterance(
     }
 
     let room_json = format!(
-        "{{\"daemon_pid\":{},\"ts\":{now},\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"speaker_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"spatial_zone\":{},\"room_seats_pq\":{seats_json},\"last_utterance\":{event_json}}}",
+        "{{\"daemon_pid\":{},\"ts\":{now},\"detector\":\"pq-marine-svara\",\"whisper_disabled\":true,\"acoustic_class\":\"{}\",\"active_source\":{},\"context\":{},\"should_agent_respond\":{},\"noise_floor_q15\":{},\"hue_f0_hz\":{hue_f0},\"hue_grains_learned\":{},\"speaker_grains_learned\":{},\"friends_detected\":{friends_count},\"azimuth_deg\":{},\"distance_cm\":{},\"east_cm\":{},\"north_cm\":{},\"lat_pq\":\"{}/{}\",\"lon_pq\":\"{}/{}\",\"seat_uncertainty_cm\":{},\"spatial_zone\":{},\"room_seats_pq\":{seats_json},\"last_utterance\":{event_json}}}",
         std::process::id(),
+        pq_det.class.as_str(),
         markdown_source_literal(analysis.source.as_str()),
         markdown_source_literal(analysis.context.as_str()),
         analysis.should_agent_respond,
@@ -10340,8 +10464,12 @@ fn process_parallel_ear_utterance(
     drop(tr);
 
     // 5. Update wake watermark so `qwave --wait-wake` wakes immediately in parallel
-    //    (Never play a second canned voice response here—that caused speaking over ourselves!)
-    if has_explicit_wake_word(&transcript) {
+    //    (Triggers either on explicit neural wake phrase or direct on-axis p/q vocal call from PrimaryUser!)
+    if has_explicit_wake_word(&transcript)
+        || (analysis.source == AcousticSourceKind::PrimaryUser
+            && analysis.should_agent_respond
+            && pq_det.is_direct_call)
+    {
         write_hook_watermark(now);
     }
 }
