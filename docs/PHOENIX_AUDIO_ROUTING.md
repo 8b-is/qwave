@@ -68,3 +68,66 @@ installed, but its live audio result is NOT validated. The silence's precise cau
 remains unresolved; investigate processing/output and the two successive volume
 stages before re-enabling Phoenix. Do not treat the earlier short RSS/routing
 smoke test as proof of working audio.
+
+## Single-stage volume, PipeWire-Pulse recovery, and routing fixes — 2026-11-23
+
+Root causes observed on `8bsov` (CachyOS, PipeWire `1.6.11`, WirePlumber `0.5.19`):
+
+1. **PipeWire hijacked by `pulseaudio`**: `pulseaudio 17.0+r134+g77d25a1e6-2.1` had
+   replaced `pipewire-pulse` on 2026-11-21 as a `pulse-native-provider` dependency of
+   `gnome-settings-daemon`. `pulseaudio.service` claimed ALSA cards via `ReserveDevice1`
+   on login, leaving PipeWire with zero sinks/sources (`hyprpwcenter` blank, `wpctl`
+   volume keys ineffective, `pipewire-alsa` stranded) and locking the `TX-384Khz` USB
+   DAC to `Altset 1` (`S16_LE`, `48000 Hz`) while downsampling Phoenix's `s32le 384000 Hz`
+   stream via `speex-float-1` with ALSA `POLLOUT` warnings.
+2. **Double volume attenuation (unresolved 2026-11-15 silence cause)**: `module-null-sink`
+   in PipeWire defaults to `monitor.channel-volumes=true`. Because `phoenix-daemon`
+   sets both `phoenix_revelation_sink` and the hardware DAC to the user's volume,
+   audio passed through two cubic volume stages. Measured on a silent probe null sink
+   (20,000 peak 440 Hz sine): default null sink delivered `19999` at 100%, `1822`
+   (`-20.8 dB`) at 45%, and `540` (`-31.4 dB`) at 30% *before* Phoenix DSP and the
+   second hardware attenuation stage (`-42.8 dB` net at 45%, `-62.7 dB` net at 30%).
+   Passing `monitor.channel-volumes=false` in `sink_properties` delivered `19999`
+   at 100%, 45%, and 30%, preserving full 16-bit dynamic range into Phoenix DSP while
+   mirroring user volume/mute once onto the hardware DAC.
+3. **Periodic `MOVE_SINK_INPUT` error spam and mute desync**: `move_all_sink_inputs_to`
+   ignored `current_sink_id`, issuing `pactl move-sink-input` every ~5.4 s even on
+   already-routed streams (logging `ERROR command:67 (MOVE_SINK_INPUT) error:3 (Invalid
+   argument)` on `PhoeniX_Hardware_Out` because `node.dont-reconnect=true`) and
+   unconditionally calling `set-sink-mute <hw> 0`, which unmuted hardware behind the
+   user's mute toggle.
+4. **Lifecycle hygiene**: `stop_phoenix_daemon` now unloads `phoenix_revelation_sink`'s
+   null-sink module cleanly; `run_phoenix_daemon` reloads any legacy sink missing
+   `monitor.channel-volumes=false`, waits 60 ms after module load so WirePlumber's
+   async `stream-properties` restore settles before syncing volume/mute, and resets
+   `PhoeniX_Hardware_Out` stream gain to 100% unmuted on startup.
+
+### Verification receipt — 2026-11-23
+
+Agent: Antigravity (Gemini). Shared family context: version 1. Branch:
+`fix/phoenix-pipewire-volume-and-routing` (base `main` @ `8683ac0`).
+
+- Replaced `pulseaudio` with `pipewire-pulse 1:1.6.11-2` (provides
+  `pulse-native-provider`, preserving `gnome-settings-daemon`), restarted
+  `pipewire`, `pipewire-pulse`, `wireplumber`, and `qwave-ear`.
+- Validation: `cargo fmt --check`, 13/13 `qwave-hypr-hud` unit tests (including
+  `phoenix_sink_module_parser_detects_unity_monitor_and_owner_module` and
+  `phoenix_move_planner_skips_already_routed_streams_and_heals_drift`), 5/5
+  `phoenix_sound` library tests, and release build passed.
+- Rollback binary:
+  `/home/hue/.local/state/qwave/backups/qwave-hypr-hud.before-pipewire-volume-fix-20261123`.
+  Installed binary SHA-256:
+  `31db79ac9b510ea1c2db11fcf54e0433ad5a4be907654bb64a27c60a76294794`.
+- Live verification on PipeWire `1.6.11`:
+  - `/proc/asound/card3/stream0`: `Status: Running`, `Altset = 2` (`S24_3LE`,
+    24-bit), `Momentary freq = 384000 Hz`.
+  - `phoenix_revelation_sink`: `monitor.channel-volumes = "false"`; `PhoeniX_Hardware_Out`:
+    `100% / 0.00 dB`, unmuted, `s32le 2ch 384000Hz`.
+  - Silent end-to-end probe at 45% volume (input peak `16000` into
+    `phoenix_revelation_sink`, DAC muted during probe): `USB Audio Adapter.monitor`
+    captured peak `25804` (`95265/96000` nonzero samples).
+  - Mute mirror check: `phoenix_revelation_sink` mute `1 -> 0` mirrored to USB DAC
+    as `Mute: yes -> Mute: no`.
+  - `journalctl --user -u pipewire-pulse` over >6.5 s (past the 5.4 s routing tick):
+    zero `ERROR` entries; `pw-top` showed `0` errors across all nodes.
+  - Listening confirmation: user confirmed "Much better!!" on live desktop playback.

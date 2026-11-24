@@ -5661,6 +5661,7 @@ pub fn run_ai_menu(args: &[String]) -> String {
 // ── System-Wide PipeWire "PhoeniX on Everything" Daemon & Waybar HUD ────────
 
 const PHOENIX_SINK_NAME: &str = "phoenix_revelation_sink";
+const PHOENIX_NULL_SINK_PROPERTIES: &str = "sink_properties='device.description=PhoeniX_Sound_Revelation_768kHz_432Hz_Goonj monitor.channel-volumes=false'";
 const PHOENIX_PRESET_FILE: &str = "/tmp/qwave_phoenix_preset.txt";
 const PHOENIX_LIVE_TSV: &str = "/tmp/qwave_phoenix_live.tsv";
 const PHOENIX_HW_SINK_FILE: &str = "/tmp/qwave_phoenix_hw_sink.txt";
@@ -6098,6 +6099,179 @@ pub fn render_waybar_phoenix_json() -> String {
     )
 }
 
+/// Inspect `pactl list sinks` output for `phoenix_revelation_sink`.
+/// Returns `(exists, owner_module_id, has_unity_monitor)` where `has_unity_monitor` is true
+/// when PipeWire `monitor.channel-volumes = "false"` is active (preventing double attenuation).
+fn parse_phoenix_sink_module_info(sinks_full: &str) -> (bool, Option<String>, bool) {
+    let mut in_block = false;
+    let mut exists = false;
+    let mut owner_module: Option<String> = None;
+    let mut unity_monitor = false;
+
+    for line in sinks_full.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Sink #") {
+            if in_block {
+                break;
+            }
+            continue;
+        }
+        if let Some(name) = trimmed.strip_prefix("Name:") {
+            if name.trim() == PHOENIX_SINK_NAME {
+                in_block = true;
+                exists = true;
+            } else if in_block {
+                break;
+            }
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if let Some(mod_str) = trimmed.strip_prefix("Owner Module:") {
+            let id = mod_str.trim();
+            if !id.is_empty() && id != "4294967295" {
+                owner_module = Some(id.to_string());
+            }
+        } else if trimmed == "monitor.channel-volumes = \"false\""
+            || trimmed == "monitor.channel-volumes = false"
+        {
+            unity_monitor = true;
+        }
+    }
+
+    (exists, owner_module, unity_monitor)
+}
+
+/// Find `Sink Input #<id>` entries belonging to our own `PhoeniX_Hardware_Out` playback stream.
+fn find_phoenix_output_input_ids(inputs_full: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut current_id = String::new();
+    for line in inputs_full.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Sink Input #") {
+            current_id = rest.trim().to_string();
+        } else if trimmed.contains("PhoeniX_Hardware_Out")
+            && !current_id.is_empty()
+            && !ids.iter().any(|x| x == &current_id)
+        {
+            ids.push(current_id.clone());
+        }
+    }
+    ids
+}
+
+/// Pure planner for `move_all_sink_inputs_to`: computes only the `(input_id, dest_sink)` moves
+/// whose current sink differs from the desired destination, avoiding redundant `MOVE_SINK_INPUT`
+/// errors/glitches on already-routed streams (especially `PhoeniX_Hardware_Out` which sets
+/// `node.dont-reconnect=true`).
+fn plan_sink_input_moves(
+    sinks_short: &str,
+    inputs_short: &str,
+    inputs_full: &str,
+    target_sink: &str,
+    hw_sink: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut sink_ids: Vec<(&str, &str)> = Vec::new();
+    for line in sinks_short.lines() {
+        let mut parts = line.split_whitespace();
+        if let (Some(id), Some(name)) = (parts.next(), parts.next()) {
+            sink_ids.push((name, id));
+        }
+    }
+    let find_sink_id = |sink_name: &str| -> Option<&str> {
+        sink_ids
+            .iter()
+            .find(|(name, _)| *name == sink_name)
+            .map(|(_, id)| *id)
+    };
+
+    let target_sink_id = find_sink_id(target_sink);
+    let hw_sink_id = hw_sink.and_then(find_sink_id);
+
+    let mut excluded_ids: Vec<String> = Vec::new();
+    let mut current_id = String::new();
+    for line in inputs_full.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Sink Input #") {
+            current_id = rest.trim().to_string();
+        } else if (trimmed.contains("PhoeniX_Hardware_Out") || trimmed.contains("pacat"))
+            && !current_id.is_empty()
+            && !excluded_ids.iter().any(|x| x == &current_id)
+        {
+            excluded_ids.push(current_id.clone());
+        }
+    }
+
+    let mut moves = Vec::new();
+    for line in inputs_short.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(id) = parts.next() else {
+            continue;
+        };
+        let current_sink_id = parts.next().unwrap_or("");
+        if !excluded_ids.iter().any(|x| x == id) {
+            if target_sink_id.is_none_or(|tid| current_sink_id != tid) {
+                moves.push((id.to_string(), target_sink.to_string()));
+            }
+        } else if let Some(hw) = hw_sink {
+            // Only self-heal `PhoeniX_Hardware_Out` if it actually drifted off `hw_sink`
+            // (and never unconditionally unmute the hardware sink behind the user's mute state).
+            if hw_sink_id.is_none_or(|hid| current_sink_id != hid) {
+                moves.push((id.to_string(), hw.to_string()));
+            }
+        }
+    }
+    moves
+}
+
+/// Unload any loaded `phoenix_revelation_sink` null-sink module cleanly.
+fn unload_phoenix_null_sink() {
+    let mut mod_ids: Vec<String> = Vec::new();
+    if let Ok(out) = Command::new("pactl").args(["list", "sinks"]).output() {
+        let full = String::from_utf8_lossy(&out.stdout);
+        let (_, owner_mod, _) = parse_phoenix_sink_module_info(&full);
+        if let Some(id) = owner_mod {
+            mod_ids.push(id);
+        }
+    }
+    if let Ok(saved) = fs::read_to_string(PHOENIX_MOD_ID_FILE) {
+        let id = saved.trim();
+        if !id.is_empty() && !mod_ids.iter().any(|x| x == id) {
+            mod_ids.push(id.to_string());
+        }
+    }
+    for id in mod_ids {
+        let _ = Command::new("pactl")
+            .args(["unload-module", &id])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = fs::remove_file(PHOENIX_MOD_ID_FILE);
+}
+
+/// Ensure our own `PhoeniX_Hardware_Out` playback stream is unmuted at 100% unity gain so stale
+/// WirePlumber stream-restore properties never silently attenuate or mute Phoenix output.
+fn normalize_phoenix_output_stream_gain() {
+    let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() else {
+        return;
+    };
+    let full = String::from_utf8_lossy(&out.stdout);
+    for id in find_phoenix_output_input_ids(&full) {
+        let _ = Command::new("pactl")
+            .args(["set-sink-input-volume", &id, "100%"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("pactl")
+            .args(["set-sink-input-mute", &id, "0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// Move all client playback `sink-inputs` (except our own hardware output bridge) onto `target_sink`.
 fn move_all_sink_inputs_to(target_sink: &str) {
     let Ok(out) = Command::new("pactl")
@@ -6106,6 +6280,15 @@ fn move_all_sink_inputs_to(target_sink: &str) {
     else {
         return;
     };
+    let inputs_short = String::from_utf8_lossy(&out.stdout);
+    if inputs_short.trim().is_empty() {
+        return;
+    }
+    let sinks_short = Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
     // Also inspect `pactl list sink-inputs` so we never move our own `PhoeniX_Hardware_Out` pacat stream
     let full_info = Command::new("pactl")
         .args(["list", "sink-inputs"])
@@ -6113,46 +6296,24 @@ fn move_all_sink_inputs_to(target_sink: &str) {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    let mut excluded_ids: Vec<String> = Vec::new();
-    let mut current_id = String::new();
-    for line in full_info.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Sink Input #") {
-            current_id = rest.trim().to_string();
-        } else if (trimmed.contains("PhoeniX_Hardware_Out") || trimmed.contains("pacat"))
-            && !current_id.is_empty()
-        {
-            excluded_ids.push(current_id.clone());
-        }
-    }
-
     let hw_sink = if target_sink == PHOENIX_SINK_NAME {
         Some(select_primary_hardware_sink())
     } else {
         None
     };
 
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
-        let mut parts = line.split_whitespace();
-        if let Some(id) = parts.next() {
-            let current_sink_id = parts.next().unwrap_or("");
-            if !excluded_ids.iter().any(|x| x == id) {
-                let _ = Command::new("pactl")
-                    .args(["move-sink-input", id, target_sink])
-                    .status();
-            } else if let Some(ref hw) = hw_sink {
-                // Self-heal: if WirePlumber moved `PhoeniX_Hardware_Out` onto `phoenix_revelation_sink`
-                // after a USB hub reset (e.g. plugging/unplugging an SD card reader), move it right
-                // back to the hardware DAC sink (`TX-384Khz` / `Line1` / `Speaker`) and ensure unmuted!
-                let _ = current_sink_id;
-                let _ = Command::new("pactl")
-                    .args(["move-sink-input", id, hw])
-                    .status();
-                let _ = Command::new("pactl")
-                    .args(["set-sink-mute", hw, "0"])
-                    .status();
-            }
-        }
+    for (id, dest) in plan_sink_input_moves(
+        &sinks_short,
+        &inputs_short,
+        &full_info,
+        target_sink,
+        hw_sink.as_deref(),
+    ) {
+        let _ = Command::new("pactl")
+            .args(["move-sink-input", &id, &dest])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -6176,6 +6337,7 @@ fn stop_phoenix_daemon() {
     let _ = Command::new("pkill")
         .args(["-f", "phoenix_revelation_sink.monitor"])
         .status();
+    unload_phoenix_null_sink();
     let _ = fs::remove_file(PHOENIX_PID_FILE);
 }
 
@@ -6394,31 +6556,41 @@ pub fn run_phoenix_menu(args: &[String]) -> String {
 }
 
 /// Read `(volume_pct, is_muted)` for a PipeWire / PulseAudio sink using pure integer parsing.
-fn read_sink_volume_and_mute(sink_name: &str) -> (i32, bool) {
-    let mut vol_pct: i32 = 45;
-    if let Ok(out) = Command::new("pactl")
+/// Returns `None` if `pactl` fails or omits the volume line so transient failures never overwrite volume.
+fn try_read_sink_volume_and_mute(sink_name: &str) -> Option<(i32, bool)> {
+    let vol_out = Command::new("pactl")
         .args(["get-sink-volume", sink_name])
         .output()
-    {
-        let txt = String::from_utf8_lossy(&out.stdout);
-        for tok in txt.split_whitespace() {
-            if let Some(num_s) = tok.strip_suffix('%') {
-                if let Ok(v) = num_s.trim().parse::<i32>() {
-                    vol_pct = v.clamp(0, 100);
-                    break;
-                }
+        .ok()?;
+    if !vol_out.status.success() {
+        return None;
+    }
+    let txt = String::from_utf8_lossy(&vol_out.stdout);
+    let mut vol_pct: Option<i32> = None;
+    for tok in txt.split_whitespace() {
+        if let Some(num_s) = tok.strip_suffix('%') {
+            if let Ok(v) = num_s.trim().parse::<i32>() {
+                vol_pct = Some(v.clamp(0, 100));
+                break;
             }
         }
     }
-    let is_muted = Command::new("pactl")
+    let vol = vol_pct?;
+    let mute_out = Command::new("pactl")
         .args(["get-sink-mute", sink_name])
         .output()
-        .map(|o| {
-            let s = String::from_utf8_lossy(&o.stdout);
-            s.contains("yes") || s.contains("true")
-        })
-        .unwrap_or(false);
-    (vol_pct, is_muted)
+        .ok()?;
+    if !mute_out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&mute_out.stdout);
+    let is_muted = s.contains("yes") || s.contains("true");
+    Some((vol, is_muted))
+}
+
+/// Read `(volume_pct, is_muted)` for a PipeWire / PulseAudio sink with a safe 45% unmuted fallback.
+fn read_sink_volume_and_mute(sink_name: &str) -> (i32, bool) {
+    try_read_sink_volume_and_mute(sink_name).unwrap_or((45, false))
 }
 
 // One pending 1024-frame block (64/3 ms at 48 kHz). Capture must keep
@@ -6483,19 +6655,24 @@ pub fn run_phoenix_daemon(args: &[String]) {
         "PipeWire-HW"
     };
 
-    // Ensure virtual null sink `phoenix_revelation_sink` exists
-    let sinks_raw = Command::new("pactl")
-        .args(["list", "short", "sinks"])
+    // Ensure virtual null sink `phoenix_revelation_sink` exists WITH `monitor.channel-volumes=false`
+    // so PipeWire taps unity-gain PCM into PhoeniX DSP instead of double-attenuating (virtual * hardware).
+    let sinks_full = Command::new("pactl")
+        .args(["list", "sinks"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
-    if !sinks_raw.contains(PHOENIX_SINK_NAME) {
+    let (sink_exists, _, has_unity_monitor) = parse_phoenix_sink_module_info(&sinks_full);
+    if sink_exists && !has_unity_monitor {
+        unload_phoenix_null_sink();
+    }
+    if !sink_exists || !has_unity_monitor {
         if let Ok(out) = Command::new("pactl")
             .args([
                 "load-module",
                 "module-null-sink",
                 &format!("sink_name={PHOENIX_SINK_NAME}"),
-                "sink_properties=device.description=PhoeniX_Sound_Revelation_768kHz_432Hz_Goonj",
+                PHOENIX_NULL_SINK_PROPERTIES,
                 "rate=48000",
                 "channels=2",
             ])
@@ -6506,6 +6683,9 @@ pub fn run_phoenix_daemon(args: &[String]) {
                 let _ = fs::write(PHOENIX_MOD_ID_FILE, &mod_id);
             }
         }
+        // Let WirePlumber finish any asynchronous saved stream-properties restore before we apply
+        // the active hardware sink's volume and mute state onto `phoenix_revelation_sink`.
+        thread::sleep(Duration::from_millis(60));
     }
 
     // Respect user's existing hardware & virtual sink volume and mute state (never force 100% / 65536!).
@@ -6604,8 +6784,11 @@ pub fn run_phoenix_daemon(args: &[String]) {
         None
     };
 
-    // Move existing application streams into `phoenix_revelation_sink`
+    // Move existing application streams into `phoenix_revelation_sink` and ensure our own
+    // `PhoeniX_Hardware_Out` stream runs unmuted at 100% unity gain into the hardware DAC.
     move_all_sink_inputs_to(PHOENIX_SINK_NAME);
+    thread::sleep(Duration::from_millis(80));
+    normalize_phoenix_output_stream_gain();
 
     let initial_slug = read_active_phoenix_preset_slug();
     let mut processor =
@@ -6640,25 +6823,26 @@ pub fn run_phoenix_daemon(args: &[String]) {
         let mut last_synced_mute = hw_muted;
         let mut ticks = 0u64;
         while control_rx.recv().is_ok() {
-            let (cur_vol, cur_mute) = read_sink_volume_and_mute(PHOENIX_SINK_NAME);
-            if cur_vol != last_synced_vol {
-                let result = Command::new("pactl")
-                    .args(["set-sink-volume", &control_sink, &format!("{cur_vol}%")])
-                    .status();
-                if result.is_ok_and(|status| status.success()) {
-                    last_synced_vol = cur_vol;
+            if let Some((cur_vol, cur_mute)) = try_read_sink_volume_and_mute(PHOENIX_SINK_NAME) {
+                if cur_vol != last_synced_vol {
+                    let result = Command::new("pactl")
+                        .args(["set-sink-volume", &control_sink, &format!("{cur_vol}%")])
+                        .status();
+                    if result.is_ok_and(|status| status.success()) {
+                        last_synced_vol = cur_vol;
+                    }
                 }
-            }
-            if cur_mute != last_synced_mute {
-                let result = Command::new("pactl")
-                    .args([
-                        "set-sink-mute",
-                        &control_sink,
-                        if cur_mute { "1" } else { "0" },
-                    ])
-                    .status();
-                if result.is_ok_and(|status| status.success()) {
-                    last_synced_mute = cur_mute;
+                if cur_mute != last_synced_mute {
+                    let result = Command::new("pactl")
+                        .args([
+                            "set-sink-mute",
+                            &control_sink,
+                            if cur_mute { "1" } else { "0" },
+                        ])
+                        .status();
+                    if result.is_ok_and(|status| status.success()) {
+                        last_synced_mute = cur_mute;
+                    }
                 }
             }
             if ticks & 15 == 8 {
@@ -10650,5 +10834,90 @@ mod tests {
         assert!(is_valid_iana_timezone("America/New_York"));
         assert!(is_valid_iana_timezone("Asia/Tokyo"));
         assert!(!is_valid_iana_timezone("../etc/passwd"));
+    }
+
+    #[test]
+    fn phoenix_sink_module_parser_detects_unity_monitor_and_owner_module() {
+        assert!(PHOENIX_NULL_SINK_PROPERTIES.contains("monitor.channel-volumes=false"));
+        assert!(PHOENIX_NULL_SINK_PROPERTIES.contains("device.description="));
+
+        let legacy = "\
+Sink #66
+\tName: alsa_output.usb-TX-384Khz.analog-stereo
+\tOwner Module: 4294967295
+Sink #102
+\tName: phoenix_revelation_sink
+\tOwner Module: 536870916
+\tProperties:
+\t\tnode.name = \"phoenix_revelation_sink\"
+\t\tdevice.description = \"PhoeniX_Sound_Revelation_768kHz_432Hz_Goonj\"
+";
+        assert_eq!(
+            parse_phoenix_sink_module_info(legacy),
+            (true, Some("536870916".to_string()), false)
+        );
+
+        let fixed = "\
+Sink #102
+\tName: phoenix_revelation_sink
+\tOwner Module: 536870918
+\tProperties:
+\t\tmonitor.channel-volumes = \"false\"
+\t\tdevice.description = \"PhoeniX_Sound_Revelation_768kHz_432Hz_Goonj\"
+";
+        assert_eq!(
+            parse_phoenix_sink_module_info(fixed),
+            (true, Some("536870918".to_string()), true)
+        );
+        assert_eq!(parse_phoenix_sink_module_info(""), (false, None, false));
+    }
+
+    #[test]
+    fn phoenix_move_planner_skips_already_routed_streams_and_heals_drift() {
+        let sinks_short = "\
+66\talsa_output.usb-TX-384Khz.analog-stereo\tPipeWire\ts24le 2ch 384000Hz\tRUNNING
+102\tphoenix_revelation_sink\tPipeWire\tfloat32le 2ch 48000Hz\tRUNNING
+";
+        let inputs_short = "\
+11\t102\t30\tPipeWire\tfloat32le 2ch 48000Hz
+12\t66\t31\tPipeWire\tfloat32le 2ch 48000Hz
+13\t66\t79\tPipeWire\ts32le 2ch 384000Hz
+14\t102\t80\tPipeWire\ts32le 2ch 384000Hz
+";
+        let inputs_full = "\
+Sink Input #11
+\tProperties:
+\t\tapplication.name = \"Spotify\"
+Sink Input #12
+\tProperties:
+\t\tapplication.name = \"Brave\"
+Sink Input #13
+\tProperties:
+\t\tapplication.name = \"PhoeniX_Hardware_Out\"
+Sink Input #14
+\tProperties:
+\t\tapplication.name = \"PhoeniX_Hardware_Out\"
+";
+        let moves = plan_sink_input_moves(
+            sinks_short,
+            inputs_short,
+            inputs_full,
+            PHOENIX_SINK_NAME,
+            Some("alsa_output.usb-TX-384Khz.analog-stereo"),
+        );
+        assert_eq!(
+            moves,
+            vec![
+                ("12".to_string(), PHOENIX_SINK_NAME.to_string()),
+                (
+                    "14".to_string(),
+                    "alsa_output.usb-TX-384Khz.analog-stereo".to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            find_phoenix_output_input_ids(inputs_full),
+            vec!["13".to_string(), "14".to_string()]
+        );
     }
 }
